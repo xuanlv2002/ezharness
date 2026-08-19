@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { api } from '../../lib/api'
   import { store } from '../../lib/store.svelte'
 
   let model = $state('')
@@ -9,6 +10,15 @@
   let saving = $state(false)
   let loaded = $state(false)
 
+  let curPort = $state(0)
+  let curDataDir = $state('')
+  let port = $state(0)
+  let dataDir = $state('')
+  let restarting = $state(false)
+  let restartErr = $state('')
+
+  let appChanged = $derived(port > 0 && port !== curPort || dataDir.trim() !== curDataDir)
+
   $effect(() => {
     if (store.settings && !loaded) {
       model = store.settings.model
@@ -17,6 +27,12 @@
       threshold = store.settings.rotateThreshold
       shell = store.settings.shell || 'auto'
       loaded = true
+      api.appConfig().then((c) => {
+        curPort = c.port
+        curDataDir = c.dataDir
+        port = c.port
+        dataDir = c.dataDir
+      })
     }
   })
 
@@ -32,6 +48,35 @@
       })
     } finally {
       saving = false
+    }
+  }
+
+  async function restartApp() {
+    restarting = true
+    restartErr = ''
+    try {
+      const req: { port?: number; dataDir?: string } = {}
+      if (port !== curPort) req.port = port
+      if (dataDir.trim() !== curDataDir) req.dataDir = dataDir.trim()
+      const res = await api.appRestart(req)
+      for (let i = 0; i < 60; i++) {
+        await new Promise((r) => setTimeout(r, 500))
+        try {
+          const h = await api.appHealth(res.url)
+          if (h.boot === res.boot) {
+            if (res.url === location.origin) location.reload()
+            else location.assign(res.url)
+            return
+          }
+        } catch {
+          /* 新代未就绪，继续轮询 */
+        }
+      }
+      restartErr = '等待新服务超时，请手动刷新页面'
+    } catch (e) {
+      restartErr = e instanceof Error ? e.message : String(e)
+    } finally {
+      restarting = false
     }
   }
 </script>
@@ -77,6 +122,25 @@
     {saving ? '保存中…' : '保存'}
   </button>
   <p class="hint">变更即时生效（重建 agent），运行中需等本轮结束。</p>
+
+  <div class="app-section">
+    <h3>应用</h3>
+    <label>
+      <span>端口</span>
+      <input type="number" bind:value={port} min="1" max="65535" />
+    </label>
+    <label>
+      <span>数据目录（settings / sessions / topics / memory 存储位置，清空恢复默认）</span>
+      <input type="text" bind:value={dataDir} placeholder={curDataDir} />
+    </label>
+    <button class="save" disabled={restarting || !appChanged} onclick={restartApp}>
+      {restarting ? '重启中…' : '应用并重启'}
+    </button>
+    <p class="hint">更换目录会自动迁移数据（不覆盖已有文件）；重启后页面自动跳转新地址。</p>
+    {#if restartErr}
+      <p class="err">{restartErr}</p>
+    {/if}
+  </div>
 </div>
 
 <style>
@@ -136,5 +200,22 @@
   .hint {
     font-size: 11px;
     color: var(--faint);
+  }
+  .app-section {
+    margin-top: 18px;
+    padding-top: 16px;
+    border-top: 1px dashed var(--line);
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+  .app-section h3 {
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--muted);
+  }
+  .err {
+    font-size: 12px;
+    color: #c0392b;
   }
 </style>

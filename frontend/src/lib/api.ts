@@ -117,6 +117,13 @@ export const api = {
 
   resumeTopic: (id: string) =>
     post<{ id: string; messages: HistoryMessage[] }>(`/api/topics/${id}/resume`),
+
+  appConfig: () => fetch('/api/app/config').then(json<{ port: number; dataDir: string }>),
+
+  appRestart: (req: { port?: number; dataDir?: string }) =>
+    post<{ url: string; boot: number }>('/api/app/restart', req),
+
+  appHealth: (base = '') => fetch(`${base}/api/app/health`).then(json<{ ok: boolean; boot: number }>),
 }
 
 /* subscribe 建立 SSE 订阅，返回断开函数。 */

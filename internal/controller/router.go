@@ -17,6 +17,7 @@ type Controllers struct {
 	Chat     *ChatController
 	Settings *SettingsController
 	Topics   *TopicController
+	App      *AppController
 }
 
 /* NewRouter 装配 gin engine 与全部路由。dist 非 nil 时服务前端静态资源。 */
@@ -26,6 +27,10 @@ func NewRouter(c Controllers, dist fs.FS) *gin.Engine {
 
 	api := r.Group("/api")
 	{
+		api.GET("/app/health", c.App.Health)
+		api.GET("/app/config", c.App.Config)
+		api.POST("/app/restart", c.App.Restart)
+
 		api.GET("/bootstrap", c.Session.Bootstrap)
 		api.GET("/status", c.Session.Status)
 

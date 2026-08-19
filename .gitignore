@@ -18,6 +18,10 @@ memory.md
 mcp.json
 skills/
 
+# 桌面应用形态：本地应用配置 + 数据目录
+ezharness.json
+data/
+
 # IDE
 .idea/
 .vscode/

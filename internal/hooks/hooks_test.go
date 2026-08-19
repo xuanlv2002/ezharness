@@ -2,7 +2,9 @@ package hooks
 
 import (
 	"context"
+	"fmt"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/xuanlv2002/ezloop/ext/fs"
@@ -25,6 +27,18 @@ func (m memFS) Write(_ context.Context, p string, data []byte) error {
 	return nil
 }
 func (m memFS) List(_ context.Context, dir string) ([]fs.Entry, error) { return nil, nil }
+func (m memFS) Edit(_ context.Context, p, oldText, newText string) (int, error) {
+	d, ok := m[p]
+	if !ok {
+		return 0, os.ErrNotExist
+	}
+	n := strings.Count(string(d), oldText)
+	if n == 0 {
+		return 0, fmt.Errorf("not found in %s", p)
+	}
+	m[p] = []byte(strings.ReplaceAll(string(d), oldText, newText))
+	return n, nil
+}
 
 /* fakeProvider 返回固定摘要文本。 */
 type fakeProvider struct{ reply string }
