@@ -1,0 +1,96 @@
+:root {
+  --bg: #ffffff;
+  --bg-soft: #fafafa;
+  --bg-invert: #0a0a0a;
+  --fg: #0a0a0a;
+  --fg-invert: #ffffff;
+  --muted: #666666;
+  --faint: #a3a3a3;
+  --line: #e5e5e5;
+  --line-strong: #0a0a0a;
+  --accent: #2563eb;
+  --accent-soft: #dbeafe;
+
+  --font-ui: 'Inter', system-ui, -apple-system, 'Segoe UI', 'Microsoft YaHei', sans-serif;
+  --font-mono: ui-monospace, 'Cascadia Code', 'JetBrains Mono', Consolas, monospace;
+
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --dur-in: 240ms;
+  --dur-fast: 160ms;
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  height: 100%;
+}
+
+body {
+  font-family: var(--font-ui);
+  font-size: 15px;
+  line-height: 1.7;
+  color: var(--fg);
+  background: var(--bg);
+  -webkit-font-smoothing: antialiased;
+}
+
+::selection {
+  background: var(--fg);
+  color: var(--bg);
+}
+
+button {
+  font-family: inherit;
+  font-size: inherit;
+  cursor: pointer;
+}
+
+/* ── 呼吸灯：分身运行中的生命信号 ── */
+@keyframes breathe {
+  0%, 100% { opacity: 0.25; }
+  50% { opacity: 1; }
+}
+
+/* ── 打字光标 ── */
+@keyframes caret {
+  0%, 49% { opacity: 1; }
+  50%, 100% { opacity: 0; }
+}
+
+/* ── 卡片入场：淡入上移 ── */
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* ── 决策卡片浮入 ── */
+@keyframes float-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px) scale(0.99);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.enter-rise {
+  animation: rise var(--dur-in) var(--ease-out) both;
+}
+
+.enter-float {
+  animation: float-in var(--dur-fast) var(--ease-out) both;
+}

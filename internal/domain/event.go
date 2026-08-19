@@ -1,0 +1,170 @@
+/*
+事件帧映射：ezloop 事件 → SSE JSON 帧，一处集中（原 dto.go 平移）。
+*/
+package domain
+
+import (
+	"encoding/json"
+	"fmt"
+	"time"
+
+	"github.com/xuanlv2002/ezloop/event"
+	"github.com/xuanlv2002/ezloop/types"
+
+	"ezharness/internal/hooks"
+)
+
+/* Event 是 SSE 帧（data: {...}）。 */
+type Event struct {
+	Type   string          `json:"type"`
+	Ts     int64           `json:"ts"`
+	Iter   int             `json:"iter"`
+	ForkID string          `json:"forkId,omitempty"`
+	Data   json.RawMessage `json:"data,omitempty"`
+}
+
+/* ToolStartData 是 tool_start 的数据。 */
+type ToolStartData struct {
+	ID   string          `json:"id"`
+	Name string          `json:"name"`
+	Args json.RawMessage `json:"args,omitempty"`
+}
+
+/* ToolEndData 是 tool_end 的数据。 */
+type ToolEndData struct {
+	CallID  string `json:"callId"`
+	Name    string `json:"name"`
+	Content string `json:"content"`
+	Err     string `json:"err,omitempty"`
+}
+
+/* ModelEndData 是 model_end 的数据（ModelResponse 摘要 + 水位）。 */
+type ModelEndData struct {
+	Content   string        `json:"content"`
+	Reasoning string        `json:"reasoning,omitempty"`
+	ToolCalls []ToolStartID `json:"toolCalls,omitempty"`
+	Usage     *types.Usage  `json:"usage,omitempty"`
+}
+
+/* ToolStartID 是 model_end 携带的调用标识。 */
+type ToolStartID struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
+/* TaskStartData 是 task.start 的数据。 */
+type TaskStartData struct {
+	ID     string `json:"id"`
+	Task   string `json:"task"`
+	CallID string `json:"callId"`
+}
+
+/* TaskEndData 是 task.end 的数据。 */
+type TaskEndData struct {
+	StopReason string `json:"stopReason"`
+	Iterations int    `json:"iterations"`
+	Answer     string `json:"answer"`
+}
+
+/* TurnEndData 是合成的 turn_end 帧。 */
+type TurnEndData struct {
+	StopReason string       `json:"stopReason"`
+	Err        string       `json:"err,omitempty"`
+	Iterations int          `json:"iterations"`
+	Usage      *types.Usage `json:"usage,omitempty"`
+}
+
+/* MapEvent 把 ezloop 事件归一为 SSE 帧。 */
+func MapEvent(e event.Event) Event {
+	out := Event{Type: string(e.Type), Ts: e.Timestamp.UnixMilli(), Iter: e.Iteration, ForkID: e.ForkID}
+	switch e.Type {
+	case event.EventModelChunk, event.EventReasoningChunk,
+		event.EventStreamFallback, event.EventError,
+		event.EventLoopEnd, event.EventIterationEnd:
+		out.Data = raw(fmt.Sprint(e.Data))
+	case event.EventLoopStart:
+		out.Data = raw(e.Data)
+	case event.EventToolStart:
+		if c, ok := e.Data.(*types.ToolCall); ok {
+			out.Data = raw(ToolStartData{ID: c.ID, Name: c.Name, Args: c.Args})
+		}
+	case event.EventToolEnd:
+		if r, ok := e.Data.(*types.ToolResult); ok {
+			d := ToolEndData{CallID: r.CallID, Name: r.Name, Content: r.Content}
+			if r.Err != nil {
+				d.Err = r.Err.Error()
+			}
+			out.Data = raw(d)
+		}
+	case event.EventModelEnd:
+		if r, ok := e.Data.(*types.ModelResponse); ok {
+			u := r.Usage
+			d := ModelEndData{Content: r.Content, Reasoning: r.Reasoning, Usage: &u}
+			for _, c := range r.ToolCalls {
+				d.ToolCalls = append(d.ToolCalls, ToolStartID{ID: c.ID, Name: c.Name})
+			}
+			out.Data = raw(d)
+		}
+	case hooks.EventRotate:
+		out.Data = raw(e.Data) // RotateInfo 原样透传
+	case "task.start", "task.end":
+		mapTaskEvent(&out, e)
+	default:
+		// approve.request / askuser.request / taskplan.request：Data 恒 *types.ToolCall
+		if c, ok := e.Data.(*types.ToolCall); ok {
+			out.Data = raw(ToolStartData{ID: c.ID, Name: c.Name, Args: c.Args})
+		}
+	}
+	return out
+}
+
+/* mapTaskEvent 处理 task 包的 start/end（避免 domain 依赖 task 的常量时用字符串）。 */
+func mapTaskEvent(out *Event, e event.Event) {
+	switch e.Type {
+	case "task.start":
+		if c, ok := e.Data.(*types.ToolCall); ok {
+			var a struct {
+				Task string `json:"task"`
+			}
+			_ = json.Unmarshal(c.Args, &a)
+			out.Data = raw(TaskStartData{ID: e.ForkID, Task: a.Task, CallID: c.ID})
+		}
+	case "task.end":
+		if s, ok := e.Data.(*types.LoopState); ok {
+			out.Data = raw(TaskEndData{
+				StopReason: string(s.StopReason),
+				Iterations: s.Iteration,
+				Answer:     lastAssistant(s),
+			})
+		}
+	}
+}
+
+/* TurnEnd 构造合成的 turn_end 帧。 */
+func TurnEnd(stop string, iterations int, usage *types.Usage, err error) Event {
+	d := TurnEndData{StopReason: stop, Iterations: iterations, Usage: usage}
+	if err != nil {
+		d.Err = err.Error()
+		if d.StopReason == "" {
+			d.StopReason = "error"
+		}
+	}
+	return Event{Type: "turn_end", Ts: time.Now().UnixMilli(), Data: raw(d)}
+}
+
+func lastAssistant(s *types.LoopState) string {
+	for i := len(s.Messages) - 1; i >= 0; i-- {
+		if s.Messages[i].Role == types.RoleAssistant {
+			return s.Messages[i].Content
+		}
+	}
+	return ""
+}
+
+func raw(v any) json.RawMessage {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return json.RawMessage(`null`)
+	}
+	return b
+}

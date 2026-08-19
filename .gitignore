@@ -1,0 +1,23 @@
+# 敏感配置（API key）
+.env
+
+# 构建产物
+ezharness.exe
+ezharness-dev.exe
+*.exe~
+
+# 前端
+frontend/node_modules/
+frontend/dist/
+
+# 运行时数据（会话存档/话题索引/设置/记忆/MCP 配置）
+sessions/
+topics.json
+settings.json
+memory.md
+mcp.json
+skills/
+
+# IDE
+.idea/
+.vscode/
