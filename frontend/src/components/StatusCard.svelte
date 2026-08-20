@@ -10,6 +10,9 @@
 </script>
 
 <aside class="card">
+  <div class="head">
+    <h2>状态</h2>
+  </div>
   <div class="row">
     <span class="label">当前上下文</span>
     <span class="value">{info.context}</span>
@@ -34,19 +37,26 @@
 
 <style>
   .card {
-    position: absolute;
-    top: 16px;
-    right: 16px;
-    z-index: 1;
     display: flex;
     flex-direction: column;
     gap: 6px;
-    min-width: 168px;
+    width: 100%;
     padding: 12px 14px;
     background: var(--bg);
     border: 1px solid var(--line);
     border-radius: 12px;
     box-shadow: 0 1px 3px rgb(0 0 0 / 4%);
+  }
+  .head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 2px;
+  }
+  h2 {
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--muted);
   }
   .row {
     display: flex;

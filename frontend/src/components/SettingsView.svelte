@@ -12,6 +12,7 @@
   interface AppConfig {
     port: number
     paths: PathEntry[]
+    memory: { longterm: string; skills: string; topics: string }
   }
 
   let cfg = $state<AppConfig | null>(null)
@@ -50,6 +51,40 @@
         <span>路径由服务端启动时生成——待接入</span>
       </div>
     {/if}
+  </section>
+
+  <section>
+    <h2>记忆文件夹</h2>
+    <p class="hint">初始为 memory/ 下三个子文件夹，可分别指向独立位置。</p>
+    <div class="paths">
+      {#if cfg}
+        <div class="path-row">
+          <span class="label">长期记忆<i>harness.md 索引 + 文件</i></span>
+          <span class="value">{cfg.memory.longterm}</span>
+        </div>
+        <div class="path-row">
+          <span class="label">能力记忆<i>skills</i></span>
+          <span class="value">{cfg.memory.skills}</span>
+        </div>
+        <div class="path-row">
+          <span class="label">话题记忆<i>历史 session</i></span>
+          <span class="value">{cfg.memory.topics}</span>
+        </div>
+      {:else}
+        <div class="path-row">
+          <span class="label">长期记忆<i>harness.md 索引 + 文件</i></span>
+          <span class="value">—</span>
+        </div>
+        <div class="path-row">
+          <span class="label">能力记忆<i>skills</i></span>
+          <span class="value">—</span>
+        </div>
+        <div class="path-row">
+          <span class="label">话题记忆<i>历史 session</i></span>
+          <span class="value">—</span>
+        </div>
+      {/if}
+    </div>
   </section>
 </div>
 
