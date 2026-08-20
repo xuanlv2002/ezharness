@@ -6,6 +6,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"ezharness/internal/domain"
 	"ezharness/internal/service"
 )
 
@@ -33,6 +34,27 @@ func (c *SettingsController) UpdateSettings(g *gin.Context) {
 			return
 		}
 		g.JSON(http.StatusConflict, gin.H{"error": err.Error()})
+		return
+	}
+	g.JSON(http.StatusOK, gin.H{"ok": true})
+}
+
+/* GetSecurity GET /api/security。 */
+func (c *SettingsController) GetSecurity(g *gin.Context) {
+	g.JSON(http.StatusOK, gin.H{"rules": c.Settings.SecurityRules()})
+}
+
+/* UpdateSecurity POST /api/security。 */
+func (c *SettingsController) UpdateSecurity(g *gin.Context) {
+	var body struct {
+		Rules []domain.ToolRule `json:"rules"`
+	}
+	if err := g.ShouldBindJSON(&body); err != nil {
+		g.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	if err := c.Settings.UpdateSecurity(body.Rules); err != nil {
+		g.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 	g.JSON(http.StatusOK, gin.H{"ok": true})

@@ -6,6 +6,7 @@ package service
 import (
 	"context"
 	"errors"
+	"fmt"
 
 	"ezharness/internal/domain"
 	"ezharness/internal/hooks"
@@ -46,7 +47,10 @@ func (s *SettingsService) Update(v SettingsView) error {
 		return errors.New("model and baseUrl required")
 	}
 	mc := domain.ModelConfig{APIKey: v.APIKey, Model: v.Model, BaseURL: v.BaseURL}
-	st := domain.Settings{SystemExtra: v.SystemExtra, RotateThreshold: v.RotateThreshold, Shell: v.Shell}
+	st := s.Hub.SettingsSnapshot()
+	st.SystemExtra = v.SystemExtra
+	st.RotateThreshold = v.RotateThreshold
+	st.Shell = v.Shell
 	if err := domain.SaveModelConfig(s.Hub.Fsys, mc); err != nil {
 		return err
 	}
@@ -56,6 +60,34 @@ func (s *SettingsService) Update(v SettingsView) error {
 	s.Hub.ApplyModel(mc)
 	s.Hub.ApplySettings(st)
 	return s.Agents.Reassemble(mc, st)
+}
+
+/* SecurityRules 返回当前审批策略。 */
+func (s *SettingsService) SecurityRules() []domain.ToolRule {
+	return s.Hub.SettingsSnapshot().ToolRules
+}
+
+/* UpdateSecurity 保存审批策略。needsApprove 运行时读设置快照，即时生效。 */
+func (s *SettingsService) UpdateSecurity(rules []domain.ToolRule) error {
+	valid := map[domain.Level]bool{
+		domain.LevelAsk: true, domain.LevelBlack: true,
+		domain.LevelWhite: true, domain.LevelAuto: true,
+	}
+	for _, r := range rules {
+		if !valid[r.Level] {
+			return fmt.Errorf("非法档位 %q（tool %s）", r.Level, r.Tool)
+		}
+		if r.Tool == "task" && (r.Level == domain.LevelBlack || r.Level == domain.LevelWhite) {
+			return errors.New("task 只支持 审批/免审（分身继承主 agent 策略）")
+		}
+	}
+	st := s.Hub.SettingsSnapshot()
+	st.ToolRules = rules
+	if err := domain.SaveSettings(s.Hub.Fsys, st); err != nil {
+		return err
+	}
+	s.Hub.ApplySettings(st)
+	return nil
 }
 
 /* MemoryService 记忆用例。 */

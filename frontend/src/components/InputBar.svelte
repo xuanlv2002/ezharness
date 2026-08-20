@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte'
+  import { store } from '../lib/store.svelte'
 
   let {
     files = [],
@@ -13,7 +14,6 @@
     onOpenBoard?: () => void
   } = $props()
 
-  /* 原型骨架：输入交互可用，发送逻辑待业务开发。 */
   let text = $state('')
   let focused = $state(false)
   let el: HTMLTextAreaElement | undefined = $state()
@@ -35,8 +35,13 @@
   })
 
   function send() {
-    if (!text.trim()) return
+    const t = text.trim()
+    if (!t) return
+    if (files.length) {
+      store.lastStatus = '附件发送尚未接入（下一批），本次仅发送文本'
+    }
     text = ''
+    void store.send(t)
   }
 
   function onKey(e: KeyboardEvent) {
@@ -55,6 +60,9 @@
 
 <div class="bar" class:focused>
   <div class="fade"></div>
+  {#if store.lastStatus}
+    <div class="status">{store.lastStatus}</div>
+  {/if}
   {#if files.length}
     <div class="attachments">
       {#each thumbs as t, i (i)}
@@ -90,12 +98,13 @@
     <textarea
       rows="1"
       bind:this={el}
-      placeholder="发出指令…"
+      placeholder={store.busy ? '运行中… 可点击 ⏹ 取消' : '发出指令…'}
       bind:value={text}
       onfocus={() => (focused = true)}
       onblur={() => (focused = false)}
       onkeydown={onKey}
       oninput={autoResize}
+      disabled={!store.activeId}
     ></textarea>
     <button class="board-btn" onclick={() => onOpenBoard?.()} title="魔法画板">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
@@ -105,12 +114,20 @@
         <circle cx="11" cy="11" r="2" />
       </svg>
     </button>
-    <button class="send" onclick={send} disabled={!text.trim()} title="发送">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-        <path d="M12 19V5" />
-        <path d="M5 12l7-7 7 7" />
-      </svg>
-    </button>
+    {#if store.busy}
+      <button class="stop" onclick={() => void store.cancel()} title="取消当前轮">
+        <svg viewBox="0 0 24 24" fill="currentColor">
+          <rect x="7" y="7" width="10" height="10" rx="1.5" />
+        </svg>
+      </button>
+    {:else}
+      <button class="send" onclick={send} disabled={!text.trim()} title="发送">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M12 19V5" />
+          <path d="M5 12l7-5 5 5" />
+        </svg>
+      </button>
+    {/if}
   </div>
   <p class="meta">Enter 发送 · Shift+Enter 换行</p>
 </div>
@@ -133,6 +150,13 @@
     height: 36px;
     background: linear-gradient(to top, var(--bg), transparent);
     pointer-events: none;
+  }
+  .status {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--faint);
+    padding: 0 4px 8px;
+    text-align: right;
   }
   .attachments {
     display: flex;
@@ -292,7 +316,11 @@
   textarea::placeholder {
     color: var(--faint);
   }
-  .send {
+  textarea:disabled {
+    opacity: 0.5;
+  }
+  .send,
+  .stop {
     flex: none;
     width: 34px;
     height: 34px;
@@ -311,6 +339,20 @@
   .send:disabled {
     opacity: 0.2;
     cursor: default;
+  }
+  .stop {
+    background: transparent;
+    border: 1px solid var(--line-strong);
+    color: var(--fg);
+    animation: breathe 2.4s ease-in-out infinite;
+  }
+  .stop svg {
+    width: 14px;
+    height: 14px;
+  }
+  .stop:hover {
+    background: var(--bg-invert);
+    color: var(--fg-invert);
   }
   .meta {
     position: absolute;

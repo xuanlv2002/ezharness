@@ -66,6 +66,11 @@
   let drawing = false
   let grab: { el: El; off: Pt } | null = null
 
+  /* 类型谓词：显式收窄到形状元素（联合判别收窄在部分场景失效） */
+  type ShapeEl = Extract<El, { kind: ShapeKind }>
+  const isShape = (el: El): el is ShapeEl =>
+    el.kind === 'rect' || el.kind === 'ellipse' || el.kind === 'arrow'
+
   /* 视图变换：canvasPx = (world - view) * zoom，滚轮缩放 / 空格或中键平移 */
   let zoom = 1
   let viewX = 0
@@ -172,7 +177,7 @@
       ctx.font = textFont(el.size)
       ctx.textBaseline = 'top'
       ctx.fillText(el.text, el.x, el.y)
-    } else {
+    } else if (isShape(el)) {
       ctx.strokeStyle = el.color
       ctx.lineWidth = el.size
       ctx.lineCap = 'round'
@@ -233,12 +238,15 @@
       const f = 12 + el.size * 4
       return { x: el.x, y: el.y, w: m.width, h: f * 1.2 }
     }
-    return {
-      x: Math.min(el.a.x, el.b.x) - el.size / 2,
-      y: Math.min(el.a.y, el.b.y) - el.size / 2,
-      w: Math.abs(el.b.x - el.a.x) + el.size,
-      h: Math.abs(el.b.y - el.a.y) + el.size,
+    if (isShape(el)) {
+      return {
+        x: Math.min(el.a.x, el.b.x) - el.size / 2,
+        y: Math.min(el.a.y, el.b.y) - el.size / 2,
+        w: Math.abs(el.b.x - el.a.x) + el.size,
+        h: Math.abs(el.b.y - el.a.y) + el.size,
+      }
     }
+    return null
   }
 
   function hit(p: Pt, tol = 4): El | null {
@@ -351,7 +359,7 @@
     if (drawing) {
       const el = elements[elements.length - 1]
       if (el && (el.kind === 'pen' || el.kind === 'eraser')) el.pts.push(p)
-      else if (el) el.b = p
+      else if (el && isShape(el)) el.b = p
       schedulePaint(el)
       return
     }
@@ -387,7 +395,7 @@
     } else if (el.kind === 'text') {
       el.x += dx
       el.y += dy
-    } else {
+    } else if (isShape(el)) {
       el.a = { x: el.a.x + dx, y: el.a.y + dy }
       el.b = { x: el.b.x + dx, y: el.b.y + dy }
     }

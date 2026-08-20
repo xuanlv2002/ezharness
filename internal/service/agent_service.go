@@ -104,25 +104,85 @@ func (a *AgentService) Reassemble(mc domain.ModelConfig, st domain.Settings) err
 	return nil
 }
 
-/* needsApprove 参数级免审白名单：只读工具与人机交互工具免审。 */
+/* needsApprove 按审批策略判定（安全页四档）。
+人机交互与内部工具恒免审；未知工具默认审批。运行时读设置快照，
+改策略即时生效（无需重建 agent）。 */
 func (a *AgentService) needsApprove(c *types.ToolCall) bool {
 	switch c.Name {
-	case "read_file", askuser.ToolName, taskplan.ToolName, task.ToolName,
-		hooks.RotateTool, hooks.RecallTool:
-		return false
-	case "bash":
-		var args struct {
-			Command string `json:"command"`
-		}
-		_ = json.Unmarshal(c.Args, &args)
-		for _, p := range []string{"ls", "cat", "head", "tail", "pwd",
-			"git status", "git diff", "git log", "go test"} {
-			if args.Command == p || strings.HasPrefix(args.Command, p+" ") {
-				return false
-			}
+	case askuser.ToolName, taskplan.ToolName, hooks.RotateTool, hooks.RecallTool:
+		return false // 交互与内部工具不属用户管控面
+	}
+	name := c.Name
+	if name == "mcp_router" {
+		name = "mcp.*" // ezloop mcp 是单一 router 工具，二段式（server/tool 在 args）
+	}
+	rules := a.Hub.SettingsSnapshot().ToolRules
+	var rule *domain.ToolRule
+	for i := range rules {
+		if rules[i].Tool == name {
+			rule = &rules[i]
+			break
 		}
 	}
+	if rule == nil {
+		return true
+	}
+	switch rule.Level {
+	case domain.LevelAuto:
+		return false
+	case domain.LevelAsk:
+		return true
+	case domain.LevelWhite:
+		return !matchRuleList(rule.List, name, c.Args)
+	case domain.LevelBlack:
+		return matchRuleList(rule.List, name, c.Args)
+	}
 	return true
+}
+
+/* matchRuleList 判定工具调用是否命中名单：bash 匹配命令（相等或词边界前缀）、
+文件工具匹配路径前缀、mcp 匹配 server 或 server.tool。 */
+func matchRuleList(list []string, ruleTool string, args json.RawMessage) bool {
+	key := ""
+	switch ruleTool {
+	case "bash":
+		var a struct {
+			Command string `json:"command"`
+		}
+		_ = json.Unmarshal(args, &a)
+		key = a.Command
+	case "read_file", "write_file", "edit_file":
+		var a struct {
+			Path string `json:"path"`
+		}
+		_ = json.Unmarshal(args, &a)
+		key = a.Path
+	case "mcp.*":
+		var a struct {
+			Server string `json:"server"`
+			Tool   string `json:"tool"`
+		}
+		_ = json.Unmarshal(args, &a)
+		key = a.Server
+		if a.Tool != "" {
+			key = a.Server + "." + a.Tool
+		}
+	}
+	if key == "" {
+		return false
+	}
+	for _, e := range list {
+		if key == e {
+			return true
+		}
+		if ruleTool == "bash" && strings.HasPrefix(key, e+" ") {
+			return true // 命令词边界
+		}
+		if ruleTool != "bash" && strings.HasPrefix(key, e) {
+			return true // 路径 / server.tool 前缀
+		}
+	}
+	return false
 }
 
 /* systemPrompt 组装系统提示（长期记忆由 memory hook 每轮注入）。 */

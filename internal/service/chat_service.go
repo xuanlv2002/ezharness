@@ -49,6 +49,7 @@ func (c *ChatService) Send(text string) error {
 		}
 		s.FinishRun(state, waitErr)
 		cancel() // 释放 turnCtx（决策 select 的 Done 依赖）
+		c.Hub.Stats.AddTurn(usage)
 		s.Publish(domain.TurnEnd(stop, iters, usage, waitErr))
 	}()
 	return nil

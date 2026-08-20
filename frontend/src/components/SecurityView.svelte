@@ -1,11 +1,13 @@
 <script lang="ts">
+  import { onMount } from 'svelte'
+  import { api, type ApproveLevel } from '../lib/api'
+
   /*
   安全：对 agent 的操作管控（区别于应用设置——这里全是 agent 域）。
   四档策略：每次审批 / 黑名单审批（名单外放行）/ 白名单免审（名单内放行）/ 全部免审。
-  选黑/白名单档时，该工具下方展开名单配置（bash=命令，文件工具=路径，task/mcp=工具名）。
-  原型阶段档位与名单可交互、仅存本地；持久化到 settings.json 待业务接入。
+  策略数据由后端下发（settings.json 的 toolRules），保存即时生效（无需重建 agent）。
   */
-  type Level = 'ask' | 'black' | 'white' | 'auto'
+  type Level = ApproveLevel
   const levels: { key: Level; label: string; full: string }[] = [
     { key: 'ask', label: '审批', full: '每次审批' },
     { key: 'black', label: '黑名单', full: '黑名单审批：名单外的操作直接放行' },
@@ -16,10 +18,10 @@
   const listMeta: Record<ListKind, { label: string; ph: string }> = {
     command: { label: '命令或前缀', ph: 'git status' },
     path: { label: '路径或前缀', ph: 'C:\\Projects\\' },
-    tool: { label: '工具名', ph: 'mcp__github__create_issue' },
+    tool: { label: 'server 或 server.tool', ph: 'github.create_issue' },
   }
 
-  interface ToolRule {
+  interface RuleRow {
     tool: string
     desc: string
     level: Level
@@ -28,38 +30,66 @@
     noList?: boolean // 不支持名单档（如 task：分身继承主 agent 策略）
   }
 
-  /* 内置工具集（后端 tools.All + 协作工具）；实际清单以后端下发为准 */
-  let rules = $state<ToolRule[]>([
-    { tool: 'read_file', desc: '读取任意文件', level: 'auto', kind: 'path', list: [] },
-    { tool: 'write_file', desc: '写入 / 创建文件', level: 'white', kind: 'path', list: ['C:\\Projects\\'] },
-    { tool: 'edit_file', desc: '精确替换文件内容', level: 'white', kind: 'path', list: ['C:\\Projects\\'] },
-    {
-      tool: 'bash',
-      desc: '执行命令',
-      level: 'white',
-      kind: 'command',
-      list: ['ls', 'cat', 'head', 'pwd', 'git status', 'git diff', 'git log'],
-    },
-    { tool: 'task', desc: 'fork 分身执行子任务（分身继承主 agent 策略）', level: 'ask', kind: 'tool', list: [], noList: true },
-    { tool: 'mcp.*', desc: '全部 MCP 服务器的工具（细粒度后续在 MCP 页配）', level: 'ask', kind: 'tool', list: [] },
-  ])
+  /* 展示元数据（说明/名单类型/约束）；档位与名单以后端下发为准 */
+  const meta: Record<string, { desc: string; kind: ListKind; noList?: boolean }> = {
+    read_file: { desc: '读取任意文件', kind: 'path' },
+    write_file: { desc: '写入 / 创建文件', kind: 'path' },
+    edit_file: { desc: '精确替换文件内容', kind: 'path' },
+    bash: { desc: '执行命令', kind: 'command' },
+    task: { desc: 'fork 分身执行子任务（分身继承主 agent 策略）', kind: 'tool', noList: true },
+    'mcp.*': { desc: '全部 MCP 服务器的工具（细粒度后续在 MCP 页配）', kind: 'tool' },
+  }
 
+  let rules = $state<RuleRow[]>([])
+  let loaded = $state(false)
+  let saving = $state(false)
+  let message = $state('')
   let newList = $state<Record<string, string>>({})
 
   const hasList = (lv: Level) => lv === 'black' || lv === 'white'
 
-  function setRule(r: ToolRule, lv: Level) {
+  onMount(async () => {
+    try {
+      const { rules: rs } = await api.getSecurity()
+      rules = rs.map((r) => ({
+        tool: r.tool,
+        level: r.level,
+        list: r.list ?? [],
+        desc: meta[r.tool]?.desc ?? '',
+        kind: meta[r.tool]?.kind ?? 'tool',
+        noList: meta[r.tool]?.noList,
+      }))
+    } catch {
+      message = '策略加载失败（后端不可达）'
+    }
+    loaded = true
+  })
+
+  async function save() {
+    saving = true
+    message = ''
+    try {
+      await api.saveSecurity(rules.map(({ tool, level, list }) => ({ tool, level, list })))
+      message = '已保存，即时生效'
+    } catch (e) {
+      message = `保存失败：${(e as Error).message}`
+    } finally {
+      saving = false
+    }
+  }
+
+  function setRule(r: RuleRow, lv: Level) {
     if (r.noList && hasList(lv)) return
     r.level = lv
   }
 
-  function addEntry(r: ToolRule) {
+  function addEntry(r: RuleRow) {
     const v = (newList[r.tool] || '').trim()
     if (v && !r.list.includes(v)) r.list = [...r.list, v]
     newList[r.tool] = ''
   }
 
-  function removeEntry(r: ToolRule, entry: string) {
+  function removeEntry(r: RuleRow, entry: string) {
     r.list = r.list.filter((x) => x !== entry)
   }
 </script>
@@ -87,8 +117,8 @@
                 <button
                   class="seg-btn"
                   class:active={r.level === lv.key}
-                  class:dim={r.noList && hasList(lv)}
-                  disabled={r.noList && hasList(lv)}
+                  class:dim={r.noList && hasList(lv.key)}
+                  disabled={r.noList && hasList(lv.key)}
                   onclick={() => setRule(r, lv.key)}
                   title={lv.full}
                 >

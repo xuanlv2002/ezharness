@@ -288,15 +288,17 @@ type Hub struct {
 	Model    ModelConfig
 	Fsys     osfs.OS
 	Settings Settings
+	Stats    *Stats
 	Topics   *hooks.Topics
 	Active   *Session
 }
 
-/* NewHub 创建领域根：加载配置记录（缺失文件自动创建默认）并恢复活动会话。 */
+/* NewHub 创建领域根：加载配置记录（缺失文件自动创建默认）与累计生命体征，并恢复活动会话。 */
 func NewHub() *Hub {
 	h := &Hub{Fsys: osfs.OS{}}
 	h.Model = ensureModelConfig(h.Fsys)
 	h.Settings = ensureSettings(h.Fsys)
+	h.Stats = NewStats(h.Fsys)
 	h.Topics = hooks.NewTopics(h.Fsys)
 	h.Active = h.bootstrap()
 	return h

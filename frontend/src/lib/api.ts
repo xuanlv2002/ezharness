@@ -33,6 +33,10 @@ export interface Status {
   busy: boolean
   contextTokens: number
   rotateThreshold: number
+  daysServed: number
+  cacheHitRate: number
+  totalTokens: number
+  turns: number
   tools: string[]
   mcpServers: string[]
   topicsCount: number
@@ -74,6 +78,13 @@ const post = <T>(url: string, body?: unknown) =>
     body: body === undefined ? undefined : JSON.stringify(body),
   }).then(json<T>)
 
+export type ApproveLevel = 'ask' | 'black' | 'white' | 'auto'
+export interface ToolRule {
+  tool: string
+  level: ApproveLevel
+  list: string[]
+}
+
 export const api = {
   bootstrap: () => fetch('/api/bootstrap').then(json<Bootstrap>),
 
@@ -106,6 +117,10 @@ export const api = {
   getSettings: () => fetch('/api/settings').then(json<Settings>),
 
   saveSettings: (s: Settings) => post<{ ok: boolean }>('/api/settings', s),
+
+  getSecurity: () => fetch('/api/security').then(json<{ rules: ToolRule[] }>),
+
+  saveSecurity: (rules: ToolRule[]) => post<{ ok: boolean }>('/api/security', { rules }),
 
   getMemory: () => fetch('/api/memory').then(json<{ content: string }>),
 

@@ -65,6 +65,10 @@ type Status struct {
 	Busy            bool     `json:"busy"`
 	ContextTokens   int      `json:"contextTokens"`
 	RotateThreshold int      `json:"rotateThreshold"`
+	DaysServed      int      `json:"daysServed"`
+	CacheHitRate    float64  `json:"cacheHitRate"`
+	TotalTokens     int      `json:"totalTokens"`
+	Turns           int      `json:"turns"`
 	Tools           []string `json:"tools"`
 	McpServers      []string `json:"mcpServers"`
 	TopicsCount     int      `json:"topicsCount"`
@@ -79,6 +83,7 @@ func (s *SessionService) Snapshot() Status {
 	if w != nil {
 		tools = w.ToolNames
 	}
+	total := s.Hub.Stats.Total()
 	return Status{
 		Model:           s.Hub.ModelSnapshot().Model,
 		SessionID:       sess.ID,
@@ -86,6 +91,10 @@ func (s *SessionService) Snapshot() Status {
 		Busy:            sess.Busy(),
 		ContextTokens:   sess.CtxTokens(),
 		RotateThreshold: st.RotateThreshold,
+		DaysServed:      s.Hub.Stats.DaysServed(),
+		CacheHitRate:    s.Hub.Stats.CacheHitRate(),
+		TotalTokens:     total.PromptTokens + total.CompletionTokens,
+		Turns:           s.Hub.Stats.Turns(),
 		Tools:           tools,
 		McpServers:      McpNames(s.Hub.Fsys),
 		TopicsCount:     len(s.Hub.Topics.Load()),

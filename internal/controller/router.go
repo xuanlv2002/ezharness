@@ -42,6 +42,8 @@ func NewRouter(c Controllers, dist fs.FS) *gin.Engine {
 
 		api.GET("/settings", c.Settings.GetSettings)
 		api.POST("/settings", c.Settings.UpdateSettings)
+		api.GET("/security", c.Settings.GetSecurity)
+		api.POST("/security", c.Settings.UpdateSecurity)
 		api.GET("/memory", c.Settings.GetMemory)
 		api.POST("/memory", c.Settings.SaveMemory)
 

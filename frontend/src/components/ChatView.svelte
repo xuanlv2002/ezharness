@@ -4,6 +4,8 @@
   import StatusCard from './StatusCard.svelte'
   import NoticePanel from './NoticePanel.svelte'
   import MagicBoard from './MagicBoard.svelte'
+  import { store } from '../lib/store.svelte'
+  import type { Notice } from './NoticePanel.svelte'
 
   /* 拖拽附件：整个对话页是热区（dragenter/leave 计数防子元素抖动）。
   发送逻辑待业务开发。 */
@@ -61,6 +63,25 @@
     }
     boardOpen = false
   }
+
+  /* 通知内联操作 → 决策回传（联动时间线卡与通知状态） */
+  function resolveNotice(id: string, action: string, input?: string) {
+    const n = store.notices.find((x) => x.id === id)
+    const block = store.blocks.find((b) => b.kind === 'decision' && b.id === id)
+    if (!n || !block || block.kind !== 'decision') return
+    if (n.kind === 'approve') {
+      void store.decideApprove(block, action === 'approve', '')
+    } else if (n.kind === 'ask') {
+      void store.decideAnswer(block, input ?? '')
+    } else if (n.kind === 'plan') {
+      void store.decidePlan(block, action === 'execute' ? 'execute' : 'reject', input ?? '')
+    }
+  }
+
+  function jumpToNotice(n: Notice) {
+    if (!n.target) return
+    document.getElementById(n.target)?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+  }
 </script>
 
 <div
@@ -82,15 +103,7 @@
   </div>
   <aside class="side">
     <StatusCard />
-    <NoticePanel
-      notices={[]}
-      onResolve={(_id, _action) => {
-        /* 内联回传决策，待业务接入 */
-      }}
-      onJump={(_n) => {
-        /* 滚动定位到时间线对应卡片（含 fork 卡内审批块），待业务接入 */
-      }}
-    />
+    <NoticePanel notices={store.notices} onResolve={resolveNotice} onJump={jumpToNotice} />
   </aside>
   {#if dragging}
     <div class="dropzone">

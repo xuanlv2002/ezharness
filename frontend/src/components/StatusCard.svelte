@@ -1,12 +1,16 @@
 <script lang="ts">
-  /* 原型阶段为静态占位数据，功能开发时接入真实状态。 */
-  const info = {
-    context: '12.4k / 80k',
-    days: '3 天',
-    cacheRate: '62%',
-    totalUsage: '1.2M',
-    tool: '—',
+  import { store } from '../lib/store.svelte'
+
+  function fmtK(n: number): string {
+    if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`
+    if (n >= 1000) return `${(n / 1000).toFixed(1)}k`
+    return String(n)
   }
+
+  const s = $derived(store.status)
+  const context = $derived(
+    s ? (s.rotateThreshold > 0 ? `${fmtK(s.contextTokens)} / ${fmtK(s.rotateThreshold)}` : fmtK(s.contextTokens)) : '—',
+  )
 </script>
 
 <aside class="card">
@@ -15,23 +19,23 @@
   </div>
   <div class="row">
     <span class="label">当前上下文</span>
-    <span class="value">{info.context}</span>
+    <span class="value">{context}</span>
   </div>
   <div class="row">
     <span class="label">已服务天数</span>
-    <span class="value">{info.days}</span>
+    <span class="value">{s ? `${s.daysServed} 天` : '—'}</span>
   </div>
   <div class="row">
     <span class="label">缓存命中率</span>
-    <span class="value">{info.cacheRate}</span>
+    <span class="value">{s && s.totalTokens > 0 ? `${(s.cacheHitRate * 100).toFixed(0)}%` : '—'}</span>
   </div>
   <div class="row">
     <span class="label">累计用量</span>
-    <span class="value">{info.totalUsage}</span>
+    <span class="value">{s && s.totalTokens > 0 ? fmtK(s.totalTokens) : '—'}</span>
   </div>
   <div class="row">
     <span class="label">当前工具</span>
-    <span class="value">{info.tool}</span>
+    <span class="value">{store.lastTool || '—'}</span>
   </div>
 </aside>
 

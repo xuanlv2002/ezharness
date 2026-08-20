@@ -64,9 +64,39 @@ func SaveModelConfig(fsys fs.FileSystem, m ModelConfig) error {
 
 /* Settings 是可热更的行为设置。 */
 type Settings struct {
-	SystemExtra     string `json:"systemExtra"`
-	RotateThreshold int    `json:"rotateThreshold"` // prompt tokens，<=0 禁用自动轮换
-	Shell           string `json:"shell"`           // "" / "auto" / "bash" / "pwsh" / "cmd"
+	SystemExtra     string     `json:"systemExtra"`
+	RotateThreshold int        `json:"rotateThreshold"` // prompt tokens，<=0 禁用自动轮换
+	Shell           string     `json:"shell"`           // "" / "auto" / "bash" / "pwsh" / "cmd"
+	ToolRules       []ToolRule `json:"toolRules"`       // 审批策略（空 = 内置默认）
+}
+
+/* Level 是审批策略档位。 */
+type Level string
+
+const (
+	LevelAsk   Level = "ask"   // 每次审批
+	LevelBlack Level = "black" // 黑名单审批：名单外放行
+	LevelWhite Level = "white" // 白名单免审：名单内放行
+	LevelAuto  Level = "auto"  // 全部免审
+)
+
+/* ToolRule 是单个工具的审批策略；list 语义随档位（黑=命中才审，白=命中即免）。 */
+type ToolRule struct {
+	Tool  string   `json:"tool"`
+	Level Level    `json:"level"`
+	List  []string `json:"list"`
+}
+
+/* DefaultToolRules 内置默认（等价旧 needsApprove 硬编码语义）。 */
+func DefaultToolRules() []ToolRule {
+	return []ToolRule{
+		{Tool: "read_file", Level: LevelAuto},
+		{Tool: "write_file", Level: LevelAsk},
+		{Tool: "edit_file", Level: LevelAsk},
+		{Tool: "bash", Level: LevelWhite, List: []string{"ls", "cat", "head", "tail", "pwd", "git status", "git diff", "git log", "go test"}},
+		{Tool: "task", Level: LevelAsk},
+		{Tool: "mcp.*", Level: LevelAsk},
+	}
 }
 
 /* DefaultSettings 给出出厂值。 */
@@ -75,6 +105,7 @@ func DefaultSettings() Settings {
 		SystemExtra:     "",
 		RotateThreshold: 80000,
 		Shell:           "auto",
+		ToolRules:       DefaultToolRules(),
 	}
 }
 
@@ -93,6 +124,9 @@ func LoadSettings(fsys fs.FileSystem) Settings {
 	out.RotateThreshold = s.RotateThreshold // 0 = 显式禁用轮换，不回落
 	if s.Shell != "" {
 		out.Shell = s.Shell
+	}
+	if len(s.ToolRules) > 0 {
+		out.ToolRules = s.ToolRules
 	}
 	return out
 }

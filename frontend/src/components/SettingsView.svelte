@@ -1,8 +1,9 @@
 <script lang="ts">
-  /* 原型骨架：纯渲染层。
-  路径与端口由后端下发——后端启动时检测当前文件夹有无配置文件，
-  没有则以 exe 首次执行所在文件夹为默认新建。接口待业务开发接入，
-  原型阶段 cfg 为 null 占位。 */
+  import { onMount } from 'svelte'
+  import { api } from '../lib/api'
+
+  /* 设置页 = 应用结构配置。port/dataDir 由 /api/app/config 下发；
+  完整文件路径清单与记忆三路径待批次 2 扩展该接口后接入。 */
   interface PathEntry {
     label: string
     file: string
@@ -11,12 +12,23 @@
 
   interface AppConfig {
     port: number
+    dataDir: string
     paths: PathEntry[]
     memory: { longterm: string; skills: string; topics: string }
   }
 
   let cfg = $state<AppConfig | null>(null)
   let port = $state<number | ''>('')
+
+  onMount(async () => {
+    try {
+      const c = await api.appConfig()
+      cfg = { port: c.port, dataDir: c.dataDir, paths: [], memory: { longterm: '', skills: '', topics: '' } }
+      port = c.port
+    } catch {
+      /* 后端不可达时保持占位 */
+    }
+  })
 </script>
 
 <div class="page">
@@ -39,12 +51,10 @@
     </p>
     {#if cfg}
       <div class="paths">
-        {#each cfg.paths as p (p.file)}
-          <div class="path-row">
-            <span class="label">{p.label}<i>{p.file}</i></span>
-            <span class="value">{p.path}</span>
-          </div>
-        {/each}
+        <div class="path-row">
+          <span class="label">数据目录<i>dataDir</i></span>
+          <span class="value">{cfg.dataDir}</span>
+        </div>
       </div>
     {:else}
       <div class="paths pending">

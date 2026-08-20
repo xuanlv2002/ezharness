@@ -4,7 +4,7 @@
   可内联完成，也可「查看」跳转到时间线对应卡片（如 fork 内的审批块）。
   原型阶段纯渲染层，数据由后端下发（SSE 决策请求帧），回调待业务接入。
   */
-  interface Notice {
+  export interface Notice {
     id: string
     kind: 'approve' | 'ask' | 'plan' | 'info'
     source: string // 'agent' 或 fork 名

@@ -1,4 +1,4 @@
-/* 全局状态机：bootstrap 模式（会话隐藏）+ SSE 事件归约，Svelte 5 runes。 */
+/* 全局状态机：bootstrap + SSE 事件归约（时间线块 / fork / 通知 / 生命体征），Svelte 5 runes。 */
 
 import {
   api,
@@ -42,6 +42,18 @@ export interface DecisionData {
   resolution: string
 }
 
+export interface NoticeData {
+  id: string
+  kind: 'approve' | 'ask' | 'plan' | 'info'
+  source: string // 'agent' 或 fork 标识
+  title: string
+  detail: string
+  time: string
+  status: 'pending' | 'done'
+  resolution: string
+  target: string // 时间线跳转锚点（decision-<id>）
+}
+
 export type Block =
   | { kind: 'user'; text: string }
   | { kind: 'assistant'; text: string; reasoning: string; streaming: boolean }
@@ -56,10 +68,16 @@ export interface TotalUsage {
   cached: number
 }
 
+function nowHM(): string {
+  return new Date().toTimeString().slice(0, 5)
+}
+
 class AppStore {
   activeId = $state('')
   blocks = $state<Block[]>([])
   forks = $state<Record<string, ForkState>>({})
+  notices = $state<NoticeData[]>([])
+  lastTool = $state('')
   busy = $state(false)
   lastStatus = $state('')
   tick = $state(0)
@@ -67,7 +85,6 @@ class AppStore {
   status = $state<Status | null>(null)
   settings = $state<Settings | null>(null)
   total = $state<TotalUsage>({ prompt: 0, completion: 0, cached: 0 })
-  panel = $state<'' | 'settings' | 'memory' | 'topics'>('')
 
   private unsub: (() => void) | null = null
 
@@ -91,9 +108,15 @@ class AppStore {
     }
   }
 
+  private resubscribe() {
+    this.unsub?.()
+    this.unsub = subscribe(this.activeId, (ev) => this.apply(ev))
+  }
+
   private async loadHistory() {
     this.blocks = []
     this.forks = {}
+    this.notices = []
     this.busy = false
     this.lastStatus = ''
     try {
@@ -115,7 +138,7 @@ class AppStore {
         if (m.content || m.reasoning) {
           out.push({ kind: 'assistant', text: m.content, reasoning: m.reasoning || '', streaming: false })
         }
-        // 展开工具调用：名称与参数来自 tool_calls（此前丢失的渲染）
+        // 展开工具调用：名称与参数来自 tool_calls
         for (const tc of m.tool_calls || []) {
           out.push({
             kind: 'tool',
@@ -180,7 +203,7 @@ class AppStore {
     }
   }
 
-  /* ── 设置 / 记忆 / 话题 ── */
+  /* ── 设置 / 话题 ── */
 
   async saveSettings(s: Settings) {
     await api.saveSettings(s)
@@ -194,8 +217,7 @@ class AppStore {
       const r = await api.resumeTopic(id)
       this.activeId = r.id
       await this.loadHistory()
-      this.unsub?.()
-      this.unsub = subscribe(this.activeId, (ev) => this.apply(ev))
+      this.resubscribe()
       this.blocks.push({ kind: 'note', text: '⟲ 已回到该话题继续' })
       await this.refreshStatus()
     } catch (e) {
@@ -203,12 +225,21 @@ class AppStore {
     }
   }
 
-  /* ── 决策回传 ── */
+  /* ── 决策回传（时间线卡 + 通知联动） ── */
+
+  private resolveNotice(id: string, resolution: string) {
+    const n = this.notices.find((x) => x.id === id)
+    if (n && n.status === 'pending') {
+      n.status = 'done'
+      n.resolution = resolution
+    }
+  }
 
   async decideApprove(block: DecisionData, approve: boolean, reason: string) {
     if (!this.activeId) return
     block.resolved = true
     block.resolution = approve ? '已批准' : reason ? `已拒绝：${reason}` : '已拒绝'
+    this.resolveNotice(block.id, block.resolution)
     await api.decideApprove(this.activeId, block.id, approve, reason).catch(() => {})
   }
 
@@ -216,6 +247,7 @@ class AppStore {
     if (!this.activeId) return
     block.resolved = true
     block.resolution = input || '(未回答)'
+    this.resolveNotice(block.id, block.resolution)
     await api.decideAnswer(this.activeId, block.id, input).catch(() => {})
   }
 
@@ -224,6 +256,7 @@ class AppStore {
     block.resolved = true
     block.resolution =
       kind === 'execute' ? '已执行' : kind === 'reject' ? '已否决' : `修改意见：${input}`
+    this.resolveNotice(block.id, block.resolution)
     await api.decidePlan(this.activeId, block.id, kind, input).catch(() => {})
   }
 
@@ -266,6 +299,7 @@ class AppStore {
           err: '',
           state: 'running',
         }
+        if (!ev.forkId) this.lastTool = tool.name
         if (ev.forkId) {
           this.forks[ev.forkId]?.tools.push(tool)
         } else {
@@ -275,14 +309,22 @@ class AppStore {
       }
       case 'tool_end': {
         const d = ev.data || {}
-        const target = ev.forkId
-          ? this.forks[ev.forkId]?.tools.find((t) => t.id === d.callId)
-          : this.blocks.find((b) => b.kind === 'tool' && b.id === d.callId)
-        if (target && target.kind === 'tool') {
-          target.result = d.content || ''
-          target.err = d.err || ''
-          target.state = 'done'
+        if (ev.forkId) {
+          const t = this.forks[ev.forkId]?.tools.find((x) => x.id === d.callId)
+          if (t) {
+            t.result = d.content || ''
+            t.err = d.err || ''
+            t.state = 'done'
+          }
+        } else {
+          const t = this.blocks.find((b) => b.kind === 'tool' && b.id === d.callId)
+          if (t && t.kind === 'tool') {
+            t.result = d.content || ''
+            t.err = d.err || ''
+            t.state = 'done'
+          }
         }
+        if (!ev.forkId) this.lastTool = ''
         break
       }
       case 'task.start': {
@@ -324,8 +366,7 @@ class AppStore {
         // 会话已轮换：切到新 ID 重新订阅（决策回传等 URL 用新标识）
         if (d.newId && d.newId !== this.activeId) {
           this.activeId = d.newId
-          this.unsub?.()
-          this.unsub = subscribe(this.activeId, (ev2) => this.apply(ev2))
+          this.resubscribe()
         }
         void this.refreshStatus()
         break
@@ -334,6 +375,9 @@ class AppStore {
       case 'askuser.request':
       case 'taskplan.request': {
         const d = ev.data || {}
+        const id = d.id || ''
+        // 去重：SSE 断线重连会重放 pending 帧
+        if (!id || this.blocks.some((b) => b.kind === 'decision' && b.id === id)) break
         let args = d.args
         if (typeof args !== 'string') args = JSON.stringify(args ?? {})
         let question = ''
@@ -345,11 +389,12 @@ class AppStore {
         } catch {
           /* 非法 JSON 忽略 */
         }
+        const dtype: DecisionData['dtype'] =
+          ev.type === 'approve.request' ? 'approve' : ev.type === 'askuser.request' ? 'ask' : 'plan'
         this.blocks.push({
           kind: 'decision',
-          id: d.id || '',
-          dtype:
-            ev.type === 'approve.request' ? 'approve' : ev.type === 'askuser.request' ? 'ask' : 'plan',
+          id,
+          dtype,
           name: d.name || '',
           args: typeof args === 'string' ? args : '',
           question,
@@ -357,6 +402,18 @@ class AppStore {
           forkId: ev.forkId || '',
           resolved: false,
           resolution: '',
+        })
+        // 通知栏同步：fork 内请求带 fork 标识，跳转锚点指向时间线决策卡
+        this.notices.push({
+          id,
+          kind: dtype,
+          source: ev.forkId || 'agent',
+          title: d.name || '',
+          detail: question || plan || '',
+          time: nowHM(),
+          status: 'pending',
+          resolution: '',
+          target: `decision-${id}`,
         })
         break
       }
@@ -367,6 +424,14 @@ class AppStore {
       }
       case 'turn_end': {
         this.busy = false
+        this.lastTool = ''
+        // 轮已结束：残留 pending 决策的回传会被后端丢弃，标记过期
+        for (const n of this.notices) {
+          if (n.status === 'pending') {
+            n.status = 'done'
+            n.resolution = '已过期'
+          }
+        }
         const d = ev.data || {}
         const u = d.usage
         if (u) {

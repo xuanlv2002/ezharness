@@ -1,5 +1,7 @@
 <script lang="ts">
+  import { onMount } from 'svelte'
   import pkg from '../package.json'
+  import { store } from './lib/store.svelte'
   import Sidebar from './components/Sidebar.svelte'
   import ChatView from './components/ChatView.svelte'
   import ModelsView from './components/ModelsView.svelte'
@@ -12,6 +14,12 @@
 
   let view = $state<'chat' | 'models' | 'memory' | 'knowledge' | 'tools' | 'mcp' | 'security' | 'settings'>('chat')
   let expanded = $state(false)
+
+  onMount(() => {
+    void store.bootstrap().catch(() => {
+      store.lastStatus = '后端不可达'
+    })
+  })
 </script>
 
 <div class="app" class:expanded>
