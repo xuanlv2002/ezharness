@@ -4,6 +4,8 @@
 
   let model = $state('')
   let baseUrl = $state('')
+  let apiKey = $state('')
+  let showKey = $state(false)
   let systemExtra = $state('')
   let threshold = $state(0)
   let shell = $state('auto')
@@ -23,6 +25,7 @@
     if (store.settings && !loaded) {
       model = store.settings.model
       baseUrl = store.settings.baseUrl
+      apiKey = store.settings.apiKey ?? ''
       systemExtra = store.settings.systemExtra
       threshold = store.settings.rotateThreshold
       shell = store.settings.shell || 'auto'
@@ -40,6 +43,7 @@
     saving = true
     try {
       await store.saveSettings({
+        apiKey: apiKey.trim(),
         model: model.trim(),
         baseUrl: baseUrl.trim(),
         systemExtra,
@@ -92,6 +96,19 @@
   <label>
     <span>API 端点</span>
     <input type="text" bind:value={baseUrl} placeholder="https://api.siliconflow.cn/v1" />
+  </label>
+
+  <label>
+    <span>API Key（空 = 未配置，发消息时会提示）</span>
+    <span class="key-row">
+      <input
+        type={showKey ? 'text' : 'password'}
+        bind:value={apiKey}
+        placeholder="sk-..."
+        autocomplete="off"
+      />
+      <button class="toggle" onclick={() => (showKey = !showKey)}>{showKey ? '隐藏' : '显示'}</button>
+    </span>
   </label>
 
   <label>
@@ -217,5 +234,27 @@
   .err {
     font-size: 12px;
     color: #c0392b;
+  }
+  .key-row {
+    display: flex;
+    gap: 6px;
+  }
+  .key-row input {
+    flex: 1;
+    min-width: 0;
+  }
+  .toggle {
+    border: 1px solid var(--line);
+    background: var(--bg);
+    color: var(--muted);
+    border-radius: 8px;
+    padding: 0 10px;
+    font-size: 11px;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .toggle:hover {
+    border-color: var(--line-strong);
+    color: var(--fg);
   }
 </style>

@@ -21,13 +21,15 @@ import (
 	"github.com/xuanlv2002/ezloop/ext/hook/taskplan"
 	"github.com/xuanlv2002/ezloop/types"
 
-	"ezharness/internal/config"
 	"ezharness/internal/hooks"
 	"ezharness/internal/osfs"
 )
 
 /* ErrBusy 表示会话当前有一轮运行未结束。 */
 var ErrBusy = errors.New("session busy")
+
+/* ErrNoAPIKey 表示 models.json 尚未配置 API Key（应用可启动，发消息被拒）。 */
+var ErrNoAPIKey = errors.New("未配置 API Key，请在设置中填写")
 
 /* runState 是一轮运行的生命周期句柄。 */
 type runState struct {
@@ -53,7 +55,6 @@ type ModelProvider interface {
 /* Session 是会话聚合：history、当前轮、SSE 订阅、未决请求。 */
 type Session struct {
 	ID    string
-	Cfg   config.Config
 	Fsys  osfs.OS
 	Sess  *localsession.Hook
 	Topics *hooks.Topics
@@ -284,20 +285,41 @@ func decisionCallID(e Event) (string, bool) {
 /* Hub 管理应用级单例状态。 */
 type Hub struct {
 	mu       sync.Mutex
-	Cfg      config.Config
+	Model    ModelConfig
 	Fsys     osfs.OS
 	Settings Settings
 	Topics   *hooks.Topics
 	Active   *Session
 }
 
-/* NewHub 创建领域根并恢复活动会话。 */
-func NewHub(c config.Config) *Hub {
-	h := &Hub{Cfg: c, Fsys: osfs.OS{}}
-	h.Settings = LoadSettings(h.Fsys, DefaultSettings(c.Model, c.BaseURL))
+/* NewHub 创建领域根：加载配置记录（缺失文件自动创建默认）并恢复活动会话。 */
+func NewHub() *Hub {
+	h := &Hub{Fsys: osfs.OS{}}
+	h.Model = ensureModelConfig(h.Fsys)
+	h.Settings = ensureSettings(h.Fsys)
 	h.Topics = hooks.NewTopics(h.Fsys)
 	h.Active = h.bootstrap()
 	return h
+}
+
+/* ensureModelConfig 加载 models.json，文件不存在则写盘默认（零配置首启自动创建）。 */
+func ensureModelConfig(fsys osfs.OS) ModelConfig {
+	if _, err := fsys.Read(context.Background(), "models.json"); err != nil {
+		m := DefaultModelConfig()
+		_ = SaveModelConfig(fsys, m)
+		return m
+	}
+	return LoadModelConfig(fsys)
+}
+
+/* ensureSettings 加载 settings.json，文件不存在则写盘默认。 */
+func ensureSettings(fsys osfs.OS) Settings {
+	if _, err := fsys.Read(context.Background(), "settings.json"); err != nil {
+		st := DefaultSettings()
+		_ = SaveSettings(fsys, st)
+		return st
+	}
+	return LoadSettings(fsys)
 }
 
 /* bootstrap 恢复最近修改的存档，没有则新建。 */
@@ -325,13 +347,26 @@ func (h *Hub) bootstrap() *Session {
 func (h *Hub) newSession(id string) *Session {
 	return &Session{
 		ID:      id,
-		Cfg:     h.Cfg,
 		Fsys:    h.Fsys,
 		Sess:    localsession.New(h.Fsys, id),
 		Topics:  h.Topics,
 		subs:    map[chan []byte]struct{}{},
 		pending: map[string]Event{},
 	}
+}
+
+/* ModelSnapshot 返回当前模型配置。 */
+func (h *Hub) ModelSnapshot() ModelConfig {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.Model
+}
+
+/* ApplyModel 更新模型配置（持久化由 service 层完成）。 */
+func (h *Hub) ApplyModel(m ModelConfig) {
+	h.mu.Lock()
+	h.Model = m
+	h.mu.Unlock()
 }
 
 /* SettingsSnapshot 返回当前设置。 */

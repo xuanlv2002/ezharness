@@ -32,6 +32,10 @@ func (c *ChatController) SendMessage(g *gin.Context) {
 			g.JSON(http.StatusConflict, gin.H{"error": err.Error()})
 			return
 		}
+		if errors.Is(err, domain.ErrNoAPIKey) {
+			g.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
 		g.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}

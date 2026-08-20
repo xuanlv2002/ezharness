@@ -25,18 +25,26 @@ type SessionService struct {
 
 /* BootstrapData 是前端启动所需的全量数据。 */
 type BootstrapData struct {
-	SessionID    string          `json:"sessionId"`
-	Settings     domain.Settings `json:"settings"`
-	Status       Status          `json:"status"`
-	MemoryExists bool            `json:"memoryExists"`
+	SessionID    string       `json:"sessionId"`
+	Settings     SettingsView `json:"settings"`
+	Status       Status       `json:"status"`
+	MemoryExists bool         `json:"memoryExists"`
 }
 
 /* Bootstrap 汇总启动数据。 */
 func (s *SessionService) Bootstrap() BootstrapData {
 	sess := s.Hub.Active
+	m, st := s.Hub.ModelSnapshot(), s.Hub.SettingsSnapshot()
 	return BootstrapData{
-		SessionID:    sess.ID,
-		Settings:     s.Hub.SettingsSnapshot(),
+		SessionID: sess.ID,
+		Settings: SettingsView{
+			APIKey:          m.APIKey,
+			Model:           m.Model,
+			BaseURL:         m.BaseURL,
+			SystemExtra:     st.SystemExtra,
+			RotateThreshold: st.RotateThreshold,
+			Shell:           st.Shell,
+		},
 		Status:       s.Snapshot(),
 		MemoryExists: memoryExists(s.Hub.Fsys),
 	}
@@ -72,7 +80,7 @@ func (s *SessionService) Snapshot() Status {
 		tools = w.ToolNames
 	}
 	return Status{
-		Model:           st.Model,
+		Model:           s.Hub.ModelSnapshot().Model,
 		SessionID:       sess.ID,
 		SessionMsgs:     len(sess.History()),
 		Busy:            sess.Busy(),
@@ -92,6 +100,9 @@ func (s *SessionService) History() HistoryData {
 
 /* Summarize 生成当前会话摘要（模型调用）。 */
 func (s *SessionService) Summarize(ctx context.Context) (string, error) {
+	if s.Hub.ModelSnapshot().APIKey == "" {
+		return "", domain.ErrNoAPIKey
+	}
 	sess := s.Hub.Active
 	hist := sess.History()
 	if len(hist) == 0 {

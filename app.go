@@ -54,7 +54,7 @@ func adoptLegacy(dataDir string) {
 	}
 	root := config.Root()
 	hasOld := false
-	for _, f := range []string{"settings.json", "topics.json", "memory.md", "mcp.json", "sessions"} {
+	for _, f := range []string{"topics.json", "memory.md", "mcp.json", "sessions"} {
 		if _, err := os.Stat(filepath.Join(root, f)); err == nil {
 			hasOld = true
 			break
@@ -73,7 +73,7 @@ func (a *app) start() error {
 	if err != nil {
 		return err
 	}
-	srv := &http.Server{Handler: a.buildRouter(cfg)}
+	srv := &http.Server{Handler: a.buildRouter()}
 	a.mu.Lock()
 	a.srv = srv
 	a.mu.Unlock()
@@ -104,9 +104,7 @@ func (a *app) restart(port int, dataDir string, ln net.Listener) {
 	if err := os.MkdirAll(dataDir, 0o755); err == nil {
 		_ = os.Chdir(dataDir)
 	}
-	cfg := a.snapshot()
-	cfg.Port, cfg.DataDir = port, dataDir
-	srv := &http.Server{Handler: a.buildRouter(cfg)}
+	srv := &http.Server{Handler: a.buildRouter()}
 	a.mu.Lock()
 	a.cfg.Port, a.cfg.DataDir = port, dataDir
 	a.srv = srv

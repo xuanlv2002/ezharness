@@ -22,6 +22,9 @@ type ChatService struct {
 
 /* Send 启动一轮异步运行：事件流扇出 SSE，结束更新历史并发 turn_end。 */
 func (c *ChatService) Send(text string) error {
+	if c.Hub.ModelSnapshot().APIKey == "" {
+		return domain.ErrNoAPIKey
+	}
 	s := c.Hub.Active
 	h, cancel, err := s.StartRun(context.Background(), text)
 	if err != nil {

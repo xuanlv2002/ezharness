@@ -7,6 +7,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"ezharness/internal/domain"
 	"ezharness/internal/service"
 )
 
@@ -38,7 +39,7 @@ func (c *SessionController) History(g *gin.Context) {
 func (c *SessionController) Summary(g *gin.Context) {
 	text, err := c.Svc.Summarize(g.Request.Context())
 	if err != nil {
-		if errors.Is(err, service.ErrEmptySession) {
+		if errors.Is(err, service.ErrEmptySession) || errors.Is(err, domain.ErrNoAPIKey) {
 			g.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return
 		}

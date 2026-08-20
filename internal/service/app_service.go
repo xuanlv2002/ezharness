@@ -82,7 +82,7 @@ func (s *AppService) Restart(req RestartRequest) (RestartResult, error) {
 			return RestartResult{}, fmt.Errorf("端口 %d 监听失败: %w", port, err)
 		}
 	}
-	if err := config.SaveApp(port, dataDir); err != nil {
+	if err := config.Save(config.Config{Port: port, DataDir: dataDir}); err != nil {
 		if ln != nil {
 			_ = ln.Close()
 		}
@@ -102,7 +102,7 @@ func MigrateData(src, dst string) error {
 	if err := os.MkdirAll(dst, 0o755); err != nil {
 		return err
 	}
-	for _, f := range []string{"settings.json", "topics.json", "memory.md", "mcp.json", ".env"} {
+	for _, f := range []string{"models.json", "settings.json", "topics.json", "memory.md", "mcp.json"} {
 		data, err := os.ReadFile(filepath.Join(src, f))
 		if err != nil {
 			continue

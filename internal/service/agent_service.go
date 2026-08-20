@@ -33,8 +33,8 @@ type AgentService struct {
 	Hub *domain.Hub
 }
 
-/* Assemble 按设置装配 agent 并注入会话。 */
-func (a *AgentService) Assemble(s *domain.Session, st domain.Settings) {
+/* Assemble 按配置装配 agent 并注入会话（mc 模型配置，st 行为设置）。 */
+func (a *AgentService) Assemble(s *domain.Session, mc domain.ModelConfig, st domain.Settings) {
 	ctx := context.Background()
 
 	skillHook, err := skill.NewFromFS(ctx, s.Fsys, "skills")
@@ -43,9 +43,9 @@ func (a *AgentService) Assemble(s *domain.Session, st domain.Settings) {
 	}
 
 	provider := openai.New(openai.Options{
-		BaseURL: st.BaseURL,
-		APIKey:  s.Cfg.APIKey,
-		Model:   st.Model,
+		BaseURL: mc.BaseURL,
+		APIKey:  mc.APIKey,
+		Model:   mc.Model,
 	})
 
 	approver, approveCh := approve.New(a.needsApprove)
@@ -94,13 +94,13 @@ func (a *AgentService) Assemble(s *domain.Session, st domain.Settings) {
 	})
 }
 
-/* Reassemble 重建活动会话的 agent（设置变更后，需空闲）。 */
-func (a *AgentService) Reassemble(st domain.Settings) error {
+/* Reassemble 重建活动会话的 agent（配置变更后，需空闲）。 */
+func (a *AgentService) Reassemble(mc domain.ModelConfig, st domain.Settings) error {
 	s := a.Hub.Active
 	if s.Busy() {
 		return domain.ErrBusy
 	}
-	a.Assemble(s, st)
+	a.Assemble(s, mc, st)
 	return nil
 }
 

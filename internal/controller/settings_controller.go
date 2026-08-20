@@ -6,7 +6,6 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	"ezharness/internal/domain"
 	"ezharness/internal/service"
 )
 
@@ -23,7 +22,7 @@ func (c *SettingsController) GetSettings(g *gin.Context) {
 
 /* UpdateSettings POST /api/settings。 */
 func (c *SettingsController) UpdateSettings(g *gin.Context) {
-	var st domain.Settings
+	var st service.SettingsView
 	if err := g.ShouldBindJSON(&st); err != nil {
 		g.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return

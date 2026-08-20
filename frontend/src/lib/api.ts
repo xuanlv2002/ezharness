@@ -18,6 +18,7 @@ export interface SseEvent {
 }
 
 export interface Settings {
+  apiKey: string
   model: string
   baseUrl: string
   systemExtra: string

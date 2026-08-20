@@ -3,9 +3,13 @@ ezharness：基于 ezloop 内核的 harness 应用（gin + 三层 MVC）。
 启动即对本机全权（文件不限目录 + shell），在哪启动操作哪台设备。
 
 桌面软件形态：单二进制内嵌前端，启动即开原生窗口（WebView），
-后端进程内运行；端口与数据目录经 ezharness.json 配置，可在
-设置页修改并进程内重启（换代）。EZHARNESS_NO_WINDOW=1 回落纯
-server 模式（浏览器访问）。
+后端进程内运行；端口与数据目录经应用根 ezharness.json 配置（缺失
+自动创建），可在设置页修改并进程内重启（换代）。EZHARNESS_NO_WINDOW=1
+回落纯 server 模式（浏览器访问）。
+
+配置记录（models.json/settings.json/mcp.json）与数据（sessions/
+memory.md/topics.json）全部在数据目录，零配置可启动，apiKey 在
+设置页配置。
 
 分层：controller（表现）→ service（用例）→ domain（会话聚合与事件），
 tools/hooks 为领域扩展，osfs/config 为基础设施。main 只做装配。
@@ -58,11 +62,11 @@ func main() {
 }
 
 /* buildRouter 装配一代完整的 controller/service/domain 栈（重启换代时重建）。 */
-func (a *app) buildRouter(cfg config.Config) *gin.Engine {
-	hub := domain.NewHub(cfg)
+func (a *app) buildRouter() *gin.Engine {
+	hub := domain.NewHub()
 
 	agents := &service.AgentService{Hub: hub}
-	agents.Assemble(hub.Active, hub.SettingsSnapshot())
+	agents.Assemble(hub.Active, hub.ModelSnapshot(), hub.SettingsSnapshot())
 
 	appSvc := &service.AppService{
 		Cfg:       a.snapshot,
