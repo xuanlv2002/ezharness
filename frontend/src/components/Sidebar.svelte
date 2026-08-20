@@ -1,44 +1,41 @@
 <script lang="ts">
-  import { store } from '../lib/store.svelte'
-  import SettingsPanel from './Panels/SettingsPanel.svelte'
-  import MemoryPanel from './Panels/MemoryPanel.svelte'
-  import TopicsPanel from './Panels/TopicsPanel.svelte'
+  import Logo from './Logo.svelte'
 
-  function toggle(p: '' | 'settings' | 'memory' | 'topics') {
-    store.panel = store.panel === p ? '' : p
-  }
+  type View = 'chat' | 'settings'
+
+  let { view, onNavigate }: { view: View; onNavigate: (v: View) => void } = $props()
 </script>
 
-<nav class="rail">
-  <div class="logo" title="ezharness">ez</div>
-  <button class="nav" class:active={store.panel === 'settings'} onclick={() => toggle('settings')} title="设置">
-    ⚙
-  </button>
-  <button class="nav" class:active={store.panel === 'memory'} onclick={() => toggle('memory')} title="记忆">
-    ◈
-  </button>
-  <button class="nav" class:active={store.panel === 'topics'} onclick={() => toggle('topics')} title="话题">
-    ⟲
+<nav class="menu">
+  <div class="logo" title="ezharness">
+    <Logo size={32} />
+  </div>
+  <button
+    class="nav"
+    class:active={view === 'chat'}
+    onclick={() => onNavigate('chat')}
+    title="对话"
+  >
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M21 11.5a8.5 8.5 0 0 1-8.5 8.5c-1.3 0-2.6-.25-3.7-.7L3 21l1.7-4.3A8.5 8.5 0 1 1 21 11.5z" />
+    </svg>
   </button>
   <div class="spacer"></div>
-  <button class="nav disabled" disabled title="知识库（即将推出）">▤</button>
-  <button class="nav disabled" disabled title="工具（即将推出）">⚡</button>
+  <button
+    class="nav"
+    class:active={view === 'settings'}
+    onclick={() => onNavigate('settings')}
+    title="设置"
+  >
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+      <circle cx="12" cy="12" r="3" />
+      <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h.01a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51h.01a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v.01a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+    </svg>
+  </button>
 </nav>
 
-{#if store.panel !== ''}
-  <aside class="panel">
-    {#if store.panel === 'settings'}
-      <SettingsPanel />
-    {:else if store.panel === 'memory'}
-      <MemoryPanel />
-    {:else if store.panel === 'topics'}
-      <TopicsPanel />
-    {/if}
-  </aside>
-{/if}
-
 <style>
-  .rail {
+  .menu {
     display: flex;
     flex-direction: column;
     align-items: center;
@@ -53,12 +50,6 @@
     width: 36px;
     height: 36px;
     margin-bottom: 10px;
-    background: var(--bg-invert);
-    color: var(--fg-invert);
-    font-family: var(--font-mono);
-    font-weight: 700;
-    font-size: 14px;
-    border-radius: 9px;
   }
   .nav {
     display: grid;
@@ -68,11 +59,14 @@
     border: none;
     background: transparent;
     border-radius: 9px;
-    font-size: 16px;
     color: var(--muted);
     transition:
       background var(--dur-fast) var(--ease-out),
       color var(--dur-fast) var(--ease-out);
+  }
+  .nav svg {
+    width: 18px;
+    height: 18px;
   }
   .nav:hover {
     background: var(--line);
@@ -82,27 +76,7 @@
     background: var(--bg-invert);
     color: var(--fg-invert);
   }
-  .nav.disabled {
-    opacity: 0.3;
-    cursor: default;
-  }
   .spacer {
     flex: 1;
-  }
-  .panel {
-    border-right: 1px solid var(--line);
-    background: var(--bg);
-    overflow-y: auto;
-    animation: panel-in var(--dur-in) var(--ease-out) both;
-  }
-  @keyframes panel-in {
-    from {
-      opacity: 0;
-      transform: translateX(-8px);
-    }
-    to {
-      opacity: 1;
-      transform: translateX(0);
-    }
   }
 </style>
