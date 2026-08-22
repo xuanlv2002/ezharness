@@ -8,9 +8,7 @@
   }
 
   const s = $derived(store.status)
-  const context = $derived(
-    s ? (s.rotateThreshold > 0 ? `${fmtK(s.contextTokens)} / ${fmtK(s.rotateThreshold)}` : fmtK(s.contextTokens)) : '—',
-  )
+  const context = $derived((s && s.contextTokens > 0 ? fmtK(s.contextTokens) : '—') as string)
 </script>
 
 <aside class="card">

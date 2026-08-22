@@ -48,8 +48,8 @@ func TestBashPipeline(t *testing.T) {
 
 func TestReadWriteEdit(t *testing.T) {
 	all := All(osfs.OS{}, "")
-	if len(all) != 4 {
-		t.Fatalf("expect 4 tools, got %d", len(all))
+	if len(all) != 5 {
+		t.Fatalf("expect 5 tools, got %d", len(all))
 	}
 	by := map[string]types.Tool{}
 	for _, tl := range all {

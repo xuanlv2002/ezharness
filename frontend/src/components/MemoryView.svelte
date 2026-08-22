@@ -1,46 +1,53 @@
 <script lang="ts">
-  /* 原型骨架：纯渲染层。
-  记忆 = 三个文件夹（初始为 memory/ 下三个子目录，路径可在设置中配置）：
+  import { onMount } from 'svelte'
+  import { api, type MemoryConfig, type MemoryTopicEntry } from '../lib/api'
+
+  /*
+  记忆 = 三个文件夹（数据由 GET /api/memory/config 下发）：
     长期记忆——一套文件系统：harness.md 是索引文件，初始加载进上下文，
       其余文件由 agent 按需检索（grep 等）。
     能力记忆——沉淀的 skill，agent 按需调用。
     话题记忆——历史 session 存档，可回顾/删除。
-  数据由后端下发，接口待业务开发接入，原型阶段 cfg 为 null 占位。 */
-  interface FileInfo {
-    name: string
-    size: number
-    mtime: string
-  }
-  interface SkillEntry {
-    id: string
-    name: string
-    desc: string
-    enabled: boolean
-  }
-  interface TopicEntry {
-    id: string
-    title: string
-    date: string
-    msgs: number
-  }
-  interface MemoryConfig {
-    longterm: { dir: string; harnessMd: FileInfo | null; files: FileInfo[] }
-    skills: { dir: string; items: SkillEntry[] }
-    topics: { dir: string; items: TopicEntry[] }
-  }
-
+  */
   let cfg = $state<MemoryConfig | null>(null)
+  let message = $state('')
+
+  onMount(async () => {
+    try {
+      cfg = await api.getMemoryConfig()
+    } catch {
+      message = '记忆数据加载失败（后端不可达）'
+    }
+  })
+
+  async function removeTopic(t: MemoryTopicEntry) {
+    try {
+      await api.deleteTopic(t.id)
+      if (cfg) cfg.topics.items = cfg.topics.items.filter((x) => x.id !== t.id)
+    } catch (e) {
+      message = `删除失败：${(e as Error).message}`
+    }
+  }
 
   function fmtSize(n: number): string {
     if (n < 1024) return `${n} B`
     if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`
     return `${(n / 1024 / 1024).toFixed(1)} MB`
   }
+
+  function fmtDate(ts: number): string {
+    if (!ts) return ''
+    const d = new Date(ts)
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+  }
 </script>
 
 <div class="page">
   <h1>记忆</h1>
   <p class="lead">agent 的记忆由三个文件夹构成，路径可在设置中配置。</p>
+  {#if message}
+    <p class="lead err">{message}</p>
+  {/if}
 
   <!-- ── 长期记忆 ── -->
   <section>
@@ -142,12 +149,15 @@
           <div class="topic">
             <div class="info">
               <span class="name">{t.title}</span>
-              <span class="desc">{t.date} · {t.msgs} 条消息</span>
+              <span class="desc">{fmtDate(t.createdAt)} · {t.msgs} 条消息</span>
             </div>
-            <button class="del" title="删除">删除</button>
+            <button class="del" onclick={() => removeTopic(t)} title="删除">删除</button>
           </div>
         {/each}
-        {:else}
+        {#if cfg.topics.items.length === 0}
+          <div class="empty">暂无存档——话题结束后会归档到此处。</div>
+        {/if}
+      {:else}
         <div class="empty">暂无存档——话题结束后会归档到此处。</div>
       {/if}
     </div>
@@ -175,6 +185,9 @@
     font-size: 12.5px;
     color: var(--muted);
     margin-top: -24px;
+  }
+  .lead.err {
+    color: #c0392b;
   }
   section {
     display: flex;

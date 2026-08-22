@@ -39,6 +39,25 @@ func (c *SettingsController) UpdateSettings(g *gin.Context) {
 	g.JSON(http.StatusOK, gin.H{"ok": true})
 }
 
+/* GetModels GET /api/models。 */
+func (c *SettingsController) GetModels(g *gin.Context) {
+	g.JSON(http.StatusOK, c.Settings.GetModels())
+}
+
+/* UpdateModels POST /api/models（每槽至多一条启用，保存后重建 agent）。 */
+func (c *SettingsController) UpdateModels(g *gin.Context) {
+	var m domain.ModelsConfig
+	if err := g.ShouldBindJSON(&m); err != nil {
+		g.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	if err := c.Settings.UpdateModels(m); err != nil {
+		g.JSON(http.StatusConflict, gin.H{"error": err.Error()})
+		return
+	}
+	g.JSON(http.StatusOK, gin.H{"ok": true})
+}
+
 /* GetSecurity GET /api/security。 */
 func (c *SettingsController) GetSecurity(g *gin.Context) {
 	g.JSON(http.StatusOK, gin.H{"rules": c.Settings.SecurityRules()})
@@ -58,6 +77,11 @@ func (c *SettingsController) UpdateSecurity(g *gin.Context) {
 		return
 	}
 	g.JSON(http.StatusOK, gin.H{"ok": true})
+}
+
+/* GetMemoryConfig GET /api/memory/config（记忆页三文件夹数据）。 */
+func (c *SettingsController) GetMemoryConfig(g *gin.Context) {
+	g.JSON(http.StatusOK, c.Memory.Config())
 }
 
 /* GetMemory GET /api/memory。 */

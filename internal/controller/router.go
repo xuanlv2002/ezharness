@@ -9,6 +9,8 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
+
+	"ezharness/internal/service"
 )
 
 /* Controllers 是路由依赖集合（main 装配）。 */
@@ -17,6 +19,8 @@ type Controllers struct {
 	Chat     *ChatController
 	Settings *SettingsController
 	Topics   *TopicController
+	Mcp      *McpController
+	Apps     *AppsController
 	App      *AppController
 }
 
@@ -42,14 +46,23 @@ func NewRouter(c Controllers, dist fs.FS) *gin.Engine {
 
 		api.GET("/settings", c.Settings.GetSettings)
 		api.POST("/settings", c.Settings.UpdateSettings)
+		api.GET("/models", c.Settings.GetModels)
+		api.POST("/models", c.Settings.UpdateModels)
 		api.GET("/security", c.Settings.GetSecurity)
 		api.POST("/security", c.Settings.UpdateSecurity)
 		api.GET("/memory", c.Settings.GetMemory)
 		api.POST("/memory", c.Settings.SaveMemory)
+		api.GET("/memory/config", c.Settings.GetMemoryConfig)
 
 		api.GET("/topics", c.Topics.List)
 		api.GET("/topics/:id", c.Topics.Get)
+		api.DELETE("/topics/:id", c.Topics.Delete)
 		api.POST("/topics/:id/resume", c.Topics.Resume)
+
+		api.GET("/mcp", c.Mcp.List)
+		api.POST("/mcp", c.Mcp.Update)
+
+		api.GET("/apps", c.Apps.List)
 
 		api.POST("/sessions/:id/decisions/approve", c.Chat.DecideApprove)
 		api.POST("/sessions/:id/decisions/answer", c.Chat.DecideAnswer)
@@ -59,6 +72,12 @@ func NewRouter(c Controllers, dist fs.FS) *gin.Engine {
 	if dist != nil {
 		serveStatic(r, dist)
 	}
+	/* 快应用静态服务：apps/ 下的 html 由前端直开 */
+	appsFS := http.Dir(service.AppsDir)
+	r.GET("/apps/*filepath", func(g *gin.Context) {
+		g.Request.URL.Path = g.Param("filepath")
+		http.FileServer(appsFS).ServeHTTP(g.Writer, g.Request)
+	})
 	return r
 }
 

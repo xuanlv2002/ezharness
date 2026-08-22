@@ -17,13 +17,67 @@ export interface SseEvent {
   data?: any
 }
 
+export interface AppEntry {
+  name: string
+  title: string
+  kind: string
+  mtime: string
+}
+
+export interface McpServerView {
+  name: string
+  transport: 'http' | 'stdio' | string
+  endpoint: string
+  enabled: boolean
+  connected: boolean
+  tools: number
+}
+
+export interface McpFile {
+  servers: {
+    name: string
+    type: string
+    url?: string
+    headers?: Record<string, string>
+    args?: string[]
+    allow?: string[]
+    enabled?: boolean
+  }[]
+}
+
+export interface PathEntry {
+  label: string
+  file: string
+  path: string
+}
+
+export interface AppConfig {
+  port: number
+  dataDir: string
+  boot: number
+  paths: PathEntry[]
+  memory: { longterm: string; skills: string; topics: string }
+}
+
 export interface Settings {
-  apiKey: string
-  model: string
-  baseUrl: string
   systemExtra: string
-  rotateThreshold: number
   shell?: string
+}
+
+export interface ModelEntry {
+  name: string
+  baseUrl: string
+  apiKey: string
+  enabled: boolean
+  tokens: number
+  cost: number
+}
+
+export interface ModelsConfig {
+  main: ModelEntry[]
+  vision: ModelEntry[]
+  image: ModelEntry[]
+  audio: ModelEntry[]
 }
 
 export interface Status {
@@ -32,7 +86,6 @@ export interface Status {
   sessionMsgs: number
   busy: boolean
   contextTokens: number
-  rotateThreshold: number
   daysServed: number
   cacheHitRate: number
   totalTokens: number
@@ -78,6 +131,30 @@ const post = <T>(url: string, body?: unknown) =>
     body: body === undefined ? undefined : JSON.stringify(body),
   }).then(json<T>)
 
+export interface MemoryFileInfo {
+  name: string
+  size: number
+  mtime: string
+}
+export interface MemorySkillEntry {
+  id: string
+  name: string
+  desc: string
+  enabled: boolean
+}
+export interface MemoryTopicEntry {
+  id: string
+  title: string
+  summary: string
+  createdAt: number
+  msgs: number
+}
+export interface MemoryConfig {
+  longterm: { dir: string; harnessMd: MemoryFileInfo | null; files: MemoryFileInfo[] }
+  skills: { dir: string; items: MemorySkillEntry[] }
+  topics: { dir: string; items: MemoryTopicEntry[] }
+}
+
 export type ApproveLevel = 'ask' | 'black' | 'white' | 'auto'
 export interface ToolRule {
   tool: string
@@ -120,6 +197,21 @@ export const api = {
 
   getSecurity: () => fetch('/api/security').then(json<{ rules: ToolRule[] }>),
 
+  getApps: () => fetch('/api/apps').then(json<{ apps: AppEntry[] }>),
+
+  getMcp: () => fetch('/api/mcp').then(json<{ servers: McpServerView[] }>),
+
+  saveMcp: (f: McpFile) => post<{ ok: boolean }>('/api/mcp', f),
+
+  getModels: () => fetch('/api/models').then(json<ModelsConfig>),
+
+  saveModels: (m: ModelsConfig) => post<{ ok: boolean }>('/api/models', m),
+
+  getMemoryConfig: () => fetch('/api/memory/config').then(json<MemoryConfig>),
+
+  deleteTopic: (id: string) =>
+    fetch(`/api/topics/${id}`, { method: 'DELETE' }).then(json<{ ok: boolean }>),
+
   saveSecurity: (rules: ToolRule[]) => post<{ ok: boolean }>('/api/security', { rules }),
 
   getMemory: () => fetch('/api/memory').then(json<{ content: string }>),
@@ -134,7 +226,7 @@ export const api = {
   resumeTopic: (id: string) =>
     post<{ id: string; messages: HistoryMessage[] }>(`/api/topics/${id}/resume`),
 
-  appConfig: () => fetch('/api/app/config').then(json<{ port: number; dataDir: string }>),
+  appConfig: () => fetch('/api/app/config').then(json<AppConfig>),
 
   appRestart: (req: { port?: number; dataDir?: string }) =>
     post<{ url: string; boot: number }>('/api/app/restart', req),

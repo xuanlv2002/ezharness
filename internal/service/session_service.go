@@ -34,18 +34,11 @@ type BootstrapData struct {
 /* Bootstrap 汇总启动数据。 */
 func (s *SessionService) Bootstrap() BootstrapData {
 	sess := s.Hub.Active
-	m, st := s.Hub.ModelSnapshot(), s.Hub.SettingsSnapshot()
+	st := s.Hub.SettingsSnapshot()
 	return BootstrapData{
 		SessionID: sess.ID,
-		Settings: SettingsView{
-			APIKey:          m.APIKey,
-			Model:           m.Model,
-			BaseURL:         m.BaseURL,
-			SystemExtra:     st.SystemExtra,
-			RotateThreshold: st.RotateThreshold,
-			Shell:           st.Shell,
-		},
-		Status:       s.Snapshot(),
+		Settings:  SettingsView{SystemExtra: st.SystemExtra, Shell: st.Shell},
+		Status:    s.Snapshot(),
 		MemoryExists: memoryExists(s.Hub.Fsys),
 	}
 }
@@ -59,25 +52,31 @@ type HistoryData struct {
 
 /* Status 是右栏生命体征数据。 */
 type Status struct {
-	Model           string   `json:"model"`
-	SessionID       string   `json:"sessionId"`
-	SessionMsgs     int      `json:"sessionMsgs"`
-	Busy            bool     `json:"busy"`
-	ContextTokens   int      `json:"contextTokens"`
-	RotateThreshold int      `json:"rotateThreshold"`
-	DaysServed      int      `json:"daysServed"`
-	CacheHitRate    float64  `json:"cacheHitRate"`
-	TotalTokens     int      `json:"totalTokens"`
-	Turns           int      `json:"turns"`
-	Tools           []string `json:"tools"`
-	McpServers      []string `json:"mcpServers"`
-	TopicsCount     int      `json:"topicsCount"`
+	Model         string   `json:"model"`
+	SessionID     string   `json:"sessionId"`
+	SessionMsgs   int      `json:"sessionMsgs"`
+	Busy          bool     `json:"busy"`
+	ContextTokens int      `json:"contextTokens"`
+	DaysServed    int      `json:"daysServed"`
+	CacheHitRate  float64  `json:"cacheHitRate"`
+	TotalTokens   int      `json:"totalTokens"`
+	Turns         int      `json:"turns"`
+	Tools         []string `json:"tools"`
+	McpServers    []string `json:"mcpServers"`
+	TopicsCount   int      `json:"topicsCount"`
+}
+
+/* mainModelName 返回主模型名（空槽显示空）。 */
+func mainModelName(h *domain.Hub) string {
+	if m := h.ModelsSnapshot().ActiveMain(); m != nil {
+		return m.Name
+	}
+	return ""
 }
 
 /* Snapshot 汇总活动会话状态。 */
 func (s *SessionService) Snapshot() Status {
 	sess := s.Hub.Active
-	st := s.Hub.SettingsSnapshot()
 	w := sess.Wired()
 	var tools []string
 	if w != nil {
@@ -85,19 +84,18 @@ func (s *SessionService) Snapshot() Status {
 	}
 	total := s.Hub.Stats.Total()
 	return Status{
-		Model:           s.Hub.ModelSnapshot().Model,
-		SessionID:       sess.ID,
-		SessionMsgs:     len(sess.History()),
-		Busy:            sess.Busy(),
-		ContextTokens:   sess.CtxTokens(),
-		RotateThreshold: st.RotateThreshold,
-		DaysServed:      s.Hub.Stats.DaysServed(),
-		CacheHitRate:    s.Hub.Stats.CacheHitRate(),
-		TotalTokens:     total.PromptTokens + total.CompletionTokens,
-		Turns:           s.Hub.Stats.Turns(),
-		Tools:           tools,
-		McpServers:      McpNames(s.Hub.Fsys),
-		TopicsCount:     len(s.Hub.Topics.Load()),
+		Model:         mainModelName(s.Hub),
+		SessionID:     sess.ID,
+		SessionMsgs:   len(sess.History()),
+		Busy:          sess.Busy(),
+		ContextTokens: sess.CtxTokens(),
+		DaysServed:    s.Hub.Stats.DaysServed(),
+		CacheHitRate:  s.Hub.Stats.CacheHitRate(),
+		TotalTokens:   total.PromptTokens + total.CompletionTokens,
+		Turns:         s.Hub.Stats.Turns(),
+		Tools:         tools,
+		McpServers:    McpNames(s.Hub.Fsys),
+		TopicsCount:   len(s.Hub.Topics.Load()),
 	}
 }
 
@@ -109,7 +107,7 @@ func (s *SessionService) History() HistoryData {
 
 /* Summarize 生成当前会话摘要（模型调用）。 */
 func (s *SessionService) Summarize(ctx context.Context) (string, error) {
-	if s.Hub.ModelSnapshot().APIKey == "" {
+	if main := s.Hub.ModelsSnapshot().ActiveMain(); main == nil || main.APIKey == "" {
 		return "", domain.ErrNoAPIKey
 	}
 	sess := s.Hub.Active

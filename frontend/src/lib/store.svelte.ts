@@ -355,22 +355,6 @@ class AppStore {
         }
         break
       }
-      case 'rotate.topic': {
-        const d = ev.data || {}
-        this.blocks.push({
-          kind: 'note',
-          text: d.auto
-            ? `⟲ 上下文水位达到阈值，话题《${d.title || ''}》已归档，新话题开始`
-            : `⟲ 话题《${d.title || ''}》已归档，新话题开始`,
-        })
-        // 会话已轮换：切到新 ID 重新订阅（决策回传等 URL 用新标识）
-        if (d.newId && d.newId !== this.activeId) {
-          this.activeId = d.newId
-          this.resubscribe()
-        }
-        void this.refreshStatus()
-        break
-      }
       case 'approve.request':
       case 'askuser.request':
       case 'taskplan.request': {

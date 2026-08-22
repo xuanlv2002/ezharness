@@ -66,7 +66,7 @@ func (a *app) buildRouter() *gin.Engine {
 	hub := domain.NewHub()
 
 	agents := &service.AgentService{Hub: hub}
-	agents.Assemble(hub.Active, hub.ModelSnapshot(), hub.SettingsSnapshot())
+	agents.Assemble(hub.Active, hub.SettingsSnapshot())
 
 	appSvc := &service.AppService{
 		Cfg:       a.snapshot,
@@ -82,6 +82,8 @@ func (a *app) buildRouter() *gin.Engine {
 			Memory:   &service.MemoryService{Hub: hub},
 		},
 		Topics: &controller.TopicController{Svc: &service.TopicService{Hub: hub}},
+		Mcp:    &controller.McpController{Svc: &service.McpService{Fsys: hub.Fsys}},
+		Apps:   &controller.AppsController{Svc: &service.AppsService{Fsys: hub.Fsys}},
 		App:    &controller.AppController{Svc: appSvc},
 	}
 	return controller.NewRouter(controllers, distFS())

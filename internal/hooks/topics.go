@@ -63,6 +63,31 @@ func (t *Topics) Add(e TopicEntry) error {
 	return t.fsys.Write(context.Background(), "topics.json", data)
 }
 
+/* Remove 删除一条索引并落盘，返回是否存在。 */
+func (t *Topics) Remove(id string) bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	list := t.loadLocked()
+	out := list[:0]
+	found := false
+	for _, e := range list {
+		if e.ID == id {
+			found = true
+			continue
+		}
+		out = append(out, e)
+	}
+	if !found {
+		return false
+	}
+	data, err := json.MarshalIndent(out, "", "  ")
+	if err != nil {
+		return false
+	}
+	_ = t.fsys.Write(context.Background(), "topics.json", data)
+	return true
+}
+
 /* Match 按 id 前缀或标题/摘要包含过滤。q 为空返回全部。 */
 func (t *Topics) Match(q string) []TopicEntry {
 	list := t.Load()

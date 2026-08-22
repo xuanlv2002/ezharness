@@ -148,7 +148,7 @@ func TestMemoryInject(t *testing.T) {
 	if len(state.Messages) != 2 || state.Messages[0].Role != types.RoleSystem {
 		t.Fatal("memory must keep single system message")
 	}
-	if state.Messages[0].Content != "base prompt\n\n# 长期记忆（用户与你的沉淀，可用文件工具更新 memory.md）\n用户偏好简洁回答" {
+	if state.Messages[0].Content != "base prompt\n\n# 长期记忆（索引随上下文加载，可用文件工具更新 memory/longterm/harness.md；其余记忆文件可用 grep 检索）\n用户偏好简洁回答" {
 		t.Fatalf("injected content wrong: %q", state.Messages[0].Content)
 	}
 }

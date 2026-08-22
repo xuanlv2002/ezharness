@@ -1,6 +1,10 @@
 /*
 AgentService 负责 agent 的装配与重建：provider、hooks、warp、工具集。
 工具集是 ezharness 的产品决策（read/write/edit/bash 四件，见 internal/tools）。
+
+上下文机制保持最简（2026-08-22 用户定调）：只有对话与 session 存档，
+不做压缩/卸载/轮换等扩展——上下文体系由用户后续专门设计，
+internal/hooks 的 rotate/recall 仅保留代码不装配。
 */
 package service
 
@@ -12,8 +16,6 @@ import (
 	"github.com/xuanlv2002/ezloop/core"
 	"github.com/xuanlv2002/ezloop/ext/hook/approve"
 	"github.com/xuanlv2002/ezloop/ext/hook/askuser"
-	"github.com/xuanlv2002/ezloop/ext/hook/contextfix"
-	"github.com/xuanlv2002/ezloop/ext/hook/offload"
 	"github.com/xuanlv2002/ezloop/ext/hook/skill"
 	"github.com/xuanlv2002/ezloop/ext/hook/task"
 	"github.com/xuanlv2002/ezloop/ext/hook/taskplan"
@@ -33,29 +35,28 @@ type AgentService struct {
 	Hub *domain.Hub
 }
 
-/* Assemble 按配置装配 agent 并注入会话（mc 模型配置，st 行为设置）。 */
-func (a *AgentService) Assemble(s *domain.Session, mc domain.ModelConfig, st domain.Settings) {
+/* Assemble 按配置装配 agent 并注入会话（主模型取 models 四槽 main 启用条目）。 */
+func (a *AgentService) Assemble(s *domain.Session, st domain.Settings) {
 	ctx := context.Background()
 
-	skillHook, err := skill.NewFromFS(ctx, s.Fsys, "skills")
+	skillHook, err := skill.NewFromFS(ctx, s.Fsys, hooks.SkillsDir)
 	if err != nil {
 		skillHook = skill.New()
 	}
 
+	main := a.Hub.ModelsSnapshot().ActiveMain()
+	if main == nil {
+		main = &domain.ModelEntry{}
+	}
 	provider := openai.New(openai.Options{
-		BaseURL: mc.BaseURL,
-		APIKey:  mc.APIKey,
-		Model:   mc.Model,
+		BaseURL: main.BaseURL,
+		APIKey:  main.APIKey,
+		Model:   main.Name,
 	})
 
 	approver, approveCh := approve.New(a.needsApprove)
 	asker, answerCh := askuser.New()
 	planner, planCh := taskplan.New()
-	rotator := hooks.NewRotate(provider, s.Fsys, s.Sess, s.Topics, st.RotateThreshold,
-		func(info hooks.RotateInfo) {
-			s.SetIdentity(info.NewID) // 宿主侧同步 session 标识
-		})
-	recaller := hooks.NewRecall(s.Fsys, s.Topics)
 
 	agent := core.NewAgent(provider,
 		core.WithSystemPrompt(systemPrompt(st)),
@@ -63,16 +64,12 @@ func (a *AgentService) Assemble(s *domain.Session, mc domain.ModelConfig, st dom
 		core.WithToolWarp(limit.Warp(4), safetool.Warp()),
 		core.WithTools(tools.All(s.Fsys, st.Shell)...),
 		core.WithHooks(
-			contextfix.New(),
-			offload.New(s.Fsys),
 			skillHook,
 			hooks.NewMemory(s.Fsys),
 			approver,
 			asker,
 			planner,
 			task.New(),
-			rotator,
-			recaller,
 			NewMcpHook(s.Fsys),
 			s.Sess,
 		),
@@ -87,20 +84,20 @@ func (a *AgentService) Assemble(s *domain.Session, mc domain.ModelConfig, st dom
 		AnswerCh:  answerCh,
 		PlanCh:    planCh,
 		ToolNames: []string{
-			"read_file", "write_file", "edit_file", "bash",
+			"read_file", "write_file", "edit_file", "bash", "save_app",
 			askuser.ToolName, taskplan.ToolName, task.ToolName,
-			hooks.RotateTool, hooks.RecallTool, "mcp_router",
+			"mcp_router",
 		},
 	})
 }
 
 /* Reassemble 重建活动会话的 agent（配置变更后，需空闲）。 */
-func (a *AgentService) Reassemble(mc domain.ModelConfig, st domain.Settings) error {
+func (a *AgentService) Reassemble(st domain.Settings) error {
 	s := a.Hub.Active
 	if s.Busy() {
 		return domain.ErrBusy
 	}
-	a.Assemble(s, mc, st)
+	a.Assemble(s, st)
 	return nil
 }
 
@@ -109,8 +106,8 @@ func (a *AgentService) Reassemble(mc domain.ModelConfig, st domain.Settings) err
 改策略即时生效（无需重建 agent）。 */
 func (a *AgentService) needsApprove(c *types.ToolCall) bool {
 	switch c.Name {
-	case askuser.ToolName, taskplan.ToolName, hooks.RotateTool, hooks.RecallTool:
-		return false // 交互与内部工具不属用户管控面
+	case askuser.ToolName, taskplan.ToolName:
+		return false // 交互工具不属用户管控面
 	}
 	name := c.Name
 	if name == "mcp_router" {
@@ -189,9 +186,9 @@ func matchRuleList(list []string, ruleTool string, args json.RawMessage) bool {
 func systemPrompt(st domain.Settings) string {
 	p := "你是 ezharness——一个持续陪伴用户的设备级 agent，可全权操作本机文件与命令。" +
 		"能用工具就用工具，回答简洁。可并行的子任务用 task 分身去做。" +
-		"用户想换话题时用 rotate_context 归档旧话题开启新会话；" +
-		"用户提起之前聊过的内容时用 recall_topic 回顾存档；" +
-		"重要的用户偏好与事实可写入 memory.md 长期记住。"
+		"用户需要小工具或网页时用 save_app 生成为快应用，用户可一键启动。" +
+		"重要的用户偏好与事实可写入 memory/longterm/harness.md 长期记住，" +
+		"更多记忆细节用 grep 在 memory/longterm/ 下检索。"
 	if st.SystemExtra != "" {
 		p += "\n\n" + st.SystemExtra
 	}

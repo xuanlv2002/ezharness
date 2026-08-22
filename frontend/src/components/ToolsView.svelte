@@ -1,22 +1,25 @@
 <script lang="ts">
-  /* 原型骨架：纯渲染层。
-  快捷工具 = agent 生成的 html 等小工具，统一存放在一个文件夹，
-  此页以卡片呈现并可快速启动。数据由后端下发，接口待业务开发
-  接入，原型阶段 cfg 为 null 占位。 */
-  interface ToolEntry {
-    id: string
-    name: string
-    desc: string
-    kind: string // html / …
-    mtime: string
-  }
+  import { onMount } from 'svelte'
+  import { api, type AppEntry } from '../lib/api'
 
-  interface ToolsConfig {
-    dir: string
-    tools: ToolEntry[]
-  }
+  /* 快应用 = agent 经 save_app 生成的 html 小工具（apps/ 目录）。
+  启动 = 新标签页直开静态服务。 */
+  let apps = $state<AppEntry[]>([])
+  let loaded = $state(false)
 
-  let cfg = $state<ToolsConfig | null>(null)
+  onMount(async () => {
+    try {
+      const { apps: list } = await api.getApps()
+      apps = list ?? []
+    } catch {
+      /* 后端不可达时空列表 */
+    }
+    loaded = true
+  })
+
+  function launch(a: AppEntry) {
+    window.open(`/apps/${encodeURIComponent(a.name)}`, '_blank')
+  }
 </script>
 
 <div class="page">
@@ -27,26 +30,28 @@
     </div>
   </div>
 
-  <p class="dir"><span>📁</span>{cfg ? cfg.dir : '—'}</p>
+  <p class="dir"><span>📁</span>apps/</p>
 
   <div class="grid">
-    {#if cfg}
-      {#each cfg.tools as t (t.id)}
-        <div class="card" role="button" tabindex="0">
+    {#if !loaded}
+      <p class="lead">加载中…</p>
+    {:else if apps.length}
+      {#each apps as a (a.name)}
+        <div class="card" role="button" tabindex="0" onkeydown={(e) => e.key === 'Enter' && launch(a)}>
           <div class="top">
-            <div class="glyph" class:live={t.kind === 'html'}>
+            <div class="glyph live">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
                 <path d="M8 6L3 12l5 6" />
                 <path d="M16 6l5 6-5 6" />
               </svg>
             </div>
-            <span class="kind">{t.kind}</span>
+            <span class="kind">{a.kind}</span>
           </div>
-          <h2>{t.name}</h2>
-          <p class="desc">{t.desc}</p>
+          <h2>{a.title}</h2>
+          <p class="desc">{a.name}</p>
           <div class="foot">
-            <span class="time">{t.mtime}</span>
-            <button class="run" disabled>
+            <span class="time">{a.mtime}</span>
+            <button class="run" onclick={() => launch(a)}>
               启动
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                 <path d="M7 17L17 7" />

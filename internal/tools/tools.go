@@ -1,7 +1,7 @@
 /*
 Package tools 提供 ezharness 的精简工具集：read_file / write_file /
-edit_file / bash。ezharness 的产品决策是只暴露这四个原子能力
-（搜索等由 bash 承担），文件操作经 osfs 全权限文件系统。
+edit_file / bash / save_app。ezharness 的产品决策是只暴露这四个原子
+能力（搜索等由 bash 承担）+ 快应用生成，文件操作经 osfs 全权限文件系统。
 
 bash 的 Windows 根因修复：不硬编码 cmd /c，按 shell 探测顺序选
 bash（git-bash）→ pwsh → powershell → cmd；非零退出码不作为工具
@@ -39,7 +39,47 @@ func All(fsys osfs.OS, shell string) []types.Tool {
 		writeTool{fsys},
 		editTool{fsys},
 		bashTool{shell},
+		saveAppTool{fsys},
 	}
+}
+
+/* ── save_app（快应用） ── */
+
+const appsDir = "apps"
+
+type saveAppTool struct{ fsys osfs.OS }
+
+func (saveAppTool) Name() string        { return "save_app" }
+func (saveAppTool) Description() string { return "把一个自包含的 html 小工具保存为快应用（用户可在快应用页一键启动）。name 用英文短名，html 是完整文档" }
+
+func (t saveAppTool) ArgsSchema() json.RawMessage {
+	return json.RawMessage(`{
+		"type": "object",
+		"properties": {
+			"name": {"type": "string", "description": "应用名（英文短名，如 pomodoro）"},
+			"html": {"type": "string", "description": "完整 html 文档内容（自包含，内联 css/js）"}
+		},
+		"required": ["name", "html"]
+	}`)
+}
+
+func (t saveAppTool) Invoke(ctx context.Context, args json.RawMessage) (string, error) {
+	var a struct {
+		Name string `json:"name"`
+		HTML string `json:"html"`
+	}
+	if err := json.Unmarshal(args, &a); err != nil {
+		return "", err
+	}
+	name := strings.TrimSuffix(strings.TrimSpace(a.Name), ".html")
+	if name == "" || strings.ContainsAny(name, `/\:*?"<>|`) {
+		return "", errors.New("invalid app name")
+	}
+	file := name + ".html"
+	if err := t.fsys.Write(ctx, appsDir+"/"+file, []byte(a.HTML)); err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("快应用已保存：%s（用户可在快应用页启动，URL /apps/%s）", file, file), nil
 }
 
 /* ── read_file ── */

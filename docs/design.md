@@ -249,13 +249,13 @@ interface ToolRule { tool: string; desc: string; level: Level; kind: 'command' |
 | 附件 | 发送时上传（multipart）→ `data/uploads/` 落盘 → 消息引用 |
 | 画板 | AI 返回图片进画板（随图片生成槽） |
 | ~~通知~~ | ✅ 批次1 已接入：SSE 决策帧驱动（含去重/过期）、内联回传、跳转定位（fork 请求带 source 标识） |
-| 模型页 | models.json 多模型读写、Reassemble 热更、用量/花费统计 |
-| 记忆页 | 三文件夹管理 API、harness.md 读取、skill 启停、话题删除 |
+| ~~模型页~~ | ✅ 批次2 已接入：models.json 四槽（main/vision/image/audio）读写、每槽单选启用、用量累计回写、旧扁平自动迁移 |
+| ~~记忆页~~ | ✅ 批次2 已接入：三文件夹数据下发（/api/memory/config）、话题删除；skill 启停待 hook 开关机制 |
 | 知识库 | 上传、自动索引+摘要、检索 |
-| 快应用 | 工具文件夹扫描、启动（webview/浏览器打开） |
-| MCP | mcp.json 读写、连接状态探测、启停 |
-| 安全 | 四档策略持久化（settings.json）+ 后端 needsApprove 改造 |
-| 设置 | 端口/路径下发与修改（换代重启已有） |
+| ~~快应用~~ | ✅ 批次2 已接入：GET /api/apps 扫描 apps/、/apps 静态服务一键启动、agent 工具 save_app 生成 |
+| ~~MCP~~ | ✅ 批次2 已接入：GET/PUT /api/mcp（启停/添加）、http 探活、禁用不装配、热加载 |
+| ~~安全~~ | ✅ 批次2 已接入：四档策略（settings.json toolRules）+ needsApprove 策略驱动，保存即时生效 |
+| ~~设置~~ | ✅ 批次2 已接入：/api/app/config 完整路径清单+记忆三路径、端口/数据目录换代重启、Agent 行为（systemExtra/shell） |
 
 ## 9. 演进注记
 

@@ -35,6 +35,19 @@ func (c *TopicController) Get(g *gin.Context) {
 	g.JSON(http.StatusOK, d)
 }
 
+/* Delete DELETE /api/topics/:id。 */
+func (c *TopicController) Delete(g *gin.Context) {
+	if err := c.Svc.Delete(g.Param("id")); err != nil {
+		if errors.Is(err, service.ErrTopicNotFound) {
+			g.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+			return
+		}
+		g.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	g.JSON(http.StatusOK, gin.H{"ok": true})
+}
+
 /* Resume POST /api/topics/:id/resume。 */
 func (c *TopicController) Resume(g *gin.Context) {
 	if err := c.Svc.Resume(g.Request.Context(), g.Param("id")); err != nil {

@@ -40,6 +40,57 @@ func (s *AppService) Status() AppStatus {
 	return AppStatus{Port: c.Port, DataDir: c.DataDir, Boot: s.Boot.Load()}
 }
 
+/* PathEntry 是数据/配置文件路径条目（设置页路径区）。 */
+type PathEntry struct {
+	Label string `json:"label"`
+	File  string `json:"file"`
+	Path  string `json:"path"`
+}
+
+/* AppConfigView 是设置页完整配置视图：端口、数据目录、路径清单、记忆三路径。 */
+type AppConfigView struct {
+	Port    int              `json:"port"`
+	DataDir string           `json:"dataDir"`
+	Boot    int64            `json:"boot"`
+	Paths   []PathEntry      `json:"paths"`
+	Memory  MemoryPathsView  `json:"memory"`
+}
+
+/* MemoryPathsView 是记忆三文件夹绝对路径。 */
+type MemoryPathsView struct {
+	Longterm string `json:"longterm"`
+	Skills   string `json:"skills"`
+	Topics   string `json:"topics"`
+}
+
+/* ConfigView 组装设置页数据（数据文件相对进程 cwd，即数据目录）。 */
+func (s *AppService) ConfigView() AppConfigView {
+	c := s.Cfg()
+	cwd, _ := os.Getwd()
+	join := func(rel string) string { return filepath.Join(cwd, rel) }
+	return AppConfigView{
+		Port:    c.Port,
+		DataDir: c.DataDir,
+		Boot:    s.Boot.Load(),
+		Paths: []PathEntry{
+			{Label: "结构配置", File: "ezharness.json", Path: filepath.Join(config.Root(), "ezharness.json")},
+			{Label: "模型配置", File: "models.json", Path: join("models.json")},
+			{Label: "行为设置", File: "settings.json", Path: join("settings.json")},
+			{Label: "累计统计", File: "stats.json", Path: join("stats.json")},
+			{Label: "话题索引", File: "topics.json", Path: join("topics.json")},
+			{Label: "MCP", File: "mcp.json", Path: join("mcp.json")},
+			{Label: "会话存档", File: "sessions/", Path: join("sessions")},
+			{Label: "附件", File: "uploads/", Path: join("uploads")},
+			{Label: "快应用", File: "apps/", Path: join("apps")},
+		},
+		Memory: MemoryPathsView{
+			Longterm: join("memory/longterm"),
+			Skills:   join("memory/skills"),
+			Topics:   join("sessions"),
+		},
+	}
+}
+
 /* RestartRequest 是重启请求（字段为零值表示不改）。 */
 type RestartRequest struct {
 	Port    *int   `json:"port"`
@@ -102,7 +153,7 @@ func MigrateData(src, dst string) error {
 	if err := os.MkdirAll(dst, 0o755); err != nil {
 		return err
 	}
-	for _, f := range []string{"models.json", "settings.json", "topics.json", "memory.md", "mcp.json"} {
+	for _, f := range []string{"models.json", "settings.json", "stats.json", "topics.json", "memory.md", "mcp.json"} {
 		data, err := os.ReadFile(filepath.Join(src, f))
 		if err != nil {
 			continue

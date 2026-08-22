@@ -15,46 +15,70 @@ import (
 	"github.com/xuanlv2002/ezloop/ext/fs"
 )
 
-/* ModelConfig 是模型配置记录（models.json）。apiKey 为空合法——应用
-照常启动，发消息时才提示未配置。 */
-type ModelConfig struct {
-	APIKey  string `json:"apiKey"`
-	Model   string `json:"model"`
-	BaseURL string `json:"baseUrl"`
+/*
+ModelEntry 是一个模型条目；ModelsConfig 是模型四槽记录（models.json）：
+main（主模型，驱动 agent 循环）/ vision（主模型无视觉时图片转写兜底）/
+image（文生图）/ audio（语音合成）——后两者是主模型按需调用的工具后端。
+每槽至多一条 Enabled。结构随后续数据建模演进。
+*/
+type ModelEntry struct {
+	Name    string  `json:"name"`    // 模型名（provider 侧 ID）
+	BaseURL string  `json:"baseUrl"`
+	APIKey  string  `json:"apiKey"`
+	Enabled bool    `json:"enabled"` // 每槽至多一条启用
+	Tokens  int     `json:"tokens"`  // 累计用量（prompt+completion）
+	Cost    float64 `json:"cost"`    // 累计花费（单价表后续接入）
 }
 
-/* DefaultModelConfig 给出出厂值（apiKey 空，零配置可启动）。 */
-func DefaultModelConfig() ModelConfig {
-	return ModelConfig{
-		APIKey:  "",
-		Model:   "deepseek-ai/DeepSeek-V3.2",
-		BaseURL: "https://api.siliconflow.cn/v1",
+type ModelsConfig struct {
+	Main   []ModelEntry `json:"main"`
+	Vision []ModelEntry `json:"vision"`
+	Image  []ModelEntry `json:"image"`
+	Audio  []ModelEntry `json:"audio"`
+}
+
+/* DefaultModelsConfig 给出出厂值（main 一条默认，apiKey 空零配置可启动）。 */
+func DefaultModelsConfig() ModelsConfig {
+	return ModelsConfig{
+		Main: []ModelEntry{{
+			Name:    "deepseek-ai/DeepSeek-V3.2",
+			BaseURL: "https://api.siliconflow.cn/v1",
+		}},
 	}
 }
 
-/* LoadModelConfig 读 models.json，缺失或字段为空回落默认。 */
-func LoadModelConfig(fsys fs.FileSystem) ModelConfig {
-	out := DefaultModelConfig()
+/* LoadModelsConfig 读 models.json；兼容旧扁平结构（apiKey/model/baseUrl）
+并迁移为 main 槽单条目（原文件备份 .bak）。 */
+func LoadModelsConfig(fsys fs.FileSystem) ModelsConfig {
+	out := DefaultModelsConfig()
 	data, err := fsys.Read(context.Background(), "models.json")
 	if err != nil {
 		return out
 	}
-	var m ModelConfig
-	if json.Unmarshal(data, &m) != nil {
-		return out
+	var mc ModelsConfig
+	if json.Unmarshal(data, &mc) == nil && (len(mc.Main)+len(mc.Vision)+len(mc.Image)+len(mc.Audio)) > 0 {
+		return mc
 	}
-	if m.Model != "" {
-		out.Model = m.Model
+	/* 旧扁平结构迁移 */
+	var old struct {
+		APIKey  string `json:"apiKey"`
+		Model   string `json:"model"`
+		BaseURL string `json:"baseUrl"`
 	}
-	if m.BaseURL != "" {
-		out.BaseURL = m.BaseURL
+	if json.Unmarshal(data, &old) == nil && old.Model != "" {
+		e := ModelEntry{Name: old.Model, BaseURL: old.BaseURL, APIKey: old.APIKey, Enabled: true}
+		if e.BaseURL == "" {
+			e.BaseURL = out.Main[0].BaseURL
+		}
+		out.Main = []ModelEntry{e}
+		_ = fsys.Write(context.Background(), "models.json.bak", data)
+		_ = SaveModelsConfig(fsys, out)
 	}
-	out.APIKey = m.APIKey
 	return out
 }
 
-/* SaveModelConfig 落盘模型配置。 */
-func SaveModelConfig(fsys fs.FileSystem, m ModelConfig) error {
+/* SaveModelsConfig 落盘模型四槽。 */
+func SaveModelsConfig(fsys fs.FileSystem, m ModelsConfig) error {
 	data, err := json.MarshalIndent(m, "", "  ")
 	if err != nil {
 		return err
@@ -62,12 +86,25 @@ func SaveModelConfig(fsys fs.FileSystem, m ModelConfig) error {
 	return fsys.Write(context.Background(), "models.json", data)
 }
 
-/* Settings 是可热更的行为设置。 */
+/* ActiveMain 返回主模型槽的生效条目（enabled 优先，否则首条；空槽 nil）。 */
+func (m ModelsConfig) ActiveMain() *ModelEntry {
+	for i := range m.Main {
+		if m.Main[i].Enabled {
+			return &m.Main[i]
+		}
+	}
+	if len(m.Main) > 0 {
+		return &m.Main[0]
+	}
+	return nil
+}
+
+/* Settings 是可热更的行为设置。
+上下文机制（压缩/轮换/卸载）暂不装配——用户后续专门设计，字段不再保留。 */
 type Settings struct {
-	SystemExtra     string     `json:"systemExtra"`
-	RotateThreshold int        `json:"rotateThreshold"` // prompt tokens，<=0 禁用自动轮换
-	Shell           string     `json:"shell"`           // "" / "auto" / "bash" / "pwsh" / "cmd"
-	ToolRules       []ToolRule `json:"toolRules"`       // 审批策略（空 = 内置默认）
+	SystemExtra string     `json:"systemExtra"`
+	Shell       string     `json:"shell"` // "" / "auto" / "bash" / "pwsh" / "cmd"
+	ToolRules   []ToolRule `json:"toolRules"` // 审批策略（空 = 内置默认）
 }
 
 /* Level 是审批策略档位。 */
@@ -95,6 +132,7 @@ func DefaultToolRules() []ToolRule {
 		{Tool: "edit_file", Level: LevelAsk},
 		{Tool: "bash", Level: LevelWhite, List: []string{"ls", "cat", "head", "tail", "pwd", "git status", "git diff", "git log", "go test"}},
 		{Tool: "task", Level: LevelAsk},
+		{Tool: "save_app", Level: LevelAsk},
 		{Tool: "mcp.*", Level: LevelAsk},
 	}
 }
@@ -102,10 +140,9 @@ func DefaultToolRules() []ToolRule {
 /* DefaultSettings 给出出厂值。 */
 func DefaultSettings() Settings {
 	return Settings{
-		SystemExtra:     "",
-		RotateThreshold: 80000,
-		Shell:           "auto",
-		ToolRules:       DefaultToolRules(),
+		SystemExtra: "",
+		Shell:       "auto",
+		ToolRules:   DefaultToolRules(),
 	}
 }
 
@@ -121,7 +158,6 @@ func LoadSettings(fsys fs.FileSystem) Settings {
 		return out
 	}
 	out.SystemExtra = s.SystemExtra
-	out.RotateThreshold = s.RotateThreshold // 0 = 显式禁用轮换，不回落
 	if s.Shell != "" {
 		out.Shell = s.Shell
 	}

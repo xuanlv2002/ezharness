@@ -1,7 +1,8 @@
 /*
-memory 是长期记忆 hook：每轮 OnStart 把 memory.md 内容拼进 system
-（复用 skill 的单条 system 拼接模式），agent 用 filetools 直接编辑
-该文件即可持久记忆。对用户暴露为左栏可编辑页。
+memory 是长期记忆 hook：每轮 OnStart 把 memory/longterm/harness.md
+（索引文件）拼进 system（复用 skill 的单条 system 拼接模式），agent
+用文件工具直接编辑该文件或 grep 其余记忆文件。长期记忆是一套文件
+系统：harness.md 初始加载，其余文件按需检索。
 */
 package hooks
 
@@ -13,8 +14,16 @@ import (
 	"github.com/xuanlv2002/ezloop/types"
 )
 
-/* MemoryFile 是记忆文件路径（工作目录相对）。 */
-const MemoryFile = "memory.md"
+/* 记忆体系目录布局（工作目录相对）。 */
+const (
+	MemoryDir      = "memory"
+	LongtermDir    = "memory/longterm"
+	SkillsDir      = "memory/skills"
+	HarnessMd      = LongtermDir + "/harness.md"
+)
+
+/* MemoryFile 是初始加载进上下文的索引文件（兼容旧名引用）。 */
+const MemoryFile = HarnessMd
 
 /* Memory 实现记忆注入。 */
 type Memory struct {
@@ -26,13 +35,13 @@ func NewMemory(fsys fs.FileSystem) *Memory { return &Memory{fsys: fsys} }
 
 func (m *Memory) Name() string { return "memory" }
 
-/* OnStart 读 memory.md 拼接进 system（文件缺失/为空则跳过）。 */
+/* OnStart 读 harness.md 拼接进 system（文件缺失/为空则跳过）。 */
 func (m *Memory) OnStart(ctx context.Context, state *types.LoopState) error {
 	data, err := m.fsys.Read(ctx, MemoryFile)
 	if err != nil || len(strings.TrimSpace(string(data))) == 0 {
 		return nil
 	}
-	block := "# 长期记忆（用户与你的沉淀，可用文件工具更新 memory.md）\n" + string(data)
+	block := "# 长期记忆（索引随上下文加载，可用文件工具更新 memory/longterm/harness.md；其余记忆文件可用 grep 检索）\n" + string(data)
 	// 单条 system 政策：有则拼接，无则新建（与 skill 同模式）
 	if len(state.Messages) > 0 && state.Messages[0].Role == types.RoleSystem {
 		state.Messages[0].Content += "\n\n" + block

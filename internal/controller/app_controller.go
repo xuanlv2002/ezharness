@@ -21,10 +21,9 @@ func (c *AppController) Health(g *gin.Context) {
 	g.JSON(http.StatusOK, gin.H{"ok": true, "boot": st.Boot})
 }
 
-/* Config 返回当前应用配置。 */
+/* Config 返回设置页完整配置（端口/数据目录/路径清单/记忆三路径）。 */
 func (c *AppController) Config(g *gin.Context) {
-	st := c.Svc.Status()
-	g.JSON(http.StatusOK, gin.H{"port": st.Port, "dataDir": st.DataDir})
+	g.JSON(http.StatusOK, c.Svc.ConfigView())
 }
 
 /* Restart 换代重启：port/dataDir 零值不改；失败时旧服务不受影响。 */

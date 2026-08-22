@@ -6,6 +6,8 @@ package service
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 
 	"github.com/xuanlv2002/ezloop/ext/hook/localsession"
 	"github.com/xuanlv2002/ezloop/types"
@@ -43,6 +45,15 @@ func (t *TopicService) Get(ctx context.Context, id string) (TopicDetail, error) 
 		}
 	}
 	return TopicDetail{}, ErrTopicNotFound
+}
+
+/* Delete 删除话题存档（索引条目 + session 文件）。 */
+func (t *TopicService) Delete(id string) error {
+	if !t.Hub.Topics.Remove(id) {
+		return ErrTopicNotFound
+	}
+	_ = os.Remove(filepath.Join(localsession.DefaultDir, id+".json"))
+	return nil
 }
 
 /* Resume 回到指定话题继续（历史替换 + session 切换）。 */

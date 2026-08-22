@@ -65,7 +65,9 @@
     loaded = true
   })
 
-  async function save() {
+  /* persist 自动保存（档位/名单变更即时提交）。 */
+  async function persist() {
+    if (!rules.length) return
     saving = true
     message = ''
     try {
@@ -81,16 +83,19 @@
   function setRule(r: RuleRow, lv: Level) {
     if (r.noList && hasList(lv)) return
     r.level = lv
+    void persist()
   }
 
   function addEntry(r: RuleRow) {
     const v = (newList[r.tool] || '').trim()
     if (v && !r.list.includes(v)) r.list = [...r.list, v]
     newList[r.tool] = ''
+    void persist()
   }
 
   function removeEntry(r: RuleRow, entry: string) {
     r.list = r.list.filter((x) => x !== entry)
+    void persist()
   }
 </script>
 
@@ -99,11 +104,24 @@
   <p class="lead">agent 拥有整台设备的权限——这里决定哪些操作需要先经你同意。</p>
 
   <section>
-    <h2>工具审批策略</h2>
+    <div class="section-head">
+      <h2>工具审批策略</h2>
+      {#if saving}
+        <span class="saving">保存中…</span>
+      {/if}
+    </div>
     <p class="hint">
       四档：每次审批 → 黑名单审批（名单外放行）→ 白名单免审（名单内放行）→ 全部免审。
-      选黑/白名单时展开对应名单配置。
+      选黑/白名单时展开对应名单配置。变更自动保存。
     </p>
+    {#if message}
+      <p class="msg">{message}</p>
+    {/if}
+    {#if !loaded}
+      <p class="hint">加载中…</p>
+    {:else if !rules.length}
+      <p class="hint">策略为空（后端将按内置默认执行：未知工具一律审批）。</p>
+    {/if}
     <div class="list">
       {#each rules as r (r.tool)}
         <div class="rule-wrap">
@@ -206,6 +224,20 @@
     font-size: 11px;
     color: var(--faint);
     margin-top: -4px;
+  }
+  .section-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .saving {
+    font-size: 11.5px;
+    color: var(--faint);
+  }
+  .msg {
+    font-size: 11.5px;
+    color: var(--muted);
+    margin-top: -2px;
   }
   .list {
     display: flex;

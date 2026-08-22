@@ -22,7 +22,7 @@ type ChatService struct {
 
 /* Send 启动一轮异步运行：事件流扇出 SSE，结束更新历史并发 turn_end。 */
 func (c *ChatService) Send(text string) error {
-	if c.Hub.ModelSnapshot().APIKey == "" {
+	if main := c.Hub.ModelsSnapshot().ActiveMain(); main == nil || main.APIKey == "" {
 		return domain.ErrNoAPIKey
 	}
 	s := c.Hub.Active
@@ -50,6 +50,7 @@ func (c *ChatService) Send(text string) error {
 		s.FinishRun(state, waitErr)
 		cancel() // 释放 turnCtx（决策 select 的 Done 依赖）
 		c.Hub.Stats.AddTurn(usage)
+		c.Hub.RecordUsage(usage) // 主模型条目用量累计
 		s.Publish(domain.TurnEnd(stop, iters, usage, waitErr))
 	}()
 	return nil

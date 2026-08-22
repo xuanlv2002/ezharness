@@ -285,7 +285,7 @@ func decisionCallID(e Event) (string, bool) {
 /* Hub 管理应用级单例状态。 */
 type Hub struct {
 	mu       sync.Mutex
-	Model    ModelConfig
+	Models   ModelsConfig
 	Fsys     osfs.OS
 	Settings Settings
 	Stats    *Stats
@@ -296,22 +296,33 @@ type Hub struct {
 /* NewHub 创建领域根：加载配置记录（缺失文件自动创建默认）与累计生命体征，并恢复活动会话。 */
 func NewHub() *Hub {
 	h := &Hub{Fsys: osfs.OS{}}
-	h.Model = ensureModelConfig(h.Fsys)
+	h.Models = ensureModelsConfig(h.Fsys)
 	h.Settings = ensureSettings(h.Fsys)
 	h.Stats = NewStats(h.Fsys)
+	migrateLegacyMemory(h.Fsys)
 	h.Topics = hooks.NewTopics(h.Fsys)
 	h.Active = h.bootstrap()
 	return h
 }
 
-/* ensureModelConfig 加载 models.json，文件不存在则写盘默认（零配置首启自动创建）。 */
-func ensureModelConfig(fsys osfs.OS) ModelConfig {
+/* ensureModelsConfig 加载 models.json（含旧扁平迁移），文件不存在则写盘默认（零配置首启自动创建）。 */
+func ensureModelsConfig(fsys osfs.OS) ModelsConfig {
 	if _, err := fsys.Read(context.Background(), "models.json"); err != nil {
-		m := DefaultModelConfig()
-		_ = SaveModelConfig(fsys, m)
+		m := DefaultModelsConfig()
+		_ = SaveModelsConfig(fsys, m)
 		return m
 	}
-	return LoadModelConfig(fsys)
+	return LoadModelsConfig(fsys)
+}
+
+/* migrateLegacyMemory 旧版单文件记忆迁移：memory.md → memory/longterm/harness.md。 */
+func migrateLegacyMemory(fsys osfs.OS) {
+	if _, err := fsys.Read(context.Background(), hooks.HarnessMd); err == nil {
+		return // 已有新布局
+	}
+	if data, err := fsys.Read(context.Background(), "memory.md"); err == nil && len(data) > 0 {
+		_ = fsys.Write(context.Background(), hooks.HarnessMd, data)
+	}
 }
 
 /* ensureSettings 加载 settings.json，文件不存在则写盘默认。 */
@@ -357,18 +368,32 @@ func (h *Hub) newSession(id string) *Session {
 	}
 }
 
-/* ModelSnapshot 返回当前模型配置。 */
-func (h *Hub) ModelSnapshot() ModelConfig {
+/* ModelsSnapshot 返回当前模型四槽。 */
+func (h *Hub) ModelsSnapshot() ModelsConfig {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	return h.Model
+	return h.Models
 }
 
-/* ApplyModel 更新模型配置（持久化由 service 层完成）。 */
-func (h *Hub) ApplyModel(m ModelConfig) {
+/* ApplyModels 更新模型四槽（持久化由 service 层完成）。 */
+func (h *Hub) ApplyModels(m ModelsConfig) {
 	h.mu.Lock()
-	h.Model = m
+	h.Models = m
 	h.mu.Unlock()
+}
+
+/* RecordUsage 累计一轮用量到主模型条目并落盘（tokens=prompt+completion）。 */
+func (h *Hub) RecordUsage(u *types.Usage) {
+	if u == nil {
+		return
+	}
+	h.mu.Lock()
+	if e := h.Models.ActiveMain(); e != nil {
+		e.Tokens += u.PromptTokens + u.CompletionTokens
+	}
+	models := h.Models
+	h.mu.Unlock()
+	_ = SaveModelsConfig(h.Fsys, models)
 }
 
 /* SettingsSnapshot 返回当前设置。 */
