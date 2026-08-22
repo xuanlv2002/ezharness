@@ -33,6 +33,7 @@ export interface McpServerView {
   connected: boolean
   tools: number
   headers: Record<string, string>
+  allow?: string[]
 }
 
 export interface McpToolView {

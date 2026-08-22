@@ -38,16 +38,18 @@ type McpServerFile struct {
 /* IsEnabled 报告服务器是否启用。 */
 func (s McpServerFile) IsEnabled() bool { return s.Enabled == nil || *s.Enabled }
 
-/* McpServerView 是 MCP 页卡片数据。Tools 未连接为 0（前端显示 —）。 */
+/* McpServerView 是 MCP 页卡片数据。Tools 未连接为 0（前端显示 —）。
+Allow 必须回传：前端全量保存，丢字段会清掉 mcp.json 里的白名单。 */
 type McpServerView struct {
 	Name        string            `json:"name"`
 	Description string            `json:"description"`
 	Transport   string            `json:"transport"` // http | stdio
-	Endpoint    string            `json:"endpoint"`  // http url 或启动命令
+	Endpoint    string            `json:"endpoint"` // http url 或启动命令
 	Enabled     bool              `json:"enabled"`
 	Connected   bool              `json:"connected"` // 页面手动会话已建立
 	Tools       int               `json:"tools"`
 	Headers     map[string]string `json:"headers"`
+	Allow       []string          `json:"allow,omitempty"`
 }
 
 /* McpToolView 是连接后返回的工具清单条目。 */
@@ -96,6 +98,7 @@ func (s *McpService) List() []McpServerView {
 			Connected:   connected,
 			Tools:       len(s.toolDefs[srv.Name]),
 			Headers:     nonNilHeaders(srv.Headers),
+			Allow:       srv.Allow,
 		})
 	}
 	return out

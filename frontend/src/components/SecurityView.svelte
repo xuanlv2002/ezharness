@@ -37,7 +37,10 @@
     edit_file: { desc: '精确替换文件内容', kind: 'path' },
     bash: { desc: '执行命令', kind: 'command' },
     task: { desc: 'fork 分身执行子任务（分身继承主 agent 策略）', kind: 'tool', noList: true },
-    'mcp.*': { desc: '全部 MCP 服务器的工具（细粒度后续在 MCP 页配）', kind: 'tool' },
+    'mcp.*': {
+      desc: 'MCP 工具调用，名单填 server 或 server.tool（如 time.getCurrentTime）；mcp_list/tool_list 恒免审',
+      kind: 'tool',
+    },
   }
 
   let rules = $state<RuleRow[]>([])

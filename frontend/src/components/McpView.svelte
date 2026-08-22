@@ -57,6 +57,7 @@
           ...(s.description ? { description: s.description } : {}),
           type: s.transport,
           ...(s.transport === 'http' ? { url: s.endpoint, headers: s.headers } : {}),
+          ...(s.allow?.length ? { allow: s.allow } : {}), // 透传白名单，防全量保存清掉
           enabled: s.enabled,
         })),
       })

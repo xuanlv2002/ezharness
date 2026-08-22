@@ -117,7 +117,16 @@ func (a *AgentService) needsApprove(c *types.ToolCall) bool {
 	}
 	name := c.Name
 	if name == "mcp_router" {
-		name = "mcp.*" // ezloop mcp 是单一 router 工具，二段式（server/tool 在 args）
+		// ezloop mcp 是单一 router 工具，二段式（action/server/tool 在 args）。
+		// 发现类（mcp_list/tool_list）只读无副作用，四档下一律免审。
+		var a struct {
+			Action string `json:"action"`
+		}
+		_ = json.Unmarshal(c.Args, &a)
+		if a.Action == "mcp_list" || a.Action == "tool_list" {
+			return false
+		}
+		name = "mcp.*" // tool_call 按 server.tool 名单走四档
 	}
 	rules := a.Hub.SettingsSnapshot().ToolRules
 	var rule *domain.ToolRule
@@ -184,8 +193,11 @@ func matchRuleList(list []string, ruleTool string, args json.RawMessage) bool {
 		if ruleTool == "terminal" && strings.HasPrefix(key, e+" ") {
 			return true // 命令词边界
 		}
-		if ruleTool != "terminal" && strings.HasPrefix(key, e) {
-			return true // 路径 / server.tool 前缀
+		if ruleTool == "mcp.*" && strings.HasPrefix(key, e+".") {
+			return true // server 前缀放行整站（点边界：time 不误命中 timeX）
+		}
+		if ruleTool != "terminal" && ruleTool != "mcp.*" && strings.HasPrefix(key, e) {
+			return true // 路径前缀
 		}
 	}
 	return false
