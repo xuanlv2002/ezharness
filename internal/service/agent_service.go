@@ -3,9 +3,10 @@ AgentService 负责 agent 的装配与重建：provider、hooks、warp、工具�
 文件与终端工具复用 ezloop 的 filetools hook（原生 shell，Windows 为 cmd，
 模型适配环境），ezharness 只增补 save_app。
 
-上下文机制保持最简（2026-08-22 用户定调）：只有对话与 session 存档，
-不做压缩/卸载/轮换等扩展——上下文体系由用户后续专门设计，
-internal/hooks 的 rotate/recall 仅保留代码不装配。
+上下文机制（2026-08-22 更新）：对话与 session 存档之外，挂 contextfix
+（Run 前修理残缺历史）与 offload（大工具结果卸载到文件，交互与分身
+结果免卸载）；压缩/轮换等仍不装配，internal/hooks 的 rotate/recall
+仅保留代码。
 */
 package service
 
@@ -17,7 +18,9 @@ import (
 	"github.com/xuanlv2002/ezloop/core"
 	"github.com/xuanlv2002/ezloop/ext/hook/approve"
 	"github.com/xuanlv2002/ezloop/ext/hook/askuser"
+	"github.com/xuanlv2002/ezloop/ext/hook/contextfix"
 	"github.com/xuanlv2002/ezloop/ext/hook/filetools"
+	"github.com/xuanlv2002/ezloop/ext/hook/offload"
 	"github.com/xuanlv2002/ezloop/ext/hook/skill"
 	"github.com/xuanlv2002/ezloop/ext/hook/task"
 	"github.com/xuanlv2002/ezloop/ext/hook/taskplan"
@@ -67,6 +70,7 @@ func (a *AgentService) Assemble(s *domain.Session, st domain.Settings) {
 		core.WithToolWarp(limit.Warp(4), safetool.Warp()),
 		core.WithTools(tools.SaveApp(s.Fsys)...),
 		core.WithHooks(
+			contextfix.New(),
 			filetools.New(s.Fsys),
 			skillHook,
 			hooks.NewMemory(s.Fsys),
@@ -75,6 +79,7 @@ func (a *AgentService) Assemble(s *domain.Session, st domain.Settings) {
 			planner,
 			task.New(),
 			NewMcpHook(s.Fsys),
+			offload.New(s.Fsys, offload.WithSkip(askuser.ToolName, taskplan.ToolName, task.ToolName)),
 			s.Sess,
 		),
 		core.WithLoopParams(core.LoopParams{MaxIterations: 12}),
