@@ -20,6 +20,8 @@ type TopicEntry struct {
 	Summary   string `json:"summary"`
 	CreatedAt int64  `json:"createdAt"`
 	Msgs      int    `json:"msgs"`
+	Path      string `json:"path,omitempty"` // 原始 session 存档路径（compact 产物）
+	Kind      string `json:"kind,omitempty"` // 归档方式：compact（后续可扩展）
 }
 
 /* Topics 管理归档话题索引（topics.json，工作目录）。 */

@@ -2,8 +2,7 @@
   import { onMount } from 'svelte'
   import { api, type AppConfig } from '../lib/api'
 
-  /* 设置页 = 应用结构配置（服务端）+ 数据/配置文件路径。全部后端下发。
-  Agent 行为（系统提示追加）暂移除——后端 /api/settings 仍在，恢复时接回即可。 */
+  /* 设置页 = 应用结构配置（服务端）+ 上下文管理 + 数据/配置文件路径。 */
   let cfg = $state<AppConfig | null>(null)
   let port = $state<number | ''>('')
   let dataDir = $state('')
@@ -11,6 +10,13 @@
   let restartErr = $state('')
   let appChanged = $state(false)
   let showPaths = $state(false)
+
+  /* 上下文压缩水位（0 = 关闭自动压缩，模型仍可主动调 compact 工具） */
+  let threshold = $state<number | ''>('')
+  let origThreshold = $state<number | null>(null)
+  let origExtra = $state('')
+  let savingThreshold = $state(false)
+  let thresholdMsg = $state('')
 
   onMount(async () => {
     try {
@@ -21,10 +27,36 @@
     } catch {
       restartErr = '配置加载失败（后端不可达）'
     }
+    try {
+      const st = await api.getSettings()
+      threshold = st.compactThreshold ?? 0
+      origThreshold = st.compactThreshold ?? 0
+      origExtra = st.systemExtra ?? ''
+    } catch {
+      /* 上下文配置加载失败不阻塞页面 */
+    }
   })
 
   function checkChanged() {
     appChanged = !!cfg && (String(port) !== String(cfg.port) || dataDir.trim() !== cfg.dataDir)
+  }
+
+  async function saveThreshold() {
+    savingThreshold = true
+    thresholdMsg = ''
+    try {
+      // systemExtra 回传原值：保存接口是整体语义，缺省会清空
+      await api.saveSettings({
+        systemExtra: origExtra,
+        compactThreshold: Number(threshold) || 0,
+      })
+      origThreshold = Number(threshold) || 0
+      thresholdMsg = '已保存（下一轮对话生效）'
+    } catch (e) {
+      thresholdMsg = `保存失败：${e instanceof Error ? e.message : String(e)}`
+    } finally {
+      savingThreshold = false
+    }
   }
 
   async function restartApp() {
@@ -78,6 +110,30 @@
     </button>
     {#if restartErr}
       <p class="err">{restartErr}</p>
+    {/if}
+  </section>
+
+  <section>
+    <h2>上下文管理</h2>
+    <p class="hint">
+      上下文压缩水位（prompt tokens）：轮末超过即自动压缩归档并开启新会话；0
+      表示关闭自动压缩（模型仍可主动调用 compact 工具，状态栏会提示推荐压缩时机）。
+    </p>
+    <div class="grid2">
+      <label class="field">
+        <span>压缩水位（tokens）</span>
+        <input type="number" bind:value={threshold} min="0" step="1000" />
+      </label>
+    </div>
+    <button
+      class="primary"
+      disabled={savingThreshold || Number(threshold) === origThreshold}
+      onclick={saveThreshold}
+    >
+      {savingThreshold ? '保存中…' : '保存水位'}
+    </button>
+    {#if thresholdMsg}
+      <p class="msg">{thresholdMsg}</p>
     {/if}
   </section>
 

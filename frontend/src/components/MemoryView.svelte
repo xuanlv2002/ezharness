@@ -148,8 +148,16 @@
         {#each cfg.topics.items as t (t.id)}
           <div class="topic">
             <div class="info">
-              <span class="name">{t.title}</span>
+              <span class="name"
+                >{t.title}{#if t.kind === 'compact'}<span class="kbadge">压缩</span>{/if}</span
+              >
               <span class="desc">{fmtDate(t.createdAt)} · {t.msgs} 条消息</span>
+              {#if t.summary}
+                <span class="summary">{t.summary}</span>
+              {/if}
+              {#if t.path}
+                <span class="path">{t.path}</span>
+              {/if}
             </div>
             <button class="del" onclick={() => removeTopic(t)} title="删除">删除</button>
           </div>
@@ -431,6 +439,35 @@
     color: var(--fg);
     font-weight: 550;
     overflow-wrap: anywhere;
+  }
+  .kbadge {
+    flex: none;
+    margin-left: 8px;
+    font-size: 10px;
+    font-weight: 500;
+    color: var(--accent);
+    background: var(--accent-soft);
+    border-radius: 5px;
+    padding: 1px 7px;
+    vertical-align: 1px;
+  }
+  .summary {
+    font-size: 11.5px;
+    line-height: 1.55;
+    color: var(--muted);
+    overflow-wrap: anywhere;
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    margin-top: 2px;
+  }
+  .path {
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    color: var(--faint);
+    overflow-wrap: anywhere;
+    margin-top: 2px;
   }
   .del {
     flex: none;

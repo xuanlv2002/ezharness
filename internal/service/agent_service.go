@@ -3,16 +3,17 @@ AgentService 负责 agent 的装配与重建：provider、hooks、warp、工具�
 文件与终端工具复用 ezloop 的 filetools hook（原生 shell，Windows 为 cmd，
 模型适配环境），ezharness 只增补 save_app。
 
-上下文机制（2026-08-22 更新）：对话与 session 存档之外，挂 contextfix
-（Run 前修理残缺历史）与 offload（大工具结果卸载到文件，交互与分身
-结果免卸载）；压缩/轮换等仍不装配，internal/hooks 的 rotate/recall
-仅保留代码。
+上下文机制：system 由 sysprompt hook 每轮注入（session 创建时组装一次：
+人格+SystemExtra+长期记忆+skill/mcp 列表；重启从快照还原不重组）。
+contextfix 修理残缺历史，offload 卸载大工具结果；压缩（compact）、
+状态栏（status）、调用链（trace）见 internal/hooks 各文件。
 */
 package service
 
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
 
 	"github.com/xuanlv2002/ezloop/core"
@@ -32,6 +33,7 @@ import (
 
 	"ezharness/internal/domain"
 	"ezharness/internal/hooks"
+	"ezharness/internal/osfs"
 	"ezharness/internal/tools"
 )
 
@@ -44,11 +46,6 @@ type AgentService struct {
 func (a *AgentService) Assemble(s *domain.Session, st domain.Settings) {
 	ctx := context.Background()
 
-	skillHook, err := skill.NewFromFS(ctx, s.Fsys, hooks.SkillsDir)
-	if err != nil {
-		skillHook = skill.New()
-	}
-
 	main := a.Hub.ModelsSnapshot().ActiveMain()
 	if main == nil {
 		main = &domain.ModelEntry{}
@@ -60,27 +57,55 @@ func (a *AgentService) Assemble(s *domain.Session, st domain.Settings) {
 		Model:   main.Name,
 	})
 
+	// system 两段式：恢复的会话从快照还原（记忆/skill/mcp 变更等下个
+	// session），新会话组装一次后固定，直到 compact 创建新 session。
+	var sys *hooks.SysPrompt
+	if snap := s.Snapshot(); snap != nil {
+		sys = hooks.NewSysPrompt(snap.SystemBase, snap.SummaryBlock)
+	} else {
+		sys = hooks.NewSysPrompt(buildSystemBase(ctx, st, s.Fsys), "")
+	}
+	s.SetSysP(sys)
+	s.Sess.BindSys(sys, main.Name)
+
 	approver, approveCh := approve.New(a.needsApprove)
 	asker, answerCh := askuser.New()
 	planner, planCh := taskplan.New()
 
+	window := main.ContextWindow
+	if window <= 0 {
+		window = 128000 // 旧 models.json 无 contextWindow 字段的兜底
+	}
+	statusHook := hooks.NewStatus(s.Fsys, s.Sess,
+		func() int { return a.Hub.Active.CtxTokens() },
+		window,
+		func() []hooks.StatusMcp { return mcpStatusList(s.Fsys) },
+	)
+	traceHook := hooks.NewTrace(s.Fsys, s.Sess, func() string { return main.Name })
+	compactHook := hooks.NewCompact(provider, s.Fsys, s.Sess, sys, a.Hub.Topics, traceHook,
+		a.Hub.SettingsSnapshot().CompactThreshold,
+		func() string { return buildSystemBase(ctx, st, s.Fsys) }, // compact 即新 session：全量重载
+		func(info hooks.CompactInfo) { a.Hub.Active.SetIdentity(info.NewID) },
+	)
+
 	agent := core.NewAgent(provider,
-		core.WithSystemPrompt(systemPrompt(st)),
 		core.WithModelWarp(modelretry.Warp()),
 		core.WithToolWarp(limit.Warp(4), safetool.Warp()),
 		core.WithTools(tools.SaveApp(s.Fsys)...),
 		core.WithHooks(
+			sys, // startHooks 首位：system 唯一来源
 			contextfix.New(),
 			filetools.New(s.Fsys),
-			skillHook,
-			hooks.NewMemory(s.Fsys),
+			statusHook,
 			approver,
 			asker,
 			planner,
 			task.New(),
 			NewMcpHook(s.Fsys),
 			offload.New(s.Fsys, offload.WithSkip(askuser.ToolName, taskplan.ToolName, task.ToolName)),
-			s.Sess,
+			compactHook, // OnEnd 在 trace/store 之前：截断+换库先发生
+			traceHook,
+			s.Sess, // 最后落盘
 		),
 		core.WithLoopParams(core.LoopParams{MaxIterations: 12}),
 		core.WithStreaming(true),
@@ -95,7 +120,7 @@ func (a *AgentService) Assemble(s *domain.Session, st domain.Settings) {
 		ToolNames: []string{
 			"read_file", "write_file", "edit_file", "bash", "save_app",
 			askuser.ToolName, taskplan.ToolName, task.ToolName,
-			"mcp_router",
+			"mcp_router", hooks.CompactTool,
 		},
 	})
 }
@@ -209,15 +234,73 @@ func matchRuleList(list []string, ruleTool string, args json.RawMessage) bool {
 	return false
 }
 
-/* systemPrompt 组装系统提示（长期记忆由 memory hook 每轮注入）。 */
-func systemPrompt(st domain.Settings) string {
-	p := "你是 ezharness——一个持续陪伴用户的设备级 agent，可全权操作本机文件与命令。" +
+/*
+buildSystemBase 组装 session 的 system 基础段：人格 + SystemExtra +
+长期记忆 + skill 列表 + MCP 列表。只在 session 创建时调用一次——
+skill 全文与记忆细节不注入（模型按需用文件工具读取），列表变更
+（新增 skill/mcp 等）要等下个 session 才进 system，过渡期靠
+agent_status 状态栏告知模型。
+*/
+func buildSystemBase(ctx context.Context, st domain.Settings, fsys osfs.OS) string {
+	var b strings.Builder
+	b.WriteString("你是 ezharness——一个持续陪伴用户的设备级 agent，可全权操作本机文件与命令。" +
 		"能用工具就用工具，回答简洁。可并行的子任务用 task 分身去做。" +
 		"用户需要小工具或网页时用 save_app 生成为快应用，用户可一键启动。" +
 		"重要的用户偏好与事实可写入 memory/longterm/harness.md 长期记住，" +
-		"更多记忆细节用 findstr/grep 在 memory/longterm/ 下检索。"
+		"更多记忆细节用 findstr/grep 在 memory/longterm/ 下检索。")
 	if st.SystemExtra != "" {
-		p += "\n\n" + st.SystemExtra
+		b.WriteString("\n\n" + st.SystemExtra)
 	}
-	return p
+	if data, err := fsys.Read(ctx, hooks.HarnessMd); err == nil && len(strings.TrimSpace(string(data))) > 0 {
+		b.WriteString("\n\n# 长期记忆\n（索引随会话加载；用文件工具更新 memory/longterm/harness.md，其余记忆文件可 grep 检索）\n")
+		b.Write(data)
+	}
+	if skills, err := skill.LoadDir(ctx, fsys, hooks.SkillsDir); err == nil && len(skills) > 0 {
+		b.WriteString("\n\n# 可用技能\n（全文见 memory/skills/<同名>.md，需要时用 read_file 读取）")
+		for _, sk := range skills {
+			fmt.Fprintf(&b, "\n- %s: %s", sk.Name, sk.Description)
+		}
+	}
+	if lines := mcpListLines(fsys); len(lines) > 0 {
+		b.WriteString("\n\n# MCP 服务\n（经 mcp_router 工具调用，先用 mcp_list/tool_list 发现服务与工具）")
+		for _, l := range lines {
+			b.WriteString("\n" + l)
+		}
+	}
+	return b.String()
+}
+
+/* mcpListLines 返回启用 server 的"名: 描述"清单。 */
+func mcpListLines(fsys osfs.OS) []string {
+	f := loadMcpFileOrNil(fsys)
+	if f == nil {
+		return nil
+	}
+	var out []string
+	for _, srv := range f.Servers {
+		if srv.IsEnabled() {
+			out = append(out, "- "+srv.Name+": "+srv.Description)
+		}
+	}
+	return out
+}
+
+/* mcpStatusList 返回状态栏 MCP 清单（描述前 8 字）。 */
+func mcpStatusList(fsys osfs.OS) []hooks.StatusMcp {
+	f := loadMcpFileOrNil(fsys)
+	if f == nil {
+		return nil
+	}
+	out := make([]hooks.StatusMcp, 0, len(f.Servers))
+	for _, srv := range f.Servers {
+		if !srv.IsEnabled() {
+			continue
+		}
+		desc := []rune(srv.Description)
+		if len(desc) > 8 {
+			desc = desc[:8]
+		}
+		out = append(out, hooks.StatusMcp{Name: srv.Name, Desc: string(desc)})
+	}
+	return out
 }

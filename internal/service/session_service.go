@@ -35,19 +35,21 @@ type BootstrapData struct {
 func (s *SessionService) Bootstrap() BootstrapData {
 	sess := s.Hub.Active
 	st := s.Hub.SettingsSnapshot()
+	p := st.CompactThreshold
 	return BootstrapData{
-		SessionID: sess.ID,
-		Settings:  SettingsView{SystemExtra: st.SystemExtra},
-		Status:    s.Snapshot(),
+		SessionID:    sess.ID,
+		Settings:     SettingsView{SystemExtra: st.SystemExtra, CompactThreshold: &p},
+		Status:       s.Snapshot(),
 		MemoryExists: memoryExists(s.Hub.Fsys),
 	}
 }
 
 /* HistoryData 是历史响应。 */
 type HistoryData struct {
-	ID       string          `json:"id"`
-	Busy     bool            `json:"busy"`
-	Messages []types.Message `json:"messages"`
+	ID          string          `json:"id"`
+	Busy        bool            `json:"busy"`
+	Messages    []types.Message `json:"messages"`
+	PrevSession string          `json:"prevSession,omitempty"` // compact 链上一会话（懒加载用）
 }
 
 /* Status 是右栏生命体征数据。 */
@@ -102,7 +104,43 @@ func (s *SessionService) Snapshot() Status {
 /* History 返回活动会话历史。 */
 func (s *SessionService) History() HistoryData {
 	sess := s.Hub.Active
-	return HistoryData{ID: sess.ID, Busy: sess.Busy(), Messages: sess.History()}
+	return HistoryData{ID: sess.ID, Busy: sess.Busy(), Messages: sess.History(), PrevSession: sess.Sess.PrevID()}
+}
+
+/* PrevData 是懒加载上一会话响应。 */
+type PrevData struct {
+	ID          string          `json:"id"`
+	Title       string          `json:"title,omitempty"`
+	Summary     string          `json:"summary,omitempty"`
+	Messages    []types.Message `json:"messages"`
+	PrevSession string          `json:"prevSession,omitempty"` // 再上一级 ID（非空可继续上翻）
+}
+
+/*
+Prev 沿 compact 链取 id 的上一会话内容（向上滚动懒加载）。id 允许
+链上任一会话（读归档只读安全）；无上一级返回 ok=false。
+*/
+func (s *SessionService) Prev(ctx context.Context, id string) (*PrevData, bool, error) {
+	cur, err := hooks.LoadSnap(ctx, s.Hub.Fsys, id)
+	if err != nil {
+		return nil, false, err
+	}
+	if cur.PrevSession == "" {
+		return nil, false, nil
+	}
+	prev, err := hooks.LoadSnap(ctx, s.Hub.Fsys, cur.PrevSession)
+	if err != nil {
+		return nil, false, err
+	}
+	title, summary := "", prev.CompactSummary
+	for _, e := range s.Hub.Topics.Load() {
+		if e.ID == cur.PrevSession {
+			title, summary = e.Title, e.Summary
+			break
+		}
+	}
+	return &PrevData{ID: prev.ID, Title: title, Summary: summary,
+		Messages: prev.Messages, PrevSession: prev.PrevSession}, true, nil
 }
 
 /* Summarize 生成当前会话摘要（模型调用）。 */

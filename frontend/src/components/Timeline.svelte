@@ -5,6 +5,7 @@
   import ToolBlock from './ToolBlock.svelte'
   import ForkCard from './ForkCard.svelte'
   import DecisionCard from './DecisionCard.svelte'
+  import StatusTagCard from './StatusTagCard.svelte'
 
   let el: HTMLDivElement
   let stick = true
@@ -12,6 +13,13 @@
   function onScroll() {
     if (!el) return
     stick = el.scrollHeight - el.scrollTop - el.clientHeight < 120
+    // 滚顶：懒加载 compact 链上一会话，加载后保持视口位置不跳
+    if (el.scrollTop < 40 && store.hasPrev && !store.loadingPrev) {
+      const prevHeight = el.scrollHeight
+      void store.loadPrev().then(() => {
+        if (el) el.scrollTop = el.scrollHeight - prevHeight
+      })
+    }
   }
 
   $effect(() => {
@@ -22,7 +30,7 @@
 
 <div class="timeline" bind:this={el} onscroll={onScroll}>
   <div class="inner">
-    {#each store.blocks as b, i (i)}
+    {#each store.blocks as b (b.uid)}
       {#if b.kind === 'user'}
         <MessageItem text={b.text} role="user" />
       {:else if b.kind === 'assistant'}
@@ -35,6 +43,8 @@
         <div id={`decision-${b.id}`}>
           <DecisionCard data={b} />
         </div>
+      {:else if b.kind === 'status'}
+        <StatusTagCard data={b.data} raw={b.text} />
       {:else if b.kind === 'note'}
         <div class="note">
           <span class="line"></span>
@@ -65,10 +75,15 @@
     display: flex;
     flex-direction: column;
     gap: 20px;
+    min-height: 100%; /* 空状态时也撑满可视区，使欢迎语垂直居中 */
   }
   .empty {
-    padding: 120px 0;
-    text-align: center;
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding-bottom: 80px; /* 补偿下方输入框高度，视觉重心略上提 */
     color: var(--muted);
   }
   .mark {

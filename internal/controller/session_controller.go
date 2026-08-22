@@ -35,6 +35,20 @@ func (c *SessionController) History(g *gin.Context) {
 	g.JSON(http.StatusOK, c.Svc.History())
 }
 
+/* Prev GET /api/sessions/:id/prev（compact 链上一会话，无上级 204）。 */
+func (c *SessionController) Prev(g *gin.Context) {
+	d, ok, err := c.Svc.Prev(g.Request.Context(), g.Param("id"))
+	if err != nil {
+		g.JSON(http.StatusNotFound, gin.H{"error": "session not found"})
+		return
+	}
+	if !ok {
+		g.Status(http.StatusNoContent)
+		return
+	}
+	g.JSON(http.StatusOK, d)
+}
+
 /* Summary POST /api/sessions/:id/summary。 */
 func (c *SessionController) Summary(g *gin.Context) {
 	text, err := c.Svc.Summarize(g.Request.Context())

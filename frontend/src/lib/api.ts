@@ -17,6 +17,22 @@ export interface SseEvent {
   data?: any
 }
 
+export interface StatusMcp {
+  name: string
+  desc?: string
+}
+
+/* agent_status 状态栏载荷（后端 hooks.StatusData 的 JSON 形状） */
+export interface StatusPayload {
+  now: string
+  sinceLastOutputMin: number
+  ctxTokens: number
+  ctxWindow: number
+  suggestCompact: boolean
+  mcp: StatusMcp[]
+  changes?: string[]
+}
+
 export interface AppEntry {
   name: string
   title: string
@@ -71,6 +87,7 @@ export interface AppConfig {
 
 export interface Settings {
   systemExtra: string
+  compactThreshold?: number | null
 }
 
 export interface ModelEntry {
@@ -158,6 +175,8 @@ export interface MemoryTopicEntry {
   summary: string
   createdAt: number
   msgs: number
+  path?: string
+  kind?: string
 }
 export interface MemoryConfig {
   longterm: { dir: string; harnessMd: MemoryFileInfo | null; files: MemoryFileInfo[] }
@@ -179,7 +198,19 @@ export const api = {
 
   getHistory: (id: string) =>
     fetch(`/api/sessions/${id}`).then(
-      json<{ id: string; busy: boolean; messages: HistoryMessage[] }>,
+      json<{ id: string; busy: boolean; messages: HistoryMessage[]; prevSession?: string }>,
+    ),
+
+  /* compact 链上一会话（懒加载）；无上级返回 null */
+  getPrev: (id: string) =>
+    fetch(`/api/sessions/${id}/prev`).then(async (r) =>
+      r.status === 204 ? null : ((await r.json()) as {
+        id: string
+        title?: string
+        summary?: string
+        messages: HistoryMessage[]
+        prevSession?: string
+      }),
     ),
 
   send: (id: string, text: string) => post<{ ok: boolean }>(`/api/sessions/${id}/messages`, { text }),

@@ -8,7 +8,6 @@ import (
 	"testing"
 
 	"github.com/xuanlv2002/ezloop/ext/fs"
-	"github.com/xuanlv2002/ezloop/ext/hook/localsession"
 	ezhook "github.com/xuanlv2002/ezloop/hook"
 	"github.com/xuanlv2002/ezloop/types"
 )
@@ -49,29 +48,39 @@ func (f fakeProvider) Invoke(_ context.Context, req *types.ModelRequest) (*types
 }
 
 func newTestState(msgs []types.Message) *types.LoopState {
-	return &types.LoopState{Messages: msgs, Tools: types.NewToolRegistry()}
+	return &types.LoopState{Messages: msgs, Tools: types.NewToolRegistry(), Metadata: map[string]any{}}
 }
 
-func TestRotateTruncationKeepsProtocol(t *testing.T) {
-	fsys := memFS{}
-	sess := localsession.New(fsys, "old-session")
+func newCompactForTest(fsys memFS, reply string) (*Compact, *Store, *SysPrompt, *Topics) {
+	store := NewStore(fsys, "old-session")
+	sys := NewSysPrompt("base prompt", "")
 	topics := NewTopics(fsys)
-	r := NewRotate(fakeProvider{"这是一份交接摘要"}, fsys, sess, topics, 0, nil)
+	trace := NewTrace(fsys, store, nil)
+	store.BindSys(sys, "fake")
+	c := NewCompact(fakeProvider{reply}, fsys, store, sys, topics, trace, 0,
+		func() string { return "rebuilt base" }, nil)
+	return c, store, sys, topics
+}
+
+func TestCompactTruncationKeepsProtocol(t *testing.T) {
+	fsys := memFS{}
+	c, store, sys, topics := newCompactForTest(fsys, "这是一份交接摘要")
 
 	state := newTestState([]types.Message{
+		{Role: types.RoleSystem, Content: "base prompt"},
 		{Role: types.RoleUser, Content: "聊聊 Go 并发"},
 		{Role: types.RoleAssistant, Content: "goroutine 是…"},
 		{Role: types.RoleUser, Content: "换个话题，聊聊数据库"},
 		{
 			Role: types.RoleAssistant,
 			ToolCalls: []types.ToolCall{
-				{ID: "call-1", Name: RotateTool, Args: []byte(`{"reason":"用户换话题"}`)},
+				{ID: "call-1", Name: CompactTool, Args: []byte(`{"reason":"用户换话题"}`)},
 			},
 		},
 	})
 
-	action, err := r.OnToolStart(context.Background(), state, &types.ToolCall{
-		ID: "call-1", Name: RotateTool, Args: []byte(`{"reason":"用户换话题"}`),
+	action, err := c.OnToolStart(context.Background(), state, &types.ToolCall{
+		ID: "call-1", Name: CompactTool, Args: []byte(`{"reason":"用户换话题"}`),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -80,43 +89,96 @@ func TestRotateTruncationKeepsProtocol(t *testing.T) {
 		t.Fatalf("expect skip, got %v", action.Kind)
 	}
 
-	// 截断协议：2 条 = [交接摘要, 原末条 assistant(tool_calls)]
-	if len(state.Messages) != 2 {
-		t.Fatalf("expect 2 messages after rotate, got %d", len(state.Messages))
+	// 截断协议：3 条 = [新 system(含摘要), handover, 原末条 assistant(tool_calls)]
+	if len(state.Messages) != 3 {
+		t.Fatalf("expect 3 messages after compact, got %d", len(state.Messages))
 	}
-	if state.Messages[0].Role != types.RoleAssistant || state.Messages[0].Content == "" {
-		t.Fatal("first message should be handover summary")
+	if state.Messages[0].Role != types.RoleSystem ||
+		!strings.Contains(state.Messages[0].Content, "这是一份交接摘要") ||
+		!strings.Contains(state.Messages[0].Content, "sessions/old-session") {
+		t.Fatalf("new system must contain summary and prev path: %q", state.Messages[0].Content)
 	}
-	last := state.Messages[1]
+	if state.Messages[1].Role != types.RoleAssistant {
+		t.Fatal("second message should be handover")
+	}
+	last := state.Messages[2]
 	if last.Role != types.RoleAssistant || len(last.ToolCalls) != 1 || last.ToolCalls[0].ID != "call-1" {
 		t.Fatal("last message must keep the tool_calls pairing")
 	}
 
-	// session 已切换
-	if sess.ID() == "old-session" || sess.ID() == "" {
-		t.Fatalf("session id should rotate, got %q", sess.ID())
+	// session 已切换；SysPrompt 已重组（rebuildBase + 摘要段）
+	if store.ID() == "old-session" || store.ID() == "" {
+		t.Fatalf("session id should switch, got %q", store.ID())
+	}
+	base, summary := sys.Parts()
+	if base != "rebuilt base" || !strings.Contains(summary, "这是一份交接摘要") {
+		t.Fatalf("sysprompt should be rebuilt, got base=%q summary=%q", base, summary)
 	}
 
-	// 索引落盘：旧话题入档
+	// 索引落盘：旧话题入档（含 Path/Kind）
 	list := topics.Load()
 	if len(list) != 1 || list[0].ID != "old-session" || list[0].Title != "聊聊 Go 并发" {
 		t.Fatalf("topic index wrong: %+v", list)
 	}
+	if list[0].Path != "sessions/old-session" || list[0].Kind != "compact" {
+		t.Fatalf("topic path/kind wrong: %+v", list[0])
+	}
 }
 
-func TestRotateForkRejected(t *testing.T) {
+func TestCompactForkInPlace(t *testing.T) {
 	fsys := memFS{}
-	r := NewRotate(fakeProvider{}, fsys, localsession.New(fsys, "s"), NewTopics(fsys), 0, nil)
-	state := newTestState([]types.Message{{Role: types.RoleUser, Content: "x"}})
+	c, _, sys, _ := newCompactForTest(fsys, "fork 摘要")
+
+	state := newTestState([]types.Message{
+		{Role: types.RoleSystem, Content: "seed system"},
+		{Role: types.RoleUser, Content: "主上下文"},
+		{Role: types.RoleUser, Content: "分身任务指令"},
+		{Role: types.RoleAssistant, Content: "分身过程…"},
+	})
 	state.ForkID = "task-1"
-	action, err := r.OnToolStart(context.Background(), state, &types.ToolCall{
-		ID: "c", Name: RotateTool,
+	state.SeedLen = 2
+
+	action, err := c.OnToolStart(context.Background(), state, &types.ToolCall{
+		ID: "c", Name: CompactTool,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if action.Kind != ezhook.KindSkip {
-		t.Fatal("fork rotate must be skipped")
+		t.Fatal("fork compact must be handled via skip")
+	}
+
+	// 就地截断：[system(含摘要), handover, 原末条]，SeedLen 重置
+	if len(state.Messages) != 3 {
+		t.Fatalf("expect 3 messages, got %d", len(state.Messages))
+	}
+	if !strings.Contains(state.Messages[0].Content, "fork 摘要") {
+		t.Fatal("fork system must contain summary")
+	}
+	if state.SeedLen != 1 {
+		t.Fatalf("SeedLen must reset to 1, got %d", state.SeedLen)
+	}
+	// 主会话 SysPrompt 不受 fork 压缩影响
+	if _, summary := sys.Parts(); summary != "" {
+		t.Fatal("main sysprompt must be untouched by fork compact")
+	}
+}
+
+func TestKeepTail(t *testing.T) {
+	msgs := []types.Message{
+		{Role: types.RoleUser, Content: "q"},
+		{Role: types.RoleAssistant, ToolCalls: []types.ToolCall{{ID: "1"}}},
+		{Role: types.RoleTool, ToolCallID: "1"},
+	}
+	// 工具路径：末条 assistant(tool_calls) 保留
+	tail := keepTail([]types.Message{msgs[0], msgs[1]}, false)
+	if len(tail) != 1 || tail[0].Role != types.RoleAssistant {
+		t.Fatalf("tool path tail wrong: %+v", tail)
+	}
+	// 轮末路径：孤儿 tool 尾巴回退到最近的非 tool 条
+	tail = keepTail(msgs, true)
+	if len(tail) != 1 || tail[0].Role != types.RoleAssistant {
+		t.Fatalf("auto path must drop orphan tool tail: %+v", tail)
 	}
 }
 
@@ -135,20 +197,16 @@ func TestTopicsMatch(t *testing.T) {
 	}
 }
 
-func TestMemoryInject(t *testing.T) {
-	fsys := memFS{MemoryFile: []byte("用户偏好简洁回答")}
-	m := NewMemory(fsys)
-	state := newTestState([]types.Message{
-		{Role: types.RoleSystem, Content: "base prompt"},
-		{Role: types.RoleUser, Content: "hi"},
-	})
-	if err := m.OnStart(context.Background(), state); err != nil {
+func TestSysPromptSingleSystem(t *testing.T) {
+	sys := NewSysPrompt("base", "summary")
+	state := newTestState([]types.Message{{Role: types.RoleUser, Content: "hi"}})
+	if err := sys.OnStart(context.Background(), state); err != nil {
 		t.Fatal(err)
 	}
 	if len(state.Messages) != 2 || state.Messages[0].Role != types.RoleSystem {
-		t.Fatal("memory must keep single system message")
+		t.Fatal("sysprompt must prepend single system message")
 	}
-	if state.Messages[0].Content != "base prompt\n\n# 长期记忆（索引随上下文加载，可用文件工具更新 memory/longterm/harness.md；其余记忆文件可用 grep 检索）\n用户偏好简洁回答" {
-		t.Fatalf("injected content wrong: %q", state.Messages[0].Content)
+	if state.Messages[0].Content != "base\n\nsummary" {
+		t.Fatalf("render wrong: %q", state.Messages[0].Content)
 	}
 }

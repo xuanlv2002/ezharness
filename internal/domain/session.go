@@ -10,14 +10,13 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
-	"strings"
+	"sort"
 	"sync"
 
 	"github.com/xuanlv2002/ezloop/core"
 	"github.com/xuanlv2002/ezloop/event"
 	"github.com/xuanlv2002/ezloop/ext/hook/approve"
 	"github.com/xuanlv2002/ezloop/ext/hook/askuser"
-	"github.com/xuanlv2002/ezloop/ext/hook/localsession"
 	"github.com/xuanlv2002/ezloop/ext/hook/taskplan"
 	"github.com/xuanlv2002/ezloop/types"
 
@@ -54,9 +53,9 @@ type ModelProvider interface {
 
 /* Session 是会话聚合：history、当前轮、SSE 订阅、未决请求。 */
 type Session struct {
-	ID    string
-	Fsys  osfs.OS
-	Sess  *localsession.Hook
+	ID     string
+	Fsys   osfs.OS
+	Sess   *hooks.Store
 	Topics *hooks.Topics
 
 	mu        sync.Mutex
@@ -66,6 +65,8 @@ type Session struct {
 	pending   map[string]Event
 	ctxTokens int
 	wired     *Wiring
+	snap      *hooks.SessionSnap // bootstrap 恢复的快照（Assemble 读取；nil = 新建）
+	sysP      *hooks.SysPrompt   // system 来源（Assemble 创建；resume/compact 热更）
 }
 
 /* Attach 注入装配产物（service 层构造，领域持有引用）。 */
@@ -122,11 +123,32 @@ func (s *Session) SetCtxTokens(n int) {
 	s.mu.Unlock()
 }
 
-/* SetIdentity 同步会话标识（话题轮换后）。 */
+/* SetIdentity 同步会话标识（话题轮换/compact 后）。 */
 func (s *Session) SetIdentity(id string) {
 	s.mu.Lock()
 	s.ID = id
 	s.mu.Unlock()
+}
+
+/* SetSysP 记录 system 来源（Assemble 注入；空闲期调用）。 */
+func (s *Session) SetSysP(sys *hooks.SysPrompt) {
+	s.mu.Lock()
+	s.sysP = sys
+	s.mu.Unlock()
+}
+
+/* SysPromptRef 返回 system 来源（nil 表示尚未组装）。 */
+func (s *Session) SysPromptRef() *hooks.SysPrompt {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.sysP
+}
+
+/* Snapshot 返回 bootstrap 恢复的快照（nil = 新建会话）。 */
+func (s *Session) Snapshot() *hooks.SessionSnap {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.snap
 }
 
 /* StartRun 占用当前轮并返回运行上下文（busy 时返回 ErrBusy）。 */
@@ -335,37 +357,51 @@ func ensureSettings(fsys osfs.OS) Settings {
 	return LoadSettings(fsys)
 }
 
-/* bootstrap 恢复最近修改的存档，没有则新建。 */
+/*
+bootstrap 恢复最近修改且未封存的存档，没有则新建。旧版平铺
+sessions/<id>.json 不在候选内（ListMain 只认目录项），共存不崩。
+恢复的 systemPrompt 不重新组装：快照里的 base/summary 直接注入
+SysPrompt，记忆/skill/mcp 变更等到下个 session 才生效。
+*/
 func (h *Hub) bootstrap() *Session {
-	ids, _ := localsession.List(context.Background(), h.Fsys, "")
-	latest, latestMt := "", int64(-1)
+	ctx := context.Background()
+	ids, _ := hooks.ListMain(ctx, h.Fsys)
+	type cand struct {
+		id string
+		mt int64
+	}
+	cands := make([]cand, 0, len(ids))
 	for _, id := range ids {
-		if strings.Contains(id, "-task-") {
-			continue // fork 分流文件不作恢复候选
-		}
-		if fi, err := os.Stat(filepath.Join("sessions", id+".json")); err == nil && fi.ModTime().UnixMilli() > latestMt {
-			latest, latestMt = id, fi.ModTime().UnixMilli()
+		if fi, err := os.Stat(filepath.Join(hooks.SessionsDir, id, "session.json")); err == nil {
+			cands = append(cands, cand{id, fi.ModTime().UnixMilli()})
 		}
 	}
-	if latest != "" {
-		s := h.newSession(latest)
-		if msgs, err := localsession.Load(context.Background(), h.Fsys, "", latest); err == nil {
-			s.setHistory(msgs.Messages)
+	sort.Slice(cands, func(i, j int) bool { return cands[i].mt > cands[j].mt })
+	for _, c := range cands {
+		snap, err := hooks.LoadSnap(ctx, h.Fsys, c.id)
+		if err != nil || snap.Archived {
+			continue
 		}
+		s := h.newSession(c.id, snap)
+		s.setHistory(snap.Messages)
+		s.Sess.SetResSnap(snap.Snapshot)
+		s.Sess.SetLastOutputAt(snap.LastOutputAt)
 		return s
 	}
-	return h.newSession(localsession.NewID())
+	return h.newSession(hooks.NewSessionID(), nil)
 }
 
-func (h *Hub) newSession(id string) *Session {
-	return &Session{
-		ID:      id,
-		Fsys:    h.Fsys,
-		Sess:    localsession.New(h.Fsys, id),
-		Topics:  h.Topics,
-		subs:    map[chan []byte]struct{}{},
+func (h *Hub) newSession(id string, snap *hooks.SessionSnap) *Session {
+	s := &Session{
+		ID:     id,
+		Fsys:   h.Fsys,
+		Sess:   hooks.NewStore(h.Fsys, id),
+		Topics: h.Topics,
+		snap:   snap,
+		subs:   map[chan []byte]struct{}{},
 		pending: map[string]Event{},
 	}
+	return s
 }
 
 /* ModelsSnapshot 返回当前模型四槽。 */

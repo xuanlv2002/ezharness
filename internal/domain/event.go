@@ -105,8 +105,10 @@ func MapEvent(e event.Event) Event {
 			}
 			out.Data = raw(d)
 		}
-	case hooks.EventRotate:
-		out.Data = raw(e.Data) // RotateInfo 原样透传
+	case hooks.EventCompact:
+		out.Data = raw(e.Data) // CompactInfo 原样透传
+	case hooks.EventStatus:
+		out.Data = raw(e.Data) // StatusData 原样透传
 	case "task.start", "task.end":
 		mapTaskEvent(&out, e)
 	default:

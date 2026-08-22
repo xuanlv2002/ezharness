@@ -7,6 +7,7 @@ import {
   type Settings,
   type SseEvent,
   type Status,
+  type StatusPayload,
 } from './api'
 
 export interface ToolBlockData {
@@ -54,13 +55,15 @@ export interface NoticeData {
   target: string // 时间线跳转锚点（decision-<id>）
 }
 
-export type Block =
+export type Block = { uid: number } & (
   | { kind: 'user'; text: string }
   | { kind: 'assistant'; text: string; reasoning: string; streaming: boolean }
   | { kind: 'tool' } & ToolBlockData
   | { kind: 'fork'; forkId: string }
   | { kind: 'decision' } & DecisionData
   | { kind: 'note'; text: string }
+  | { kind: 'status'; text: string; data: StatusPayload | null }
+)
 
 export interface TotalUsage {
   prompt: number
@@ -70,6 +73,21 @@ export interface TotalUsage {
 
 function nowHM(): string {
   return new Date().toTimeString().slice(0, 5)
+}
+
+/* 解析 <agent_status> 载荷（非状态记录返回 null） */
+function parseStatus(content: string): StatusPayload | null {
+  const open = '<agent_status>'
+  const close = '</agent_status>'
+  const i = content.indexOf(open)
+  if (i < 0) return null
+  const j = content.indexOf(close, i)
+  if (j < 0) return null
+  try {
+    return JSON.parse(content.slice(i + open.length, j).trim())
+  } catch {
+    return null
+  }
 }
 
 class AppStore {
@@ -86,7 +104,17 @@ class AppStore {
   settings = $state<Settings | null>(null)
   total = $state<TotalUsage>({ prompt: 0, completion: 0, cached: 0 })
 
+  /* 懒加载：compact 链上是否还有旧会话可翻、是否正在加载 */
+  hasPrev = $state(false)
+  loadingPrev = $state(false)
+  private prevCursor = '' // 已翻到的会话 ID（沿 prevSession 链继续上翻）
+
   private unsub: (() => void) | null = null
+  private uidSeq = 0
+
+  private nuid(): number {
+    return ++this.uidSeq
+  }
 
   /* ── 启动 ── */
 
@@ -121,27 +149,67 @@ class AppStore {
     this.lastStatus = ''
     try {
       const s = await api.getHistory(this.activeId)
-      this.rebuild(s.messages)
+      this.blocks = this.buildBlocks(s.messages)
       this.busy = s.busy
+      this.prevCursor = this.activeId
+      this.hasPrev = !!s.prevSession
     } catch {
       /* 网络异常时保底空时间线 */
     }
   }
 
+  /* 懒加载：沿 compact 链向上翻上一会话，头部插入并保持滚动位置 */
+  async loadPrev() {
+    if (!this.prevCursor || this.loadingPrev) return
+    this.loadingPrev = true
+    try {
+      const res = await api.getPrev(this.prevCursor)
+      if (!res) {
+        this.hasPrev = false
+      } else {
+        const prevBlocks = this.buildBlocks(res.messages)
+        const note: Block = {
+          kind: 'note',
+          uid: this.nuid(),
+          text: `⇩ 以上为当前会话，以下为压缩前会话${res.title ? `：${res.title}` : ''}`,
+        }
+        this.blocks = [...prevBlocks, note, ...this.blocks]
+        this.prevCursor = res.prevSession || ''
+        this.hasPrev = !!res.prevSession
+      }
+    } catch {
+      this.hasPrev = false
+    } finally {
+      this.loadingPrev = false
+    }
+  }
+
   /* 历史重建：user/assistant/tool 消息序列，tool_calls 展开为工具块 */
-  private rebuild(messages: HistoryMessage[]) {
+  private buildBlocks(messages: HistoryMessage[]): Block[] {
     const out: Block[] = []
     for (const m of messages) {
       if (m.role === 'user') {
-        out.push({ kind: 'user', text: m.content })
+        const d = parseStatus(m.content)
+        if (d) {
+          out.push({ kind: 'status', uid: this.nuid(), text: m.content, data: d })
+        } else {
+          out.push({ kind: 'user', uid: this.nuid(), text: m.content })
+        }
       } else if (m.role === 'assistant') {
         if (m.content || m.reasoning) {
-          out.push({ kind: 'assistant', text: m.content, reasoning: m.reasoning || '', streaming: false })
+          out.push({
+            kind: 'assistant',
+            uid: this.nuid(),
+            text: m.content,
+            reasoning: m.reasoning || '',
+            streaming: false,
+          })
         }
         // 展开工具调用：名称与参数来自 tool_calls（Args 序列化后是嵌套对象，非字符串）
         for (const tc of m.tool_calls || []) {
           out.push({
             kind: 'tool',
+            uid: this.nuid(),
             id: tc.ID || '',
             name: tc.Name || '',
             args: typeof tc.Args === 'string' ? tc.Args : JSON.stringify(tc.Args ?? ''),
@@ -159,6 +227,7 @@ class AppStore {
         } else {
           out.push({
             kind: 'tool',
+            uid: this.nuid(),
             id: m.tool_call_id || '',
             name: '',
             args: '',
@@ -169,14 +238,14 @@ class AppStore {
         }
       }
     }
-    this.blocks = out
+    return out
   }
 
   /* ── 发送 / 取消 ── */
 
   async send(text: string) {
     if (!this.activeId || !text.trim()) return
-    this.blocks.push({ kind: 'user', text })
+    this.blocks.push({ kind: 'user', uid: this.nuid(), text })
     this.busy = true
     this.lastStatus = ''
     try {
@@ -197,7 +266,7 @@ class AppStore {
     this.lastStatus = '摘要中…'
     try {
       const { text } = await api.summarize(this.activeId)
-      this.blocks.push({ kind: 'assistant', text: `📝 ${text}`, reasoning: '', streaming: false })
+      this.blocks.push({ kind: 'assistant', uid: this.nuid(), text: `📝 ${text}`, reasoning: '', streaming: false })
     } catch (e) {
       this.lastStatus = `摘要失败：${(e as Error).message}`
     }
@@ -218,7 +287,7 @@ class AppStore {
       this.activeId = r.id
       await this.loadHistory()
       this.resubscribe()
-      this.blocks.push({ kind: 'note', text: '⟲ 已回到该话题继续' })
+      this.blocks.push({ kind: 'note', uid: this.nuid(), text: '⟲ 已回到该话题继续' })
       await this.refreshStatus()
     } catch (e) {
       this.lastStatus = `回到话题失败：${(e as Error).message}`
@@ -303,7 +372,7 @@ class AppStore {
         if (ev.forkId) {
           this.forks[ev.forkId]?.tools.push(tool)
         } else {
-          this.blocks.push({ kind: 'tool', ...tool })
+          this.blocks.push({ kind: 'tool', uid: this.nuid(), ...tool })
         }
         break
       }
@@ -341,7 +410,7 @@ class AppStore {
           stopReason: '',
           collapsed: false,
         }
-        this.blocks.push({ kind: 'fork', forkId: fid })
+        this.blocks.push({ kind: 'fork', uid: this.nuid(), forkId: fid })
         break
       }
       case 'task.end': {
@@ -377,6 +446,7 @@ class AppStore {
           ev.type === 'approve.request' ? 'approve' : ev.type === 'askuser.request' ? 'ask' : 'plan'
         this.blocks.push({
           kind: 'decision',
+          uid: this.nuid(),
           id,
           dtype,
           name: d.name || '',
@@ -403,7 +473,37 @@ class AppStore {
       }
       case 'error': {
         const msg = typeof ev.data === 'string' ? ev.data : JSON.stringify(ev.data ?? '')
-        this.blocks.push({ kind: 'assistant', text: `⚠️ ${msg}`, reasoning: '', streaming: false })
+        this.blocks.push({ kind: 'assistant', uid: this.nuid(), text: `⚠️ ${msg}`, reasoning: '', streaming: false })
+        break
+      }
+      case 'status.snapshot': {
+        // 状态卡插到最后一个 user 块之前（send 已先本地 push user 块）
+        const block: Block = { kind: 'status', uid: this.nuid(), text: '', data: ev.data ?? null }
+        let idx = -1
+        for (let k = this.blocks.length - 1; k >= 0; k--) {
+          if (this.blocks[k].kind === 'user') {
+            idx = k
+            break
+          }
+        }
+        if (idx >= 0) this.blocks.splice(idx, 0, block)
+        else this.blocks.push(block)
+        break
+      }
+      case 'session.compact': {
+        // 压缩分隔线 + activeId 更新（SSE 绑 Session 对象无需重订阅，
+        // 但 GET /api/sessions/:id 校验活动 ID，必须本地换新）
+        const d = ev.data || {}
+        this.blocks.push({
+          kind: 'note',
+          uid: this.nuid(),
+          text: `⇪ 上下文已压缩归档：${d.title || ''}${d.auto ? '（自动）' : ''}`,
+        })
+        if (d.newId && d.newId !== this.activeId) {
+          this.activeId = d.newId
+          this.hasPrev = !!d.prevPath // 新会话可继续向上翻旧会话
+        }
+        void this.refreshStatus()
         break
       }
       case 'turn_end': {
@@ -437,7 +537,7 @@ class AppStore {
   private appendMain(delta: string, isContent: boolean) {
     let last = this.lastStreamingAssistant()
     if (!last) {
-      this.blocks.push({ kind: 'assistant', text: '', reasoning: '', streaming: true })
+      this.blocks.push({ kind: 'assistant', uid: this.nuid(), text: '', reasoning: '', streaming: true })
       last = this.blocks[this.blocks.length - 1] as Extract<Block, { kind: 'assistant' }>
     }
     if (isContent) last.text += delta

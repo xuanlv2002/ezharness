@@ -130,21 +130,35 @@
     min-height: 0;
     display: flex;
   }
-  /* 主列：聊天记录 + 输入框，在扣除右列后的空间居中 */
+  /* 主列：聊天记录 + 输入框。右侧悬浮列不占布局宽度，内容在整体
+  偏左的区域居中（留出右侧给悬浮卡，窄屏时允许少量重叠） */
   .main-col {
     flex: 1;
     min-width: 0;
     display: flex;
     flex-direction: column;
+    padding-right: 128px;
   }
-  /* 右侧列：状态卡 + 通知栏 */
+  /* 右侧悬浮列：状态卡 + 通知栏浮在内容之上。容器点击穿透，
+  卡片自身可交互；bottom 留出右下角 brand-foot 的位置 */
   .side {
-    flex: none;
+    position: absolute;
+    top: 16px;
+    right: 16px;
+    bottom: 30px;
     width: 232px;
+    z-index: 5;
     display: flex;
     flex-direction: column;
     gap: 10px;
-    padding: 16px 16px 16px 0;
+    pointer-events: none;
+  }
+  .chat > .side > :global(*) {
+    pointer-events: auto;
+    box-shadow: 0 4px 16px rgb(0 0 0 / 8%);
+  }
+  .side > :global(.panel) {
+    min-height: 0; /* 通知过多时收缩，列表内部滚动 */
   }
   .dropzone {
     position: absolute;
