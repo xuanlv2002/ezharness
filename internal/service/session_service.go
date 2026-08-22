@@ -37,7 +37,7 @@ func (s *SessionService) Bootstrap() BootstrapData {
 	st := s.Hub.SettingsSnapshot()
 	return BootstrapData{
 		SessionID: sess.ID,
-		Settings:  SettingsView{SystemExtra: st.SystemExtra, Shell: st.Shell},
+		Settings:  SettingsView{SystemExtra: st.SystemExtra},
 		Status:    s.Snapshot(),
 		MemoryExists: memoryExists(s.Hub.Fsys),
 	}

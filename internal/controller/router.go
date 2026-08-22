@@ -61,6 +61,9 @@ func NewRouter(c Controllers, dist fs.FS) *gin.Engine {
 
 		api.GET("/mcp", c.Mcp.List)
 		api.POST("/mcp", c.Mcp.Update)
+		api.POST("/mcp/connect", c.Mcp.Connect)
+		api.POST("/mcp/disconnect", c.Mcp.Disconnect)
+		api.POST("/mcp/call", c.Mcp.Call)
 
 		api.GET("/apps", c.Apps.List)
 

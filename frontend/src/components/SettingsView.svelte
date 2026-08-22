@@ -10,7 +10,7 @@
   let restartErr = $state('')
   let appChanged = $state(false)
 
-  let behavior = $state<Settings>({ systemExtra: '', shell: 'auto' })
+  let behavior = $state<Settings>({ systemExtra: '' })
   let savingBehavior = $state(false)
   let behaviorMsg = $state('')
   let showPaths = $state(false)
@@ -110,15 +110,6 @@
         <span class="saving">保存中…</span>
       {/if}
     </div>
-    <label class="field">
-      <span>Shell（bash 工具的执行器）</span>
-      <select bind:value={behavior.shell} onchange={() => void saveBehavior()}>
-        <option value="auto">auto（探测：bash → pwsh → cmd）</option>
-        <option value="bash">bash</option>
-        <option value="pwsh">pwsh / powershell</option>
-        <option value="cmd">cmd</option>
-      </select>
-    </label>
     <label class="field">
       <span>系统提示追加</span>
       <textarea

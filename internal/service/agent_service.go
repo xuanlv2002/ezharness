@@ -1,6 +1,7 @@
 /*
 AgentService 负责 agent 的装配与重建：provider、hooks、warp、工具集。
-工具集是 ezharness 的产品决策（read/write/edit/bash 四件，见 internal/tools）。
+文件与终端工具复用 ezloop 的 filetools hook（原生 shell，Windows 为 cmd，
+模型适配环境），ezharness 只增补 save_app。
 
 上下文机制保持最简（2026-08-22 用户定调）：只有对话与 session 存档，
 不做压缩/卸载/轮换等扩展——上下文体系由用户后续专门设计，
@@ -16,6 +17,7 @@ import (
 	"github.com/xuanlv2002/ezloop/core"
 	"github.com/xuanlv2002/ezloop/ext/hook/approve"
 	"github.com/xuanlv2002/ezloop/ext/hook/askuser"
+	"github.com/xuanlv2002/ezloop/ext/hook/filetools"
 	"github.com/xuanlv2002/ezloop/ext/hook/skill"
 	"github.com/xuanlv2002/ezloop/ext/hook/task"
 	"github.com/xuanlv2002/ezloop/ext/hook/taskplan"
@@ -62,8 +64,9 @@ func (a *AgentService) Assemble(s *domain.Session, st domain.Settings) {
 		core.WithSystemPrompt(systemPrompt(st)),
 		core.WithModelWarp(modelretry.Warp()),
 		core.WithToolWarp(limit.Warp(4), safetool.Warp()),
-		core.WithTools(tools.All(s.Fsys, st.Shell)...),
+		core.WithTools(tools.SaveApp(s.Fsys)...),
 		core.WithHooks(
+			filetools.New(s.Fsys),
 			skillHook,
 			hooks.NewMemory(s.Fsys),
 			approver,
@@ -101,9 +104,12 @@ func (a *AgentService) Reassemble(st domain.Settings) error {
 	return nil
 }
 
-/* needsApprove 按审批策略判定（安全页四档）。
+/*
+	needsApprove 按审批策略判定（安全页四档）。
+
 人机交互与内部工具恒免审；未知工具默认审批。运行时读设置快照，
-改策略即时生效（无需重建 agent）。 */
+改策略即时生效（无需重建 agent）。
+*/
 func (a *AgentService) needsApprove(c *types.ToolCall) bool {
 	switch c.Name {
 	case askuser.ToolName, taskplan.ToolName:
@@ -137,12 +143,15 @@ func (a *AgentService) needsApprove(c *types.ToolCall) bool {
 	return true
 }
 
-/* matchRuleList 判定工具调用是否命中名单：bash 匹配命令（相等或词边界前缀）、
-文件工具匹配路径前缀、mcp 匹配 server 或 server.tool。 */
+/*
+	matchRuleList 判定工具调用是否命中名单：bash 匹配命令（相等或词边界前缀）、
+
+文件工具匹配路径前缀、mcp 匹配 server 或 server.tool。
+*/
 func matchRuleList(list []string, ruleTool string, args json.RawMessage) bool {
 	key := ""
 	switch ruleTool {
-	case "bash":
+	case "terminal":
 		var a struct {
 			Command string `json:"command"`
 		}
@@ -172,10 +181,10 @@ func matchRuleList(list []string, ruleTool string, args json.RawMessage) bool {
 		if key == e {
 			return true
 		}
-		if ruleTool == "bash" && strings.HasPrefix(key, e+" ") {
+		if ruleTool == "terminal" && strings.HasPrefix(key, e+" ") {
 			return true // 命令词边界
 		}
-		if ruleTool != "bash" && strings.HasPrefix(key, e) {
+		if ruleTool != "terminal" && strings.HasPrefix(key, e) {
 			return true // 路径 / server.tool 前缀
 		}
 	}
@@ -188,7 +197,7 @@ func systemPrompt(st domain.Settings) string {
 		"能用工具就用工具，回答简洁。可并行的子任务用 task 分身去做。" +
 		"用户需要小工具或网页时用 save_app 生成为快应用，用户可一键启动。" +
 		"重要的用户偏好与事实可写入 memory/longterm/harness.md 长期记住，" +
-		"更多记忆细节用 grep 在 memory/longterm/ 下检索。"
+		"更多记忆细节用 findstr/grep 在 memory/longterm/ 下检索。"
 	if st.SystemExtra != "" {
 		p += "\n\n" + st.SystemExtra
 	}

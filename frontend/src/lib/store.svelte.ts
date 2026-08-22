@@ -138,13 +138,13 @@ class AppStore {
         if (m.content || m.reasoning) {
           out.push({ kind: 'assistant', text: m.content, reasoning: m.reasoning || '', streaming: false })
         }
-        // 展开工具调用：名称与参数来自 tool_calls
+        // 展开工具调用：名称与参数来自 tool_calls（Args 序列化后是嵌套对象，非字符串）
         for (const tc of m.tool_calls || []) {
           out.push({
             kind: 'tool',
             id: tc.ID || '',
             name: tc.Name || '',
-            args: tc.Args || '',
+            args: typeof tc.Args === 'string' ? tc.Args : JSON.stringify(tc.Args ?? ''),
             result: '',
             err: '',
             state: 'done',

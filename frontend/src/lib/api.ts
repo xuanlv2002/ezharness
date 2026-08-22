@@ -4,7 +4,7 @@ export interface HistoryMessage {
   role: string
   content: string
   tool_call_id?: string
-  tool_calls?: { ID: string; Name: string; Args: string }[]
+  tool_calls?: { ID: string; Name: string; Args: string | Record<string, unknown> }[]
   err?: string
   reasoning?: string
 }
@@ -26,16 +26,25 @@ export interface AppEntry {
 
 export interface McpServerView {
   name: string
+  description: string
   transport: 'http' | 'stdio' | string
   endpoint: string
   enabled: boolean
   connected: boolean
   tools: number
+  headers: Record<string, string>
+}
+
+export interface McpToolView {
+  name: string
+  description: string
+  args_schema?: any
 }
 
 export interface McpFile {
   servers: {
     name: string
+    description?: string
     type: string
     url?: string
     headers?: Record<string, string>
@@ -61,7 +70,6 @@ export interface AppConfig {
 
 export interface Settings {
   systemExtra: string
-  shell?: string
 }
 
 export interface ModelEntry {
@@ -202,6 +210,13 @@ export const api = {
   getMcp: () => fetch('/api/mcp').then(json<{ servers: McpServerView[] }>),
 
   saveMcp: (f: McpFile) => post<{ ok: boolean }>('/api/mcp', f),
+
+  connectMcp: (name: string) => post<{ tools: McpToolView[] }>('/api/mcp/connect', { name }),
+
+  disconnectMcp: (name: string) => post<{ ok: boolean }>('/api/mcp/disconnect', { name }),
+
+  callMcp: (server: string, tool: string, args: unknown) =>
+    post<{ result: string }>('/api/mcp/call', { server, tool, args }),
 
   getModels: () => fetch('/api/models').then(json<ModelsConfig>),
 

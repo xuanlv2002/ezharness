@@ -26,22 +26,18 @@ type SettingsService struct {
 /* SettingsView 是设置页行为设置视图（模型归 /api/models）。 */
 type SettingsView struct {
 	SystemExtra string `json:"systemExtra"`
-	Shell       string `json:"shell"`
 }
 
 /* Get 返回当前行为设置。 */
 func (s *SettingsService) Get() SettingsView {
 	st := s.Hub.SettingsSnapshot()
-	return SettingsView{SystemExtra: st.SystemExtra, Shell: st.Shell}
+	return SettingsView{SystemExtra: st.SystemExtra}
 }
 
 /* Update 保存行为设置并重建 agent（busy 时拒绝）。 */
 func (s *SettingsService) Update(v SettingsView) error {
 	st := s.Hub.SettingsSnapshot()
 	st.SystemExtra = v.SystemExtra
-	if v.Shell != "" {
-		st.Shell = v.Shell
-	}
 	if err := domain.SaveSettings(s.Hub.Fsys, st); err != nil {
 		return err
 	}

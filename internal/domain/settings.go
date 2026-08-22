@@ -103,7 +103,6 @@ func (m ModelsConfig) ActiveMain() *ModelEntry {
 上下文机制（压缩/轮换/卸载）暂不装配——用户后续专门设计，字段不再保留。 */
 type Settings struct {
 	SystemExtra string     `json:"systemExtra"`
-	Shell       string     `json:"shell"` // "" / "auto" / "bash" / "pwsh" / "cmd"
 	ToolRules   []ToolRule `json:"toolRules"` // 审批策略（空 = 内置默认）
 }
 
@@ -130,7 +129,11 @@ func DefaultToolRules() []ToolRule {
 		{Tool: "read_file", Level: LevelAuto},
 		{Tool: "write_file", Level: LevelAsk},
 		{Tool: "edit_file", Level: LevelAsk},
-		{Tool: "bash", Level: LevelWhite, List: []string{"ls", "cat", "head", "tail", "pwd", "git status", "git diff", "git log", "go test"}},
+		{Tool: "terminal", Level: LevelWhite, List: []string{
+			"ls", "cat", "head", "tail", "pwd", // POSIX 只读
+			"dir", "type", "cd", "ver", // cmd 只读（Windows 原生 shell）
+			"git status", "git diff", "git log", "go test",
+		}},
 		{Tool: "task", Level: LevelAsk},
 		{Tool: "save_app", Level: LevelAsk},
 		{Tool: "mcp.*", Level: LevelAsk},
@@ -141,7 +144,6 @@ func DefaultToolRules() []ToolRule {
 func DefaultSettings() Settings {
 	return Settings{
 		SystemExtra: "",
-		Shell:       "auto",
 		ToolRules:   DefaultToolRules(),
 	}
 }
@@ -158,10 +160,12 @@ func LoadSettings(fsys fs.FileSystem) Settings {
 		return out
 	}
 	out.SystemExtra = s.SystemExtra
-	if s.Shell != "" {
-		out.Shell = s.Shell
-	}
 	if len(s.ToolRules) > 0 {
+		for i := range s.ToolRules {
+			if s.ToolRules[i].Tool == "bash" {
+				s.ToolRules[i].Tool = "terminal" // 旧存档里的工具名
+			}
+		}
 		out.ToolRules = s.ToolRules
 	}
 	return out
