@@ -1,18 +1,15 @@
 <script lang="ts">
   import { onMount } from 'svelte'
-  import { api, type AppConfig, type Settings } from '../lib/api'
+  import { api, type AppConfig } from '../lib/api'
 
-  /* 设置页 = 应用结构配置（服务端）+ Agent 行为 + 数据/配置文件路径。全部后端下发。 */
+  /* 设置页 = 应用结构配置（服务端）+ 数据/配置文件路径。全部后端下发。
+  Agent 行为（系统提示追加）暂移除——后端 /api/settings 仍在，恢复时接回即可。 */
   let cfg = $state<AppConfig | null>(null)
   let port = $state<number | ''>('')
   let dataDir = $state('')
   let restarting = $state(false)
   let restartErr = $state('')
   let appChanged = $state(false)
-
-  let behavior = $state<Settings>({ systemExtra: '' })
-  let savingBehavior = $state(false)
-  let behaviorMsg = $state('')
   let showPaths = $state(false)
 
   onMount(async () => {
@@ -23,11 +20,6 @@
       appChanged = false
     } catch {
       restartErr = '配置加载失败（后端不可达）'
-    }
-    try {
-      behavior = await api.getSettings()
-    } catch {
-      /* 行为设置加载失败不阻塞页面 */
     }
   })
 
@@ -63,20 +55,6 @@
       restarting = false
     }
   }
-
-  /* 行为设置自动保存：select 变更即存，textarea 失焦（change）即存。 */
-  async function saveBehavior() {
-    savingBehavior = true
-    behaviorMsg = ''
-    try {
-      await api.saveSettings(behavior)
-      behaviorMsg = '已保存，下一轮生效'
-    } catch (e) {
-      behaviorMsg = `保存失败：${(e as Error).message}`
-    } finally {
-      savingBehavior = false
-    }
-  }
 </script>
 
 <div class="page">
@@ -100,27 +78,6 @@
     </button>
     {#if restartErr}
       <p class="err">{restartErr}</p>
-    {/if}
-  </section>
-
-  <section>
-    <div class="section-head">
-      <h2>Agent 行为</h2>
-      {#if savingBehavior}
-        <span class="saving">保存中…</span>
-      {/if}
-    </div>
-    <label class="field">
-      <span>系统提示追加</span>
-      <textarea
-        rows="4"
-        bind:value={behavior.systemExtra}
-        onchange={() => void saveBehavior()}
-        placeholder="追加到系统提示的自定义内容（角色设定、约束等），失焦自动保存"
-      ></textarea>
-    </label>
-    {#if behaviorMsg}
-      <p class="msg">{behaviorMsg}</p>
     {/if}
   </section>
 

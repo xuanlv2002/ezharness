@@ -22,12 +22,13 @@ image（文生图）/ audio（语音合成）——后两者是主模型按需�
 每槽至多一条 Enabled。结构随后续数据建模演进。
 */
 type ModelEntry struct {
-	Name    string  `json:"name"`    // 模型名（provider 侧 ID）
-	BaseURL string  `json:"baseUrl"`
-	APIKey  string  `json:"apiKey"`
-	Enabled bool    `json:"enabled"` // 每槽至多一条启用
-	Tokens  int     `json:"tokens"`  // 累计用量（prompt+completion）
-	Cost    float64 `json:"cost"`    // 累计花费（单价表后续接入）
+	Name    string            `json:"name"`              // 模型名（provider 侧 ID）
+	BaseURL string            `json:"baseUrl"`
+	APIKey  string            `json:"apiKey"`
+	Headers map[string]string `json:"headers,omitempty"` // 自定义请求头（网关鉴权、组织 ID 等）
+	Enabled bool              `json:"enabled"`           // 每槽至多一条启用
+	Tokens  int               `json:"tokens"`            // 累计用量（prompt+completion）
+	Cost    float64           `json:"cost"`              // 累计花费（单价表后续接入）
 }
 
 type ModelsConfig struct {

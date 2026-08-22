@@ -53,6 +53,7 @@ func (a *AgentService) Assemble(s *domain.Session, st domain.Settings) {
 	provider := openai.New(openai.Options{
 		BaseURL: main.BaseURL,
 		APIKey:  main.APIKey,
+		Headers: main.Headers,
 		Model:   main.Name,
 	})
 

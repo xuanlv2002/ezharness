@@ -15,14 +15,19 @@
     { key: 'audio', title: '声音生成', hint: '主模型按需调用的语音合成工具' },
   ]
 
+  interface HeaderPair {
+    key: string
+    value: string
+  }
+
   let cfg = $state<ModelsConfig | null>(null)
   let loaded = $state(false)
   let saving = $state(false)
   let message = $state('')
   let adding = $state<SlotKey | null>(null)
-  let draft = $state({ name: '', baseUrl: '', apiKey: '' })
+  let draft = $state({ name: '', baseUrl: '', apiKey: '', pairs: [] as HeaderPair[] })
   let editing = $state<{ slot: SlotKey; idx: number } | null>(null)
-  let editDraft = $state({ name: '', baseUrl: '', apiKey: '' })
+  let editDraft = $state({ name: '', baseUrl: '', apiKey: '', pairs: [] as HeaderPair[] })
 
   onMount(async () => {
     try {
@@ -64,20 +69,29 @@
     void persist()
   }
 
+  /* pairsToRecord 过滤空键后转 map（与 McpView 同模式）。 */
+  function pairsToRecord(pairs: HeaderPair[]): Record<string, string> {
+    const out: Record<string, string> = {}
+    for (const p of pairs) if (p.key.trim()) out[p.key.trim()] = p.value
+    return out
+  }
+
   function addEntry(slot: SlotKey) {
     if (!cfg || !draft.name.trim() || !draft.baseUrl.trim()) return
+    const headers = pairsToRecord(draft.pairs)
     cfg[slot] = [
       ...cfg[slot],
       {
         name: draft.name.trim(),
         baseUrl: draft.baseUrl.trim(),
         apiKey: draft.apiKey.trim(),
+        ...(Object.keys(headers).length ? { headers } : {}),
         enabled: cfg[slot].length === 0,
         tokens: 0,
         cost: 0,
       },
     ]
-    draft = { name: '', baseUrl: '', apiKey: '' }
+    draft = { name: '', baseUrl: '', apiKey: '', pairs: [] }
     adding = null
     void persist()
   }
@@ -86,15 +100,29 @@
     if (!cfg) return
     const m = cfg[slot][idx]
     editing = { slot, idx }
-    editDraft = { name: m.name, baseUrl: m.baseUrl, apiKey: m.apiKey }
+    editDraft = {
+      name: m.name,
+      baseUrl: m.baseUrl,
+      apiKey: m.apiKey,
+      pairs: Object.entries(m.headers ?? {}).map(([key, value]) => ({ key, value })),
+    }
   }
 
   function saveEdit() {
     if (!cfg || !editing) return
     const { slot, idx } = editing
     if (!editDraft.name.trim() || !editDraft.baseUrl.trim()) return
+    const headers = pairsToRecord(editDraft.pairs)
     cfg[slot] = cfg[slot].map((e, i) =>
-      i === idx ? { ...e, name: editDraft.name.trim(), baseUrl: editDraft.baseUrl.trim(), apiKey: editDraft.apiKey.trim() } : e,
+      i === idx
+        ? {
+            ...e,
+            name: editDraft.name.trim(),
+            baseUrl: editDraft.baseUrl.trim(),
+            apiKey: editDraft.apiKey.trim(),
+            headers: Object.keys(headers).length ? headers : undefined, // 删光时清掉旧值
+          }
+        : e,
     )
     editing = null
     void persist()
@@ -144,7 +172,7 @@
                 <button class="dot" class:on={m.enabled} onclick={() => enable(k.key, i)} title={m.enabled ? '已启用' : '点击启用'}></button>
                 <div class="info">
                   <span class="name">{m.name}</span>
-                  <span class="meta">{m.baseUrl} · {maskKey(m.apiKey)}</span>
+                  <span class="meta">{m.baseUrl} · {maskKey(m.apiKey)}{Object.keys(m.headers ?? {}).length ? ` · ${Object.keys(m.headers ?? {}).length} 个请求头` : ''}</span>
                 </div>
                 <div class="usage">
                   <span class="tokens" title="累计用量">{m.tokens > 0 ? fmtTokens(m.tokens) : '0'} tokens</span>
@@ -157,6 +185,18 @@
                   <input type="text" placeholder="模型名" bind:value={editDraft.name} />
                   <input type="text" placeholder="API 端点" bind:value={editDraft.baseUrl} />
                   <input type="password" placeholder="API Key" bind:value={editDraft.apiKey} />
+                  {#each editDraft.pairs as p, j}
+                    <div class="hdr-row">
+                      <input type="text" placeholder="Header（如 X-Org-Id）" bind:value={p.key} />
+                      <input type="text" placeholder="Value（如 org-123）" bind:value={p.value} />
+                      <button class="hdr-x" onclick={() => (editDraft.pairs = editDraft.pairs.filter((_, k2) => k2 !== j))} title="移除">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round">
+                          <path d="M6 6l12 12M18 6L6 18" />
+                        </svg>
+                      </button>
+                    </div>
+                  {/each}
+                  <button class="hdr-add" onclick={() => (editDraft.pairs = [...editDraft.pairs, { key: '', value: '' }])}>+ 请求头</button>
                   <div class="add-actions">
                     <button class="add-ok" disabled={!editDraft.name.trim() || !editDraft.baseUrl.trim()} onclick={saveEdit}>确定</button>
                     <button class="add-no" onclick={() => (editing = null)}>取消</button>
@@ -173,6 +213,18 @@
               <input type="text" placeholder="模型名（如 deepseek-ai/DeepSeek-V3.2）" bind:value={draft.name} />
               <input type="text" placeholder={defaultBase()} bind:value={draft.baseUrl} />
               <input type="password" placeholder="API Key" bind:value={draft.apiKey} />
+              {#each draft.pairs as p, j}
+                <div class="hdr-row">
+                  <input type="text" placeholder="Header（如 X-Org-Id）" bind:value={p.key} />
+                  <input type="text" placeholder="Value（如 org-123）" bind:value={p.value} />
+                  <button class="hdr-x" onclick={() => (draft.pairs = draft.pairs.filter((_, k2) => k2 !== j))} title="移除">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round">
+                      <path d="M6 6l12 12M18 6L6 18" />
+                    </svg>
+                  </button>
+                </div>
+              {/each}
+              <button class="hdr-add" onclick={() => (draft.pairs = [...draft.pairs, { key: '', value: '' }])}>+ 请求头</button>
               <div class="add-actions">
                 <button class="add-ok" disabled={!draft.name.trim() || !draft.baseUrl.trim()} onclick={() => addEntry(k.key)}>添加</button>
                 <button class="add-no" onclick={() => (adding = null)}>取消</button>
@@ -362,6 +414,38 @@
   }
   .add-form input:focus {
     border-color: var(--line-strong);
+  }
+  .hdr-row {
+    display: grid;
+    grid-template-columns: 1fr 1.4fr auto;
+    gap: 6px;
+    align-items: center;
+  }
+  .hdr-x {
+    display: grid;
+    place-items: center;
+    width: 26px;
+    height: 26px;
+    border: none;
+    background: transparent;
+    color: var(--faint);
+    border-radius: 6px;
+  }
+  .hdr-x:hover {
+    background: var(--bg-soft);
+    color: #c0392b;
+  }
+  .hdr-x svg {
+    width: 10px;
+    height: 10px;
+  }
+  .hdr-add {
+    align-self: flex-start;
+    border: none;
+    background: transparent;
+    color: var(--accent);
+    font-size: 11.5px;
+    padding: 2px 0;
   }
   .add-actions {
     display: flex;

@@ -77,6 +77,7 @@ export interface ModelEntry {
   name: string
   baseUrl: string
   apiKey: string
+  headers?: Record<string, string>
   enabled: boolean
   tokens: number
   cost: number
