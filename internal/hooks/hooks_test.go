@@ -25,7 +25,27 @@ func (m memFS) Write(_ context.Context, p string, data []byte) error {
 	m[p] = append([]byte(nil), data...)
 	return nil
 }
-func (m memFS) List(_ context.Context, dir string) ([]fs.Entry, error) { return nil, nil }
+func (m memFS) List(_ context.Context, dir string) ([]fs.Entry, error) {
+	prefix := strings.TrimSuffix(dir, "/") + "/"
+	seen := map[string]fs.Entry{}
+	for p := range m {
+		if !strings.HasPrefix(p, prefix) {
+			continue
+		}
+		rest := strings.TrimPrefix(p, prefix)
+		parts := strings.Split(rest, "/")
+		if len(parts) == 1 {
+			seen[rest] = fs.Entry{Name: rest}
+		} else {
+			seen[parts[0]] = fs.Entry{Name: parts[0], IsDir: true}
+		}
+	}
+	out := make([]fs.Entry, 0, len(seen))
+	for _, e := range seen {
+		out = append(out, e)
+	}
+	return out, nil
+}
 func (m memFS) Edit(_ context.Context, p, oldText, newText string) (int, error) {
 	d, ok := m[p]
 	if !ok {
@@ -208,5 +228,48 @@ func TestSysPromptSingleSystem(t *testing.T) {
 	}
 	if state.Messages[0].Content != "base\n\nsummary" {
 		t.Fatalf("render wrong: %q", state.Messages[0].Content)
+	}
+}
+
+/* 三层加载的第 2 层：load_skill 返回 SKILL.md 全文 + 路径 + 目录结构。 */
+func TestSkillToolLoad(t *testing.T) {
+	ctx := context.Background()
+	fsys := memFS{}
+	_ = fsys.Write(ctx, "memory/skills/pdf/SKILL.md",
+		[]byte("---\nname: pdf\ndescription: 提取 PDF\n---\n\n# PDF 处理\n步骤：pdfplumber"))
+	_ = fsys.Write(ctx, "memory/skills/pdf/scripts/extract.py", []byte("print(1)"))
+	_ = fsys.Write(ctx, "memory/skills/pdf/references/api.md", []byte("api 文档"))
+
+	h := NewSkillTool(fsys, "memory/skills")
+	state := newTestState(nil)
+	if err := h.OnStart(ctx, state); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := state.Tools.Lookup(SkillTool); err != nil {
+		t.Fatal("load_skill must be registered")
+	}
+
+	action, err := h.OnToolStart(ctx, state, &types.ToolCall{
+		ID: "c1", Name: SkillTool, Args: []byte(`{"name":"pdf"}`),
+	})
+	if err != nil || action.Kind != ezhook.KindSkip {
+		t.Fatalf("expect skip action, err=%v kind=%v", err, action.Kind)
+	}
+	r := action.Result
+	if !strings.Contains(r, "memory/skills/pdf/SKILL.md") ||
+		!strings.Contains(r, "步骤：pdfplumber") || // 全文（frontmatter 已剥离）
+		!strings.Contains(r, "scripts/extract.py") || !strings.Contains(r, "references/api.md") {
+		t.Fatalf("load result missing parts: %q", r)
+	}
+	if strings.Contains(r, "name: pdf") {
+		t.Fatal("frontmatter must be stripped from instructions")
+	}
+
+	// 未知名：返回可用列表提示
+	action, _ = h.OnToolStart(ctx, state, &types.ToolCall{
+		ID: "c2", Name: SkillTool, Args: []byte(`{"name":"nope"}`),
+	})
+	if !strings.Contains(action.Result, "pdf") {
+		t.Fatalf("unknown skill should list available: %q", action.Result)
 	}
 }

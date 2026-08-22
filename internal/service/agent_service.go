@@ -96,6 +96,7 @@ func (a *AgentService) Assemble(s *domain.Session, st domain.Settings) {
 			sys, // startHooks 首位：system 唯一来源
 			contextfix.New(),
 			filetools.New(s.Fsys),
+			hooks.NewSkillTool(s.Fsys, hooks.SkillsDir),
 			statusHook,
 			approver,
 			asker,
@@ -120,7 +121,7 @@ func (a *AgentService) Assemble(s *domain.Session, st domain.Settings) {
 		ToolNames: []string{
 			"read_file", "write_file", "edit_file", "bash", "save_app",
 			askuser.ToolName, taskplan.ToolName, task.ToolName,
-			"mcp_router", hooks.CompactTool,
+			"mcp_router", hooks.CompactTool, hooks.SkillTool,
 		},
 	})
 }
@@ -143,8 +144,8 @@ func (a *AgentService) Reassemble(st domain.Settings) error {
 */
 func (a *AgentService) needsApprove(c *types.ToolCall) bool {
 	switch c.Name {
-	case askuser.ToolName, taskplan.ToolName:
-		return false // 交互工具不属用户管控面
+	case askuser.ToolName, taskplan.ToolName, hooks.SkillTool, hooks.CompactTool:
+		return false // 交互与内部工具不属用户管控面（加载技能/压缩均为只读元操作）
 	}
 	name := c.Name
 	if name == "mcp_router" {
@@ -256,7 +257,7 @@ func buildSystemBase(ctx context.Context, st domain.Settings, fsys osfs.OS) stri
 		b.Write(data)
 	}
 	if skills, err := skill.LoadDir(ctx, fsys, hooks.SkillsDir); err == nil && len(skills) > 0 {
-		b.WriteString("\n\n# 可用技能\n（全文见 memory/skills/<同名>.md，需要时用 read_file 读取）")
+		b.WriteString("\n\n# 可用技能\n（此处仅名称与描述；需要使用时先调用 load_skill 获取完整指令与脚本路径）")
 		for _, sk := range skills {
 			fmt.Fprintf(&b, "\n- %s: %s", sk.Name, sk.Description)
 		}

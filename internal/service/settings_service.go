@@ -8,13 +8,12 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"strings"
 
 	"github.com/xuanlv2002/ezloop/ext/hook/localsession"
+	"github.com/xuanlv2002/ezloop/ext/hook/skill"
 
 	"ezharness/internal/domain"
 	"ezharness/internal/hooks"
-	"ezharness/internal/osfs"
 )
 
 /* SettingsService 设置用例。 */
@@ -184,16 +183,12 @@ func (m *MemoryService) Config() MemoryConfigView {
 			}
 		}
 	}
-	if entries, err := m.Hub.Fsys.List(context.Background(), hooks.SkillsDir); err == nil {
-		for _, e := range entries {
-			if e.IsDir || !strings.HasSuffix(e.Name, ".md") {
-				continue
-			}
-			name := strings.TrimSuffix(e.Name, ".md")
+	if entries, err := skill.LoadDir(context.Background(), m.Hub.Fsys, hooks.SkillsDir); err == nil {
+		for _, s := range entries {
 			v.Skills.Items = append(v.Skills.Items, SkillEntryView{
-				ID:      name,
-				Name:    name,
-				Desc:    skillDesc(m.Hub.Fsys, hooks.SkillsDir+"/"+e.Name),
+				ID:      s.Name,
+				Name:    s.Name,
+				Desc:    s.Description,
 				Enabled: true, // 启停机制待后续（skill hook 无开关，暂恒启用）
 			})
 		}
@@ -209,21 +204,6 @@ func (m *MemoryService) Config() MemoryConfigView {
 		v.Topics.Items = []hooks.TopicEntry{}
 	}
 	return v
-}
-
-/* skillDesc 取 skill 文件首行标题（# 开头）作为描述。 */
-func skillDesc(fsys osfs.OS, path string) string {
-	data, err := fsys.Read(context.Background(), path)
-	if err != nil {
-		return ""
-	}
-	for line := range strings.SplitSeq(string(data), "\n") {
-		line = strings.TrimSpace(line)
-		if line != "" {
-			return strings.TrimPrefix(strings.TrimPrefix(line, "#"), " ")
-		}
-	}
-	return ""
 }
 
 func fileMtime(path string) string {
