@@ -58,15 +58,16 @@ type Session struct {
 	Sess   *hooks.Store
 	Topics *hooks.Topics
 
-	mu        sync.Mutex
-	history   []types.Message
-	cur       *runState
-	subs      map[chan []byte]struct{}
-	pending   map[string]Event
-	ctxTokens int
-	wired     *Wiring
-	snap      *hooks.SessionSnap // bootstrap 恢复的快照（Assemble 读取；nil = 新建）
-	sysP      *hooks.SysPrompt   // system 来源（Assemble 创建；resume/compact 热更）
+	mu         sync.Mutex
+	history    []types.Message
+	cur        *runState
+	subs       map[chan []byte]struct{}
+	pending    map[string]Event
+	ctxTokens  int
+	wired      *Wiring
+	snap       *hooks.SessionSnap // bootstrap 恢复的快照（Assemble 读取；nil = 新建）
+	sysP       *hooks.SysPrompt   // system 来源（Assemble 创建；resume/compact 热更）
+	turnFrames [][]byte           // 本轮聚合帧缓存（刷新回放重建时间线；轮开始清空）
 }
 
 /* Attach 注入装配产物（service 层构造，领域持有引用）。 */
@@ -165,6 +166,7 @@ func (s *Session) StartRun(ctx context.Context, text string) (*core.RunHandle, c
 	turnCtx, cancel := context.WithCancel(ctx)
 	h := s.wired.Agent.RunAsync(turnCtx, text, core.WithHistory(s.history...))
 	s.cur = &runState{ctx: turnCtx, cancel: cancel}
+	s.turnFrames = nil
 	s.mu.Unlock()
 	return h, cancel, nil
 }
@@ -249,7 +251,8 @@ func (s *Session) Subscribe() (<-chan []byte, func()) {
 	}
 }
 
-/* Publish 向全部订阅者扇出事件帧；人机请求登记 pending 供断线重放。 */
+/* Publish 向全部订阅者扇出事件帧；人机请求登记 pending 供断线重放，
+聚合帧缓存进 turnFrames 供整轮回放（刷新重建时间线）。 */
 func (s *Session) Publish(e Event) {
 	data, err := json.Marshal(e)
 	if err != nil {
@@ -259,6 +262,9 @@ func (s *Session) Publish(e Event) {
 	if id, ok := decisionCallID(e); ok {
 		s.pending[id] = e
 	}
+	if replayable(e.Type) {
+		s.turnFrames = append(s.turnFrames, data)
+	}
 	for ch := range s.subs {
 		select {
 		case ch <- data:
@@ -266,6 +272,16 @@ func (s *Session) Publish(e Event) {
 		}
 	}
 	s.mu.Unlock()
+}
+
+/* replayable 判定帧是否进回放缓存：聚合帧保留，高频增量与瞬态帧跳过。 */
+func replayable(t string) bool {
+	switch t {
+	case "model_chunk", "reasoning_chunk", "tool_chunk", "model_start",
+		"status.snapshot", "turn_end", "loop_end", "iteration_end":
+		return false
+	}
+	return true
 }
 
 /* PendingFrames 返回未决请求帧快照（SSE 建立时重放）。 */
@@ -279,6 +295,27 @@ func (s *Session) PendingFrames() [][]byte {
 		}
 	}
 	return out
+}
+
+/*
+ReplayFrames 返回 SSE 建立时的重放帧：轮进行中回放整轮聚合帧
+（user 输入/模型回复/工具卡/决策——刷新后时间线完整重建；已决
+审批由其后的 decision.resolved 帧纠正），空闲时退化为未决请求帧。
+*/
+func (s *Session) ReplayFrames() [][]byte {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.cur == nil {
+		out := make([][]byte, 0, len(s.pending))
+		for _, e := range s.pending {
+			if data, err := json.Marshal(e); err == nil {
+				out = append(out, data)
+			}
+		}
+		return out
+	}
+	out := make([][]byte, 0, len(s.turnFrames))
+	return append(out, s.turnFrames...) // 未决请求帧也在其中（request 是聚合帧）
 }
 
 /* clearPending 清除一个已回传的请求。 */

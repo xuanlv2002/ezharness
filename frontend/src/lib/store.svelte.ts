@@ -351,6 +351,26 @@ class AppStore {
   apply(ev: SseEvent) {
     this.tick++
     switch (ev.type) {
+      case 'loop_start': {
+        // 回放重建：本轮 user 输入（实时路径 send 已本地 push，同文本去重）
+        const text = typeof ev.data === 'string' ? ev.data : ''
+        const last = this.blocks[this.blocks.length - 1]
+        if (text && !(last && last.kind === 'user' && last.text === text)) {
+          this.blocks.push({ kind: 'user', uid: this.nuid(), text })
+        }
+        break
+      }
+      case 'decision.resolved': {
+        // 回放纠正：已决审批的决策卡与工具卡徽标（实时路径本地已处理，幂等）
+        const d = ev.data || {}
+        const b = this.blocks.find((x) => x.kind === 'decision' && x.id === d.id)
+        if (b && b.kind === 'decision' && !b.resolved) {
+          b.resolved = true
+          b.resolution = d.resolution || ''
+        }
+        if (d.id) this.resolveNotice(d.id, d.resolution || '')
+        break
+      }
       case 'model_start': {
         this.modelActive = true
         break
@@ -409,7 +429,18 @@ class AppStore {
       case 'model_end': {
         this.modelActive = false
         const last = this.lastStreamingAssistant()
-        if (last) last.streaming = false
+        if (last) {
+          last.streaming = false
+        } else if (!ev.forkId && (ev.data?.content || ev.data?.reasoning)) {
+          // 回放重建：无流式块时按聚合帧补完整回复（实时路径 chunk 已建块）
+          this.blocks.push({
+            kind: 'assistant',
+            uid: this.nuid(),
+            text: ev.data.content || '',
+            reasoning: ev.data.reasoning || '',
+            streaming: false,
+          })
+        }
         const u = ev.data?.usage
         if (u && this.status) {
           this.status.contextTokens = u.PromptTokens || 0

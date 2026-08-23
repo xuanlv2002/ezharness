@@ -91,7 +91,8 @@ func (c *ChatService) DecidePlan(callID, kind, input string) {
 	c.Hub.Active.DecidePlan(d)
 }
 
-/* recordDecision 持久化决策记录（刷新后工具卡徽标用，失败静默）。 */
+/* recordDecision 持久化决策记录（轮末刷新后工具卡徽标用）并发
+decision.resolved 帧（轮内刷新回放时纠正决策卡与徽标）。失败静默。 */
 func (c *ChatService) recordDecision(kind, callID, resolution string) {
 	s := c.Hub.Active
 	if callID == "" {
@@ -100,6 +101,8 @@ func (c *ChatService) recordDecision(kind, callID, resolution string) {
 	hooks.AppendDecision(context.Background(), s.Fsys, s.ID, hooks.DecisionRecord{
 		CallID: callID, Kind: kind, Resolution: resolution, Ts: time.Now().UnixMilli(),
 	})
+	s.Publish(domain.Event{Type: "decision.resolved", Data: domain.Raw(
+		map[string]string{"id": callID, "resolution": resolution})})
 }
 
 func approveDecision(callID string, ok bool, reason string) approve.Decision {

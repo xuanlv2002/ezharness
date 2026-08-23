@@ -61,7 +61,7 @@ func (c *ChatController) Events(g *gin.Context) {
 	g.Header("Connection", "keep-alive")
 	fmt.Fprint(g.Writer, ": connected\n\n")
 
-	for _, frame := range sess.PendingFrames() {
+	for _, frame := range sess.ReplayFrames() {
 		fmt.Fprintf(g.Writer, "data: %s\n\n", frame)
 	}
 	fl.Flush()

@@ -165,6 +165,9 @@ func lastAssistant(s *types.LoopState) string {
 	return ""
 }
 
+/* Raw 序列化为事件 Data 载荷（跨包构造事件用）。 */
+func Raw(v any) json.RawMessage { return raw(v) }
+
 func raw(v any) json.RawMessage {
 	b, err := json.Marshal(v)
 	if err != nil {
