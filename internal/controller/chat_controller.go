@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 
@@ -70,10 +71,19 @@ func (c *ChatController) Events(g *gin.Context) {
 	defer unsub()
 
 	hb := g.Request.Context()
+	// 心跳注释帧：SSE 经代理（Vite dev proxy 等）空闲约 200s 被断，
+	// 周期性写入保持连接活性（注释行不触发前端 onmessage）。
+	hbTick := time.NewTicker(20 * time.Second)
+	defer hbTick.Stop()
 	for {
 		select {
 		case <-hb.Done():
 			return
+		case <-hbTick.C:
+			if _, err := fmt.Fprint(g.Writer, ": hb\n\n"); err != nil {
+				return
+			}
+			fl.Flush()
 		case frame := <-ch:
 			if _, err := fmt.Fprintf(g.Writer, "data: %s\n\n", frame); err != nil {
 				return

@@ -297,9 +297,13 @@ export const api = {
   appHealth: (base = '') => fetch(`${base}/api/app/health`).then(json<{ ok: boolean; boot: number }>),
 }
 
-/* subscribe 建立 SSE 订阅，返回断开函数。 */
+/* subscribe 建立 SSE 订阅，返回断开函数。
+window 级单连接：HMR/重复订阅先关旧连接，防泄漏挤占同域连接池。 */
 export function subscribe(id: string, onEvent: (ev: SseEvent) => void): () => void {
+  const w = window as unknown as { __ezSSE?: EventSource }
+  w.__ezSSE?.close()
   const es = new EventSource(`/api/sessions/${id}/events`)
+  w.__ezSSE = es
   es.onmessage = (m) => {
     try {
       onEvent(JSON.parse(m.data))
@@ -307,5 +311,8 @@ export function subscribe(id: string, onEvent: (ev: SseEvent) => void): () => vo
       /* 忽略坏帧 */
     }
   }
-  return () => es.close()
+  return () => {
+    es.close()
+    if (w.__ezSSE === es) w.__ezSSE = undefined
+  }
 }
