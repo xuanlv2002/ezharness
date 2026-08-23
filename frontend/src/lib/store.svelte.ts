@@ -16,7 +16,7 @@ export interface ToolBlockData {
   args: string
   result: string
   err: string
-  state: 'running' | 'done'
+  state: 'building' | 'running' | 'done' // building＝模型流式构造参数中
 }
 
 export interface ForkState {
@@ -99,6 +99,8 @@ class AppStore {
   busy = $state(false)
   lastStatus = $state('')
   tick = $state(0)
+  /* 模型调用进行中（model_start→model_end），思考指示用 */
+  modelActive = $state(false)
 
   status = $state<Status | null>(null)
   /* 最新 agent_status 快照（status.snapshot 事件实时更新，右上角水位条数据源） */
@@ -342,6 +344,46 @@ class AppStore {
   apply(ev: SseEvent) {
     this.tick++
     switch (ev.type) {
+      case 'model_start': {
+        this.modelActive = true
+        break
+      }
+      case 'tool_chunk': {
+        // 流式工具调用增量：按 index 分桶累积成 building 态工具块
+        const d = ev.data || {}
+        const key = `b-${ev.forkId || 'm'}-${d.index ?? 0}`
+        if (ev.forkId) {
+          const f = this.forks[ev.forkId]
+          if (!f) break
+          let t = f.tools.find((b) => b.id === key && b.state === 'building')
+          if (!t) {
+            t = { id: key, name: '', args: '', result: '', err: '', state: 'building' }
+            f.tools.push(t)
+          }
+          if (d.nameDelta) t.name += d.nameDelta
+          if (d.argsDelta) t.args += d.argsDelta
+        } else {
+          const t = this.blocks.find(
+            (b) => b.kind === 'tool' && b.id === key && b.state === 'building',
+          )
+          if (t && t.kind === 'tool') {
+            if (d.nameDelta) t.name += d.nameDelta
+            if (d.argsDelta) t.args += d.argsDelta
+          } else {
+            this.blocks.push({
+              kind: 'tool',
+              uid: this.nuid(),
+              id: key,
+              name: d.nameDelta || '',
+              args: d.argsDelta || '',
+              result: '',
+              err: '',
+              state: 'building',
+            })
+          }
+        }
+        break
+      }
       case 'model_chunk':
       case 'reasoning_chunk': {
         const delta: string = typeof ev.data === 'string' ? ev.data : ''
@@ -358,6 +400,7 @@ class AppStore {
         break
       }
       case 'model_end': {
+        this.modelActive = false
         const last = this.lastStreamingAssistant()
         if (last) last.streaming = false
         const u = ev.data?.usage
@@ -368,20 +411,36 @@ class AppStore {
       }
       case 'tool_start': {
         const d = ev.data || {}
-        const tool: ToolBlockData = {
-          id: d.id || '',
-          name: d.name || '',
-          args: typeof d.args === 'string' ? d.args : JSON.stringify(d.args ?? ''),
-          result: '',
-          err: '',
-          state: 'running',
-        }
-        if (!ev.forkId) this.lastTool = tool.name
+        const args = typeof d.args === 'string' ? d.args : JSON.stringify(d.args ?? '')
+        // 认领流式构造期（building）的同名块：换真实 callID、完整 args、转执行态
         if (ev.forkId) {
-          this.forks[ev.forkId]?.tools.push(tool)
+          const f = this.forks[ev.forkId]
+          const t = f?.tools.find((b) => b.state === 'building' && b.name === d.name)
+          if (f && t) {
+            t.id = d.id || ''
+            t.args = args
+            t.state = 'running'
+          } else if (f) {
+            f.tools.push({
+              id: d.id || '', name: d.name || '', args, result: '', err: '', state: 'running',
+            })
+          }
         } else {
-          this.blocks.push({ kind: 'tool', uid: this.nuid(), ...tool })
+          const t = this.blocks.find(
+            (b) => b.kind === 'tool' && b.state === 'building' && b.name === d.name,
+          )
+          if (t && t.kind === 'tool') {
+            t.id = d.id || ''
+            t.args = args
+            t.state = 'running'
+          } else {
+            this.blocks.push({
+              kind: 'tool', uid: this.nuid(), id: d.id || '', name: d.name || '',
+              args, result: '', err: '', state: 'running',
+            })
+          }
         }
+        if (!ev.forkId) this.lastTool = d.name || ''
         break
       }
       case 'tool_end': {
@@ -522,7 +581,17 @@ class AppStore {
       }
       case 'turn_end': {
         this.busy = false
+        this.modelActive = false
         this.lastTool = ''
+        // 兜底：残留 building 块（模型输出了调用但引擎未执行）标记完成
+        for (const b of this.blocks) {
+          if (b.kind === 'tool' && b.state === 'building') b.state = 'done'
+        }
+        for (const f of Object.values(this.forks)) {
+          for (const t of f.tools) {
+            if (t.state === 'building') t.state = 'done'
+          }
+        }
         // 轮已结束：残留 pending 决策的回传会被后端丢弃，标记过期
         for (const n of this.notices) {
           if (n.status === 'pending') {

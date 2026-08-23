@@ -11,6 +11,10 @@
       return raw
     }
   }
+
+  /* building 态参数尾部预览（tail 跟随，像日志一样看内容增长） */
+  const tail = $derived(data.state === 'building' ? data.args.slice(-600) : '')
+  const nchars = $derived(data.args.length)
 </script>
 
 <div class="tool enter-rise" class:done={data.state === 'done'}>
@@ -18,15 +22,26 @@
     <span class="arrow" class:open>{open ? '▾' : '▸'}</span>
     {#if data.state === 'running'}
       <span class="spinner"></span>
+    {:else if data.state === 'building'}
+      <span class="breath"></span>
     {:else}
       <span class="dot"></span>
     {/if}
     <span class="name">{data.name || 'tool'}</span>
+    {#if data.state === 'building'}
+      <span class="building-tag">构造中 {nchars} 字</span>
+    {/if}
     {#if data.state === 'done' && data.err}
       <span class="err-tag">error</span>
     {/if}
   </button>
-  {#if open}
+  {#if data.state === 'building'}
+    {#if tail}
+      <div class="detail">
+        <pre class="stream">{tail}</pre>
+      </div>
+    {/if}
+  {:else if open}
     <div class="detail">
       {#if data.args}
         <div class="section">
@@ -91,6 +106,41 @@
     border-top-color: var(--line-strong);
     border-radius: 50%;
     animation: spin 0.8s linear infinite;
+  }
+  .breath {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--line-strong);
+    animation: breath 1.4s ease-in-out infinite;
+  }
+  @keyframes breath {
+    0%,
+    100% {
+      opacity: 0.25;
+      transform: scale(0.85);
+    }
+    50% {
+      opacity: 1;
+      transform: scale(1.05);
+    }
+  }
+  .building-tag {
+    margin-left: auto;
+    font-size: 10px;
+    color: var(--faint);
+    font-variant-numeric: tabular-nums;
+  }
+  pre.stream {
+    font-family: var(--font-mono);
+    font-size: 11.5px;
+    line-height: 1.5;
+    white-space: pre-wrap;
+    word-break: break-all;
+    max-height: 140px;
+    overflow: hidden;
+    color: var(--muted);
+    mask-image: linear-gradient(to bottom, transparent, #000 28px);
   }
   @keyframes spin {
     to {

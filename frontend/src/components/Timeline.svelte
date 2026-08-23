@@ -108,6 +108,20 @@
     stick = el.scrollHeight - el.scrollTop - el.clientHeight < 120
   }
 
+  /* 模型调用中但正文尚未流出（首 token 前 / 纯工具调用构造期）→ 思考指示 */
+  const thinking = $derived.by(() => {
+    if (!store.modelActive) return false
+    for (let i = store.blocks.length - 1; i >= 0; i--) {
+      const b = store.blocks[i]
+      if (b.kind === 'assistant') {
+        return !(b.streaming && (b.text || b.reasoning))
+      }
+      if (b.kind === 'user') return true
+      if (b.kind === 'tool' && b.state === 'building') return false
+    }
+    return true
+  })
+
   $effect(() => {
     void store.tick
     if (el && stick && !pull) el.scrollTop = el.scrollHeight
@@ -159,6 +173,9 @@
         </div>
       {/if}
     {/each}
+    {#if thinking}
+      <div class="thinking"><span class="tdot"></span>模型输出中…</div>
+    {/if}
     {#if store.blocks.length === 0}
       <div class="empty">
         <div class="mark"><Logo size={56} /></div>
@@ -232,6 +249,32 @@
     to {
       opacity: 1;
       transform: translateY(0);
+    }
+  }
+  .thinking {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 12px;
+    color: var(--faint);
+    padding: 2px 0;
+  }
+  .tdot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--line-strong);
+    animation: breath 1.4s ease-in-out infinite;
+  }
+  @keyframes breath {
+    0%,
+    100% {
+      opacity: 0.25;
+      transform: scale(0.85);
+    }
+    50% {
+      opacity: 1;
+      transform: scale(1.05);
     }
   }
   .empty {

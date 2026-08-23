@@ -88,6 +88,8 @@ func MapEvent(e event.Event) Event {
 		if c, ok := e.Data.(*types.ToolCall); ok {
 			out.Data = raw(ToolStartData{ID: c.ID, Name: c.Name, Args: c.Args})
 		}
+	case event.EventToolChunk:
+		out.Data = raw(e.Data) // types.ToolCallDelta 原样透传（building 态渲染）
 	case event.EventToolEnd:
 		if r, ok := e.Data.(*types.ToolResult); ok {
 			d := ToolEndData{CallID: r.CallID, Name: r.Name, Content: r.Content}
