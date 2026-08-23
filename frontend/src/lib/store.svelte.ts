@@ -109,6 +109,8 @@ class AppStore {
   /* 懒加载：compact 链上是否还有旧会话可翻、是否正在加载 */
   hasPrev = $state(false)
   loadingPrev = $state(false)
+  /* 最近一次下拉拉出的块 uid 集合（展开动画用，渲染层命中加 class） */
+  batchIds = $state<Set<number>>(new Set())
   private prevCursor = '' // 已翻到的会话 ID（沿 prevSession 链继续上翻）
 
   private unsub: (() => void) | null = null
@@ -155,20 +157,12 @@ class AppStore {
       this.busy = s.busy
       this.prevCursor = this.activeId
       this.hasPrev = !!s.prevSession
-      // 压缩标记：本会话由压缩产生时头部提示，向上滚动加载上一话题
-      if (s.prevSession) {
-        this.blocks.unshift({
-          kind: 'note',
-          uid: this.nuid(),
-          text: `⇪ 以上为压缩后新会话${s.prevTitle ? `（上一话题：${s.prevTitle}）` : ''}，向上滚动查看`,
-        })
-      }
     } catch {
       /* 网络异常时保底空时间线 */
     }
   }
 
-  /* 懒加载：沿 compact 链向上翻上一会话，头部插入并保持滚动位置 */
+  /* 下拉懒加载：沿 compact 链拉出上一会话，一次一个；底部带压缩归档标记 */
   async loadPrev() {
     if (!this.prevCursor || this.loadingPrev) return
     this.loadingPrev = true
@@ -178,12 +172,13 @@ class AppStore {
         this.hasPrev = false
       } else {
         const prevBlocks = this.buildBlocks(res.messages)
-        const note: Block = {
+        const sep: Block = {
           kind: 'note',
           uid: this.nuid(),
-          text: `⇩ 以上为当前会话，以下为压缩前会话${res.title ? `：${res.title}` : ''}`,
+          text: `⇪ 上下文已压缩归档：${res.title || ''}`,
         }
-        this.blocks = [...prevBlocks, note, ...this.blocks]
+        this.batchIds = new Set(prevBlocks.map((b) => b.uid))
+        this.blocks = [...prevBlocks, sep, ...this.blocks]
         this.prevCursor = res.prevSession || ''
         this.hasPrev = !!res.prevSession
       }
