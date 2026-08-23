@@ -35,6 +35,7 @@ import (
 	"ezharness/internal/hooks"
 	"ezharness/internal/osfs"
 	"ezharness/internal/tools"
+	"ezharness/internal/warp/modeldump"
 )
 
 /* AgentService 装配领域会话的运行时。 */
@@ -89,7 +90,7 @@ func (a *AgentService) Assemble(s *domain.Session, st domain.Settings) {
 	)
 
 	agent := core.NewAgent(provider,
-		core.WithModelWarp(modelretry.Warp()),
+		core.WithModelWarp(modeldump.Warp(), modelretry.Warp()),
 		core.WithToolWarp(limit.Warp(4), safetool.Warp()),
 		core.WithTools(tools.SaveApp(s.Fsys)...),
 		core.WithHooks(
