@@ -65,8 +65,8 @@
     return `${(n / 1024 / 1024).toFixed(1)} MB`
   }
 
-  /* 话题树：parent 建树；单孩子链（压缩主线）自动平铺不缩进，分叉点
-     按展开状态渲染子分支（缩进+竖线）——树形按需展开 */
+  /* 话题树：parent 建树；嵌套关系完全用展开钮表达（无缩进/tab）——
+     每个有孩子的节点（含单孩子）都可展开，子节点平级排在下方 */
   let expanded = $state<Set<string>>(new Set())
 
   function toggleFork(id: string) {
@@ -77,7 +77,7 @@
   }
 
   const treeRows = $derived.by(() => {
-    if (!cfg) return [] as { item: MemoryTopicEntry; level: number; forks: number; open: boolean }[]
+    if (!cfg) return [] as { item: MemoryTopicEntry; forks: number; open: boolean }[]
     const items = cfg.topics.items
     const byId = new Set(items.map((x) => x.id))
     const kids = new Map<string, MemoryTopicEntry[]>()
@@ -93,16 +93,15 @@
     }
     const byTime = (a: MemoryTopicEntry, b: MemoryTopicEntry) => b.createdAt - a.createdAt
     roots.sort(byTime)
-    const out: { item: MemoryTopicEntry; level: number; forks: number; open: boolean }[] = []
-    const walk = (item: MemoryTopicEntry, level: number) => {
+    const out: { item: MemoryTopicEntry; forks: number; open: boolean }[] = []
+    const walk = (item: MemoryTopicEntry) => {
       const ch = (kids.get(item.id) || []).sort(byTime)
       const open = expanded.has(item.id)
-      out.push({ item, level, forks: ch.length, open })
-      if (ch.length > 1 && !open) return // 分叉收起：子分支不渲染
-      const childLevel = ch.length > 1 ? level + 1 : level
-      for (const c of ch) walk(c, childLevel)
+      out.push({ item, forks: ch.length, open })
+      if (!open) return
+      for (const c of ch) walk(c)
     }
-    for (const r of roots) walk(r, 0)
+    for (const r of roots) walk(r)
     return out
   })
 
@@ -218,16 +217,17 @@
       {#if cfg}
         {#each treeRows as row, i (`${row.item.id}-${i}`)}
           {@const t = row.item}
-          <div class="branch" class:root={row.level === 0} style="margin-left:{row.level * 26}px">
+          <div class="branch">
           <div class="topic" class:cur={store.activeId === t.id}>
             <div class="info">
               <span class="name"
-                >{t.title}{#if store.activeId === t.id}<span class="kbadge live">进行中</span>{:else if t.parent}<span class="kbadge">压缩</span>{/if}</span
+                >{t.title}{#if store.activeId === t.id}<span class="kbadge live">进行中</span>{/if}</span
               >
-              {#if row.forks > 1}
-                <button class="forkbtn" onclick={() => toggleFork(t.id)} title="分支">
+              {#if row.forks > 0}
+                <button class="forkbtn" onclick={() => toggleFork(t.id)}
+                  title={row.open ? '收起子会话' : '展开子会话'}>
                   <span class="farrow" class:open={row.open}>{row.open ? '▾' : '▸'}</span>
-                  {row.forks} 条分支
+                  {row.forks}
                 </button>
               {/if}
               <span class="desc">{fmtDate(t.createdAt)} · {t.msgs} 条消息</span>
@@ -523,12 +523,6 @@
   .branch {
     display: flex;
     flex-direction: column;
-    border-left: 1px solid var(--line);
-    padding-left: 14px;
-  }
-  .branch.root {
-    border-left: none;
-    padding-left: 0;
   }
   .topic {
     display: flex;
