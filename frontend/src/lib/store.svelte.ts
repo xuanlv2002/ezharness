@@ -101,6 +101,8 @@ class AppStore {
   tick = $state(0)
 
   status = $state<Status | null>(null)
+  /* 最新 agent_status 快照（status.snapshot 事件实时更新，右上角水位条数据源） */
+  live = $state<StatusPayload | null>(null)
   settings = $state<Settings | null>(null)
   total = $state<TotalUsage>({ prompt: 0, completion: 0, cached: 0 })
 
@@ -153,6 +155,14 @@ class AppStore {
       this.busy = s.busy
       this.prevCursor = this.activeId
       this.hasPrev = !!s.prevSession
+      // 压缩标记：本会话由压缩产生时头部提示，向上滚动加载上一话题
+      if (s.prevSession) {
+        this.blocks.unshift({
+          kind: 'note',
+          uid: this.nuid(),
+          text: `⇪ 以上为压缩后新会话${s.prevTitle ? `（上一话题：${s.prevTitle}）` : ''}，向上滚动查看`,
+        })
+      }
     } catch {
       /* 网络异常时保底空时间线 */
     }
@@ -190,8 +200,11 @@ class AppStore {
     for (const m of messages) {
       if (m.role === 'user') {
         const d = parseStatus(m.content)
+        // 状态记录仅异常时（推荐压缩/资源变更）入时间线，平时只在右上角
         if (d) {
-          out.push({ kind: 'status', uid: this.nuid(), text: m.content, data: d })
+          if (d.suggestCompact || d.changes?.length) {
+            out.push({ kind: 'status', uid: this.nuid(), text: m.content, data: d })
+          }
         } else {
           out.push({ kind: 'user', uid: this.nuid(), text: m.content })
         }
@@ -477,17 +490,23 @@ class AppStore {
         break
       }
       case 'status.snapshot': {
-        // 状态卡插到最后一个 user 块之前（send 已先本地 push user 块）
-        const block: Block = { kind: 'status', uid: this.nuid(), text: '', data: ev.data ?? null }
-        let idx = -1
-        for (let k = this.blocks.length - 1; k >= 0; k--) {
-          if (this.blocks[k].kind === 'user') {
-            idx = k
-            break
+        const d = ev.data ?? null
+        // 右上角实时同步：最新快照 + 上下文水位
+        this.live = d
+        if (d && this.status) this.status.contextTokens = d.ctxTokens || 0
+        // 时间线仅异常时插块（send 已先本地 push user 块，插到它之前）
+        if (d && (d.suggestCompact || d.changes?.length)) {
+          const block: Block = { kind: 'status', uid: this.nuid(), text: '', data: d }
+          let idx = -1
+          for (let k = this.blocks.length - 1; k >= 0; k--) {
+            if (this.blocks[k].kind === 'user') {
+              idx = k
+              break
+            }
           }
+          if (idx >= 0) this.blocks.splice(idx, 0, block)
+          else this.blocks.push(block)
         }
-        if (idx >= 0) this.blocks.splice(idx, 0, block)
-        else this.blocks.push(block)
         break
       }
       case 'session.compact': {

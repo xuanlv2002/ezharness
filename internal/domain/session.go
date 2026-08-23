@@ -386,6 +386,9 @@ func (h *Hub) bootstrap() *Session {
 		s.setHistory(snap.Messages)
 		s.Sess.SetResSnap(snap.Snapshot)
 		s.Sess.SetLastOutputAt(snap.LastOutputAt)
+		if snap.PrevSession != "" {
+			s.Sess.SetPrev(snap.PrevSession, snap.CompactSummary) // compact 链（上翻懒加载用）
+		}
 		return s
 	}
 	return h.newSession(hooks.NewSessionID(), nil)

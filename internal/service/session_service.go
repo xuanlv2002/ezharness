@@ -50,6 +50,7 @@ type HistoryData struct {
 	Busy        bool            `json:"busy"`
 	Messages    []types.Message `json:"messages"`
 	PrevSession string          `json:"prevSession,omitempty"` // compact 链上一会话（懒加载用）
+	PrevTitle   string          `json:"prevTitle,omitempty"`   // 上一话题标题（压缩标记用）
 }
 
 /* Status 是右栏生命体征数据。 */
@@ -104,7 +105,16 @@ func (s *SessionService) Snapshot() Status {
 /* History 返回活动会话历史。 */
 func (s *SessionService) History() HistoryData {
 	sess := s.Hub.Active
-	return HistoryData{ID: sess.ID, Busy: sess.Busy(), Messages: sess.History(), PrevSession: sess.Sess.PrevID()}
+	h := HistoryData{ID: sess.ID, Busy: sess.Busy(), Messages: sess.History(), PrevSession: sess.Sess.PrevID()}
+	if h.PrevSession != "" {
+		for _, e := range s.Hub.Topics.Load() {
+			if e.ID == h.PrevSession {
+				h.PrevTitle = e.Title
+				break
+			}
+		}
+	}
+	return h
 }
 
 /* PrevData 是懒加载上一会话响应。 */

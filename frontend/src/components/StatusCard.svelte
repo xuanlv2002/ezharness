@@ -8,16 +8,31 @@
   }
 
   const s = $derived(store.status)
-  const context = $derived((s && s.contextTokens > 0 ? fmtK(s.contextTokens) : '—') as string)
+  const live = $derived(store.live)
+  const ctx = $derived(live?.ctxTokens || s?.contextTokens || 0)
+  const win = $derived(live?.ctxWindow || 0)
+  const hot = $derived(live?.suggestCompact ?? false)
+  const pct = $derived(win > 0 ? Math.min(100, (ctx / win) * 100) : 0)
+  const context = $derived(ctx > 0 ? (win > 0 ? `${fmtK(ctx)}/${fmtK(win)}` : fmtK(ctx)) : '—')
 </script>
 
 <aside class="card">
   <div class="head">
     <h2>状态</h2>
+    {#if live?.changes?.length}
+      <span class="changes" title={live.changes.join('\n')}>{live.changes.join(' · ')}</span>
+    {/if}
   </div>
-  <div class="row">
-    <span class="label">当前上下文</span>
-    <span class="value">{context}</span>
+  <div class="ctxrow">
+    <div class="row">
+      <span class="label">当前上下文{hot ? '（推荐压缩）' : ''}</span>
+      <span class="value" class:hot>{context}</span>
+    </div>
+    {#if win > 0}
+      <div class="bar">
+        <div class="fill" class:hot style="width:{pct}%"></div>
+      </div>
+    {/if}
   </div>
   <div class="row">
     <span class="label">已服务天数</span>
@@ -60,6 +75,20 @@
     font-weight: 700;
     color: var(--muted);
   }
+  .changes {
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    color: #3fb950;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .ctxrow {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding-bottom: 4px;
+  }
   .row {
     display: flex;
     justify-content: space-between;
@@ -71,10 +100,32 @@
     color: var(--faint);
     white-space: nowrap;
   }
+  .label:has(+ .value.hot) {
+    color: #d29922;
+  }
   .value {
     font-family: var(--font-mono);
     font-size: 12px;
     color: var(--fg);
     white-space: nowrap;
+  }
+  .value.hot {
+    color: #d29922;
+    font-weight: 600;
+  }
+  .bar {
+    height: 4px;
+    border-radius: 2px;
+    background: var(--line);
+    overflow: hidden;
+  }
+  .fill {
+    height: 100%;
+    border-radius: 2px;
+    background: #2563eb;
+    transition: width 0.3s var(--ease-out);
+  }
+  .fill.hot {
+    background: #d29922;
   }
 </style>

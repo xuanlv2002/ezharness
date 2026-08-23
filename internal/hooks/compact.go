@@ -62,17 +62,16 @@ type Compact struct {
 }
 
 /*
-pendingCompact 是一次挂起的压缩：工具路径截断后本轮还有剩余迭代
-（模型汇总压缩结果），这些过程消息逻辑上属于旧库，故切库动作延迟
-到 OnEnd——收尾时旧库补写完整历史并封存，新库空置起步。
+pendingCompact 是一次挂起的压缩：工具路径触发后本轮还有剩余迭代
+（模型在原上下文里汇总压缩结果），翻页必须等轮末——压缩轮完整
+历史归旧库，新库空置起步。新 system 两段在此备好，轮末才应用。
 */
 type pendingCompact struct {
 	oldID, newID           string
 	title, reason, summary string
 	auto                   bool
-	oldMsgs                []types.Message // 截断前全量（含本轮触发输入与 tool_calls）
-	oldPrompt              string          // 压缩前的 system 三段（旧库存档 pin 用）
-	oldBase, oldSummary    string
+	newBase                string // 新 session 的 system 两段
+	newSummaryBlock        string
 }
 
 /* NewCompact 创建压缩 hook。rebuildBase/onCompact 可为 nil。 */
@@ -144,25 +143,18 @@ func (c *Compact) OnEnd(ctx context.Context, state *types.LoopState) error {
 }
 
 /*
-finishPending 收尾一次挂起的压缩：过程消息归旧库 → 封存归档 →
-切新 trace/新库（新库本轮不落盘）→ 内存翻页（只剩新 system，
-下一轮用户输入即新库第一条）→ 发事件与回调。
+finishPending 轮末翻页：旧库补写完整历史（含工具结果与模型汇总）
+并封存 → 此刻才重组 system、截断上下文、切新 trace/新库（新库本轮
+不落盘，空置起步）→ 发事件与回调。此前压缩对上下文零改动，模型
+的汇总发生在原上下文里，世界观连续。
 */
 func (c *Compact) finishPending(ctx context.Context, state *types.LoopState) {
 	p := c.pending
 	c.pending = nil
 
-	// 过程新增 = 截断列表 [system, handover, tail] 之后的追加
-	// （工具结果、模型对压缩的汇总——逻辑上属于旧库的收尾）。
-	var tailNew []types.Message
-	if len(state.Messages) > 3 {
-		tailNew = append(tailNew, state.Messages[3:]...)
-	}
-	full := append(append([]types.Message(nil), p.oldMsgs...), tailNew...)
-
-	// 关闭压缩后重开的 turn root，残余 span 落旧 trace 后再切换。
+	// 关闭 turn root（压缩 span 与汇总迭代都在旧 trace），再切换。
 	c.trace.CloseRoot(state, map[string]any{"stopReason": string(state.StopReason), "compacted": true})
-	if err := c.archiveOld(ctx, p, state, full); err != nil {
+	if err := c.archiveOld(ctx, p, state); err != nil {
 		state.EmitEvent(event.EventError, "compact archive failed: "+err.Error())
 	}
 	_ = c.topics.Add(TopicEntry{
@@ -170,22 +162,20 @@ func (c *Compact) finishPending(ctx context.Context, state *types.LoopState) {
 		Title:     p.title,
 		Summary:   p.summary,
 		CreatedAt: time.Now().UnixMilli(),
-		Msgs:      len(full),
+		Msgs:      len(state.Messages),
 		Path:      SessionsDir + "/" + p.oldID,
 		Kind:      "compact",
 	})
 
+	c.sys.Set(p.newBase, p.newSummaryBlock) // 翻页：新 system 两段此刻生效
 	newID := p.newID
 	c.trace.SetTrace(newID)
 	c.sess.SetID(newID)
 	c.sess.SetPrev(p.oldID, p.summary)
-	c.sess.SkipNextSave() // 压缩轮不写新库：新库空置，等用户下一轮
 
-	if len(state.Messages) > 0 && state.Messages[0].Role == types.RoleSystem {
-		state.Messages = []types.Message{state.Messages[0]}
-	} else {
-		state.Messages = []types.Message{{Role: types.RoleSystem, Content: c.sys.Prompt()}}
-	}
+	// 内存翻页后 store.OnEnd 落盘即新库初始快照：messages 空 + 新
+	// system + prev 链——空置起步的重启可恢复形态。
+	state.Messages = []types.Message{{Role: types.RoleSystem, Content: c.sys.Prompt()}}
 
 	info := CompactInfo{OldID: p.oldID, NewID: newID, Title: p.title, Summary: p.summary,
 		Auto: p.auto, Reason: p.reason, PrevPath: SessionsDir + "/" + p.oldID}
@@ -196,19 +186,20 @@ func (c *Compact) finishPending(ctx context.Context, state *types.LoopState) {
 }
 
 /*
-archiveOld 把压缩轮的完整历史补写进旧库存档并封存。system 用压缩前
-的三段（摘要后的新 system 属于新库）；createdAt/input 等承自旧库上次
-落盘的快照（压缩轮触发时旧库文件尚是上一轮的完整状态）。
+archiveOld 把压缩轮的完整历史补写进旧库存档并封存。此刻 sys 尚未
+重组，system 三段即旧库原值；createdAt/input 等承自旧库上次落盘的
+快照（压缩轮触发时旧库文件尚是上一轮的完整状态）。
 */
-func (c *Compact) archiveOld(ctx context.Context, p *pendingCompact, state *types.LoopState, full []types.Message) error {
+func (c *Compact) archiveOld(ctx context.Context, p *pendingCompact, state *types.LoopState) error {
+	base, summary := c.sys.Parts()
 	snap := SessionSnap{
 		ID:           p.oldID,
 		CreatedAt:    state.StartedAt.UnixMilli(),
 		Input:        state.Input,
-		Messages:     stripSystem(full),
-		SystemPrompt: p.oldPrompt,
-		SystemBase:   p.oldBase,
-		SummaryBlock: p.oldSummary,
+		Messages:     stripSystem(state.Messages),
+		SystemPrompt: c.sys.Prompt(),
+		SystemBase:   base,
+		SummaryBlock: summary,
 		Tools:        toolNames(state),
 		Iterations:   state.Iteration,
 		StopReason:   string(state.StopReason),
@@ -233,10 +224,11 @@ func (c *Compact) archiveOld(ctx context.Context, p *pendingCompact, state *type
 }
 
 /*
-compact 执行主循环压缩：摘要 → 重组 system → 截断（供本轮剩余迭代
-使用新上下文）→ 挂起 pending。切库/归档/事件延迟到 OnEnd 收尾——
-压缩轮的完整历史（含工具结果与模型汇总）归旧库，新库空置起步。
-auto 路径在 OnEnd 内就地挂起并立即收尾。
+compact 执行主循环压缩：摘要 → 备好新 system 两段 → 挂起 pending。
+对进行中的上下文零改动——模型在原上下文里收到工具结果并自然汇总
+（同轮内世界观不突变）；翻页（重组 system、截断、切库）全部延迟到
+OnEnd 收尾，下一轮用户输入时模型看到的才是新上下文。auto 路径在
+OnEnd 内就地挂起并立即收尾。
 */
 func (c *Compact) compact(ctx context.Context, state *types.LoopState, auto bool, reason string) (CompactInfo, error) {
 	if len(state.Messages) == 0 {
@@ -246,7 +238,7 @@ func (c *Compact) compact(ctx context.Context, state *types.LoopState, auto bool
 		return CompactInfo{}, errors.New("already compacted this turn")
 	}
 	oldID := c.sess.ID()
-	title := firstUserTitle(state.Messages) // 截断前取：首条 user 在旧上下文里
+	title := firstUserTitle(state.Messages) // 全量历史里的首条真实 user
 	sp := c.trace.StartSpan(state, "compact", "compact", map[string]any{
 		"auto": auto, "reason": reason, "oldId": oldID,
 	})
@@ -258,16 +250,10 @@ func (c *Compact) compact(ctx context.Context, state *types.LoopState, auto bool
 	c.trace.EndSpan(sp, map[string]any{
 		"title": title, "summary": truncStr(summaryText, 2048),
 	})
-	// compact span 记入旧 trace；压缩后的剩余迭代 span 也归旧 trace
-	// （收尾时才 SetTrace），turn root 关闭后重开承接。
-	c.trace.CloseRoot(state, map[string]any{"stopReason": "compacted", "compacted": true})
-	if !auto {
-		c.trace.OpenRoot(state, map[string]any{"input": "(compact 后继续)"})
-	}
 
 	prevPath := SessionsDir + "/" + oldID
 	// 新 session 的 system：base 重组（compact 即创建新 session，记忆/skill/mcp 全量重载）
-	// + 摘要段（含上一 session 路径引用）。
+	// + 摘要段（含上一 session 路径引用）。轮末 finishPending 才 Set。
 	summaryBlock := "# 上下文压缩存档\n上一会话已归档，原始记录在 " + prevPath +
 		"（session.json 可读取全文）。本会话开始前的摘要：\n" + summaryText
 	base := ""
@@ -276,31 +262,11 @@ func (c *Compact) compact(ctx context.Context, state *types.LoopState, auto bool
 	} else if b, _ := c.sys.Parts(); b != "" {
 		base = b
 	}
-	oldBase, oldSummary := c.sys.Parts()
-	oldPrompt := c.sys.Prompt()
-	c.sys.Set(base, summaryBlock)
-
-	// 截断：[新 system, handover, 衔接条]——末条保 tool_calls 协议配对
-	// （工具路径末条是携带 tool_calls 的 assistant，引擎随后的结果追加紧贴它）；
-	// 轮末路径丢弃孤儿 tool 尾巴（其配对的 assistant 已被截掉）。
-	handover := types.Message{
-		Role: types.RoleAssistant,
-		Content: "（上下文已压缩）上一会话的摘要已注入系统提示，过程细节已归档，" +
-			"如需细节可读取 " + prevPath + "/session.json。",
-	}
-	newMsgs := []types.Message{
-		{Role: types.RoleSystem, Content: c.sys.Prompt()},
-		handover,
-	}
-	newMsgs = append(newMsgs, keepTail(state.Messages, auto)...)
-	oldMsgs := append([]types.Message(nil), state.Messages...)
-	state.Messages = newMsgs
 
 	newID := NewSessionID()
 	c.pending = &pendingCompact{
 		oldID: oldID, newID: newID, title: title, reason: reason,
-		summary: summaryText, auto: auto, oldMsgs: oldMsgs,
-		oldPrompt: oldPrompt, oldBase: oldBase, oldSummary: oldSummary,
+		summary: summaryText, auto: auto, newBase: base, newSummaryBlock: summaryBlock,
 	}
 	if auto {
 		c.finishPending(ctx, state)
@@ -364,16 +330,17 @@ func (c *Compact) summarize(ctx context.Context, msgs []types.Message) (string, 
 	return resp.Content, nil
 }
 
-/* firstUserTitle 从消息里取首条 user 文本作话题标题。 */
+/* firstUserTitle 从消息里取首条真实 user 文本作话题标题（跳过 agent_status 状态栏注入）。 */
 func firstUserTitle(msgs []types.Message) string {
 	for _, m := range msgs {
-		if m.Role == types.RoleUser {
-			t := strings.TrimSpace(m.Content)
-			if len([]rune(t)) > 40 {
-				return string([]rune(t)[:40]) + "…"
-			}
-			return t
+		if m.Role != types.RoleUser || strings.HasPrefix(strings.TrimSpace(m.Content), "<agent_status>") {
+			continue
 		}
+		t := strings.TrimSpace(m.Content)
+		if len([]rune(t)) > 40 {
+			return string([]rune(t)[:40]) + "…"
+		}
+		return t
 	}
 	return "未命名话题"
 }

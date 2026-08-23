@@ -3,131 +3,58 @@
 
   let { data, raw }: { data: StatusPayload | null; raw: string } = $props()
 
+  const hm = $derived(data ? data.now.slice(11) : '')
   const pct = $derived(
     data && data.ctxWindow > 0 ? Math.min(100, (data.ctxTokens / data.ctxWindow) * 100) : 0,
   )
   const fmt = (n: number) => (n >= 10000 ? Math.round(n / 1000) + 'k' : String(n))
 </script>
 
-<div class="scard">
+<!-- 仅异常时渲染（推荐压缩/资源变更），一条细警示行 -->
+<div class="alert">
   {#if data}
-    <div class="row">
-      <span class="t">{data.now}</span>
-      {#if data.sinceLastOutputMin > 0}
-        <span>距上次输出 {data.sinceLastOutputMin} 分钟</span>
-      {/if}
-      {#if data.suggestCompact}
-        <span class="warn">推荐压缩</span>
-      {:else if data.ctxWindow > 0}
-        <span class="ok">暂不需压缩</span>
-      {/if}
-    </div>
-    {#if data.ctxWindow > 0}
-      <div class="ctx">
-        <div class="bar">
-          <div class="fill" class:hot={data.suggestCompact} style="width:{pct}%"></div>
-        </div>
-        <span class="mono">上下文 {fmt(data.ctxTokens)}/{fmt(data.ctxWindow)}</span>
-      </div>
+    <span class="t">{hm}</span>
+    {#if data.suggestCompact}
+      <span class="mono">{fmt(data.ctxTokens)}/{fmt(data.ctxWindow)}</span>
+      <span class="warn">推荐压缩</span>
     {/if}
-    {#if data.mcp?.length}
-      <div class="chips">
-        {#each data.mcp as m (m.name)}
-          <span class="chip" title={m.desc}>{m.name}</span>
-        {/each}
-      </div>
-    {/if}
-    {#if data.changes?.length}
-      <div class="changes">
-        {#each data.changes as c (c)}
-          <span class={c.startsWith('+') ? 'add' : 'del'}>{c}</span>
-        {/each}
-      </div>
-    {/if}
+    {#each data.changes || [] as c (c)}
+      <span class={c.startsWith('+') ? 'add' : 'del'}>{c}</span>
+    {/each}
   {:else}
     <pre class="raw">{raw}</pre>
   {/if}
 </div>
 
 <style>
-  .scard {
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-    padding: 10px 14px;
-    border: 1px solid var(--line);
-    border-radius: 10px;
-    background: rgba(127, 127, 127, 0.06);
-    font-size: 12px;
-    color: var(--muted);
-  }
-  .row {
+  .alert {
     display: flex;
     align-items: center;
-    gap: 14px;
+    gap: 10px;
     flex-wrap: wrap;
+    padding: 3px 12px;
+    font-size: 11.5px;
+    color: var(--muted);
+    border-left: 2px solid #d29922;
   }
   .t {
     font-family: var(--font-mono);
     color: var(--faint);
   }
+  .mono {
+    font-family: var(--font-mono);
+  }
   .warn {
     color: #d29922;
     font-weight: 600;
   }
-  .ok {
-    color: var(--faint);
-  }
-  .ctx {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-  }
-  .bar {
-    flex: 1;
-    height: 4px;
-    border-radius: 2px;
-    background: var(--line);
-    overflow: hidden;
-  }
-  .fill {
-    height: 100%;
-    border-radius: 2px;
-    background: #58a6ff;
-    transition: width 0.3s var(--ease-out);
-  }
-  .fill.hot {
-    background: #f0883e;
-  }
-  .mono {
-    font-family: var(--font-mono);
-    white-space: nowrap;
-  }
-  .chips {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 6px;
-  }
-  .chip {
-    padding: 1px 8px;
-    border: 1px solid var(--line);
-    border-radius: 999px;
-    font-family: var(--font-mono);
-    font-size: 11px;
-    color: var(--muted);
-  }
-  .changes {
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-    font-family: var(--font-mono);
-    font-size: 11.5px;
-  }
   .add {
     color: #3fb950;
+    font-family: var(--font-mono);
   }
   .del {
     color: #f85149;
+    font-family: var(--font-mono);
   }
   .raw {
     margin: 0;
@@ -135,7 +62,7 @@
     font-size: 11.5px;
     white-space: pre-wrap;
     word-break: break-all;
-    max-height: 160px;
+    max-height: 120px;
     overflow-y: auto;
   }
 </style>

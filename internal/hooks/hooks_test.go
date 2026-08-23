@@ -109,37 +109,27 @@ func TestCompactTruncationKeepsProtocol(t *testing.T) {
 		t.Fatalf("expect skip, got %v", action.Kind)
 	}
 
-	// 截断协议：3 条 = [新 system(含摘要), handover, 原末条 assistant(tool_calls)]
-	if len(state.Messages) != 3 {
-		t.Fatalf("expect 3 messages after compact, got %d", len(state.Messages))
+	// 工具调用中途对上下文零改动：消息原样（模型在原上下文里汇总）
+	if len(state.Messages) != 5 {
+		t.Fatalf("expect untouched 5 messages after compact trigger, got %d", len(state.Messages))
 	}
-	if state.Messages[0].Role != types.RoleSystem ||
-		!strings.Contains(state.Messages[0].Content, "这是一份交接摘要") ||
-		!strings.Contains(state.Messages[0].Content, "sessions/old-session") {
-		t.Fatalf("new system must contain summary and prev path: %q", state.Messages[0].Content)
-	}
-	if state.Messages[1].Role != types.RoleAssistant {
-		t.Fatal("second message should be handover")
-	}
-	last := state.Messages[2]
+	last := state.Messages[4]
 	if last.Role != types.RoleAssistant || len(last.ToolCalls) != 1 || last.ToolCalls[0].ID != "call-1" {
-		t.Fatal("last message must keep the tool_calls pairing")
+		t.Fatal("last message must keep the tool_calls pairing untouched")
 	}
 
-	// 挂起期不切库、不入档：压缩轮还在进行（模型将汇总工具结果）
+	// 挂起期不切库、不入档、system 不变：压缩轮还在进行
 	if store.ID() != "old-session" {
 		t.Fatalf("session must not switch before OnEnd, got %q", store.ID())
 	}
 	if list := topics.Load(); len(list) != 0 {
 		t.Fatalf("topic index must be empty before OnEnd, got %+v", list)
 	}
-	// SysPrompt 已重组（rebuildBase + 摘要段）——剩余迭代立即用新上下文
-	base, summary := sys.Parts()
-	if base != "rebuilt base" || !strings.Contains(summary, "这是一份交接摘要") {
-		t.Fatalf("sysprompt should be rebuilt, got base=%q summary=%q", base, summary)
+	if base, summary := sys.Parts(); base != "base prompt" || summary != "" {
+		t.Fatalf("sysprompt must be untouched before OnEnd, got base=%q summary=%q", base, summary)
 	}
 
-	// 模拟剩余迭代：引擎追加工具结果与模型汇总
+	// 模拟剩余迭代：引擎追加工具结果与模型汇总（发生在原上下文里）
 	state.Messages = append(state.Messages,
 		types.Message{Role: types.RoleTool, ToolCallID: "call-1", Content: "上下文已压缩归档…"},
 		types.Message{Role: types.RoleAssistant, Content: "好的，已重置。"},
@@ -150,19 +140,30 @@ func TestCompactTruncationKeepsProtocol(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// 新库切入；内存翻页只剩 [system]（下一轮用户输入即新库第一条）
+	// 新库切入；翻页后只剩 [新 system]（下一轮用户输入即新库第一条）
 	if store.ID() == "old-session" || store.ID() == "" {
 		t.Fatalf("session id should switch after OnEnd, got %q", store.ID())
 	}
-	if len(state.Messages) != 1 || state.Messages[0].Role != types.RoleSystem {
-		t.Fatalf("expect [system] after finish, got %d msgs", len(state.Messages))
+	if len(state.Messages) != 1 || state.Messages[0].Role != types.RoleSystem ||
+		!strings.Contains(state.Messages[0].Content, "这是一份交接摘要") {
+		t.Fatalf("expect [new system] after finish, got %+v", state.Messages)
 	}
-	// store.OnEnd 跳过：新库不落盘（空置起步）
+	// store.OnEnd 落盘＝新库初始快照：messages 空、新 system、prev 链（重启可恢复）
 	if err := store.OnEnd(context.Background(), state); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := fsys.Read(context.Background(), "sessions/"+store.ID()+"/session.json"); err == nil {
-		t.Fatal("new session must not be persisted on compact turn")
+	newSnap, err := LoadSnap(context.Background(), fsys, store.ID())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(newSnap.Messages) != 0 {
+		t.Fatalf("new session snapshot must be empty, got %d msgs", len(newSnap.Messages))
+	}
+	if !strings.Contains(newSnap.SystemPrompt, "这是一份交接摘要") {
+		t.Fatalf("new snapshot must pin new system, got %q", newSnap.SystemPrompt)
+	}
+	if newSnap.PrevSession != "old-session" || newSnap.Archived {
+		t.Fatalf("new snapshot prev chain wrong: %+v", newSnap)
 	}
 
 	// 旧库补写完整历史（含触发输入与过程消息）并封存

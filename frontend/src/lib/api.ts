@@ -198,7 +198,13 @@ export const api = {
 
   getHistory: (id: string) =>
     fetch(`/api/sessions/${id}`).then(
-      json<{ id: string; busy: boolean; messages: HistoryMessage[]; prevSession?: string }>,
+      json<{
+        id: string
+        busy: boolean
+        messages: HistoryMessage[]
+        prevSession?: string
+        prevTitle?: string
+      }>,
     ),
 
   /* compact 链上一会话（懒加载）；无上级返回 null */
