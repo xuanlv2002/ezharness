@@ -626,6 +626,7 @@ class AppStore {
       case 'session.compact': {
         // 压缩分隔线 + activeId 更新（SSE 绑 Session 对象无需重订阅，
         // 但 GET /api/sessions/:id 校验活动 ID，必须本地换新）
+        this.live = null // 旧会话水位快照作废，状态卡按刷新后的 status 渲染
         const d = ev.data || {}
         this.blocks.push({
           kind: 'note',

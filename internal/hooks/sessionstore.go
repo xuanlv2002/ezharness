@@ -68,6 +68,7 @@ type Store struct {
 	prevID string // compact 链：上一 session ID
 	prevSum string // compact 链：上一 session 摘要
 	usage types.Usage // 本会话累计用量（OnEnd 累计并随快照落盘）
+	runID string // 本轮开始时的会话 ID（compact 轮内切库时拒绝把用量记入新库）
 	ctx   func() (tokens, window int) // 上下文水位与窗口（宿主注入，快照落盘用）
 }
 
@@ -185,6 +186,14 @@ func (h *Store) SetLastOutputAt(t int64) {
 
 func (h *Store) Name() string { return "sessionstore" }
 
+/* OnStart 记录本轮所属会话（compact 在 OnEnd 轮内切库时，用量仍归旧库口径——不记入新库）。 */
+func (h *Store) OnStart(_ context.Context, _ *types.LoopState) error {
+	h.mu.Lock()
+	h.runID = h.id
+	h.mu.Unlock()
+	return nil
+}
+
 /*
 OnEnd 持久化快照；失败不阻断主流程（错误记入 Metadata）。
 fork 写主会话 forks/ 子目录，SeedLen 越界 clamp 全存（fork 内 compact
@@ -216,7 +225,7 @@ func (h *Store) OnEnd(_ context.Context, state *types.LoopState) error {
 		LastOutputAt: last,
 		Snapshot:     snap,
 	}
-	if !fork { // 主循环累计会话用量与水位（fork 产物只存增量消息）
+	if !fork && h.runID == id { // 主循环且本轮未切库：累计用量与水位（fork 只存增量；compact 切库轮的用量不计入新库）
 		h.mu.Lock()
 		h.usage.Add(state.Usage)
 		usage := h.usage

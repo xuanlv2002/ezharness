@@ -212,6 +212,9 @@ func (c *Compact) archiveOld(ctx context.Context, p *pendingCompact, state *type
 		snap.CreatedAt = old.CreatedAt
 		snap.Input = old.Input
 		snap.Model = old.Model
+		snap.Usage = old.Usage // 用量/水位承自旧库（压缩轮自身开销不计入任何会话）
+		snap.CtxTokens = old.CtxTokens
+		snap.CtxWindow = old.CtxWindow
 		if old.PrevSession != "" {
 			snap.PrevSession, snap.CompactSummary = old.PrevSession, old.CompactSummary
 		}

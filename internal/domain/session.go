@@ -125,10 +125,12 @@ func (s *Session) SetCtxTokens(n int) {
 	s.mu.Unlock()
 }
 
-/* SetIdentity 同步会话标识（话题轮换/compact 后）。 */
+/* SetIdentity 同步会话标识（话题轮换/compact 后），水位清零
+（恢复场景由调用方随后按快照重注）。 */
 func (s *Session) SetIdentity(id string) {
 	s.mu.Lock()
 	s.ID = id
+	s.ctxTokens = 0
 	s.mu.Unlock()
 }
 
