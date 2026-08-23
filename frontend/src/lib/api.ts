@@ -115,12 +115,14 @@ export interface Status {
   sessionMsgs: number
   busy: boolean
   contextTokens: number
-  daysServed: number
+  contextWindow: number
   cacheHitRate: number
-  totalTokens: number
+  promptTokens: number
+  completionTokens: number
   turns: number
   tools: string[]
   mcpServers: string[]
+  skills: string[]
   topicsCount: number
 }
 

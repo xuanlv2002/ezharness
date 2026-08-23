@@ -81,6 +81,12 @@ func (t *TopicService) Resume(ctx context.Context, id string) error {
 	s.ReplaceHistory(snap.Messages)
 	s.Sess.SetResSnap(snap.Snapshot)
 	s.Sess.SetLastOutputAt(snap.LastOutputAt)
+	s.Sess.SeedUsage(snap.Usage) // SetID 已清零，按目标快照重注
+	if snap.CtxTokens > 0 {
+		s.SetCtxTokens(snap.CtxTokens)
+	} else {
+		s.SetCtxTokens(hooks.LastCtxTokens(snap.Messages))
+	}
 	if snap.PrevSession != "" { // 压缩链（SetID 已清空，需重设）
 		s.Sess.SetPrev(snap.PrevSession, snap.CompactSummary)
 	}

@@ -424,6 +424,13 @@ func (h *Hub) bootstrap() *Session {
 		s.setHistory(snap.Messages)
 		s.Sess.SetResSnap(snap.Snapshot)
 		s.Sess.SetLastOutputAt(snap.LastOutputAt)
+		s.Sess.SeedUsage(snap.Usage)
+		// 恢复水位（旧快照无字段时从历史最后一条 agent_status 兜底）
+		if snap.CtxTokens > 0 {
+			s.SetCtxTokens(snap.CtxTokens)
+		} else {
+			s.SetCtxTokens(hooks.LastCtxTokens(snap.Messages))
+		}
 		if snap.PrevSession != "" {
 			s.Sess.SetPrev(snap.PrevSession, snap.CompactSummary) // compact 链（上翻懒加载用）
 		}

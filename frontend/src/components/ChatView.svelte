@@ -103,7 +103,7 @@
   </div>
   <aside class="side">
     <StatusCard />
-    <NoticePanel notices={store.notices} onResolve={resolveNotice} onJump={jumpToNotice} />
+    <NoticePanel notices={store.notices} onResolve={resolveNotice} onJump={jumpToNotice} onDismiss={(id) => store.dismissNotice(id)} />
   </aside>
   {#if dragging}
     <div class="dropzone">

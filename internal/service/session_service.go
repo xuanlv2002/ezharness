@@ -8,6 +8,7 @@ import (
 	"errors"
 	"strings"
 
+	"github.com/xuanlv2002/ezloop/ext/hook/skill"
 	"github.com/xuanlv2002/ezloop/ext/hook/summary"
 	"github.com/xuanlv2002/ezloop/types"
 
@@ -54,20 +55,22 @@ type HistoryData struct {
 	Decisions   []hooks.DecisionRecord    `json:"decisions,omitempty"`   // 人机决策记录（工具卡徽标用）
 }
 
-/* Status 是右栏生命体征数据。 */
+/* Status 是右栏状态卡数据（命中率与用量为本会话口径，切会话/重启清零）。 */
 type Status struct {
-	Model         string   `json:"model"`
-	SessionID     string   `json:"sessionId"`
-	SessionMsgs   int      `json:"sessionMsgs"`
-	Busy          bool     `json:"busy"`
-	ContextTokens int      `json:"contextTokens"`
-	DaysServed    int      `json:"daysServed"`
-	CacheHitRate  float64  `json:"cacheHitRate"`
-	TotalTokens   int      `json:"totalTokens"`
-	Turns         int      `json:"turns"`
-	Tools         []string `json:"tools"`
-	McpServers    []string `json:"mcpServers"`
-	TopicsCount   int      `json:"topicsCount"`
+	Model            string   `json:"model"`
+	SessionID        string   `json:"sessionId"`
+	SessionMsgs      int      `json:"sessionMsgs"`
+	Busy             bool     `json:"busy"`
+	ContextTokens    int      `json:"contextTokens"`
+	ContextWindow    int      `json:"contextWindow"` // 主模型窗口（水位条分母）
+	CacheHitRate     float64  `json:"cacheHitRate"`
+	PromptTokens     int      `json:"promptTokens"`     // 本会话累计输入
+	CompletionTokens int      `json:"completionTokens"` // 本会话累计输出
+	Turns            int      `json:"turns"`
+	Tools            []string `json:"tools"`
+	McpServers       []string `json:"mcpServers"`
+	Skills           []string `json:"skills"`
+	TopicsCount      int      `json:"topicsCount"`
 }
 
 /* mainModelName 返回主模型名（空槽显示空）。 */
@@ -86,20 +89,40 @@ func (s *SessionService) Snapshot() Status {
 	if w != nil {
 		tools = w.ToolNames
 	}
-	total := s.Hub.Stats.Total()
+	if tools == nil {
+		tools = []string{}
+	}
+	mcp := McpNames(s.Hub.Fsys)
+	if mcp == nil {
+		mcp = []string{}
+	}
+	u := sess.Sess.Usage()
+	hit := 0.0
+	if u.PromptTokens > 0 {
+		hit = float64(u.CachedTokens) / float64(u.PromptTokens)
+	}
+	ctxTokens, ctxWindow := sess.Sess.CtxInfo()
+	skills := []string{}
+	if entries, err := skill.LoadDir(context.Background(), s.Hub.Fsys, hooks.SkillsDir); err == nil {
+		for _, e := range entries {
+			skills = append(skills, e.Name)
+		}
+	}
 	return Status{
-		Model:         mainModelName(s.Hub),
-		SessionID:     sess.ID,
-		SessionMsgs:   len(sess.History()),
-		Busy:          sess.Busy(),
-		ContextTokens: sess.CtxTokens(),
-		DaysServed:    s.Hub.Stats.DaysServed(),
-		CacheHitRate:  s.Hub.Stats.CacheHitRate(),
-		TotalTokens:   total.PromptTokens + total.CompletionTokens,
-		Turns:         s.Hub.Stats.Turns(),
-		Tools:         tools,
-		McpServers:    McpNames(s.Hub.Fsys),
-		TopicsCount:   len(s.Hub.Topics.Load()),
+		Model:            mainModelName(s.Hub),
+		SessionID:        sess.ID,
+		SessionMsgs:      len(sess.History()),
+		Busy:             sess.Busy(),
+		ContextTokens:    ctxTokens,
+		ContextWindow:    ctxWindow,
+		CacheHitRate:     hit,
+		PromptTokens:     u.PromptTokens,
+		CompletionTokens: u.CompletionTokens,
+		Turns:            s.Hub.Stats.Turns(),
+		Tools:            tools,
+		McpServers:       mcp,
+		Skills:           skills,
+		TopicsCount:      len(s.Hub.Topics.Load()),
 	}
 }
 

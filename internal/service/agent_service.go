@@ -77,6 +77,7 @@ func (a *AgentService) Assemble(s *domain.Session, st domain.Settings) {
 	if window <= 0 {
 		window = 128000 // 旧 models.json 无 contextWindow 字段的兜底
 	}
+	s.Sess.BindCtx(func() (int, int) { return a.Hub.Active.CtxTokens(), window })
 	statusHook := hooks.NewStatus(s.Fsys, s.Sess,
 		func() int { return a.Hub.Active.CtxTokens() },
 		window,

@@ -164,3 +164,17 @@ func ParseStatusTag(content string) *StatusData {
 	}
 	return &d
 }
+
+/* LastCtxTokens 从历史尾部找最近一条状态记录的水位（旧快照无
+ctxTokens 字段时的恢复兜底；找不到返回 0）。 */
+func LastCtxTokens(msgs []types.Message) int {
+	for i := len(msgs) - 1; i >= 0; i-- {
+		if msgs[i].Role != types.RoleUser {
+			continue
+		}
+		if d := ParseStatusTag(msgs[i].Content); d != nil && d.CtxTokens > 0 {
+			return d.CtxTokens
+		}
+	}
+	return 0
+}

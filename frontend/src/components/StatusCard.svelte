@@ -10,10 +10,14 @@
   const s = $derived(store.status)
   const live = $derived(store.live)
   const ctx = $derived(live?.ctxTokens || s?.contextTokens || 0)
-  const win = $derived(live?.ctxWindow || 0)
+  const win = $derived(live?.ctxWindow || s?.contextWindow || 0)
   const hot = $derived(live?.suggestCompact ?? false)
   const pct = $derived(win > 0 ? Math.min(100, (ctx / win) * 100) : 0)
-  const context = $derived(ctx > 0 ? (win > 0 ? `${fmtK(ctx)}/${fmtK(win)}` : fmtK(ctx)) : '—')
+  const context = $derived(ctx > 0 ? (win > 0 ? `${fmtK(ctx)}/${fmtK(win)}` : fmtK(ctx)) : '-')
+  const hit = $derived(s && s.promptTokens > 0 ? `${(s.cacheHitRate * 100).toFixed(0)}%` : '-')
+  const tools = $derived(s?.tools ?? [])
+  const mcp = $derived(s?.mcpServers ?? [])
+  const skills = $derived(s?.skills ?? [])
 </script>
 
 <aside class="card">
@@ -35,20 +39,34 @@
     {/if}
   </div>
   <div class="row">
-    <span class="label">已服务天数</span>
-    <span class="value">{s ? `${s.daysServed} 天` : '—'}</span>
-  </div>
-  <div class="row">
     <span class="label">缓存命中率</span>
-    <span class="value">{s && s.totalTokens > 0 ? `${(s.cacheHitRate * 100).toFixed(0)}%` : '—'}</span>
+    <span class="value">{hit}</span>
   </div>
   <div class="row">
-    <span class="label">累计用量</span>
-    <span class="value">{s && s.totalTokens > 0 ? fmtK(s.totalTokens) : '—'}</span>
+    <span class="label">累计输入</span>
+    <span class="value">{s && s.promptTokens > 0 ? fmtK(s.promptTokens) : '-'}</span>
   </div>
   <div class="row">
-    <span class="label">当前工具</span>
-    <span class="value">{store.lastTool || '—'}</span>
+    <span class="label">累计输出</span>
+    <span class="value">{s && s.completionTokens > 0 ? fmtK(s.completionTokens) : '-'}</span>
+  </div>
+  <div class="caps">
+    <span class="label">工具</span>
+    {#if tools.length}
+      <div class="chips">{#each tools as t (t)}<i class="chip">{t}</i>{/each}</div>
+    {:else}<span class="none">-</span>{/if}
+  </div>
+  <div class="caps">
+    <span class="label">MCP</span>
+    {#if mcp.length}
+      <div class="chips">{#each mcp as m (m)}<i class="chip">{m}</i>{/each}</div>
+    {:else}<span class="none">-</span>{/if}
+  </div>
+  <div class="caps">
+    <span class="label">Skill</span>
+    {#if skills.length}
+      <div class="chips">{#each skills as k (k)}<i class="chip">{k}</i>{/each}</div>
+    {:else}<span class="none">-</span>{/if}
   </div>
 </aside>
 
@@ -58,6 +76,8 @@
     flex-direction: column;
     gap: 6px;
     width: 100%;
+    max-height: 100%;
+    overflow-y: auto;
     padding: 12px 14px;
     background: var(--bg);
     border: 1px solid var(--line);
@@ -127,5 +147,30 @@
   }
   .fill.hot {
     background: #d29922;
+  }
+  .caps {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding-top: 2px;
+  }
+  .none {
+    font-size: 11px;
+    color: var(--faint);
+  }
+  .chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+  }
+  .chip {
+    font-family: var(--font-mono);
+    font-style: normal;
+    font-size: 10px;
+    color: var(--muted);
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    padding: 1px 5px;
+    white-space: nowrap;
   }
 </style>

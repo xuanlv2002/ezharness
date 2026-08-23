@@ -46,6 +46,9 @@ type SessionSnap struct {
 	CompactSummary string          `json:"compactSummary,omitempty"` // 上一 session 的摘要
 	LastOutputAt   int64           `json:"lastOutputAt,omitempty"`   // agent_status 距上次输出用
 	Snapshot       *ResSnapshot    `json:"snapshot,omitempty"`       // 资源清单快照（nil = 基线未建）
+	Usage          types.Usage     `json:"usage"`                    // 本会话累计用量（状态卡展示）
+	CtxTokens      int             `json:"ctxTokens,omitempty"`      // 最近一次模型调用的上下文水位
+	CtxWindow      int             `json:"ctxWindow,omitempty"`      // 主模型上下文窗口
 	Iterations     int             `json:"iterations"`
 	StopReason     string          `json:"stopReason"`
 	StartedAt      time.Time       `json:"startedAt"`
@@ -64,6 +67,8 @@ type Store struct {
 	last int64 // lastOutputAt（status hook 维护）
 	prevID string // compact 链：上一 session ID
 	prevSum string // compact 链：上一 session 摘要
+	usage types.Usage // 本会话累计用量（OnEnd 累计并随快照落盘）
+	ctx   func() (tokens, window int) // 上下文水位与窗口（宿主注入，快照落盘用）
 }
 
 /* NewStore 创建存储 hook。id 为空自动生成。 */
@@ -99,7 +104,40 @@ func (h *Store) SetID(id string) {
 		h.snap = nil // 新会话资源基线由 status hook 重建
 		h.last = 0
 		h.prevID, h.prevSum = "", ""
+		h.usage = types.Usage{} // 新会话用量重新累计
 	}
+	h.mu.Unlock()
+}
+
+/* BindCtx 注入上下文水位与窗口（Assemble 时调用）。 */
+func (h *Store) BindCtx(fn func() (tokens, window int)) {
+	h.mu.Lock()
+	h.ctx = fn
+	h.mu.Unlock()
+}
+
+/* CtxInfo 返回上下文水位与窗口（未绑定时 0,0）。 */
+func (h *Store) CtxInfo() (int, int) {
+	h.mu.Lock()
+	fn := h.ctx
+	h.mu.Unlock()
+	if fn == nil {
+		return 0, 0
+	}
+	return fn()
+}
+
+/* Usage 返回本会话累计用量副本。 */
+func (h *Store) Usage() types.Usage {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.usage
+}
+
+/* SeedUsage 恢复快照时注入累计用量（SetID 之后调用）。 */
+func (h *Store) SeedUsage(u types.Usage) {
+	h.mu.Lock()
+	h.usage = u
 	h.mu.Unlock()
 }
 
@@ -177,6 +215,14 @@ func (h *Store) OnEnd(_ context.Context, state *types.LoopState) error {
 		EndedAt:      state.EndedAt,
 		LastOutputAt: last,
 		Snapshot:     snap,
+	}
+	if !fork { // 主循环累计会话用量与水位（fork 产物只存增量消息）
+		h.mu.Lock()
+		h.usage.Add(state.Usage)
+		usage := h.usage
+		h.mu.Unlock()
+		out.Usage = usage
+		out.CtxTokens, out.CtxWindow = h.CtxInfo()
 	}
 	if sys != nil {
 		base, summary := sys.Parts()

@@ -19,6 +19,17 @@
     void store.bootstrap().catch(() => {
       store.lastStatus = '后端不可达'
     })
+    // 窗口重新聚焦时刷新（skill/MCP 可能在别的窗口或本机文件系统被改）
+    const onFocus = () => {
+      if (view === 'chat') void store.refreshStatus()
+    }
+    window.addEventListener('focus', onFocus)
+    return () => window.removeEventListener('focus', onFocus)
+  })
+
+  // 进入对话页即刷新：MCP/记忆等页面改动开关或 skill 后，右上角状态卡实时反映
+  $effect(() => {
+    if (view === 'chat') void store.refreshStatus()
   })
 </script>
 

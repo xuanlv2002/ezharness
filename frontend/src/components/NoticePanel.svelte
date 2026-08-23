@@ -20,10 +20,12 @@
     notices = [],
     onResolve,
     onJump,
+    onDismiss,
   }: {
     notices?: Notice[]
     onResolve?: (id: string, action: string, input?: string) => void
     onJump?: (n: Notice) => void
+    onDismiss?: (id: string) => void
   } = $props()
 
   const kindMeta: Record<Notice['kind'], { label: string; icon: string }> = {
@@ -68,6 +70,13 @@
               {/if}
             </div>
             <span class="time">{n.time}</span>
+            {#if n.status === 'done'}
+              <button class="close" onclick={() => onDismiss?.(n.id)} title="关闭通知">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+                  <path d="M6 6l12 12M18 6L6 18" />
+                </svg>
+              </button>
+            {/if}
           </div>
 
           {#if n.status === 'pending'}
@@ -147,6 +156,7 @@
     display: flex;
     flex-direction: column;
     gap: 8px;
+    max-height: 45vh;
     overflow-y: auto;
     min-height: 0;
   }
@@ -239,6 +249,31 @@
     font-family: var(--font-mono);
     font-size: 9.5px;
     color: var(--faint);
+  }
+  .close {
+    flex: none;
+    display: grid;
+    place-items: center;
+    width: 16px;
+    height: 16px;
+    margin: -2px -2px 0 0;
+    border: none;
+    border-radius: 4px;
+    background: transparent;
+    color: var(--faint);
+    opacity: 0;
+    cursor: pointer;
+  }
+  .close svg {
+    width: 9px;
+    height: 9px;
+  }
+  .notice:hover .close {
+    opacity: 1;
+  }
+  .close:hover {
+    color: var(--fg);
+    background: var(--bg-soft);
   }
   .actions {
     display: flex;

@@ -321,6 +321,14 @@ class AppStore {
     if (t && t.kind === 'tool') t.decision = resolution
   }
 
+  /* 关闭通知：仅已处理/过期可关，pending 保留待处理 */
+  dismissNotice(id: string) {
+    const n = this.notices.find((x) => x.id === id)
+    if (n && n.status === 'done') {
+      this.notices = this.notices.filter((x) => x.id !== id)
+    }
+  }
+
   async decideApprove(block: DecisionData, approve: boolean, reason: string) {
     if (!this.activeId) return
     block.resolved = true
@@ -576,8 +584,8 @@ class AppStore {
           resolved: false,
           resolution: '',
         })
-        // 通知栏同步：fork 内请求带 fork 标识，跳转锚点指向时间线决策卡
-        this.notices.push({
+        // 通知栏同步：fork 内请求带 fork 标识，跳转锚点指向时间线决策卡；最新在最前
+        this.notices.unshift({
           id,
           kind: dtype,
           source: ev.forkId || 'agent',
