@@ -25,6 +25,29 @@ const (
 /* MemoryFile 是初始加载进上下文的索引文件（兼容旧名引用）。 */
 const MemoryFile = HarnessMd
 
+/*
+DefaultHarnessMd 是索引文件的初始模板：首次访问（文件缺失）时落盘，
+此后完全归 agent 维护。
+*/
+const DefaultHarnessMd = `# ezharness 长期记忆索引
+
+本文件是长期记忆的入口，随会话加载进上下文。重要的用户偏好与事实
+按主题写入独立文件（如 user.md、projects.md），并在此登记一行摘要；
+本文件也可直接更新。其余记忆文件不进上下文，用 grep/findstr 检索。
+`
+
+/*
+EnsureHarnessMd 确保索引文件存在（缺失写默认模板），返回当前内容。
+system 组装的唯一取材入口——初始化与加载合一。
+*/
+func EnsureHarnessMd(ctx context.Context, fsys fs.FileSystem) string {
+	if data, err := fsys.Read(ctx, HarnessMd); err == nil && len(strings.TrimSpace(string(data))) > 0 {
+		return string(data)
+	}
+	_ = fsys.Write(ctx, HarnessMd, []byte(DefaultHarnessMd))
+	return DefaultHarnessMd
+}
+
 /* Memory 实现记忆注入。 */
 type Memory struct {
 	fsys fs.FileSystem

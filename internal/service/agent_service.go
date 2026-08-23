@@ -238,36 +238,43 @@ func matchRuleList(list []string, ruleTool string, args json.RawMessage) bool {
 
 /*
 buildSystemBase 组装 session 的 system 基础段：人格 + SystemExtra +
-长期记忆 + skill 列表 + MCP 列表。只在 session 创建时调用一次——
-skill 全文与记忆细节不注入（模型按需用文件工具读取），列表变更
-（新增 skill/mcp 等）要等下个 session 才进 system，过渡期靠
-agent_status 状态栏告知模型。
+标签化注入块（<memory> 长期记忆结构+索引 / <skills> 技能列表 /
+<mcp> MCP 列表）。只在 session 创建时调用一次（同 session 不变）；
+skill 全文与记忆细节不注入（模型按需用文件工具读取），列表变更要等
+下个 session 才进 system，过渡期靠 agent_status 状态栏告知模型。
 */
 func buildSystemBase(ctx context.Context, st domain.Settings, fsys osfs.OS) string {
 	var b strings.Builder
 	b.WriteString("你是 ezharness——一个持续陪伴用户的设备级 agent，可全权操作本机文件与命令。" +
 		"能用工具就用工具，回答简洁。可并行的子任务用 task 分身去做。" +
 		"用户需要小工具或网页时用 save_app 生成为快应用，用户可一键启动。" +
-		"重要的用户偏好与事实可写入 memory/longterm/harness.md 长期记住，" +
-		"更多记忆细节用 findstr/grep 在 memory/longterm/ 下检索。")
+		"重要的用户偏好与事实可写入长期记忆（结构见 <memory> 块）。")
 	if st.SystemExtra != "" {
 		b.WriteString("\n\n" + st.SystemExtra)
 	}
-	if data, err := fsys.Read(ctx, hooks.HarnessMd); err == nil && len(strings.TrimSpace(string(data))) > 0 {
-		b.WriteString("\n\n# 长期记忆\n（索引随会话加载；用文件工具更新 memory/longterm/harness.md，其余记忆文件可 grep 检索）\n")
-		b.Write(data)
-	}
+	b.WriteString("\n\n<memory>\n" +
+		"# 长期记忆\n" +
+		"- 根目录 memory/（工作目录相对），分三个区：\n" +
+		"  - memory/longterm/ —— 长期记忆：harness.md 是索引（下方已加载，" +
+		"可直接用文件工具更新），主题文件按需创建，不进上下文，用 findstr/grep 检索\n" +
+		"  - memory/skills/ —— 能力记忆：沉淀的技能\n" +
+		"  - sessions/ —— 话题存档：历史会话全文（compact 后的旧库）\n" +
+		"# 索引（harness.md）\n" +
+		hooks.EnsureHarnessMd(ctx, fsys) +
+		"\n</memory>")
 	if skills, err := skill.LoadDir(ctx, fsys, hooks.SkillsDir); err == nil && len(skills) > 0 {
-		b.WriteString("\n\n# 可用技能\n（此处仅名称与描述；需要使用时先调用 load_skill 获取完整指令与脚本路径）")
+		b.WriteString("\n\n<skills>\n（仅名称与描述；使用前先调用 load_skill 获取完整指令与脚本路径）")
 		for _, sk := range skills {
 			fmt.Fprintf(&b, "\n- %s: %s", sk.Name, sk.Description)
 		}
+		b.WriteString("\n</skills>")
 	}
 	if lines := mcpListLines(fsys); len(lines) > 0 {
-		b.WriteString("\n\n# MCP 服务\n（经 mcp_router 工具调用，先用 mcp_list/tool_list 发现服务与工具）")
+		b.WriteString("\n\n<mcp>\n（经 mcp_router 工具调用，先用 mcp_list/tool_list 发现服务与工具）")
 		for _, l := range lines {
 			b.WriteString("\n" + l)
 		}
+		b.WriteString("\n</mcp>")
 	}
 	return b.String()
 }

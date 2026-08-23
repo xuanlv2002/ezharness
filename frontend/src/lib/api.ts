@@ -25,11 +25,6 @@ export interface SseEvent {
   data?: any
 }
 
-export interface StatusMcp {
-  name: string
-  desc?: string
-}
-
 /* agent_status 状态栏载荷（后端 hooks.StatusData 的 JSON 形状） */
 export interface StatusPayload {
   now: string
@@ -37,7 +32,6 @@ export interface StatusPayload {
   ctxTokens: number
   ctxWindow: number
   suggestCompact: boolean
-  mcp: StatusMcp[]
   changes?: string[]
 }
 

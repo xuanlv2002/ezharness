@@ -253,9 +253,9 @@ func (c *Compact) compact(ctx context.Context, state *types.LoopState, auto bool
 
 	prevPath := SessionsDir + "/" + oldID
 	// 新 session 的 system：base 重组（compact 即创建新 session，记忆/skill/mcp 全量重载）
-	// + 摘要段（含上一 session 路径引用）。轮末 finishPending 才 Set。
-	summaryBlock := "# 上下文压缩存档\n上一会话已归档，原始记录在 " + prevPath +
-		"（session.json 可读取全文）。本会话开始前的摘要：\n" + summaryText
+	// + 摘要段（标签块，含上一 session 路径引用）。轮末 finishPending 才 Set。
+	summaryBlock := "<compact-summary>\n上一会话已归档，原始记录在 " + prevPath +
+		"（session.json 可读取全文）。本会话开始前的摘要：\n" + summaryText + "\n</compact-summary>"
 	base := ""
 	if c.rebuildBase != nil {
 		base = c.rebuildBase()

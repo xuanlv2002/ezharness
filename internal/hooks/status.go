@@ -34,15 +34,15 @@ type StatusMcp struct {
 	Desc string `json:"desc,omitempty"`
 }
 
-/* StatusData 是状态记录内容（JSON，前端直接解析渲染）。 */
+/* StatusData 是状态记录内容（JSON，前端直接解析渲染）。
+skill/mcp 全量清单在 system（<skills>/<mcp> 块），这里只注入变更。 */
 type StatusData struct {
-	Now                string      `json:"now"`
-	SinceLastOutputMin int64       `json:"sinceLastOutputMin"` // 0 = 无记录
-	CtxTokens          int         `json:"ctxTokens"`
-	CtxWindow          int         `json:"ctxWindow"`
-	SuggestCompact     bool        `json:"suggestCompact"`
-	Mcp                []StatusMcp `json:"mcp"`
-	Changes            []string    `json:"changes,omitempty"`
+	Now                string   `json:"now"`
+	SinceLastOutputMin int64    `json:"sinceLastOutputMin"` // 0 = 无记录
+	CtxTokens          int      `json:"ctxTokens"`
+	CtxWindow          int      `json:"ctxWindow"`
+	SuggestCompact     bool     `json:"suggestCompact"`
+	Changes            []string `json:"changes,omitempty"`
 }
 
 /* Status 实现状态栏注入。 */
@@ -94,7 +94,6 @@ func (h *Status) build(ctx context.Context) StatusData {
 		Now:       now.Format("2006-01-02 15:04"),
 		CtxTokens: h.ctxTokens(),
 		CtxWindow: h.ctxWindow,
-		Mcp:       h.mcpList(),
 	}
 	if last := h.store.LastOutputAt(); last > 0 {
 		data.SinceLastOutputMin = (now.UnixMilli() - last) / 60000
@@ -110,7 +109,7 @@ func (h *Status) build(ctx context.Context) StatusData {
 		}
 		sort.Strings(curSkills)
 	}
-	for _, m := range data.Mcp {
+	for _, m := range h.mcpList() { // 全量仅作变更基线，不进状态记录
 		curMcps = append(curMcps, m.Name)
 	}
 	sort.Strings(curMcps)
