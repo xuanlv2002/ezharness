@@ -1,5 +1,13 @@
 /* API 封装：REST + SSE。v0.2：bootstrap 模式（会话对用户隐藏）。 */
 
+/* 人机决策持久化记录（后端 hooks.DecisionRecord 的 JSON 形状） */
+export interface DecisionRecord {
+  callId: string
+  kind: 'approve' | 'ask' | 'plan'
+  resolution: string
+  ts: number
+}
+
 export interface HistoryMessage {
   role: string
   content: string
@@ -204,6 +212,7 @@ export const api = {
         messages: HistoryMessage[]
         prevSession?: string
         prevTitle?: string
+        decisions?: DecisionRecord[]
       }>,
     ),
 

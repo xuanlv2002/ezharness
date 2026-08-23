@@ -46,11 +46,12 @@ func (s *SessionService) Bootstrap() BootstrapData {
 
 /* HistoryData 是历史响应。 */
 type HistoryData struct {
-	ID          string          `json:"id"`
-	Busy        bool            `json:"busy"`
-	Messages    []types.Message `json:"messages"`
-	PrevSession string          `json:"prevSession,omitempty"` // compact 链上一会话（懒加载用）
-	PrevTitle   string          `json:"prevTitle,omitempty"`   // 上一话题标题（压缩标记用）
+	ID          string                    `json:"id"`
+	Busy        bool                      `json:"busy"`
+	Messages    []types.Message           `json:"messages"`
+	PrevSession string                    `json:"prevSession,omitempty"` // compact 链上一会话（懒加载用）
+	PrevTitle   string                    `json:"prevTitle,omitempty"`   // 上一话题标题（压缩标记用）
+	Decisions   []hooks.DecisionRecord    `json:"decisions,omitempty"`   // 人机决策记录（工具卡徽标用）
 }
 
 /* Status 是右栏生命体征数据。 */
@@ -114,6 +115,7 @@ func (s *SessionService) History() HistoryData {
 			}
 		}
 	}
+	h.Decisions = hooks.LoadDecisions(context.Background(), s.Hub.Active.Fsys, h.ID)
 	return h
 }
 

@@ -8,6 +8,7 @@ fork 子循环写 sessions/<主ID>/forks/<forkID>/session.json（剥离 seed
 package hooks
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
@@ -232,6 +233,43 @@ func NewSessionID() string {
 	b := make([]byte, 4)
 	_, _ = rand.Read(b)
 	return time.Now().Format("20060102-150405") + "-" + hex.EncodeToString(b)
+}
+
+/* DecisionRecord 是一条已回传的人机决策（审批/回答/规划处置）持久化记录。 */
+type DecisionRecord struct {
+	CallID     string `json:"callId"`
+	Kind       string `json:"kind"` // approve | ask | plan
+	Resolution string `json:"resolution"`
+	Ts         int64  `json:"ts"`
+}
+
+/* AppendDecision 追加决策记录（sessions/<id>/decisions.jsonl，失败静默）。 */
+func AppendDecision(ctx context.Context, fsys fs.FileSystem, id string, r DecisionRecord) {
+	if r.CallID == "" || id == "" {
+		return
+	}
+	data, _ := json.Marshal(r)
+	prev, _ := fsys.Read(ctx, SessionsDir+"/"+id+"/decisions.jsonl")
+	_ = fsys.Write(ctx, SessionsDir+"/"+id+"/decisions.jsonl", append(prev, append(data, '\n')...))
+}
+
+/* LoadDecisions 读回会话的全部决策记录（无文件返回 nil）。 */
+func LoadDecisions(ctx context.Context, fsys fs.FileSystem, id string) []DecisionRecord {
+	data, err := fsys.Read(ctx, SessionsDir+"/"+id+"/decisions.jsonl")
+	if err != nil {
+		return nil
+	}
+	var out []DecisionRecord
+	for _, line := range bytes.Split(data, []byte("\n")) {
+		if len(bytes.TrimSpace(line)) == 0 {
+			continue
+		}
+		var r DecisionRecord
+		if json.Unmarshal(line, &r) == nil {
+			out = append(out, r)
+		}
+	}
+	return out
 }
 
 /* LoadSnap 读取指定会话快照（sessions/<id>/session.json）。 */

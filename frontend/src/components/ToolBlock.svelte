@@ -2,7 +2,12 @@
   import type { ToolBlockData } from '../lib/store.svelte'
 
   let { data }: { data: ToolBlockData } = $props()
-  let open = $state(false)
+  /* null＝用户未操作：building 态默认展开（看流式输出），其余态默认折叠；
+     用户点击后固定，不再随状态切换 */
+  let open = $state<boolean | null>(null)
+
+  /* 当前可见性：未操作时 building 展开、其余折叠 */
+  const shown = $derived(open ?? data.state === 'building')
 
   function prettyArgs(raw: string): string {
     try {
@@ -18,8 +23,8 @@
 </script>
 
 <div class="tool enter-rise" class:done={data.state === 'done'}>
-  <button class="head" onclick={() => (open = !open)}>
-    <span class="arrow" class:open>{open ? '▾' : '▸'}</span>
+  <button class="head" onclick={() => (open = !shown)}>
+    <span class="arrow" class:open={shown}>{shown ? '▾' : '▸'}</span>
     {#if data.state === 'running'}
       <span class="spinner"></span>
     {:else if data.state === 'building'}
@@ -28,6 +33,11 @@
       <span class="dot"></span>
     {/if}
     <span class="name">{data.name || 'tool'}</span>
+    {#if data.decision}
+      <span class="dec-tag" class:rej={data.decision.startsWith('已拒绝')}
+        >{data.decision.startsWith('已批准') ? '✓ 审批' : data.decision}</span
+      >
+    {/if}
     {#if data.state === 'building'}
       <span class="building-tag">构造中 {nchars} 字</span>
     {/if}
@@ -36,12 +46,12 @@
     {/if}
   </button>
   {#if data.state === 'building'}
-    {#if tail}
+    {#if shown && tail}
       <div class="detail">
         <pre class="stream">{tail}</pre>
       </div>
     {/if}
-  {:else if open}
+  {:else if shown}
     <div class="detail">
       {#if data.args}
         <div class="section">
@@ -124,6 +134,21 @@
       opacity: 1;
       transform: scale(1.05);
     }
+  }
+  .dec-tag {
+    font-size: 10px;
+    color: var(--muted);
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    padding: 1px 7px;
+    max-width: 220px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .dec-tag.rej {
+    color: #f85149;
+    border-color: rgb(248 81 73 / 30%);
   }
   .building-tag {
     margin-left: auto;

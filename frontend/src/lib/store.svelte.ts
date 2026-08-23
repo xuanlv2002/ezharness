@@ -3,6 +3,7 @@
 import {
   api,
   subscribe,
+  type DecisionRecord,
   type HistoryMessage,
   type Settings,
   type SseEvent,
@@ -17,6 +18,7 @@ export interface ToolBlockData {
   result: string
   err: string
   state: 'building' | 'running' | 'done' // building＝模型流式构造参数中
+  decision?: string // 人机决策徽标（已批准/已拒绝…，刷新后由 decisions.jsonl 重建）
 }
 
 export interface ForkState {
@@ -155,7 +157,7 @@ class AppStore {
     this.lastStatus = ''
     try {
       const s = await api.getHistory(this.activeId)
-      this.blocks = this.buildBlocks(s.messages)
+      this.blocks = this.buildBlocks(s.messages, s.decisions)
       this.busy = s.busy
       this.prevCursor = this.activeId
       this.hasPrev = !!s.prevSession
@@ -191,8 +193,9 @@ class AppStore {
     }
   }
 
-  /* 历史重建：user/assistant/tool 消息序列，tool_calls 展开为工具块 */
-  private buildBlocks(messages: HistoryMessage[]): Block[] {
+  /* 历史重建：user/assistant/tool 消息序列，tool_calls 展开为工具块；决策记录映射为徽标 */
+  private buildBlocks(messages: HistoryMessage[], decisions?: DecisionRecord[]): Block[] {
+    const dmap = new Map((decisions || []).map((d) => [d.callId, d.resolution]))
     const out: Block[] = []
     for (const m of messages) {
       if (m.role === 'user') {
@@ -226,6 +229,7 @@ class AppStore {
             result: '',
             err: '',
             state: 'done',
+            decision: dmap.get(tc.ID || ''),
           })
         }
       } else if (m.role === 'tool') {
@@ -312,6 +316,9 @@ class AppStore {
       n.status = 'done'
       n.resolution = resolution
     }
+    // 对应工具卡打决策徽标（与 decisions.jsonl 重建同源）
+    const t = this.blocks.find((b) => b.kind === 'tool' && b.id === id)
+    if (t && t.kind === 'tool') t.decision = resolution
   }
 
   async decideApprove(block: DecisionData, approve: boolean, reason: string) {
@@ -500,6 +507,20 @@ class AppStore {
         if (!id || this.blocks.some((b) => b.kind === 'decision' && b.id === id)) break
         let args = d.args
         if (typeof args !== 'string') args = JSON.stringify(args ?? {})
+        // 工具卡补插：刷新/重放时本轮快照未含此调用（turn 未落盘），
+        // 决策卡之前补一个执行中的工具卡
+        if (!ev.forkId && !this.blocks.some((b) => b.kind === 'tool' && b.id === id)) {
+          this.blocks.push({
+            kind: 'tool',
+            uid: this.nuid(),
+            id,
+            name: d.name || '',
+            args,
+            result: '',
+            err: '',
+            state: 'running',
+          })
+        }
         let question = ''
         let plan = ''
         try {

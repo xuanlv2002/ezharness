@@ -5,6 +5,7 @@ package service
 
 import (
 	"context"
+	"time"
 
 	"github.com/xuanlv2002/ezloop/event"
 	"github.com/xuanlv2002/ezloop/ext/hook/approve"
@@ -13,6 +14,7 @@ import (
 	"github.com/xuanlv2002/ezloop/types"
 
 	"ezharness/internal/domain"
+	"ezharness/internal/hooks"
 )
 
 /* ChatService 对话用例。 */
@@ -61,17 +63,43 @@ func (c *ChatService) Cancel() { c.Hub.Active.Cancel() }
 
 /* DecideApprove 回传审批决策。 */
 func (c *ChatService) DecideApprove(callID string, approve bool, reason string) {
+	res := "已批准"
+	if !approve {
+		res = "已拒绝"
+		if reason != "" {
+			res = "已拒绝：" + reason
+		}
+	}
+	c.recordDecision("approve", callID, res)
 	c.Hub.Active.DecideApprove(approveDecision(callID, approve, reason))
 }
 
 /* DecideAnswer 回传提问回答。 */
 func (c *ChatService) DecideAnswer(callID, input string) {
+	c.recordDecision("ask", callID, input)
 	c.Hub.Active.DecideAnswer(answerOf(callID, input))
 }
 
 /* DecidePlan 回传规划处置。 */
 func (c *ChatService) DecidePlan(callID, kind, input string) {
-	c.Hub.Active.DecidePlan(planDecision(callID, kind, input))
+	d := planDecision(callID, kind, input)
+	res := map[taskplan.Kind]string{taskplan.Execute: "规划已执行", taskplan.Reject: "规划已否决"}[d.Kind]
+	if res == "" {
+		res = "修改意见：" + input
+	}
+	c.recordDecision("plan", callID, res)
+	c.Hub.Active.DecidePlan(d)
+}
+
+/* recordDecision 持久化决策记录（刷新后工具卡徽标用，失败静默）。 */
+func (c *ChatService) recordDecision(kind, callID, resolution string) {
+	s := c.Hub.Active
+	if callID == "" {
+		return
+	}
+	hooks.AppendDecision(context.Background(), s.Fsys, s.ID, hooks.DecisionRecord{
+		CallID: callID, Kind: kind, Resolution: resolution, Ts: time.Now().UnixMilli(),
+	})
 }
 
 func approveDecision(callID string, ok bool, reason string) approve.Decision {
