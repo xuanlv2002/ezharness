@@ -126,13 +126,67 @@ func TestCompactTruncationKeepsProtocol(t *testing.T) {
 		t.Fatal("last message must keep the tool_calls pairing")
 	}
 
-	// session 已切换；SysPrompt 已重组（rebuildBase + 摘要段）
-	if store.ID() == "old-session" || store.ID() == "" {
-		t.Fatalf("session id should switch, got %q", store.ID())
+	// 挂起期不切库、不入档：压缩轮还在进行（模型将汇总工具结果）
+	if store.ID() != "old-session" {
+		t.Fatalf("session must not switch before OnEnd, got %q", store.ID())
 	}
+	if list := topics.Load(); len(list) != 0 {
+		t.Fatalf("topic index must be empty before OnEnd, got %+v", list)
+	}
+	// SysPrompt 已重组（rebuildBase + 摘要段）——剩余迭代立即用新上下文
 	base, summary := sys.Parts()
 	if base != "rebuilt base" || !strings.Contains(summary, "这是一份交接摘要") {
 		t.Fatalf("sysprompt should be rebuilt, got base=%q summary=%q", base, summary)
+	}
+
+	// 模拟剩余迭代：引擎追加工具结果与模型汇总
+	state.Messages = append(state.Messages,
+		types.Message{Role: types.RoleTool, ToolCallID: "call-1", Content: "上下文已压缩归档…"},
+		types.Message{Role: types.RoleAssistant, Content: "好的，已重置。"},
+	)
+
+	// 轮末收尾
+	if err := c.OnEnd(context.Background(), state); err != nil {
+		t.Fatal(err)
+	}
+
+	// 新库切入；内存翻页只剩 [system]（下一轮用户输入即新库第一条）
+	if store.ID() == "old-session" || store.ID() == "" {
+		t.Fatalf("session id should switch after OnEnd, got %q", store.ID())
+	}
+	if len(state.Messages) != 1 || state.Messages[0].Role != types.RoleSystem {
+		t.Fatalf("expect [system] after finish, got %d msgs", len(state.Messages))
+	}
+	// store.OnEnd 跳过：新库不落盘（空置起步）
+	if err := store.OnEnd(context.Background(), state); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fsys.Read(context.Background(), "sessions/"+store.ID()+"/session.json"); err == nil {
+		t.Fatal("new session must not be persisted on compact turn")
+	}
+
+	// 旧库补写完整历史（含触发输入与过程消息）并封存
+	snap, err := LoadSnap(context.Background(), fsys, "old-session")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !snap.Archived {
+		t.Fatal("old session must be archived")
+	}
+	var sawTrigger, sawSummary bool
+	for _, m := range snap.Messages {
+		if m.Role == types.RoleUser && m.Content == "换个话题，聊聊数据库" {
+			sawTrigger = true
+		}
+		if m.Role == types.RoleAssistant && m.Content == "好的，已重置。" {
+			sawSummary = true
+		}
+	}
+	if !sawTrigger || !sawSummary {
+		t.Fatalf("old archive must contain trigger and wrap-up messages: %+v", snap.Messages)
+	}
+	if snap.SystemPrompt != "base prompt" {
+		t.Fatalf("old archive must pin pre-compact system, got %q", snap.SystemPrompt)
 	}
 
 	// 索引落盘：旧话题入档（含 Path/Kind）

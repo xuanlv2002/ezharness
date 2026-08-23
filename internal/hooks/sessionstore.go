@@ -63,6 +63,7 @@ type Store struct {
 	last int64 // lastOutputAt（status hook 维护）
 	prevID string // compact 链：上一 session ID
 	prevSum string // compact 链：上一 session 摘要
+	skip   bool // 压缩轮跳过落盘（新库空置起步），下一次 OnEnd 消费
 }
 
 /* NewStore 创建存储 hook。id 为空自动生成。 */
@@ -123,6 +124,13 @@ func (h *Store) SetPrev(oldID, summary string) {
 	h.mu.Unlock()
 }
 
+/* SkipNextSave 让下一次 OnEnd 跳过落盘（压缩轮新库空置起步）。 */
+func (h *Store) SkipNextSave() {
+	h.mu.Lock()
+	h.skip = true
+	h.mu.Unlock()
+}
+
 /* PrevID 返回 compact 链上一会话 ID（空 = 本会话非压缩产物）。 */
 func (h *Store) PrevID() string {
 	h.mu.Lock()
@@ -153,6 +161,11 @@ fork 写主会话 forks/ 子目录，SeedLen 越界 clamp 全存（fork 内 comp
 */
 func (h *Store) OnEnd(_ context.Context, state *types.LoopState) error {
 	h.mu.Lock()
+	if h.skip {
+		h.skip = false
+		h.mu.Unlock()
+		return nil
+	}
 	id := h.id
 	snap, sys, tool := h.snap, h.sys, h.tool
 	last, prevID, prevSum := h.last, h.prevID, h.prevSum
@@ -260,18 +273,4 @@ func ListMain(ctx context.Context, fsys fs.FileSystem) ([]string, error) {
 		}
 	}
 	return ids, nil
-}
-
-/* MarkArchived 封存会话（compact 后旧库不再作恢复候选）。 */
-func MarkArchived(ctx context.Context, fsys fs.FileSystem, id string) error {
-	snap, err := LoadSnap(ctx, fsys, id)
-	if err != nil {
-		return err
-	}
-	snap.Archived = true
-	data, err := json.MarshalIndent(snap, "", "  ")
-	if err != nil {
-		return err
-	}
-	return fsys.Write(ctx, SessionsDir+"/"+id+"/session.json", data)
 }

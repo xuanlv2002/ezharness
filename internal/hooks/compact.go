@@ -2,13 +2,13 @@
 compact 是上下文压缩 hook：模型主动调 compact_context 工具、或轮末
 水位超阈值（prompt tokens > threshold）时自动触发。主循环路径：
 总结当前 session → 重组 system（base 重读记忆/skill/mcp + 摘要段 +
-上一 session 路径引用）→ 截断上下文 → 切换全新 session → 旧库封存
-归档到话题记忆 → 发 session.compact 事件（前端渲染分隔线并更新
-activeId）。fork 路径：就地压缩增量（不换库不归档，摘要拼进 fork
+上一 session 路径引用）→ 截断上下文供本轮剩余迭代使用；压缩轮的
+完整历史（含触发输入与工具过程）在 OnEnd 收尾时补写进旧库封存，
+此刻才切换新库并跳过新库落盘——新库空置起步，下一条记录是用户的
+下一轮输入。fork 路径：就地压缩增量（不换库不归档，摘要拼进 fork
 内的 system）。
 
-对用户 session 完全透明，是 agent 的"记忆翻页"机制。实现沿 rotate
-的轮内截断方案，修正其丢失 system 的缺陷（截断保留重写后的 system）。
+对用户 session 完全透明，是 agent 的"记忆翻页"机制。
 */
 package hooks
 
@@ -58,6 +58,21 @@ type Compact struct {
 	threshold   int // 水位阈值（prompt tokens），<=0 禁用自动压缩
 	rebuildBase func() string
 	onCompact   func(CompactInfo) // 压缩成功回调（宿主同步 session 标识）
+	pending     *pendingCompact   // 挂起的压缩（轮末 OnEnd 收尾）
+}
+
+/*
+pendingCompact 是一次挂起的压缩：工具路径截断后本轮还有剩余迭代
+（模型汇总压缩结果），这些过程消息逻辑上属于旧库，故切库动作延迟
+到 OnEnd——收尾时旧库补写完整历史并封存，新库空置起步。
+*/
+type pendingCompact struct {
+	oldID, newID           string
+	title, reason, summary string
+	auto                   bool
+	oldMsgs                []types.Message // 截断前全量（含本轮触发输入与 tool_calls）
+	oldPrompt              string          // 压缩前的 system 三段（旧库存档 pin 用）
+	oldBase, oldSummary    string
 }
 
 /* NewCompact 创建压缩 hook。rebuildBase/onCompact 可为 nil。 */
@@ -100,8 +115,16 @@ func (c *Compact) OnToolStart(ctx context.Context, state *types.LoopState, call 
 		"摘要与上一会话路径。请直接继续回应用户，不要重述已归档的过程细节。"), nil
 }
 
-/* OnEnd 水位自动压缩：最近一次模型调用的 prompt tokens 超阈值即翻页。失败发 error 事件。 */
+/*
+OnEnd 收尾与水位自动压缩。挂起的压缩（工具路径）先收尾：旧库补写
+完整历史并封存、切新库、新库跳过落盘。水位自动路径在同一处就地
+压缩并收尾（轮末触发，无剩余迭代）。失败发 error 事件。
+*/
 func (c *Compact) OnEnd(ctx context.Context, state *types.LoopState) error {
+	if c.pending != nil {
+		c.finishPending(ctx, state)
+		return nil
+	}
 	if c.threshold <= 0 || state.LastResponse == nil {
 		return nil
 	}
@@ -112,11 +135,7 @@ func (c *Compact) OnEnd(ctx context.Context, state *types.LoopState) error {
 	if state.ForkID != "" {
 		err = c.compactFork(ctx, state, true, "fork 上下文水位达到阈值")
 	} else {
-		var info CompactInfo
-		info, err = c.compact(ctx, state, true, "上下文水位达到阈值")
-		if err == nil && c.onCompact != nil {
-			c.onCompact(info)
-		}
+		_, err = c.compact(ctx, state, true, "上下文水位达到阈值")
 	}
 	if err != nil {
 		state.EmitEvent(event.EventError, "auto compact failed: "+err.Error())
@@ -124,10 +143,107 @@ func (c *Compact) OnEnd(ctx context.Context, state *types.LoopState) error {
 	return nil
 }
 
-/* compact 执行主循环压缩：摘要 → 重组 system → 截断 → 切新 session → 归档 → 事件。 */
+/*
+finishPending 收尾一次挂起的压缩：过程消息归旧库 → 封存归档 →
+切新 trace/新库（新库本轮不落盘）→ 内存翻页（只剩新 system，
+下一轮用户输入即新库第一条）→ 发事件与回调。
+*/
+func (c *Compact) finishPending(ctx context.Context, state *types.LoopState) {
+	p := c.pending
+	c.pending = nil
+
+	// 过程新增 = 截断列表 [system, handover, tail] 之后的追加
+	// （工具结果、模型对压缩的汇总——逻辑上属于旧库的收尾）。
+	var tailNew []types.Message
+	if len(state.Messages) > 3 {
+		tailNew = append(tailNew, state.Messages[3:]...)
+	}
+	full := append(append([]types.Message(nil), p.oldMsgs...), tailNew...)
+
+	// 关闭压缩后重开的 turn root，残余 span 落旧 trace 后再切换。
+	c.trace.CloseRoot(state, map[string]any{"stopReason": string(state.StopReason), "compacted": true})
+	if err := c.archiveOld(ctx, p, state, full); err != nil {
+		state.EmitEvent(event.EventError, "compact archive failed: "+err.Error())
+	}
+	_ = c.topics.Add(TopicEntry{
+		ID:        p.oldID,
+		Title:     p.title,
+		Summary:   p.summary,
+		CreatedAt: time.Now().UnixMilli(),
+		Msgs:      len(full),
+		Path:      SessionsDir + "/" + p.oldID,
+		Kind:      "compact",
+	})
+
+	newID := p.newID
+	c.trace.SetTrace(newID)
+	c.sess.SetID(newID)
+	c.sess.SetPrev(p.oldID, p.summary)
+	c.sess.SkipNextSave() // 压缩轮不写新库：新库空置，等用户下一轮
+
+	if len(state.Messages) > 0 && state.Messages[0].Role == types.RoleSystem {
+		state.Messages = []types.Message{state.Messages[0]}
+	} else {
+		state.Messages = []types.Message{{Role: types.RoleSystem, Content: c.sys.Prompt()}}
+	}
+
+	info := CompactInfo{OldID: p.oldID, NewID: newID, Title: p.title, Summary: p.summary,
+		Auto: p.auto, Reason: p.reason, PrevPath: SessionsDir + "/" + p.oldID}
+	state.EmitEvent(EventCompact, info)
+	if c.onCompact != nil {
+		c.onCompact(info)
+	}
+}
+
+/*
+archiveOld 把压缩轮的完整历史补写进旧库存档并封存。system 用压缩前
+的三段（摘要后的新 system 属于新库）；createdAt/input 等承自旧库上次
+落盘的快照（压缩轮触发时旧库文件尚是上一轮的完整状态）。
+*/
+func (c *Compact) archiveOld(ctx context.Context, p *pendingCompact, state *types.LoopState, full []types.Message) error {
+	snap := SessionSnap{
+		ID:           p.oldID,
+		CreatedAt:    state.StartedAt.UnixMilli(),
+		Input:        state.Input,
+		Messages:     stripSystem(full),
+		SystemPrompt: p.oldPrompt,
+		SystemBase:   p.oldBase,
+		SummaryBlock: p.oldSummary,
+		Tools:        toolNames(state),
+		Iterations:   state.Iteration,
+		StopReason:   string(state.StopReason),
+		StartedAt:    state.StartedAt,
+		EndedAt:      state.EndedAt,
+		LastOutputAt: c.sess.LastOutputAt(),
+		Archived:     true,
+	}
+	if old, err := LoadSnap(ctx, c.fsys, p.oldID); err == nil {
+		snap.CreatedAt = old.CreatedAt
+		snap.Input = old.Input
+		snap.Model = old.Model
+		if old.PrevSession != "" {
+			snap.PrevSession, snap.CompactSummary = old.PrevSession, old.CompactSummary
+		}
+	}
+	data, err := json.MarshalIndent(snap, "", "  ")
+	if err != nil {
+		return err
+	}
+	return c.fsys.Write(ctx, SessionsDir+"/"+p.oldID+"/session.json", data)
+}
+
+/*
+compact 执行主循环压缩：摘要 → 重组 system → 截断（供本轮剩余迭代
+使用新上下文）→ 挂起 pending。切库/归档/事件延迟到 OnEnd 收尾——
+压缩轮的完整历史（含工具结果与模型汇总）归旧库，新库空置起步。
+auto 路径在 OnEnd 内就地挂起并立即收尾。
+*/
 func (c *Compact) compact(ctx context.Context, state *types.LoopState, auto bool, reason string) (CompactInfo, error) {
 	if len(state.Messages) == 0 {
 		return CompactInfo{}, errors.New("nothing to compact")
+	}
+	if c.pending != nil {
+		return CompactInfo{}, errors.New("already compacted this turn")
 	}
 	oldID := c.sess.ID()
 	title := firstUserTitle(state.Messages) // 截断前取：首条 user 在旧上下文里
@@ -142,8 +258,12 @@ func (c *Compact) compact(ctx context.Context, state *types.LoopState, auto bool
 	c.trace.EndSpan(sp, map[string]any{
 		"title": title, "summary": truncStr(summaryText, 2048),
 	})
-	// compact span 记入旧 trace；此后关闭旧 turn、切换新 trace。
+	// compact span 记入旧 trace；压缩后的剩余迭代 span 也归旧 trace
+	// （收尾时才 SetTrace），turn root 关闭后重开承接。
 	c.trace.CloseRoot(state, map[string]any{"stopReason": "compacted", "compacted": true})
+	if !auto {
+		c.trace.OpenRoot(state, map[string]any{"input": "(compact 后继续)"})
+	}
 
 	prevPath := SessionsDir + "/" + oldID
 	// 新 session 的 system：base 重组（compact 即创建新 session，记忆/skill/mcp 全量重载）
@@ -156,6 +276,8 @@ func (c *Compact) compact(ctx context.Context, state *types.LoopState, auto bool
 	} else if b, _ := c.sys.Parts(); b != "" {
 		base = b
 	}
+	oldBase, oldSummary := c.sys.Parts()
+	oldPrompt := c.sys.Prompt()
 	c.sys.Set(base, summaryBlock)
 
 	// 截断：[新 system, handover, 衔接条]——末条保 tool_calls 协议配对
@@ -171,35 +293,21 @@ func (c *Compact) compact(ctx context.Context, state *types.LoopState, auto bool
 		handover,
 	}
 	newMsgs = append(newMsgs, keepTail(state.Messages, auto)...)
-	msgCount := len(state.Messages)
+	oldMsgs := append([]types.Message(nil), state.Messages...)
 	state.Messages = newMsgs
 
 	newID := NewSessionID()
-	c.sess.SetID(newID)
-	c.sess.SetPrev(oldID, summaryText)
-	c.trace.SetTrace(newID)
-	if auto {
-		// 轮末路径 turn 已关闭；工具路径本轮还有剩余迭代，重开 turn 承接。
-		c.trace.OpenRoot(state, map[string]any{"input": "(compact 后继续)"})
+	c.pending = &pendingCompact{
+		oldID: oldID, newID: newID, title: title, reason: reason,
+		summary: summaryText, auto: auto, oldMsgs: oldMsgs,
+		oldPrompt: oldPrompt, oldBase: oldBase, oldSummary: oldSummary,
 	}
-
-	_ = MarkArchived(ctx, c.fsys, oldID)
-	_ = c.topics.Add(TopicEntry{
-		ID:        oldID,
-		Title:     title,
-		Summary:   summaryText,
-		CreatedAt: time.Now().UnixMilli(),
-		Msgs:      msgCount,
-		Path:      prevPath,
-		Kind:      "compact",
-	})
+	if auto {
+		c.finishPending(ctx, state)
+	}
 
 	info := CompactInfo{OldID: oldID, NewID: newID, Title: title, Summary: summaryText,
 		Auto: auto, Reason: reason, PrevPath: prevPath}
-	state.EmitEvent(EventCompact, info)
-	if c.onCompact != nil {
-		c.onCompact(info)
-	}
 	return info, nil
 }
 
