@@ -44,6 +44,7 @@ type Wiring struct {
 	AnswerCh  chan<- askuser.Answer
 	PlanCh    chan<- taskplan.Decision
 	ToolNames []string
+	Trace     *hooks.Trace // 调用链记录（Resume 切会话时同步切 trace）
 }
 
 /* ModelProvider 是领域所需的最小模型面（摘要用例），ezloop 同名接口的子集。 */

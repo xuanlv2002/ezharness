@@ -119,6 +119,7 @@ func (a *AgentService) Assemble(s *domain.Session, st domain.Settings) {
 		ApproveCh: approveCh,
 		AnswerCh:  answerCh,
 		PlanCh:    planCh,
+		Trace:     traceHook,
 		ToolNames: []string{
 			"read_file", "write_file", "edit_file", "bash", "save_app",
 			askuser.ToolName, taskplan.ToolName, task.ToolName,

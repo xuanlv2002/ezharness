@@ -238,7 +238,7 @@ func (c *Compact) compact(ctx context.Context, state *types.LoopState, auto bool
 		return CompactInfo{}, errors.New("already compacted this turn")
 	}
 	oldID := c.sess.ID()
-	title := firstUserTitle(state.Messages) // 全量历史里的首条真实 user
+	title := FirstUserTitle(state.Messages) // 全量历史里的首条真实 user
 	sp := c.trace.StartSpan(state, "compact", "compact", map[string]any{
 		"auto": auto, "reason": reason, "oldId": oldID,
 	})
@@ -330,8 +330,8 @@ func (c *Compact) summarize(ctx context.Context, msgs []types.Message) (string, 
 	return resp.Content, nil
 }
 
-/* firstUserTitle 从消息里取首条真实 user 文本作话题标题（跳过 agent_status 状态栏注入）。 */
-func firstUserTitle(msgs []types.Message) string {
+/* FirstUserTitle 从消息里取首条真实 user 文本作话题标题（跳过 agent_status 状态栏注入）。 */
+func FirstUserTitle(msgs []types.Message) string {
 	for _, m := range msgs {
 		if m.Role != types.RoleUser || strings.HasPrefix(strings.TrimSpace(m.Content), "<agent_status>") {
 			continue

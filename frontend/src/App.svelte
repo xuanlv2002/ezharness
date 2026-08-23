@@ -30,7 +30,7 @@
     {:else if view === 'models'}
       <ModelsView />
     {:else if view === 'memory'}
-      <MemoryView />
+      <MemoryView onNavigate={(v) => (view = v as typeof view)} />
     {:else if view === 'knowledge'}
       <KnowledgeView />
     {:else if view === 'tools'}

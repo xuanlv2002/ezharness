@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte'
-  import { api, type MemoryConfig, type MemoryTopicEntry } from '../lib/api'
+  import { api, type HistoryMessage, type MemoryConfig, type MemoryTopicEntry } from '../lib/api'
+  import { store } from '../lib/store.svelte'
 
   /*
   记忆 = 三个文件夹（数据由 GET /api/memory/config 下发）：
@@ -9,8 +10,12 @@
     能力记忆——沉淀的 skill，agent 按需调用。
     话题记忆——历史 session 存档，可回顾/删除。
   */
+  let { onNavigate }: { onNavigate?: (v: string) => void } = $props()
+
   let cfg = $state<MemoryConfig | null>(null)
   let message = $state('')
+  let openTopic = $state('') // 展开回顾的 topic id
+  let topicMsgs = $state<HistoryMessage[]>([])
 
   onMount(async () => {
     try {
@@ -29,11 +34,77 @@
     }
   }
 
+  /* 回顾：展开只读全文（再点收起） */
+  async function reviewTopic(t: MemoryTopicEntry) {
+    if (openTopic === t.id) {
+      openTopic = ''
+      return
+    }
+    try {
+      const d = await api.getTopic(t.id)
+      topicMsgs = d.messages || []
+      openTopic = t.id
+    } catch (e) {
+      message = `回顾失败：${(e as Error).message}`
+    }
+  }
+
+  /* 回到话题：恢复为活动会话并跳转对话页 */
+  async function resumeTopic(t: MemoryTopicEntry) {
+    try {
+      await store.resumeTopic(t.id)
+      onNavigate?.('chat')
+    } catch (e) {
+      message = `回到话题失败：${(e as Error).message}`
+    }
+  }
+
   function fmtSize(n: number): string {
     if (n < 1024) return `${n} B`
     if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`
     return `${(n / 1024 / 1024).toFixed(1)} MB`
   }
+
+  /* 话题树：parent 建树；单孩子链（压缩主线）自动平铺不缩进，分叉点
+     按展开状态渲染子分支（缩进+竖线）——树形按需展开 */
+  let expanded = $state<Set<string>>(new Set())
+
+  function toggleFork(id: string) {
+    const next = new Set(expanded)
+    if (next.has(id)) next.delete(id)
+    else next.add(id)
+    expanded = next
+  }
+
+  const treeRows = $derived.by(() => {
+    if (!cfg) return [] as { item: MemoryTopicEntry; level: number; forks: number; open: boolean }[]
+    const items = cfg.topics.items
+    const byId = new Set(items.map((x) => x.id))
+    const kids = new Map<string, MemoryTopicEntry[]>()
+    const roots: MemoryTopicEntry[] = []
+    for (const it of items) {
+      if (it.parent && byId.has(it.parent)) {
+        const arr = kids.get(it.parent) || []
+        arr.push(it)
+        kids.set(it.parent, arr)
+      } else {
+        roots.push(it)
+      }
+    }
+    const byTime = (a: MemoryTopicEntry, b: MemoryTopicEntry) => b.createdAt - a.createdAt
+    roots.sort(byTime)
+    const out: { item: MemoryTopicEntry; level: number; forks: number; open: boolean }[] = []
+    const walk = (item: MemoryTopicEntry, level: number) => {
+      const ch = (kids.get(item.id) || []).sort(byTime)
+      const open = expanded.has(item.id)
+      out.push({ item, level, forks: ch.length, open })
+      if (ch.length > 1 && !open) return // 分叉收起：子分支不渲染
+      const childLevel = ch.length > 1 ? level + 1 : level
+      for (const c of ch) walk(c, childLevel)
+    }
+    for (const r of roots) walk(r, 0)
+    return out
+  })
 
   function fmtDate(ts: number): string {
     if (!ts) return ''
@@ -145,12 +216,20 @@
     <p class="dir"><span>📁</span>{cfg ? cfg.topics.dir : '—'}</p>
     <div class="list">
       {#if cfg}
-        {#each cfg.topics.items as t (t.id)}
-          <div class="topic">
+        {#each treeRows as row, i (`${row.item.id}-${i}`)}
+          {@const t = row.item}
+          <div class="branch" class:root={row.level === 0} style="margin-left:{row.level * 26}px">
+          <div class="topic" class:cur={store.activeId === t.id}>
             <div class="info">
               <span class="name"
-                >{t.title}{#if t.kind === 'compact'}<span class="kbadge">压缩</span>{/if}</span
+                >{t.title}{#if store.activeId === t.id}<span class="kbadge live">进行中</span>{:else if t.parent}<span class="kbadge">压缩</span>{/if}</span
               >
+              {#if row.forks > 1}
+                <button class="forkbtn" onclick={() => toggleFork(t.id)} title="分支">
+                  <span class="farrow" class:open={row.open}>{row.open ? '▾' : '▸'}</span>
+                  {row.forks} 条分支
+                </button>
+              {/if}
               <span class="desc">{fmtDate(t.createdAt)} · {t.msgs} 条消息</span>
               {#if t.summary}
                 <span class="summary">{t.summary}</span>
@@ -159,7 +238,27 @@
                 <span class="path">{t.path}</span>
               {/if}
             </div>
-            <button class="del" onclick={() => removeTopic(t)} title="删除">删除</button>
+            <div class="ops">
+              <button class="op" onclick={() => reviewTopic(t)}>
+                {openTopic === t.id ? '收起' : '回顾'}
+              </button>
+              <button class="op" onclick={() => resumeTopic(t)} title="恢复为活动会话并继续">回到话题</button>
+              <button class="del" onclick={() => removeTopic(t)} title="删除">删除</button>
+            </div>
+          </div>
+          {#if openTopic === t.id}
+            <div class="review">
+              {#each topicMsgs as m, i (i)}
+                <div class="rv" class:me={m.role === 'user'}>
+                  <span class="rrole">{m.role === 'assistant' ? 'agent' : m.role === 'tool' ? 'tool' : m.role}</span>
+                  <span class="rtext">{(m.content || (m.tool_calls ? JSON.stringify(m.tool_calls) : '')).slice(0, 300)}</span>
+                </div>
+              {/each}
+              {#if topicMsgs.length === 0}
+                <div class="rv">（无消息）</div>
+              {/if}
+            </div>
+          {/if}
           </div>
         {/each}
         {#if cfg.topics.items.length === 0}
@@ -421,11 +520,22 @@
   }
 
   /* 话题记忆：会话行 */
+  .branch {
+    display: flex;
+    flex-direction: column;
+    border-left: 1px solid var(--line);
+    padding-left: 14px;
+  }
+  .branch.root {
+    border-left: none;
+    padding-left: 0;
+  }
   .topic {
     display: flex;
     align-items: center;
     gap: 12px;
     padding: 11px 14px;
+    flex-wrap: wrap; /* 回顾展开区占满整行 */
     transition: background var(--dur-fast) var(--ease-out);
   }
   .topic + .topic {
@@ -440,6 +550,25 @@
     font-weight: 550;
     overflow-wrap: anywhere;
   }
+  .forkbtn {
+    flex: none;
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    border: 1px solid var(--line);
+    background: transparent;
+    color: var(--muted);
+    font-size: 10px;
+    font-family: var(--font-mono);
+    padding: 1px 8px;
+    border-radius: 999px;
+    cursor: pointer;
+    transition: all var(--dur-fast) var(--ease-out);
+  }
+  .forkbtn:hover {
+    border-color: var(--accent);
+    color: var(--accent);
+  }
   .kbadge {
     flex: none;
     margin-left: 8px;
@@ -450,6 +579,13 @@
     border-radius: 5px;
     padding: 1px 7px;
     vertical-align: 1px;
+  }
+  .kbadge.live {
+    color: #3fb950;
+    background: rgb(63 185 80 / 12%);
+  }
+  .topic.cur {
+    background: var(--bg-soft);
   }
   .summary {
     font-size: 11.5px;
@@ -468,6 +604,65 @@
     color: var(--faint);
     overflow-wrap: anywhere;
     margin-top: 2px;
+  }
+  .ops {
+    display: flex;
+    gap: 4px;
+    flex: none;
+  }
+  .op {
+    flex: none;
+    border: none;
+    background: transparent;
+    color: var(--muted);
+    font-size: 11.5px;
+    padding: 4px 8px;
+    border-radius: 6px;
+    opacity: 0;
+    cursor: pointer;
+    transition: background var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out);
+  }
+  .op:hover {
+    background: var(--bg-soft);
+    color: var(--fg);
+  }
+  .topic:hover .op {
+    opacity: 1;
+  }
+  .review {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    width: 100%;
+    margin-top: 8px;
+    padding: 10px 12px;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: var(--bg-soft);
+    max-height: 320px;
+    overflow-y: auto;
+  }
+  .rv {
+    display: flex;
+    gap: 10px;
+    font-size: 12px;
+    line-height: 1.5;
+  }
+  .rv.me .rtext {
+    color: var(--muted);
+  }
+  .rrole {
+    flex: none;
+    width: 44px;
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    color: var(--faint);
+    text-transform: uppercase;
+    padding-top: 2px;
+  }
+  .rtext {
+    white-space: pre-wrap;
+    word-break: break-word;
   }
   .del {
     flex: none;

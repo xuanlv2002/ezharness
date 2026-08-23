@@ -6,6 +6,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -62,8 +63,9 @@ func (t *TopicService) Delete(id string) error {
 }
 
 /*
-Resume 回到指定话题继续：历史替换 + session 切换 + system 热更
-（新格式从快照还原 base/summary；旧格式无 pin，按当前配置重组）。
+Resume 回到指定 session 继续话题：同 ID 直接续写（话题页=session 管理，
+接受回到过去导致的压缩链后代部分不同步），历史/system/trace/压缩链
+整体切换（与 bootstrap 恢复同构），洗净封存标记使其成为活动会话。
 */
 func (t *TopicService) Resume(ctx context.Context, id string) error {
 	s := t.Hub.Active
@@ -79,8 +81,27 @@ func (t *TopicService) Resume(ctx context.Context, id string) error {
 	s.ReplaceHistory(snap.Messages)
 	s.Sess.SetResSnap(snap.Snapshot)
 	s.Sess.SetLastOutputAt(snap.LastOutputAt)
+	if snap.PrevSession != "" { // 压缩链（SetID 已清空，需重设）
+		s.Sess.SetPrev(snap.PrevSession, snap.CompactSummary)
+	}
+	if w := s.Wired(); w != nil && w.Trace != nil {
+		w.Trace.SetTrace(id)
+	}
 	if sys := s.SysPromptRef(); sys != nil {
 		sys.Set(snap.SystemBase, snap.SummaryBlock)
 	}
+	if snap.Archived { // 恢复即活动：洗净封存标记
+		snap.Archived = false
+		t.saveSnap(ctx, snap)
+	}
 	return nil
+}
+
+/* saveSnap 写回会话快照（失败静默）。 */
+func (t *TopicService) saveSnap(ctx context.Context, snap *hooks.SessionSnap) {
+	data, err := json.MarshalIndent(snap, "", "  ")
+	if err != nil {
+		return
+	}
+	_ = t.Hub.Fsys.Write(ctx, hooks.SessionsDir+"/"+snap.ID+"/session.json", data)
 }

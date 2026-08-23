@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/xuanlv2002/ezloop/ext/hook/localsession"
 	"github.com/xuanlv2002/ezloop/ext/hook/skill"
 
 	"ezharness/internal/domain"
@@ -158,9 +157,15 @@ type MemoryConfigView struct {
 		Items []SkillEntryView  `json:"items"`
 	} `json:"skills"`
 	Topics struct {
-		Dir   string              `json:"dir"`
-		Items []hooks.TopicEntry  `json:"items"`
+		Dir   string          `json:"dir"`
+		Items []TopicItemView `json:"items"`
 	} `json:"topics"`
+}
+
+/* TopicItemView 是话题条目 + 树形父子信息（parent=压缩链上一级，读存档补全）。 */
+type TopicItemView struct {
+	hooks.TopicEntry
+	Parent string `json:"parent,omitempty"`
 }
 
 /* Config 汇总记忆页数据（目录缺失容错为空列表）。 */
@@ -168,7 +173,7 @@ func (m *MemoryService) Config() MemoryConfigView {
 	var v MemoryConfigView
 	v.Longterm.Dir = hooks.LongtermDir
 	v.Skills.Dir = hooks.SkillsDir
-	v.Topics.Dir = localsession.DefaultDir
+	v.Topics.Dir = hooks.SessionsDir
 
 	if entries, err := m.Hub.Fsys.List(context.Background(), hooks.LongtermDir); err == nil {
 		for _, e := range entries {
@@ -193,7 +198,36 @@ func (m *MemoryService) Config() MemoryConfigView {
 			})
 		}
 	}
-	v.Topics.Items = m.Hub.Topics.Load()
+	// 话题页=session 管理：扫描 sessions/ 目录组装全部会话（含活动中的），
+	// parent=压缩链上一级；摘要/标题兜底从 topics 压缩索引补
+	summaries := map[string]hooks.TopicEntry{}
+	for _, e := range m.Hub.Topics.Load() {
+		summaries[e.ID] = e
+	}
+	active := m.Hub.Active.ID
+	ids, _ := hooks.ListMain(context.Background(), m.Hub.Fsys)
+	for _, id := range ids {
+		snap, err := hooks.LoadSnap(context.Background(), m.Hub.Fsys, id)
+		if err != nil {
+			continue
+		}
+		if len(snap.Messages) == 0 && id != active {
+			continue // 空壳（压缩后的新库未开聊）非活动不展示
+		}
+		it := TopicItemView{TopicEntry: hooks.TopicEntry{
+			ID:        id,
+			CreatedAt: snap.CreatedAt,
+			Msgs:      len(snap.Messages),
+			Path:      hooks.SessionsDir + "/" + id,
+		}, Parent: snap.PrevSession}
+		if e, ok := summaries[id]; ok {
+			it.Title, it.Summary = e.Title, e.Summary
+		}
+		if it.Title == "" {
+			it.Title = hooks.FirstUserTitle(snap.Messages)
+		}
+		v.Topics.Items = append(v.Topics.Items, it)
+	}
 	if v.Longterm.Files == nil {
 		v.Longterm.Files = []FileInfoView{}
 	}
@@ -201,7 +235,7 @@ func (m *MemoryService) Config() MemoryConfigView {
 		v.Skills.Items = []SkillEntryView{}
 	}
 	if v.Topics.Items == nil {
-		v.Topics.Items = []hooks.TopicEntry{}
+		v.Topics.Items = []TopicItemView{}
 	}
 	return v
 }

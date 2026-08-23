@@ -179,6 +179,7 @@ export interface MemoryTopicEntry {
   msgs: number
   path?: string
   kind?: string
+  parent?: string // 压缩链上一级（树形渲染用）
 }
 export interface MemoryConfig {
   longterm: { dir: string; harnessMd: MemoryFileInfo | null; files: MemoryFileInfo[] }
