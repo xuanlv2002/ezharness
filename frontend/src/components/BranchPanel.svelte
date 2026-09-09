@@ -4,11 +4,14 @@
   条目 = 分支（根 ID 身份，compact 换代不换条目）；指示器：
   橙点呼吸 = 有轮运行中（含后台分支）；⚠ 待审批。操作：点击切换
   （状态/审批随之切换）、顶部开新线、行尾归档。
+  悬浮覆盖抽屉：浮在聊天内容之上（不占布局宽度），点外部收起。
   */
+  import { fly } from 'svelte/transition'
   import { type BranchView } from '../lib/api'
   import { store } from '../lib/store.svelte'
 
-  /* 收起为小方块：localStorage 记忆（有分支在跑/等审批时红点提示） */
+  /* 收起为小方块：localStorage 记忆（有分支在跑/等审批时红点提示）。
+  悬浮抽屉语义：点面板外部自动收起（面板内点击——切分支/归档——不收） */
   const collapsedKey = 'ezh.branchPanel.collapsed'
   let collapsed = $state((() => {
     try {
@@ -24,6 +27,13 @@
     } catch {
       /* 存储不可用时仅本次生效 */
     }
+  }
+
+  let panelEl = $state<HTMLElement | null>(null)
+  function onGlobalPointerDown(e: PointerEvent) {
+    if (collapsed || !panelEl) return
+    if (panelEl.contains(e.target as Node)) return
+    fold(true)
   }
 
   const alertCount = $derived(store.branches.filter((b) => b.running || b.waiting).length)
@@ -67,6 +77,8 @@
   })
 </script>
 
+<svelte:window onpointerdown={onGlobalPointerDown} />
+
 {#if collapsed}
   <button class="mini" onclick={() => fold(false)} title={`分支 · 点击展开${alertCount > 0 ? `（${alertCount} 条在跑/待审批）` : ''}`}>
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
@@ -80,7 +92,7 @@
     {/if}
   </button>
 {:else}
-  <div class="panel">
+  <div class="panel" bind:this={panelEl} transition:fly={{ x: -16, duration: 180 }}>
     <div class="head">
       <h2>分支</h2>
       <button class="fold" onclick={() => fold(true)} title="收起">
@@ -157,6 +169,11 @@
     background: #f0883e;
   }
   .panel {
+    /* 脱离容器 flex 流：fly 离场期间不占位（否则 mini 进场被挤到
+    面板下方、离场完再弹回）。相对 .side-left（absolute）定位 */
+    position: absolute;
+    top: 0;
+    left: 0;
     display: flex;
     flex-direction: column;
     border: 1px solid var(--line);

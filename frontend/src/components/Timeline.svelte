@@ -338,8 +338,10 @@
     flex: 1;
     overflow-y: auto;
     min-height: 0;
-    /* 滚动条槽位常驻：显隐不再挤压文本宽度；滚动不外传 */
-    scrollbar-gutter: stable;
+    /* 滚动条槽位常驻且双侧对称（both-edges）：显隐不再挤压文本宽度，
+    且消息流中心与下方输入框（居中于全宽）对齐——单侧槽会让内容
+    整体左偏半个槽宽，输入框看起来左宽右窄 */
+    scrollbar-gutter: stable both-edges;
     overscroll-behavior: contain;
   }
   /* 轮次导航：默认仅一列刻度线垂直居中贴右缘，悬浮展开文字卡片。

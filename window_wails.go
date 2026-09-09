@@ -33,6 +33,11 @@ var trayIcon []byte
 
 var appWinSeq atomic.Int64 // 快应用子窗口命名序号
 
+/* MinWindowW 主窗口最小宽：全开组合不裁切的下限——64 侧栏 + 656
+主列布局下限 + 280 终端保底。再窄则时间线内容（代码块等）放不下，
+会出横向滚动条。 */
+const MinWindowW = 1000
+
 /* clampToScreen 把窗口尺寸按主屏工作区等比钳制，返回可用尺寸。 */
 func clampToScreen(win *application.WebviewWindow, w, h int) (int, int) {
 	sc, err := win.GetScreen()
@@ -55,6 +60,7 @@ func openWindow(a *app) {
 		Title:     "ezharness",
 		Width:     a.cfg.WindowW,
 		Height:    a.cfg.WindowH,
+		MinWidth:  MinWindowW,
 		Hidden:    true, // 尺寸钳制后再显示，避免超大窗口闪现
 		Frameless: true,
 		// 组合宿主 + 非客户区支持：前者让 WndProc 接入宿主命中路由

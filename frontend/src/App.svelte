@@ -85,13 +85,20 @@
     height: 100%;
   }
   .app {
+    --sidebar-w: 64px; /* 终端抽屉宽度联动基数（expanded 时覆写） */
     display: flex;
     flex: 1;
     min-height: 0;
+    overflow: hidden; /* 卷帘抽屉收起时盒子溢出视口，此处裁切 */
+  }
+  .app.expanded {
+    --sidebar-w: 176px;
   }
   main {
     flex: 1;
-    min-width: 0;
+    /* 主列布局下限：极端组合（终端开+窗口压到 MinWindowW）下防内容
+    挤碎；= MinWindowW 1000 - 64 侧栏 - 280 终端保底 */
+    min-width: 656px;
     min-height: 0;
     display: flex;
     flex-direction: column;

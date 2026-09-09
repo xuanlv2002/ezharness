@@ -145,31 +145,39 @@
     min-height: 0;
     display: flex;
   }
-  /* 主列：聊天记录 + 输入框。限制最大宽度并在剩余空间居中，
-  时间线滚动条因此贴在内容右缘，而不是被推到窗口最右侧；
-  右侧悬浮列不占布局宽度，窄屏时允许少量重叠 */
+  /* 主列：聊天记录 + 输入框。最大宽对齐消息流/输入框自身的 780——
+  收窄主列不缩内容（inner 本就 780 封顶），却能在侧栏与右侧悬浮列
+  之间留出等宽留白；时间线滚动条贴内容右缘而非窗口最右 */
   .main-col {
     flex: 1;
     min-width: 0;
-    max-width: 880px;
+    max-width: 780px;
     margin: 0 auto;
     display: flex;
     flex-direction: column;
   }
-  /* 左侧分支列：推挤式布局列（抽屉语义）——展开时占宽度把主列挤窄，
-  收起（BranchPanel collapsed）只剩折叠小方块；不遮挡内容 */
+  /* 左侧分支列：悬浮覆盖抽屉——展开时浮在内容之上（不占布局宽度，
+  主列不动），收起只剩折叠小方块。容器点击穿透，卡片自身可交互 */
   .side-left {
-    flex: none;
-    align-self: stretch;
+    position: absolute;
+    top: 16px;
+    left: 16px;
+    bottom: 30px;
+    width: 240px;
+    z-index: 5;
     display: flex;
     flex-direction: column;
     align-items: flex-start;
-    padding: 16px 12px 30px 16px;
+    gap: 10px;
+    pointer-events: none;
+  }
+  .chat > .side-left > :global(*) {
+    pointer-events: auto;
+    box-shadow: 0 4px 16px rgb(0 0 0 / 8%);
   }
   .side-left > :global(.panel) {
     min-height: 0;
-    flex: 1;
-    width: 240px;
+    width: 100%;
   }
   /* 右侧悬浮列：状态卡 + 通知栏浮在内容之上。容器点击穿透，
   卡片自身可交互；bottom 留出右下角 brand-foot 的位置 */
