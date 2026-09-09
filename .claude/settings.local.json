@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(go env *)",
+      "Bash(grep -rn \"func.*Write\" \"$\\(go env GOMODCACHE\\)/github.com/xuanlv2002/ezloop\"*/fs/osfs/osfs.go)"
+    ]
+  }
+}

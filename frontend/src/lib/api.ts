@@ -330,6 +330,10 @@ export const api = {
   /* 桌面壳为快应用开独立子窗口（浏览器访问 503，调用方回落新标签页） */
   openApp: (name: string) => post<{ ok: boolean }>('/api/apps/open', { name }),
 
+  /* 工作目录文本文件保存（file:// 编辑器）；沙箱同 /api/workspace/file */
+  saveFile: (path: string, content: string) =>
+    post<{ ok: boolean }>('/api/workspace/save', { path, content }),
+
   getMcp: () => fetch('/api/mcp').then(json<{ servers: McpServerView[] }>),
 
   saveMcp: (f: McpFile) => post<{ ok: boolean }>('/api/mcp', f),

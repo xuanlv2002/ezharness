@@ -3,6 +3,7 @@
   import DOMPurify from 'dompurify'
   import { api, type ImagePayload } from '../lib/api'
   import { isDesktop } from '../lib/desktop'
+  import { fileBaseName, isTextFilePath } from '../lib/textfile'
   import { store } from '../lib/store.svelte'
 
   let {
@@ -27,7 +28,8 @@
 
   /* <$supper_url> 特殊渲染语法（占位）：闭合标签解析为可点击 chip——
      http(s) 经系统浏览器打开（复用外链拦截）；term://<终端id> 拉开
-     共享终端抽屉并定位；app://<快应用名> 打开快应用子窗。其他内容
+     共享终端抽屉并定位；app://<快应用名> 打开快应用子窗；
+     file://<绝对路径> 拉开抽屉文件页编辑（文本白名单门禁）。其他内容
      仅展示。流式未闭合时按原文转义显示。 */
   const escHtml = (s: string) =>
     s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
@@ -60,13 +62,18 @@
             const id = escHtml(m[1])
             return `<span class="supper-url act" data-supper-kind="app" data-supper-id="${id}" role="button" tabindex="0">▶ 快应用 ${id}</span>`
           }
+          m = t.match(/^file:\/\/(.+)$/i)
+          if (m) {
+            const p = m[1].trim()
+            return `<span class="supper-url act" data-supper-kind="file" data-supper-id="${escHtml(p)}" role="button" tabindex="0" title="${escHtml(p)}">📄 ${escHtml(fileBaseName(p))}</span>`
+          }
           return `<a class="supper-url" data-supper-url="${b}">${b}</a>`
         },
       },
     ],
   })
 
-  /* term:// / app:// chip 点击委托（{@html} 渲染无法直接绑事件） */
+  /* term:// / app:// / file:// chip 点击委托（{@html} 渲染无法直接绑事件） */
   function onBodyClick(e: MouseEvent) {
     const el = (e.target as HTMLElement).closest('span[data-supper-kind]')
     if (!el) return
@@ -79,6 +86,10 @@
         .openApp(id)
         .then(() => (store.lastStatus = `正在打开快应用 ${id}`))
         .catch((err: unknown) => (store.lastStatus = `打开快应用失败：${(err as Error).message}`))
+    } else if (kind === 'file') {
+      /* 文本白名单门禁在此（后端沙箱之外的入口门禁） */
+      if (isTextFilePath(id)) store.openFileAt(id)
+      else store.lastStatus = `该类型文件暂不支持预览编辑：${id}`
     }
   }
 

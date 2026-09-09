@@ -214,9 +214,14 @@ class AppStore {
   pendingBoardFile = $state<{ file: File; tag: string; source: File | null } | null>(null)
   /* 共享终端抽屉(独立于画板 overlay,与聊天并存):收起仅滑出,
      WS/xterm 常驻保活。termFocus 是外部请求定位的终端 id
-     （supper_url term:// 点击入口；TerminalTab 消费后清空） */
+     （supper_url term:// 点击入口；TerminalTab 消费后清空）。
+     drawerTool 是抽屉内工具页（终端/文件互斥显隐，双 pane 常驻保活）；
+     fileFocus 是待打开的文件路径（supper_url file:// 点击入口，
+     FilePane 消费后清空） */
   termDrawerOpen = $state(false)
   termFocus = $state('')
+  drawerTool = $state<'term' | 'file'>('term')
+  fileFocus = $state('')
   private boardTag = ''
   /* 模型调用进行中（model_start→model_end），思考指示用 */
   modelActive = $state(false)
@@ -555,6 +560,7 @@ class AppStore {
   /* openTermDrawer 拉开共享终端抽屉（AI term_* 实际执行时调用；
      抽屉与聊天并存，不打断当前视图）。 */
   private openTermDrawer() {
+    this.drawerTool = 'term'
     this.termDrawerOpen = true
   }
 
@@ -562,15 +568,34 @@ class AppStore {
      首次打开时 WS hello 到达后由 TerminalTab 消费定位）。 */
   openTermAt(id: string) {
     this.termFocus = id
+    this.drawerTool = 'term'
     this.termDrawerOpen = true
+  }
+
+  /* openFileAt 拉开抽屉文件页并打开指定文件（supper_url file:// 点击）。 */
+  openFileAt(path: string) {
+    if (!path) return
+    this.fileFocus = path
+    this.drawerTool = 'file'
+    this.termDrawerOpen = true
+  }
+
+  setDrawerTool(t: 'term' | 'file') {
+    this.drawerTool = t
   }
 
   closeTermDrawer() {
     this.termDrawerOpen = false
   }
 
-  toggleTermDrawer() {
-    this.termDrawerOpen = !this.termDrawerOpen
+  /* 工具入口 mini 钮的开关语义：开着且已是该工具页 → 收起；
+     否则切到该工具页并拉开 */
+  toggleDrawerTool(t: 'term' | 'file') {
+    if (this.termDrawerOpen && this.drawerTool === t) this.termDrawerOpen = false
+    else {
+      this.drawerTool = t
+      this.termDrawerOpen = true
+    }
   }
 
   /* loadForkDetail 懒加载存档详情（已结束分身的执行记录重建）；运行中的

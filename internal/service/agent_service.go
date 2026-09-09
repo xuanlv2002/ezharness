@@ -443,7 +443,8 @@ func buildSystemBase(ctx context.Context, st domain.Settings, fsys osfs.OS) stri
 		"（省去先 read_file 再复制的往返；单文件上限 200000 字符，读不到会报错）；\n" +
 		"# 输出占位：回复中给用户可点击的入口用 <$supper_url>类型://标识</$supper_url> 包裹——" +
 		"https:// 外部链接、term://终端id（term_list 可查；长驻程序运行中或任务收尾时把终端入口交付给用户）、" +
-		"app://快应用名（save_app 生成后在回复中引用，用户点击即开）；\n" +
+		"app://快应用名（save_app 生成后在回复中引用，用户点击即开）、" +
+		"file://工作目录内文本文件的绝对路径（write_file/read_file 等操作过的代码与文档，交付入口供用户点击查看编辑）；\n" +
 		"# 共享终端（term_start/term_send 等）：魔法看板里的多终端，用户与你实时共见同一屏幕，全局共享（所有会话可用同一批终端）；" +
 		"term_list 查看全部（含用户手开的），term_start 新建（带描述，可附带首条命令）；\n" +
 		"# term_send 发命令并等输出静默返回（也用于应答交互/发 \\u0003 中断），term_read 游标式续读（只返回新增），term_close 关闭；\n" +

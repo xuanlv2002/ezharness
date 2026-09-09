@@ -13,7 +13,7 @@
   import SecurityView from './components/SecurityView.svelte'
   import SettingsView from './components/SettingsView.svelte'
   import Panel from './components/board/Panel.svelte'
-  import TerminalDrawer from './components/board/TerminalDrawer.svelte'
+  import WorkspaceDrawer from './components/board/WorkspaceDrawer.svelte'
 
   let view = $state<'chat' | 'models' | 'memory' | 'knowledge' | 'tools' | 'mcp' | 'security' | 'settings'>('chat')
   let expanded = $state(false)
@@ -64,12 +64,13 @@
         <SettingsView />
       {/if}
     </main>
-    <!-- 共享终端：推挤式右布局列（.app flex 行内，打开挤窄 main） -->
-    <TerminalDrawer />
+    <!-- 工作区抽屉（终端/文件双工具页）：推挤式右布局列（.app flex 行内，
+    打开挤窄 main；pane 常驻挂载保活） -->
+    <WorkspaceDrawer />
   </div>
 </div>
 
-<footer class="brand-foot">
+<footer class="brand-foot" class:away={store.termDrawerOpen}>
   <a href="https://github.com/xuanlv2002/ezharness" target="_blank" rel="noreferrer">ezharness v{pkg.version}</a>
   <span>·</span>
   <a href="https://github.com/xuanlv2002/ezloop" target="_blank" rel="noreferrer">powered by ezloop</a>
@@ -85,11 +86,10 @@
     height: 100%;
   }
   .app {
-    --sidebar-w: 64px; /* 终端抽屉宽度联动基数（expanded 时覆写） */
+    --sidebar-w: 64px; /* 工作区抽屉宽度联动基数（expanded 时覆写） */
     display: flex;
     flex: 1;
     min-height: 0;
-    overflow: hidden; /* 卷帘抽屉收起时盒子溢出视口，此处裁切 */
   }
   .app.expanded {
     --sidebar-w: 176px;
@@ -119,6 +119,11 @@
   }
   .brand-foot:hover {
     opacity: 1;
+  }
+  /* 工作区抽屉打开时避让：右下角会与抽屉底部操作区重叠 */
+  .brand-foot.away {
+    opacity: 0;
+    pointer-events: none;
   }
   .brand-foot a {
     color: var(--faint);

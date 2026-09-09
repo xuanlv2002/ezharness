@@ -116,10 +116,20 @@
       onDismiss={(id) => store.dismissNotice(id)}
     />
     <div class="entries">
-      <button class="entry" onclick={() => store.toggleTermDrawer()} title="共享终端（用户与 AI 共写）">
+      <!-- 工具入口：每类资源一个独立 mini 钮（开着且为该工具页时高亮） -->
+      <button class="entry" class:active={store.termDrawerOpen && store.drawerTool === 'term'}
+        onclick={() => store.toggleDrawerTool('term')} title="共享终端（用户与 AI 共写）">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
           <path d="M5 8l4 4-4 4" />
           <path d="M12 16.5h7" />
+        </svg>
+      </button>
+      <button class="entry" class:active={store.termDrawerOpen && store.drawerTool === 'file'}
+        onclick={() => store.toggleDrawerTool('file')} title="文件（查看 · 编辑 · 发给 AI）">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" />
+          <path d="M14 3v5h5" />
+          <path d="M9 13h6M9 17h6" />
         </svg>
       </button>
     </div>
@@ -200,10 +210,12 @@
   .side > :global(.panel) {
     min-height: 0; /* 通知过多时收缩，列表内部滚动 */
   }
-  /* 终端抽屉入口：右列通知下方，方形图标钮（与卡片同视觉语言） */
+  /* 工具抽屉入口：右列通知下方，方形图标钮（与卡片同视觉语言）；
+  当前工具页展开时高亮对应钮 */
   .entries {
     align-self: flex-end;
     display: flex;
+    flex-direction: column;
     gap: 8px;
   }
   .entry {
@@ -224,6 +236,11 @@
     background: var(--bg-soft);
     color: var(--fg);
     border-color: var(--line-strong);
+  }
+  .entry.active {
+    border-color: var(--accent-soft, var(--accent));
+    color: var(--accent, #2563eb);
+    background: var(--accent-soft, color-mix(in srgb, #2563eb 8%, var(--bg)));
   }
   .entry svg {
     width: 16px;

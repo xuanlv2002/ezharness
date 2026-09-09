@@ -84,7 +84,9 @@ func NewRouter(c Controllers, dist fs.FS) *gin.Engine {
 		api.GET("/apps", c.Apps.List)
 		api.POST("/apps/open", c.Apps.Open)
 
-		api.GET("/workspace/file", c.Workspace.File) // 工作目录文件预览（附件 chips 源）
+		api.GET("/workspace/file", c.Workspace.File)  // 工作目录文件预览（附件 chips 源）
+		api.HEAD("/workspace/file", c.Workspace.File) // 同上（文件页轮询 Last-Modified 用；gin 不自动映射 HEAD→GET）
+		api.POST("/workspace/save", c.Workspace.Save) // 工作目录文本保存（file:// 编辑器）
 
 		/* 魔法看板·共享终端：WS 多路复用 + REST 管理 */
 		api.GET("/terminal/ws", c.Terminal.Ws)
