@@ -101,8 +101,11 @@ func collectRefs(v any) []string {
 	return out
 }
 
-/* expand 递归替换：字符串里的标签替换为 contents 路径对应的内容
-（collectRefs 已保证命中；空路径保留原文由模型自纠）。 */
+/*
+	expand 递归替换：字符串里的标签替换为 contents 路径对应的内容
+
+（collectRefs 已保证命中；空路径保留原文由模型自纠）。
+*/
 func expand(v any, contents map[string]string) any {
 	switch cur := v.(type) {
 	case map[string]any:

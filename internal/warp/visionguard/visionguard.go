@@ -19,8 +19,11 @@ import (
 	"github.com/xuanlv2002/ezloop/warp"
 )
 
-/* imageLoadedTag 与 ezloop filetools 的图片消息标签同源：剥离时给
-开标签注入 omitted 属性（模型侧可读的省略说明），落盘历史不动。 */
+/*
+	imageLoadedTag 与 ezloop filetools 的图片消息标签同源：剥离时给
+
+开标签注入 omitted 属性（模型侧可读的省略说明），落盘历史不动。
+*/
 const imageLoadedTag = "<image_loaded>"
 
 const elidedOpen = `<image_loaded omitted="当前模型可能已切换，不支持图片输入">`

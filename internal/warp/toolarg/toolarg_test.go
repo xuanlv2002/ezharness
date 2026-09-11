@@ -55,9 +55,11 @@ func TestExpandNestedAndEscape(t *testing.T) {
 		t.Fatalf("invoke: %v", err)
 	}
 	var got struct {
-		Path    string   `json:"path"`
-		Content string   `json:"content"`
-		Opts    struct { Deep []string `json:"deep"` } `json:"opts"`
+		Path    string `json:"path"`
+		Content string `json:"content"`
+		Opts    struct {
+			Deep []string `json:"deep"`
+		} `json:"opts"`
 	}
 	if err := json.Unmarshal(stub.gotArgs, &got); err != nil {
 		t.Fatalf("unmarshal: %v", err)

@@ -8,17 +8,17 @@ import (
 func TestStripAnsi(t *testing.T) {
 	cases := []struct{ in, want string }{
 		{"plain text", "plain text"},
-		{"\x1b[31mred\x1b[0m", "red"},                                     // SGR
-		{"\x1b[2J\x1b[Hcleared", "cleared"},                                // 清屏/光标
-		{"\x1b]0;title\x07body", "body"},                                   // OSC
-		{"\x1b]0;title\x1b\\body", "body"},                                 // OSC(ST)
-		{"a\x07b", "ab"},                                                   // BEL
-		{"line1\r\nline2", "line1\nline2"},                                 // CRLF
-		{"v\x1b[Kersion", "version"},                                       // 行内清除
-		{"a\n\n\n\nb", "a\n\nb"},                                           // 空行压缩
-		{"\x1b[?25h\x1b[6n", ""},                                           // 纯控制序列
-		{"中文输出正常", "中文输出正常"},                                           // UTF-8
-		{"\x1b[1;32mOK\x1b[0m done", "OK done"},                            // 多参 SGR
+		{"\x1b[31mred\x1b[0m", "red"},           // SGR
+		{"\x1b[2J\x1b[Hcleared", "cleared"},     // 清屏/光标
+		{"\x1b]0;title\x07body", "body"},        // OSC
+		{"\x1b]0;title\x1b\\body", "body"},      // OSC(ST)
+		{"a\x07b", "ab"},                        // BEL
+		{"line1\r\nline2", "line1\nline2"},      // CRLF
+		{"v\x1b[Kersion", "version"},            // 行内清除
+		{"a\n\n\n\nb", "a\n\nb"},                // 空行压缩
+		{"\x1b[?25h\x1b[6n", ""},                // 纯控制序列
+		{"中文输出正常", "中文输出正常"},                    // UTF-8
+		{"\x1b[1;32mOK\x1b[0m done", "OK done"}, // 多参 SGR
 		{strings.Repeat("x", 10) + "\x1b[999;999H" + strings.Repeat("y", 5), strings.Repeat("x", 10) + strings.Repeat("y", 5)}, // 光标定位
 	}
 	for _, c := range cases {
@@ -69,12 +69,12 @@ func TestIsRawControl(t *testing.T) {
 		in   string
 		want bool
 	}{
-		{"\u0003", true},          // 纯 ^C
-		{"\u0003\u0003", true},    // 多个控制符
-		{"y\r", false},            // 含可打印内容
-		{"echo hi", false},        // 普通命令
-		{"", false},               // 空
-		{"\ty", false},            // \t 不算控制输入
+		{"\u0003", true},       // 纯 ^C
+		{"\u0003\u0003", true}, // 多个控制符
+		{"y\r", false},         // 含可打印内容
+		{"echo hi", false},     // 普通命令
+		{"", false},            // 空
+		{"\ty", false},         // \t 不算控制输入
 	}
 	for _, c := range cases {
 		if got := isRawControl(c.in); got != c.want {
@@ -145,14 +145,14 @@ func TestAggregate(t *testing.T) {
 		want []string
 	}{
 		{"echo hi\r\n", []string{"echo hi"}},
-		{"\x1b[I\x1b[Oecho hi\r", []string{"echo hi"}},   // 聚焦/失焦上报不污染
-		{"\x1b[A\x1b[Aping\r", []string{"ping"}},          // 方向上历史
-		{"\x1bOAls\r", []string{"ls"}},                    // SS3 方向键
-		{"ab\x7f\x7fcd\r", []string{"cd"}},                // 退格
-		{"stop\x03\r", []string{"^C"}},                    // ^C
-		{"中文 ok\r", []string{"中文 ok"}},                   // UTF-8
-		{"\x1b[Iec", []string{"ESC_CHUNK"}},               // 序列跨 chunk:先半截
-		{"ho hi\r", []string{"echo hi"}},                  // 续上块收尾
+		{"\x1b[I\x1b[Oecho hi\r", []string{"echo hi"}}, // 聚焦/失焦上报不污染
+		{"\x1b[A\x1b[Aping\r", []string{"ping"}},       // 方向上历史
+		{"\x1bOAls\r", []string{"ls"}},                 // SS3 方向键
+		{"ab\x7f\x7fcd\r", []string{"cd"}},             // 退格
+		{"stop\x03\r", []string{"^C"}},                 // ^C
+		{"中文 ok\r", []string{"中文 ok"}},                 // UTF-8
+		{"\x1b[Iec", []string{"ESC_CHUNK"}},            // 序列跨 chunk:先半截
+		{"ho hi\r", []string{"echo hi"}},               // 续上块收尾
 	}
 	var sess TermSession
 	for i, c := range cases {

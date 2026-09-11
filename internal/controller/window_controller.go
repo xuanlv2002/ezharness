@@ -23,8 +23,8 @@ type WindowControl interface {
 	Minimise()
 	ToggleMaximise()
 	IsMaximised() bool
-	Hide()        // 最小化到托盘
-	RequestQuit() // 真退出（收尾落盘后 Quit；关窗钩子放行）
+	Hide()                            // 最小化到托盘
+	RequestQuit()                     // 真退出（收尾落盘后 Quit；关窗钩子放行）
 	OpenAppWindow(path, title string) // 快应用独立子窗口
 }
 
@@ -92,9 +92,12 @@ func (c *WindowController) Close(g *gin.Context) {
 	g.JSON(http.StatusOK, gin.H{"prompt": true})
 }
 
-/* CloseDecision POST /api/window/close-decision：关闭询问的决定。
+/*
+	CloseDecision POST /api/window/close-decision：关闭询问的决定。
+
 tray=本次最小化到托盘（remember 同时持久化，之后点 X 直接最小化）；
-tray=false=退出。设置经 Hub（内存与磁盘同步，设置页同源联动）。 */
+tray=false=退出。设置经 Hub（内存与磁盘同步，设置页同源联动）。
+*/
 func (c *WindowController) CloseDecision(g *gin.Context) {
 	var body struct {
 		Tray     bool `json:"tray"`

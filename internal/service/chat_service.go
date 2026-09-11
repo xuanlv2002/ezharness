@@ -29,10 +29,13 @@ func (c *ChatService) resolve(rootID string) *domain.Session {
 	return c.Hub.SessionOf(rootID)
 }
 
-/* Send 启动一轮异步运行：引用为工作目录内路径的结构化列表（附件 =
+/*
+	Send 启动一轮异步运行：引用为工作目录内路径的结构化列表（附件 =
+
 整文件引用，文件页标注 = 片段+行号+备注；表现层已校验归属），统一经
 <reference_file> 记录告知模型。事件流扇出 SSE，结束更新历史并发
-turn_end。 */
+turn_end。
+*/
 func (c *ChatService) Send(rootID, text string, refs []hooks.RefFile) error {
 	if main := c.Hub.ModelsSnapshot().ActiveMain(); main == nil || main.APIKey == "" {
 		return domain.ErrNoAPIKey
@@ -50,8 +53,8 @@ func (c *ChatService) Send(rootID, text string, refs []hooks.RefFile) error {
 		now := time.Now().UnixMilli()
 		_ = c.Hub.Topics.Add(hooks.TopicEntry{
 			ID: s.RootID, LeafID: s.ID,
-			Title:    hooks.FirstUserTitle([]types.Message{{Role: types.RoleUser, Content: text}}),
-			Kind:     "new",
+			Title:     hooks.FirstUserTitle([]types.Message{{Role: types.RoleUser, Content: text}}),
+			Kind:      "new",
 			CreatedAt: now, UpdatedAt: now, Msgs: len(s.History()),
 		})
 	}
@@ -129,8 +132,11 @@ func (c *ChatService) DecideAnswer(rootID, callID, input string) {
 	s.DecideAnswer(askuser.Answer{CallID: callID, Input: input})
 }
 
-/* recordDecision 持久化决策记录（轮末刷新后工具卡徽标用）并发
-decision.resolved 帧（轮内刷新回放时纠正决策卡与徽标）。失败静默。 */
+/*
+	recordDecision 持久化决策记录（轮末刷新后工具卡徽标用）并发
+
+decision.resolved 帧（轮内刷新回放时纠正决策卡与徽标）。失败静默。
+*/
 func (c *ChatService) recordDecision(s *domain.Session, kind, callID, resolution string) {
 	if callID == "" {
 		return

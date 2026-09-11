@@ -5,8 +5,11 @@ import (
 	"testing"
 )
 
-/* PendingNotices 只导出未决人机请求（含 fork 标识），其他 pending 类型与
-坏帧剔除；通知栏全局轮询的数据源契约。 */
+/*
+	PendingNotices 只导出未决人机请求（含 fork 标识），其他 pending 类型与
+
+坏帧剔除；通知栏全局轮询的数据源契约。
+*/
 func TestPendingNotices(t *testing.T) {
 	s := &Session{pending: map[string]Event{
 		"c1": {Type: "approve.request", Ts: 1000, Data: raw(ToolStartData{ID: "c1", Name: "terminal", Args: json.RawMessage(`{"cmd":"ls"}`)})},

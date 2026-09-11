@@ -38,10 +38,10 @@ type TopicService struct {
 /* BranchView 是分支面板条目（索引 + 运行态合成）。 */
 type BranchView struct {
 	hooks.TopicEntry
-	Running bool `json:"running"`           // 有轮运行中（后台分支也亮）
-	Waiting bool `json:"waiting"`           // 有未决审批/提问
-	Archiving bool `json:"archiving"`       // 归档进行中（摘要期间锁该分支对话）
-	Active  bool `json:"active"`            // 当前所处分支
+	Running   bool `json:"running"`   // 有轮运行中（后台分支也亮）
+	Waiting   bool `json:"waiting"`   // 有未决审批/提问
+	Archiving bool `json:"archiving"` // 归档进行中（摘要期间锁该分支对话）
+	Active    bool `json:"active"`    // 当前所处分支
 }
 
 /* buildBranchViews 由索引+注册表合成分支列表（含未索引的活动新分支）。 */

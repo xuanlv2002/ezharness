@@ -4,6 +4,7 @@
     结构随数据建模独立演进。
   - Settings（settings.json）：harness 行为设置——系统提示追加、
     话题轮换水位、shell。
+
 持久化到工作目录（进程 cwd 即数据目录）。
 */
 package domain
@@ -99,16 +100,19 @@ func (m ModelsConfig) ActiveMain() *ModelEntry {
 
 /* Settings 是可热更的行为设置（审批策略独立于 toolRules.json）。 */
 type Settings struct {
-	SystemExtra string `json:"systemExtra"`
-	TrimPercent int    `json:"trimPercent"` // 上下文整理水位（模型窗口百分比，0=禁用自动整理）
-	WorkDir        string     `json:"workDir"`        // 工作目录（terminal 默认目录；空=数据目录下 workspace/，相对=相对数据目录）
-	CloseToTray    bool       `json:"closeToTray"`    // 桌面端点关闭 = 最小化到托盘（关窗时实时读取，即改即生效）
-	DisabledSkills []string   `json:"disabledSkills"` // 已禁用 skill 的目录名（load_skill/状态面板实时读取，system 清单下个 session 生效）
-	MaxIterations  int        `json:"maxIterations"`  // 单轮对话的最大模型迭代次数（0 = 默认 12；随 Reassemble 生效）
+	SystemExtra    string   `json:"systemExtra"`
+	TrimPercent    int      `json:"trimPercent"`    // 上下文整理水位（模型窗口百分比，0=禁用自动整理）
+	WorkDir        string   `json:"workDir"`        // 工作目录（terminal 默认目录；空=数据目录下 workspace/，相对=相对数据目录）
+	CloseToTray    bool     `json:"closeToTray"`    // 桌面端点关闭 = 最小化到托盘（关窗时实时读取，即改即生效）
+	DisabledSkills []string `json:"disabledSkills"` // 已禁用 skill 的目录名（load_skill/状态面板实时读取，system 清单下个 session 生效）
+	MaxIterations  int      `json:"maxIterations"`  // 单轮对话的最大模型迭代次数（0 = 默认 12；随 Reassemble 生效）
 }
 
-/* DefaultSettings 给出出厂值（水位 75%：窗口自适应，留足摘要提前量；
-点关闭默认弹窗询问退出，选「最小化到托盘」后即常驻托盘）。 */
+/*
+	DefaultSettings 给出出厂值（水位 75%：窗口自适应，留足摘要提前量；
+
+点关闭默认弹窗询问退出，选「最小化到托盘」后即常驻托盘）。
+*/
 func DefaultSettings() Settings {
 	return Settings{
 		SystemExtra: "",

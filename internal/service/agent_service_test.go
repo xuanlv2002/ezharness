@@ -32,10 +32,10 @@ func TestNeedsApproveMcpDiscovery(t *testing.T) {
 // tool_call 按四档判定：白名单命中放行、整站前缀放行、黑名单命中拦、其余按档默认。
 func TestNeedsApproveMcpToolCall(t *testing.T) {
 	cases := []struct {
-		desc  string
-		rule  domain.ToolRule
-		call  *types.ToolCall
-		want  bool
+		desc string
+		rule domain.ToolRule
+		call *types.ToolCall
+		want bool
 	}{
 		{"ask 恒审批", domain.ToolRule{Tool: "mcp.*", Level: domain.LevelAsk}, mcpCall("tool_call", "time", "getCurrentTime"), true},
 		{"auto 恒免审", domain.ToolRule{Tool: "mcp.*", Level: domain.LevelAuto}, mcpCall("tool_call", "time", "getCurrentTime"), false},

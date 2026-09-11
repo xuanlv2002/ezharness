@@ -19,8 +19,11 @@ import (
 	"ezharness/internal/config"
 )
 
-/* AppService 管理应用配置与重启。Boot 由 main 持有并注入（跨代共享的
-服务代际计数）。 */
+/*
+	AppService 管理应用配置与重启。Boot 由 main 持有并注入（跨代共享的
+
+服务代际计数）。
+*/
 type AppService struct {
 	Cfg       func() config.Config
 	RestartFn func(port int, listen, dataDir string, ln net.Listener)
@@ -50,12 +53,12 @@ type PathEntry struct {
 
 /* AppConfigView 是设置页完整配置视图：端口、监听、数据目录、路径清单、记忆三路径。 */
 type AppConfigView struct {
-	Port    int              `json:"port"`
-	Listen  string           `json:"listen"`
-	DataDir string           `json:"dataDir"`
-	Boot    int64            `json:"boot"`
-	Paths   []PathEntry      `json:"paths"`
-	Memory  MemoryPathsView  `json:"memory"`
+	Port    int             `json:"port"`
+	Listen  string          `json:"listen"`
+	DataDir string          `json:"dataDir"`
+	Boot    int64           `json:"boot"`
+	Paths   []PathEntry     `json:"paths"`
+	Memory  MemoryPathsView `json:"memory"`
 }
 
 /* MemoryPathsView 是记忆三文件夹绝对路径。 */

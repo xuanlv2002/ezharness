@@ -301,8 +301,11 @@ func (s *TerminalService) List() []TermInfo {
 	return out
 }
 
-/* ListTermsJSON 终端清单的 JSON 文本(term_list 工具直接返回;
-tools 侧不能引用 service 类型,走字符串解耦)。 */
+/*
+	ListTermsJSON 终端清单的 JSON 文本(term_list 工具直接返回;
+
+tools 侧不能引用 service 类型,走字符串解耦)。
+*/
 func (s *TerminalService) ListTermsJSON() string {
 	b, err := json.Marshal(s.List())
 	if err != nil {
@@ -311,9 +314,12 @@ func (s *TerminalService) ListTermsJSON() string {
 	return string(b)
 }
 
-/* StartTerm 新建终端(desc 为描述/名称);带 command 时立即运行
+/*
+	StartTerm 新建终端(desc 为描述/名称);带 command 时立即运行
+
 并等输出静默返回(等价"新建+send"一步到位)。读位点取注入前的当前
-位置(欢迎横幅不计入 agent 可读增量)。 */
+位置(欢迎横幅不计入 agent 可读增量)。
+*/
 func (s *TerminalService) StartTerm(desc, command string, quietMs, timeoutMs int) (string, error) {
 	quiet := clampInt(quietMs, 100, 5000, 800)
 	timeout := clampInt(timeoutMs, 1000, 60000, 30000)
@@ -359,8 +365,11 @@ func (s *TerminalService) StartTerm(desc, command string, quietMs, timeoutMs int
 	return renderTermOutput(head, out, note), nil
 }
 
-/* isRawControl 判断是否为原始控制输入(如 ^C):含 C0 控制字符且无
-可打印内容时原样写入、不补回车。 */
+/*
+	isRawControl 判断是否为原始控制输入(如 ^C):含 C0 控制字符且无
+
+可打印内容时原样写入、不补回车。
+*/
 func isRawControl(cmd string) bool {
 	hasCtrl, hasPrint := false, false
 	for _, c := range cmd {
@@ -375,8 +384,11 @@ func isRawControl(cmd string) bool {
 	return hasCtrl && !hasPrint
 }
 
-/* writeAI 是 AI 侧写入:记录 lastCmd 与最近终端,不做用户输入聚合
-(避免 agent_status 自反馈)。 */
+/*
+	writeAI 是 AI 侧写入:记录 lastCmd 与最近终端,不做用户输入聚合
+
+(避免 agent_status 自反馈)。
+*/
 func (s *TerminalService) writeAI(sess *TermSession, lastCmd string, b []byte) {
 	s.mu.Lock()
 	s.lastAi = sess.ID
@@ -389,9 +401,12 @@ func (s *TerminalService) writeAI(sess *TermSession, lastCmd string, b []byte) {
 	sess.mu.Unlock()
 }
 
-/* Send 在终端执行命令并等待输出静默,返回本次新增输出。收集起点取
+/*
+	Send 在终端执行命令并等待输出静默,返回本次新增输出。收集起点取
+
 读位点与写前位置的较早者(此前未读的增量一并交付,不丢输出),返回后
-推进读位点(send 与 read 共用,读即消费)。 */
+推进读位点(send 与 read 共用,读即消费)。
+*/
 func (s *TerminalService) Send(ctx context.Context, id, cmd string, quietMs, timeoutMs int) (string, error) {
 	quiet := clampInt(quietMs, 100, 5000, 800)
 	timeout := clampInt(timeoutMs, 1000, 60000, 30000)
@@ -535,8 +550,11 @@ func (s *TerminalService) remove(sess *TermSession) {
 	s.broadcast(TermFrame{Type: "terminals", Sessions: s.List()})
 }
 
-/* UserInput 是用户手敲输入(WS 路径):写入并聚合命令行供 agent_status。
-按 id 精确查找(WS 帧必须带 id,不走 AI 最近终端兜底)。 */
+/*
+	UserInput 是用户手敲输入(WS 路径):写入并聚合命令行供 agent_status。
+
+按 id 精确查找(WS 帧必须带 id,不走 AI 最近终端兜底)。
+*/
 func (s *TerminalService) UserInput(id string, b []byte) error {
 	sess, ok := s.get(id)
 	if !ok {
@@ -552,10 +570,13 @@ func (s *TerminalService) UserInput(id string, b []byte) error {
 	return nil
 }
 
-/* aggregate 把输入字节聚合成命令行:可打印字符累积,回车切行,
+/*
+	aggregate 把输入字节聚合成命令行:可打印字符累积,回车切行,
+
 控制字符忽略(\x03 记 ^C,退格弹末字符),单行截 80 字。
 ESC 起始的转义序列整体跳过(方向键/聚焦上报等,否则 ESC 后的
-"[A""[I" 等可见字符会污染记录)。调用方需持 sess.mu。 */
+"[A""[I" 等可见字符会污染记录)。调用方需持 sess.mu。
+*/
 func (s *TerminalService) aggregate(sess *TermSession, b []byte) []string {
 	var lines []string
 	for _, c := range string(b) {
@@ -625,8 +646,11 @@ func (s *TerminalService) CollectUserActivity() []UserLine {
 	return out
 }
 
-/* enqueueUserLine 用户命令行入全局队列(带终端 id,
-status 渲染 "用户在终端 tN 执行:xxx")。 */
+/*
+	enqueueUserLine 用户命令行入全局队列(带终端 id,
+
+status 渲染 "用户在终端 tN 执行:xxx")。
+*/
 func (s *TerminalService) enqueueUserLine(id string, line string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -736,10 +760,10 @@ func (s *TerminalService) Shutdown(_ time.Duration) {
 /* ── ANSI 剥离(term_send/term_read 输出净化) ── */
 
 var (
-	csiRe  = regexp.MustCompile(`\x1b\[[0-9;?]*[ -/]*[@-~]`)     // CSI 序列
+	csiRe  = regexp.MustCompile(`\x1b\[[0-9;?]*[ -/]*[@-~]`)       // CSI 序列
 	oscRe  = regexp.MustCompile(`\x1b\][^\x07\x1b]*(\x07|\x1b\\)`) // OSC 序列
-	escRe  = regexp.MustCompile(`\x1b[@-Z\\-_]`)                 // 单字符转义
-	ctrlRe = regexp.MustCompile(`[\x00-\x08\x0b-\x1f\x7f]`)      // 其余 C0(保留 \n\t)
+	escRe  = regexp.MustCompile(`\x1b[@-Z\\-_]`)                   // 单字符转义
+	ctrlRe = regexp.MustCompile(`[\x00-\x08\x0b-\x1f\x7f]`)        // 其余 C0(保留 \n\t)
 )
 
 /* stripAnsi 剥终端转义序列与控制字符(保留 \n \t),压缩连续空行。 */

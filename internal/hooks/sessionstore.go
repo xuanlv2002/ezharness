@@ -385,8 +385,11 @@ func toolNames(state *types.LoopState) []string {
 	return out
 }
 
-/* StripSystem 剥离 system 消息（system 由 SysPrompt 单独 pin；
-GET /sessions 响应与盘上快照共用此基准，分叉对位）。 */
+/*
+	StripSystem 剥离 system 消息（system 由 SysPrompt 单独 pin；
+
+GET /sessions 响应与盘上快照共用此基准，分叉对位）。
+*/
 func StripSystem(msgs []types.Message) []types.Message {
 	out := make([]types.Message, 0, len(msgs))
 	for _, m := range msgs {

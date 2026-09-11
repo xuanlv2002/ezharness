@@ -27,10 +27,13 @@ type SettingsService struct {
 	Agents *AgentService
 }
 
-/* SettingsView 是设置页行为设置视图（模型归 /api/models）。
+/*
+	SettingsView 是设置页行为设置视图（模型归 /api/models）。
+
 TrimPercent/WorkDir/CloseToTray/MaxIterations 用指针：区分"未提交该
 字段"与"提交空值（0=禁用压缩 / 空=工作目录回默认 / false=关闭托盘
-常驻 / 0=迭代次数回默认 12）。 */
+常驻 / 0=迭代次数回默认 12）。
+*/
 type SettingsView struct {
 	SystemExtra   string  `json:"systemExtra"`
 	TrimPercent   *int    `json:"compactPercent,omitempty"`
@@ -105,8 +108,11 @@ func normalizeModels(m domain.ModelsConfig) domain.ModelsConfig {
 	return m
 }
 
-/* UpdateModels 保存模型四槽（每槽至多一条启用，main 槽不可为空且必须
-有启用条目——能力槽允许全部停用）并重建 agent（busy 时拒绝）。 */
+/*
+	UpdateModels 保存模型四槽（每槽至多一条启用，main 槽不可为空且必须
+
+有启用条目——能力槽允许全部停用）并重建 agent（busy 时拒绝）。
+*/
 func (s *SettingsService) UpdateModels(m domain.ModelsConfig) error {
 	if len(m.Main) == 0 {
 		return errors.New("main 槽至少需要一个模型")
@@ -141,8 +147,11 @@ func (s *SettingsService) UpdateModels(m domain.ModelsConfig) error {
 	return s.Agents.Reassemble(s.Hub.SettingsSnapshot())
 }
 
-/* SecurityRules 返回当前审批策略：用户档为准，DefaultToolRules 补缺
-（精简档没覆盖的新工具按内置默认档出现，安全页可配全部工具）。 */
+/*
+	SecurityRules 返回当前审批策略：用户档为准，DefaultToolRules 补缺
+
+（精简档没覆盖的新工具按内置默认档出现，安全页可配全部工具）。
+*/
 func (s *SettingsService) SecurityRules() []domain.ToolRule {
 	rules := s.Hub.ToolRulesSnapshot()
 	seen := map[string]bool{}
@@ -200,8 +209,11 @@ type SkillEntryView struct {
 	Enabled bool   `json:"enabled"`
 }
 
-/* MemoryConfigView 是记忆页数据：长期记忆/能力记忆两个文件夹的清单。
-话题记忆（完整会话树）走独立端点 GET /api/memory/tree。 */
+/*
+	MemoryConfigView 是记忆页数据：长期记忆/能力记忆两个文件夹的清单。
+
+话题记忆（完整会话树）走独立端点 GET /api/memory/tree。
+*/
 type MemoryConfigView struct {
 	Longterm struct {
 		Dir       string         `json:"dir"`
@@ -357,7 +369,7 @@ func (m *MemoryService) DeleteSkill(id string) error {
 
 /* 技能 zip 上传的大小护栏：压缩包 ≤ 20MB，解压后总内容 ≤ 10MB。 */
 const (
-	skillZipMax     = 20 << 20
+	skillZipMax      = 20 << 20
 	skillUnzippedMax = 10 << 20
 )
 
@@ -469,8 +481,11 @@ func unzipSkill(zr *zip.Reader) (string, []skillZipEntry, error) {
 	return "", nil, errors.New("压缩包缺少 SKILL.md（技能的唯一必需文件）")
 }
 
-/* frontmatterName 提取 SKILL.md frontmatter 的 name 字段（扁平
-`name: xx` 行；无 frontmatter 或无 name 返回空）。 */
+/*
+	frontmatterName 提取 SKILL.md frontmatter 的 name 字段（扁平
+
+`name: xx` 行；无 frontmatter 或无 name 返回空）。
+*/
 func frontmatterName(body string) string {
 	lines := strings.Split(body, "\n")
 	if len(lines) == 0 || strings.TrimSpace(lines[0]) != "---" {

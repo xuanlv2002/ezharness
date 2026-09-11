@@ -38,13 +38,16 @@ type McpServerFile struct {
 /* IsEnabled 报告服务器是否启用。 */
 func (s McpServerFile) IsEnabled() bool { return s.Enabled == nil || *s.Enabled }
 
-/* McpServerView 是 MCP 页卡片数据。Tools 未连接为 0（前端显示 —）。
-Allow 必须回传：前端全量保存，丢字段会清掉 mcp.json 里的白名单。 */
+/*
+	McpServerView 是 MCP 页卡片数据。Tools 未连接为 0（前端显示 —）。
+
+Allow 必须回传：前端全量保存，丢字段会清掉 mcp.json 里的白名单。
+*/
 type McpServerView struct {
 	Name        string            `json:"name"`
 	Description string            `json:"description"`
 	Transport   string            `json:"transport"` // http | stdio
-	Endpoint    string            `json:"endpoint"` // http url 或启动命令
+	Endpoint    string            `json:"endpoint"`  // http url 或启动命令
 	Enabled     bool              `json:"enabled"`
 	Connected   bool              `json:"connected"` // 页面手动会话已建立
 	Tools       int               `json:"tools"`
@@ -59,8 +62,11 @@ type McpToolView struct {
 	ArgsSchema  json.RawMessage `json:"args_schema,omitempty"`
 }
 
-/* McpService MCP 配置用例。clients 是页面手动连接的会话缓存，
-与 agent Router 懒建立的连接相互独立。 */
+/*
+	McpService MCP 配置用例。clients 是页面手动连接的会话缓存，
+
+与 agent Router 懒建立的连接相互独立。
+*/
 type McpService struct {
 	Fsys fs.FileSystem
 
@@ -104,8 +110,11 @@ func (s *McpService) List() []McpServerView {
 	return out
 }
 
-/* Connect 建立页面侧 MCP 会话并返回工具清单；已有会话则复用刷新，
-失效时重建。禁用的 server 也允许连（页面是调试通道）。 */
+/*
+	Connect 建立页面侧 MCP 会话并返回工具清单；已有会话则复用刷新，
+
+失效时重建。禁用的 server 也允许连（页面是调试通道）。
+*/
 func (s *McpService) Connect(ctx context.Context, name string) ([]McpToolView, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -171,8 +180,11 @@ func (s *McpService) closeClient(name string, c mcp.Client) {
 	delete(s.toolDefs, name)
 }
 
-/* Update 保存 mcp.json（Reload 钩子下一轮生效），并关闭已删除/禁用
-server 的页面会话。 */
+/*
+	Update 保存 mcp.json（Reload 钩子下一轮生效），并关闭已删除/禁用
+
+server 的页面会话。
+*/
 func (s *McpService) Update(f McpFile) error {
 	for _, srv := range f.Servers {
 		if srv.Name == "" {

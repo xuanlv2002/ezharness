@@ -27,8 +27,10 @@ func SaveApp(fsys osfs.OS) []types.Tool {
 
 type saveAppTool struct{ fsys osfs.OS }
 
-func (saveAppTool) Name() string        { return "save_app" }
-func (saveAppTool) Description() string { return "把一个自包含的 html 小工具保存为快应用（用户可在快应用页一键启动）。name 用英文短名，html 是完整文档" }
+func (saveAppTool) Name() string { return "save_app" }
+func (saveAppTool) Description() string {
+	return "把一个自包含的 html 小工具保存为快应用（用户可在快应用页一键启动）。name 用英文短名，html 是完整文档"
+}
 
 func (t saveAppTool) ArgsSchema() json.RawMessage {
 	return json.RawMessage(`{

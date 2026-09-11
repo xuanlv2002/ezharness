@@ -15,8 +15,11 @@ type AppController struct {
 	Svc *service.AppService
 }
 
-/* Health 探活：前端在重启后轮询，boot 与 restart 响应一致即新代就绪。
-换端口重启时旧页面在新 origin 上轮询本端点，跨域响应需放行。 */
+/*
+	Health 探活：前端在重启后轮询，boot 与 restart 响应一致即新代就绪。
+
+换端口重启时旧页面在新 origin 上轮询本端点，跨域响应需放行。
+*/
 func (c *AppController) Health(g *gin.Context) {
 	g.Header("Access-Control-Allow-Origin", "*")
 	st := c.Svc.Status()

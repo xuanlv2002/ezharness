@@ -1,5 +1,8 @@
-/* WorkspaceController：工作目录文件预览与文本保存（附件 chips 缩略图、
-文件查看源、supper_url file:// 编辑器）。 */
+/*
+	WorkspaceController：工作目录文件预览与文本保存（附件 chips 缩略图、
+
+文件查看源、supper_url file:// 编辑器）。
+*/
 package controller
 
 import (

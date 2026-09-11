@@ -49,37 +49,37 @@ func (s *SessionService) Bootstrap() BootstrapData {
 
 /* HistoryData 是历史响应。 */
 type HistoryData struct {
-	ID          string                 `json:"id"` // 叶 session ID
-	RootID      string                 `json:"rootId"`
-	Busy        bool                   `json:"busy"`
-	Messages    []types.Message        `json:"messages"` // 剥 system：与盘上快照同基准（分叉 msgIdx 对位）
-	TargetID    string                 `json:"targetId,omitempty"`  // 向上边目标（compress 链上翻游标）
-	SeedKind    string                 `json:"seedKind,omitempty"` // new | fork | compress
-	CanPrev     bool                   `json:"canPrev"`             // 上翻是否还有上一级（后端判定，fork 换源后算）
-	ForkedFrom  *hooks.ForkOrigin      `json:"forkedFrom,omitempty"`
-	PrevTitle   string                 `json:"prevTitle,omitempty"` // 上一话题标题（压缩标记用）
-	Decisions   []hooks.DecisionRecord `json:"decisions,omitempty"` // 人机决策记录（工具卡徽标用）
-	Forks       []hooks.ForkSummary    `json:"forks,omitempty"`     // fork 分身摘要（入口卡重建，详情懒加载）
+	ID         string                 `json:"id"` // 叶 session ID
+	RootID     string                 `json:"rootId"`
+	Busy       bool                   `json:"busy"`
+	Messages   []types.Message        `json:"messages"`           // 剥 system：与盘上快照同基准（分叉 msgIdx 对位）
+	TargetID   string                 `json:"targetId,omitempty"` // 向上边目标（compress 链上翻游标）
+	SeedKind   string                 `json:"seedKind,omitempty"` // new | fork | compress
+	CanPrev    bool                   `json:"canPrev"`            // 上翻是否还有上一级（后端判定，fork 换源后算）
+	ForkedFrom *hooks.ForkOrigin      `json:"forkedFrom,omitempty"`
+	PrevTitle  string                 `json:"prevTitle,omitempty"` // 上一话题标题（压缩标记用）
+	Decisions  []hooks.DecisionRecord `json:"decisions,omitempty"` // 人机决策记录（工具卡徽标用）
+	Forks      []hooks.ForkSummary    `json:"forks,omitempty"`     // fork 分身摘要（入口卡重建，详情懒加载）
 }
 
 /* Status 是右栏状态卡数据（命中率与用量为本会话口径，切会话/重启清零）。 */
 type Status struct {
-	Model            string   `json:"model"`
-	ModelVision      bool     `json:"modelVision"` // 主模型是否支持视觉输入（false 时带图发送前端提示省略）
-	SessionID        string   `json:"sessionId"`
-	RootID           string   `json:"rootId"`
-	SessionMsgs      int      `json:"sessionMsgs"`
-	Busy             bool     `json:"busy"`
-	ContextTokens    int      `json:"contextTokens"`
-	ContextWindow    int      `json:"contextWindow"` // 主模型窗口（水位条分母）
-	TrimPercent      int      `json:"trimPercent"`   // 自动整理阈值（窗口百分比，水位条阈值线；0=禁用）
-	CacheHitRate     float64  `json:"cacheHitRate"`
-	PromptTokens     int      `json:"promptTokens"` // 本会话累计输入（命中率分母）
-	Turns            int      `json:"turns"`
-	Tools            []string `json:"tools"`
-	McpServers       []string `json:"mcpServers"`
-	Skills           []string `json:"skills"`
-	TopicsCount      int      `json:"topicsCount"`
+	Model         string   `json:"model"`
+	ModelVision   bool     `json:"modelVision"` // 主模型是否支持视觉输入（false 时带图发送前端提示省略）
+	SessionID     string   `json:"sessionId"`
+	RootID        string   `json:"rootId"`
+	SessionMsgs   int      `json:"sessionMsgs"`
+	Busy          bool     `json:"busy"`
+	ContextTokens int      `json:"contextTokens"`
+	ContextWindow int      `json:"contextWindow"` // 主模型窗口（水位条分母）
+	TrimPercent   int      `json:"trimPercent"`   // 自动整理阈值（窗口百分比，水位条阈值线；0=禁用）
+	CacheHitRate  float64  `json:"cacheHitRate"`
+	PromptTokens  int      `json:"promptTokens"` // 本会话累计输入（命中率分母）
+	Turns         int      `json:"turns"`
+	Tools         []string `json:"tools"`
+	McpServers    []string `json:"mcpServers"`
+	Skills        []string `json:"skills"`
+	TopicsCount   int      `json:"topicsCount"`
 }
 
 /* Snapshot 汇总活动会话状态。 */
@@ -119,22 +119,22 @@ func (s *SessionService) Snapshot() Status {
 		vision, modelName = m.Vision, m.Name
 	}
 	return Status{
-		Model:            modelName,
-		ModelVision:      vision,
-		SessionID:        sess.ID,
-		RootID:           sess.RootID,
-		SessionMsgs:      len(sess.History()),
-		Busy:             sess.Busy(),
-		ContextTokens:    ctxTokens,
-		ContextWindow:    ctxWindow,
+		Model:         modelName,
+		ModelVision:   vision,
+		SessionID:     sess.ID,
+		RootID:        sess.RootID,
+		SessionMsgs:   len(sess.History()),
+		Busy:          sess.Busy(),
+		ContextTokens: ctxTokens,
+		ContextWindow: ctxWindow,
 		TrimPercent:   s.Hub.SettingsSnapshot().TrimPercent,
-		CacheHitRate:     hit,
-		PromptTokens:     u.PromptTokens,
-		Turns:            s.Hub.Stats.Turns(),
-		Tools:            tools,
-		McpServers:       mcp,
-		Skills:           skills,
-		TopicsCount:      len(s.Hub.Topics.Load()),
+		CacheHitRate:  hit,
+		PromptTokens:  u.PromptTokens,
+		Turns:         s.Hub.Stats.Turns(),
+		Tools:         tools,
+		McpServers:    mcp,
+		Skills:        skills,
+		TopicsCount:   len(s.Hub.Topics.Load()),
 	}
 }
 
@@ -153,13 +153,13 @@ func (s *SessionService) History(rootID string) HistoryData {
 		}
 	}
 	h := HistoryData{
-		ID:      sess.ID,
-		RootID:  sess.RootID,
-		Busy:    sess.Busy(),
-		Messages: hooks.StripSystem(sess.History()),
-		TargetID: edge.TargetID,
-		SeedKind: edge.SeedKind,
-		CanPrev:  s.canPrev(context.Background(), sess.ID),
+		ID:         sess.ID,
+		RootID:     sess.RootID,
+		Busy:       sess.Busy(),
+		Messages:   hooks.StripSystem(sess.History()),
+		TargetID:   edge.TargetID,
+		SeedKind:   edge.SeedKind,
+		CanPrev:    s.canPrev(context.Background(), sess.ID),
 		ForkedFrom: edge.ForkedFrom,
 	}
 	h.Decisions = hooks.LoadDecisions(context.Background(), sess.Fsys, h.ID)

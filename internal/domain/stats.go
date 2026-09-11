@@ -29,7 +29,7 @@ type Stats struct {
 /* StatsView 是 stats 的下发视图。 */
 type StatsView struct {
 	FirstSeen int64 `json:"firstSeen"`
-	Turns     int  `json:"turns"`
+	Turns     int   `json:"turns"`
 }
 
 func (s *Stats) viewLocked() StatsView {
@@ -37,9 +37,9 @@ func (s *Stats) viewLocked() StatsView {
 }
 
 type statsFileLayout struct {
-	FirstSeen int64        `json:"firstSeen"` // UnixMilli
-	Turns     int          `json:"turns"`
-	Total     types.Usage  `json:"total"`
+	FirstSeen int64       `json:"firstSeen"` // UnixMilli
+	Turns     int         `json:"turns"`
+	Total     types.Usage `json:"total"`
 }
 
 /* NewStats 读 stats.json；不存在则以当前时间为首启写盘。 */

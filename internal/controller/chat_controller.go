@@ -194,9 +194,12 @@ func (c *ChatController) DecideApprove(g *gin.Context) {
 	g.JSON(http.StatusOK, gin.H{"ok": true})
 }
 
-/* Notifications GET /api/notifications：全分支未决人机请求汇总（通知栏
+/*
+	Notifications GET /api/notifications：全分支未决人机请求汇总（通知栏
+
 全局轮询数据源；纯读无状态，后台分支的请求也在此可达）。组间按最新
-请求时间排序（Hub.Sessions 遍历序随机），保证轮询结果顺序稳定。 */
+请求时间排序（Hub.Sessions 遍历序随机），保证轮询结果顺序稳定。
+*/
 func (c *ChatController) Notifications(g *gin.Context) {
 	type noticeGroup struct {
 		RootID string                 `json:"rootId"`

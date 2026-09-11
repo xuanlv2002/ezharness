@@ -2,15 +2,15 @@
 window 是桌面窗口壳（Wails v3，跨平台）：无边框窗口 + 系统托盘 +
 关闭最小化到托盘。
 
-- 页面一律走本进程 gin 的真实网络地址（http://127.0.0.1:<port>）：
-  不经 wails 资产桥——该桥在 Windows 上缓冲整个响应，SSE 等流式无法
-  工作；走网络后桌面端与浏览器访问行为完全一致。
-- 无边框拖拽/双击最大化走 WebView2 原生非客户区支持
-  （NonClientRegionSupport + 前端 CSS app-region: drag），无需 JS 注入。
-- 托盘常驻：左键切换窗口显示，右键菜单（打开/退出）。
-- 关闭行为实时读设置：CloseToTray 开 = 隐藏到托盘不弹窗；关 = 前端
-  关闭询问（页面 modal，勾选「以后最小化到托盘」即持久化）。Alt+F4/
-  任务栏关闭走系统惯例直接退出。
+  - 页面一律走本进程 gin 的真实网络地址（http://127.0.0.1:<port>）：
+    不经 wails 资产桥——该桥在 Windows 上缓冲整个响应，SSE 等流式无法
+    工作；走网络后桌面端与浏览器访问行为完全一致。
+  - 无边框拖拽/双击最大化走 WebView2 原生非客户区支持
+    （NonClientRegionSupport + 前端 CSS app-region: drag），无需 JS 注入。
+  - 托盘常驻：左键切换窗口显示，右键菜单（打开/退出）。
+  - 关闭行为实时读设置：CloseToTray 开 = 隐藏到托盘不弹窗；关 = 前端
+    关闭询问（页面 modal，勾选「以后最小化到托盘」即持久化）。Alt+F4/
+    任务栏关闭走系统惯例直接退出。
 */
 package main
 
@@ -33,9 +33,12 @@ var trayIcon []byte
 
 var appWinSeq atomic.Int64 // 快应用子窗口命名序号
 
-/* MinWindowW 主窗口最小宽：全开组合不裁切的下限——64 侧栏 + 656
+/*
+	MinWindowW 主窗口最小宽：全开组合不裁切的下限——64 侧栏 + 656
+
 主列布局下限 + 280 终端保底。再窄则时间线内容（代码块等）放不下，
-会出横向滚动条。 */
+会出横向滚动条。
+*/
 const MinWindowW = 1000
 
 /* clampToScreen 把窗口尺寸按主屏工作区等比钳制，返回可用尺寸。 */
@@ -52,8 +55,11 @@ func clampToScreen(win *application.WebviewWindow, w, h int) (int, int) {
 	return int(float64(w) * scale), int(float64(h) * scale)
 }
 
-/* openWindow 打开主窗口并阻塞至应用退出；返回后调用方收尾 server。
-URL 走本进程真实网络地址（start 已完成 listen 后才开窗，无竞态）。 */
+/*
+	openWindow 打开主窗口并阻塞至应用退出；返回后调用方收尾 server。
+
+URL 走本进程真实网络地址（start 已完成 listen 后才开窗，无竞态）。
+*/
 func openWindow(a *app) {
 	opts := application.WebviewWindowOptions{
 		Name:      "main",
@@ -70,7 +76,7 @@ func openWindow(a *app) {
 		// （边缘缩放 resizeBorderHitTest + app-region 拖拽命中），后者开启
 		// WebView2 对 CSS app-region 的解析。二者缺一则边缘无法缩放。
 		Windows: application.WindowsWindow{
-			NonClientRegionSupport:    true,
+			NonClientRegionSupport:     true,
 			WebView2CompositionHosting: true,
 		},
 	}
@@ -168,17 +174,24 @@ func (a wailsWindow) ToggleMaximise()   { a.win.ToggleMaximise() }
 func (a wailsWindow) IsMaximised() bool { return a.win.IsMaximised() }
 func (a wailsWindow) Hide()             { a.win.Hide() }
 
-/* RequestQuit 真退出（前端关闭询问确认后调用）：quitting 置位让关窗
-钩子放行，再走完整收尾退出流程。 */
+/*
+	RequestQuit 真退出（前端关闭询问确认后调用）：quitting 置位让关窗
+
+钩子放行，再走完整收尾退出流程。
+*/
 func (a wailsWindow) RequestQuit() {
 	if a.quit != nil {
 		go a.quit()
 	}
 }
-/* OpenAppWindow 为快应用开独立子窗口：页面走本进程 gin 直出的绝对 URL
+
+/*
+	OpenAppWindow 为快应用开独立子窗口：页面走本进程 gin 直出的绝对 URL
+
 （release 与 dev 一致；wails 资产域只服务主窗口相对路径）。带系统标题栏。
 path 为完整 http(s) URL 时直接加载（看板浏览器的"独立窗口"，绕开 iframe
-内嵌限制）。 */
+内嵌限制）。
+*/
 func (a wailsWindow) OpenAppWindow(path, title string) {
 	url := path
 	if !strings.HasPrefix(path, "http://") && !strings.HasPrefix(path, "https://") {

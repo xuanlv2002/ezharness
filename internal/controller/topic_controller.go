@@ -77,8 +77,11 @@ func (c *TopicController) Compact(g *gin.Context) {
 	g.JSON(http.StatusOK, gin.H{"ok": true})
 }
 
-/* ForkBranch POST /api/sessions/:id/fork body {anchor}。
-从 :id 源会话的第 anchor 条消息（含）复制前缀开新线。 */
+/*
+	ForkBranch POST /api/sessions/:id/fork body {anchor}。
+
+从 :id 源会话的第 anchor 条消息（含）复制前缀开新线。
+*/
 func (c *TopicController) ForkBranch(g *gin.Context) {
 	var body struct {
 		Anchor int `json:"anchor" binding:"required"`
@@ -120,8 +123,11 @@ func (c *TopicController) Tree(g *gin.Context) {
 	g.JSON(http.StatusOK, c.Svc.Tree(g.Request.Context()))
 }
 
-/* Archive POST /api/sessions/:id/archive body {archived}（手动归档预留，
-缺省 true=归档；活动/运行中的当前叶拒绝）。 */
+/*
+	Archive POST /api/sessions/:id/archive body {archived}（手动归档预留，
+
+缺省 true=归档；活动/运行中的当前叶拒绝）。
+*/
 func (c *TopicController) Archive(g *gin.Context) {
 	var body struct {
 		Archived *bool `json:"archived"`

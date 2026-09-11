@@ -54,8 +54,11 @@ var (
 	fileMu   sync.Mutex
 )
 
-/* Root 返回应用根目录（配置文件所在）= exe 所在目录。首次调用即锚定为
-绝对路径（在进程 chdir 到数据目录之前），此后不受 cwd 变化影响。 */
+/*
+	Root 返回应用根目录（配置文件所在）= exe 所在目录。首次调用即锚定为
+
+绝对路径（在进程 chdir 到数据目录之前），此后不受 cwd 变化影响。
+*/
 func Root() string {
 	rootOnce.Do(func() {
 		v := "."
@@ -135,8 +138,11 @@ func saveLocked(c Config) error {
 	return os.WriteFile(filepath.Join(Root(), "ezharness.json"), data, 0o644)
 }
 
-/* normalizeListen 归一监听地址：空 = 默认 127.0.0.1（仅本机，不触发
-防火墙公网放行弹窗）。 */
+/*
+	normalizeListen 归一监听地址：空 = 默认 127.0.0.1（仅本机，不触发
+
+防火墙公网放行弹窗）。
+*/
 func normalizeListen(listen string) string {
 	if strings.TrimSpace(listen) == "" {
 		return "127.0.0.1"
@@ -149,8 +155,11 @@ func ListenAddr(listen string, port int) string {
 	return fmt.Sprintf("%s:%d", normalizeListen(listen), port)
 }
 
-/* ResolveDataDir 把 dataDir 配置解析为绝对路径：空 → 应用根下 data/，
-相对 → 相对应用根，绝对 → 原样。 */
+/*
+	ResolveDataDir 把 dataDir 配置解析为绝对路径：空 → 应用根下 data/，
+
+相对 → 相对应用根，绝对 → 原样。
+*/
 func ResolveDataDir(spec string) string {
 	spec = strings.TrimSpace(spec)
 	if spec == "" {

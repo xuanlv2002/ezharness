@@ -10,8 +10,11 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-/* 发送形态校验：text/files 至少其一、附件个数（路径沙箱校验依赖
-Hub，在手测/集成覆盖；两用例均在解 Hub 前返回，nil Svc 安全）。 */
+/*
+	发送形态校验：text/files 至少其一、附件个数（路径沙箱校验依赖
+
+Hub，在手测/集成覆盖；两用例均在解 Hub 前返回，nil Svc 安全）。
+*/
 func TestSendMessageValidation(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	c := &ChatController{Svc: nil}

@@ -51,9 +51,12 @@ type ModelProvider interface {
 	Invoke(ctx context.Context, req *types.ModelRequest) (*types.ModelResponse, error)
 }
 
-/* Session 是会话聚合：history、当前轮、SSE 订阅、未决请求。
+/*
+	Session 是会话聚合：history、当前轮、SSE 订阅、未决请求。
+
 ID = 当前叶 session ID（compact 换代随之更新）；RootID = 所属分支根
-（稳定，注册表键与前端路由用它）。 */
+（稳定，注册表键与前端路由用它）。
+*/
 type Session struct {
 	ID     string
 	RootID string
@@ -170,8 +173,11 @@ func (s *Session) SetCtxTokens(n int) {
 	s.mu.Unlock()
 }
 
-/* SetIdentity 同步会话标识（话题轮换/compact 后），水位清零
-（恢复场景由调用方随后按快照重注）。RootID 不变：换代不换线。 */
+/*
+	SetIdentity 同步会话标识（话题轮换/compact 后），水位清零
+
+（恢复场景由调用方随后按快照重注）。RootID 不变：换代不换线。
+*/
 func (s *Session) SetIdentity(id string) {
 	s.mu.Lock()
 	s.ID = id
@@ -261,9 +267,12 @@ func (s *Session) FinishRun(state *types.LoopState, runErr error) {
 	s.mu.Unlock()
 }
 
-/* Cancel 取消当前轮；无运行轮时补发一帧 turn_end（幂等纠正——轮在
+/*
+	Cancel 取消当前轮；无运行轮时补发一帧 turn_end（幂等纠正——轮在
+
 SSE 断线窗口内结束时前端会错过 turn_end 而卡在"运行中"，取消操作
-借此自愈）。 */
+借此自愈）。
+*/
 func (s *Session) Cancel() {
 	s.mu.Lock()
 	idle := s.cur == nil
@@ -283,8 +292,11 @@ func (s *Session) TurnActive() bool {
 	return s.cur != nil
 }
 
-/* Shutdown 收尾运行中的轮：取消并等待轮结束落盘（带超时，进程退出/
-换代用——轮内历史只在 OnEnd 落盘，不等待直接退出会丢整轮）。 */
+/*
+	Shutdown 收尾运行中的轮：取消并等待轮结束落盘（带超时，进程退出/
+
+换代用——轮内历史只在 OnEnd 落盘，不等待直接退出会丢整轮）。
+*/
 func (s *Session) Shutdown(wait time.Duration) {
 	s.Cancel()
 	deadline := time.Now().Add(wait)
@@ -343,10 +355,13 @@ func (s *Session) Subscribe() (<-chan []byte, func()) {
 	}
 }
 
-/* Publish 向全部订阅者扇出事件帧；人机请求登记 pending 供断线重放，
+/*
+	Publish 向全部订阅者扇出事件帧；人机请求登记 pending 供断线重放，
+
 聚合帧缓存进 turnFrames 供整轮回放（刷新重建时间线）。主轮 loop_start
 帧附带本轮引用（运行中切回分支时前端按回放重建 user 块的 chips——
-本轮消息要等 FinishRun 才并入历史，getHistory 里没有）。 */
+本轮消息要等 FinishRun 才并入历史，getHistory 里没有）。
+*/
 func (s *Session) Publish(e Event) {
 	if e.Type == "loop_start" && e.ForkID == "" && len(s.turnRefs) > 0 {
 		// 载荷扩为 {text, files, fileRefs}：items 空 = 附件 chip，非空 = 引用 chip
@@ -397,9 +412,12 @@ func (s *Session) Publish(e Event) {
 	s.mu.Unlock()
 }
 
-/* replayable 判定帧是否进回放缓存：聚合帧保留，高频增量与瞬态帧跳过
+/*
+	replayable 判定帧是否进回放缓存：聚合帧保留，高频增量与瞬态帧跳过
+
 （res.change 与 status.snapshot 同理：对应块插在 pendingUser 截断点
-之前，回放重插会重复渲染）。 */
+之前，回放重插会重复渲染）。
+*/
 func replayable(t string) bool {
 	switch t {
 	case "model_chunk", "reasoning_chunk", "tool_chunk", "model_start",
@@ -432,9 +450,12 @@ type PendingNotice struct {
 	Ts     int64  `json:"ts"`
 }
 
-/* PendingNotices 返回未决人机请求快照（通知栏跨分支轮询数据源）。
+/*
+	PendingNotices 返回未决人机请求快照（通知栏跨分支轮询数据源）。
+
 按请求时间降序（新在前）——pending 是 map，遍历序随机，固定排序保证
-轮询结果稳定不抖动。 */
+轮询结果稳定不抖动。
+*/
 func (s *Session) PendingNotices() []PendingNotice {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -489,8 +510,11 @@ func (s *Session) clearPending(callID string) {
 
 /* ── Hub：设置、分支注册表与当前活动分支 ── */
 
-/* Hub 管理应用级单例状态。Active 是当前分支；branches 按线根 ID 注册
-存活分支（阶段一线间并发：后台分支的轮继续跑，事件进各自 turnFrames）。 */
+/*
+	Hub 管理应用级单例状态。Active 是当前分支；branches 按线根 ID 注册
+
+存活分支（阶段一线间并发：后台分支的轮继续跑，事件进各自 turnFrames）。
+*/
 type Hub struct {
 	mu        sync.Mutex
 	Models    ModelsConfig
@@ -503,8 +527,11 @@ type Hub struct {
 	branches  map[string]*Session
 }
 
-/* NewHub 创建领域根：加载配置记录（缺失文件自动创建默认）与累计生命体征，
-并恢复活动会话。 */
+/*
+	NewHub 创建领域根：加载配置记录（缺失文件自动创建默认）与累计生命体征，
+
+并恢复活动会话。
+*/
 func NewHub() *Hub {
 	h := &Hub{Fsys: osfs.OS{}, branches: map[string]*Session{}}
 	ctx := context.Background()

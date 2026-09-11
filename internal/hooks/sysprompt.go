@@ -45,8 +45,11 @@ func (s *SysPrompt) Parts() (base, summary string) {
 	return s.base, s.summary
 }
 
-/* Set 整体替换（compact 创建新 session 时：重组 base + 摘要段；
-身份段独立不受影响——换代后 identityFn 实时读新 ID）。 */
+/*
+	Set 整体替换（compact 创建新 session 时：重组 base + 摘要段；
+
+身份段独立不受影响——换代后 identityFn 实时读新 ID）。
+*/
 func (s *SysPrompt) Set(base, summary string) {
 	s.mu.Lock()
 	s.base, s.summary = base, summary
@@ -60,8 +63,11 @@ func (s *SysPrompt) SetIdentityFn(fn func() string) {
 	s.mu.Unlock()
 }
 
-/* SessionIdentityBlock 渲染会话身份块：ID + 存档绝对路径——上下文整理
-（trim）折叠的早期对话仍完整保存在存档里，模型据此回忆。 */
+/*
+	SessionIdentityBlock 渲染会话身份块：ID + 存档绝对路径——上下文整理
+
+（trim）折叠的早期对话仍完整保存在存档里，模型据此回忆。
+*/
 func SessionIdentityBlock(id string) string {
 	wd, _ := os.Getwd() // 进程 cwd 即数据目录（启动时 chdir）
 	p := filepath.ToSlash(filepath.Join(wd, SessionsDir, id, "session.json"))
@@ -72,8 +78,11 @@ func SessionIdentityBlock(id string) string {
 		"需要回忆本会话此前内容时读取它。）\n</session>"
 }
 
-/* render 拼接三段（base + 身份 + 摘要）；调用方须持 s.mu（不可重入锁，
-render 自身不拿锁——Prompt/Parts 持锁后调用）。 */
+/*
+	render 拼接三段（base + 身份 + 摘要）；调用方须持 s.mu（不可重入锁，
+
+render 自身不拿锁——Prompt/Parts 持锁后调用）。
+*/
 func (s *SysPrompt) render() string {
 	parts := make([]string, 0, 3)
 	if s.base != "" {
