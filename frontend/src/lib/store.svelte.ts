@@ -37,7 +37,7 @@ export interface ToolBlockData {
 
 /* ForkState 是分身聊天框的数据模型：blocks 与主时间线同构，
 实时事件归约与存档回放共用 buildBlocks。owner=所属会话 ID（fork 存档
-在所属库的 forks/ 下，compact 链上的旧库分身懒加载按 owner 取）。 */
+在所属库的 forks/ 下，compact 链上的历代库分身懒加载按 owner 取）。 */
 export interface ForkState {
   id: string
   owner: string
@@ -106,11 +106,7 @@ export interface TotalUsage {
   cached: number
 }
 
-function nowHM(): string {
-  return new Date().toTimeString().slice(0, 5)
-}
-
-/* 路径取文件名（chips 展示用；兼容 / 与 \ 两种分隔符） */
+/* 路径取文件名（chips 展示用；支持 / 与 \ 两种分隔符） */
 function baseName(p: string): string {
   const i = Math.max(p.lastIndexOf('/'), p.lastIndexOf('\\'))
   return i >= 0 ? p.slice(i + 1) : p
@@ -131,15 +127,13 @@ function parseStatus(content: string): StatusPayload | null {
   }
 }
 
-/* 解析 <end_reason> 字段拼一行收尾文案——与 turn_end 实时收尾同款格式
-   （历史回放与实时两条路径的 endtick 文案保持一致）；无字段的旧格式
-   剔除系统提示语后原样压行 */
+/* 解析 <end_reason> 字段拼一行收尾文案（与 turn_end 实时收尾同款格式，
+   历史回放与实时两条路径的 endtick 文案一致；无结束原因字段返回空） */
 function endReasonText(content: string): string {
-  const m = content.match(/<end_reason>([\s\S]*?)<\/end_reason>/)
-  const body = m?.[1] ?? ''
+  const body = content.match(/<end_reason>([\s\S]*?)<\/end_reason>/)?.[1] ?? ''
   const get = (k: string) => body.match(new RegExp(`${k}：\\s*(.+)`))?.[1]?.trim() ?? ''
   const reason = get('结束原因')
-  if (!reason) return body.replace(/（系统自动记录[^）]*）/g, '').trim().replace(/\s+/g, ' ')
+  if (!reason) return ''
   const iters = get('运行轮次')
   const dur = get('运行时长')
   const hm = get('结束时间').slice(11, 16) // YYYY-MM-DD HH:MM:SS → HH:MM
@@ -161,28 +155,6 @@ function trimText(content: string): string {
   const m = content.match(/摘要：\s*([\s\S]*?)<\/context_trim>/)
   const summary = (m?.[1] ?? '').trim().replace(/\s+/g, ' ')
   return `上下文已整理：此前的对话折叠为摘要。${summary}`
-}
-
-/* 终止原因文案（completed 由调用方排除，不产生提示） */
-function stopNote(reason: string): string {
-  switch (reason) {
-    case 'cancelled':
-      return '用户手动停止本轮'
-    case 'max_iterations':
-      return '达到最大迭代次数上限'
-    case 'error':
-      return '执行出错中止'
-    case 'aborted':
-      return '被策略中止'
-    default:
-      return `本轮结束（${reason}）`
-  }
-}
-
-function fmtDur(totalSecs: number): string {
-  if (totalSecs < 60) return `${totalSecs} 秒`
-  if (totalSecs < 3600) return `${Math.floor(totalSecs / 60)} 分 ${totalSecs % 60} 秒`
-  return `${Math.floor(totalSecs / 3600)} 小时 ${Math.floor((totalSecs % 3600) / 60)} 分钟`
 }
 
 class AppStore {
@@ -357,7 +329,7 @@ class AppStore {
       if (!res) {
         this.hasPrev = false
       } else {
-        // 旧库分身摘要建骨架（懒加载按所属库 ID 取详情）
+        // 历代库的分身摘要建骨架（懒加载按所属库 ID 取详情）
         for (const fk of res.forks ?? []) {
           if (!this.forks[fk.id]) {
             this.forks[fk.id] = {
@@ -446,7 +418,7 @@ class AppStore {
           out.push({ kind: 'imgload', uid: this.nuid(), paths, images: m.images || [] })
         } else if (m.content.includes('<end_reason>')) {
           const detail = endReasonText(m.content)
-          out.push({ kind: 'endtick', uid: this.nuid(), icon: endIcon(detail), title: detail })
+          if (detail) out.push({ kind: 'endtick', uid: this.nuid(), icon: endIcon(detail), title: detail })
         } else if (m.content.includes('<context_trim')) {
           out.push({ kind: 'note', uid: this.nuid(), text: `✂️ ${trimText(m.content)}` })
         } else if (!m.content.trim() && !m.images?.length) {
@@ -557,7 +529,7 @@ class AppStore {
     this.imgVer = { ...this.imgVer, [path]: (this.imgVer[path] ?? 0) + 1 }
   }
 
-  /* openBase64Draft 把无路径的内存图片（旧多模态 base64 历史）转草稿：
+  /* openBase64Draft 把无路径的内存图片（消息内 base64，无工作目录真身）转草稿：
      dataURL → File → openDraftImage。 */
   async openBase64Draft(src: string, name: string) {
     try {
@@ -943,7 +915,7 @@ class AppStore {
         const d = ev.data
         const obj = d && typeof d === 'object' ? d : null
         const text = typeof d === 'string' ? d : (obj?.text ?? '')
-        // 新一轮开始：上一轮的资源变更不再挂右上角（res.change 按需推送不自动清）
+        // 新一轮开始：清空上一轮的资源变更（右上角只挂本轮）（res.change 按需推送不自动清）
         if (!ev.forkId) this.liveChanges = []
         if (ev.forkId) {
           // 分身输入进分身聊天框（含任务包装前缀，即分身收到的原文）
@@ -1063,7 +1035,7 @@ class AppStore {
         const args = typeof d.args === 'string' ? d.args : JSON.stringify(d.args ?? '')
         // 认领流式构造期（building）的同名块：换真实 callID、完整 args、转执行态
         const bs = ev.forkId ? this.ensureFork(ev.forkId).blocks : this.blocks
-        // 去重：决策路径已补插过同 id 工具卡时只补名参，不再push（防重复块乱序）
+        // 去重：决策路径已补插过同 id 工具卡时只补名参（防重复块乱序）
         const dup = bs.find((b) => b.kind === 'tool' && b.id === d.id && b.state !== 'building')
         if (dup && dup.kind === 'tool') {
           if (!dup.name) dup.name = d.name || ''
@@ -1311,16 +1283,32 @@ class AppStore {
         // 每轮收尾：小图标实时入时间线（悬浮显示详情；持久化正文由后端 endnote 写入历史）
         {
           const secs = d.elapsedMs ? Math.round(d.elapsedMs / 1000) : 0
-          const reason = stopNote(d.stopReason || 'completed')
+          const stop = d.stopReason || 'completed'
+          const reason =
+            stop === 'cancelled'
+              ? '用户手动停止本轮'
+              : stop === 'max_iterations'
+                ? '达到最大迭代次数上限'
+                : stop === 'error'
+                  ? '执行出错中止'
+                  : stop === 'aborted'
+                    ? '被策略中止'
+                    : `本轮结束（${stop}）`
           // 错误详情跟在原因后（endtick 超宽截断、悬浮看全文）；取消路径
           // 的 err 是 context.Canceled，无信息量不拼
           const errTxt =
             d.err && (d.stopReason || 'error') === 'error'
               ? `：${String(d.err).replace(/\s+/g, ' ').slice(0, 300)}`
               : ''
-          const title =
-            `${reason}${errTxt} · ${d.iterations ?? 0} 轮${secs ? ` · ${fmtDur(secs)}` : ''}` +
-            ` · ${new Date().toTimeString().slice(0, 5)}`
+          const dur =
+            secs >= 3600
+              ? ` · ${Math.floor(secs / 3600)} 小时 ${Math.floor((secs % 3600) / 60)} 分钟`
+              : secs >= 60
+                ? ` · ${Math.floor(secs / 60)} 分 ${secs % 60} 秒`
+                : secs
+                  ? ` · ${secs} 秒`
+                  : ''
+          const title = `${reason}${errTxt} · ${d.iterations ?? 0} 轮${dur} · ${new Date().toTimeString().slice(0, 5)}`
           this.blocks.push({
             kind: 'endtick',
             uid: this.nuid(),
@@ -1367,10 +1355,6 @@ class AppStore {
     const b = bs[idx] as Extract<Block, { kind: 'assistant' }>
     if (isContent) b.text += delta
     else b.reasoning += delta
-  }
-
-  private lastStreamingAssistant(): Extract<Block, { kind: 'assistant' }> | null {
-    return this.lastStreaming(this.blocks)
   }
 
   /* insertBeforeLastUser 把块插到最后一个 user 块之前（status/reschange
