@@ -96,8 +96,11 @@ func (h *Remind) OnStart(ctx context.Context, state *types.LoopState) error {
 	return nil
 }
 
-/* insertBeforeLastUser 插入到末条 user 消息之前（startHooks 运行时
-末条必为本轮 input）；无 user 时追加。 */
+/*
+	insertBeforeLastUser 插入到末条 user 消息之前（startHooks 运行时
+
+末条必为本轮 input）；无 user 时追加。
+*/
 func (h *Remind) insertBeforeLastUser(state *types.LoopState, msg types.Message) {
 	if n := len(state.Messages); n > 0 && state.Messages[n-1].Role == types.RoleUser {
 		state.Messages = slices.Insert(state.Messages, n-1, msg)
@@ -188,8 +191,11 @@ func (h *Remind) OnEnd(_ context.Context, state *types.LoopState) error {
 	return nil
 }
 
-/* oneLine 压平换行并按 rune 截断（错误详情进 end_reason 单行展示，
-HTTP 错误响应体可能多行或超长）。 */
+/*
+	oneLine 压平换行并按 rune 截断（错误详情进 end_reason 单行展示，
+
+HTTP 错误响应体可能多行或超长）。
+*/
 func oneLine(s string, max int) string {
 	s = strings.ReplaceAll(strings.ReplaceAll(s, "\r", ""), "\n", " ")
 	if r := []rune(s); len(r) > max {
@@ -250,8 +256,11 @@ func ParseStatusTag(content string) *StatusData {
 	return &d
 }
 
-/* LastCtxTokens 从历史尾部找最近一条状态记录的水位（旧快照无
-ctxTokens 字段时的恢复兜底；找不到返回 0）。 */
+/*
+	LastCtxTokens 从历史尾部找最近一条状态记录的水位（旧快照无
+
+ctxTokens 字段时的恢复兜底；找不到返回 0）。
+*/
 func LastCtxTokens(msgs []types.Message) int {
 	for i := len(msgs) - 1; i >= 0; i-- {
 		if msgs[i].Role != types.RoleUser {

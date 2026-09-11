@@ -8,7 +8,7 @@
   import BranchPanel from './BranchPanel.svelte'
   import { api } from '../lib/api'
   import { normFileKey } from '../lib/textfile'
-  import { store, type Att, type FileRef } from '../lib/store.svelte'
+  import { store, type Attachment, type FileRef } from '../lib/store.svelte'
 
   /* 附件（一切皆资源）：拖拽热区挂 window——抽屉/侧栏是 .chat 的兄弟
   节点，绑容器内时松手在抽屉上 drop 事件进不来（提示出现但无效）；
@@ -16,7 +16,7 @@
   path 由 /api/workspace/stash 落盘回填——chip 立即可点开（图片进
   画板、文本进资源页）。画板草稿是内存 file（发送时才 stash），真身
   图编辑写回原路径不换 chip。 */
-  let atts = $state<Att[]>([])
+  let attachments = $state<Attachment[]>([])
   let dragging = $state(false)
   let depth = 0
 
@@ -55,39 +55,39 @@
     }
   })
 
-  function removeAtts(i: number) {
-    atts = atts.filter((_, idx) => idx !== i)
+  function removeAttachment(i: number) {
+    attachments = attachments.filter((_, idx) => idx !== i)
   }
 
   /* 占位→暂存回填：批量回填按 [start, start+n) 区间对位（并发拖入
   批次互不干扰）；失败移除该批占位并提示 */
   async function addFiles(fs: File[]) {
     if (!fs.length) return
-    const start = atts.length
-    atts = [...atts, ...fs.map((f) => ({ name: f.name, path: '' }))]
+    const start = attachments.length
+    attachments = [...attachments, ...fs.map((f) => ({ name: f.name, path: '' }))]
     try {
       const paths = await api.stash(fs)
-      atts = atts.map((a, i) =>
+      attachments = attachments.map((a, i) =>
         i >= start && i < start + fs.length ? { ...a, path: paths[i - start] ?? '' } : a,
       )
     } catch (e) {
-      atts = atts.filter((_, i) => i < start || i >= start + fs.length)
+      attachments = attachments.filter((_, i) => i < start || i >= start + fs.length)
       store.lastStatus = `附件暂存失败：${(e as Error).message}`
     }
   }
 
-  function clearAtts() {
-    atts = []
+  function clearAttachments() {
+    attachments = []
   }
 
   /* 待回流附件（查看器「添加到对话」/Wails 拖入）：草稿带 tag 时
   原位替换来源 chip（身份一致校验：file 引用相等），否则追加。本页
   未挂载时积压在 store，回对话页后首跑消费，跨页不丢。 */
   $effect(() => {
-    const list = store.pendingAtts
+    const list = store.pendingAttachments
     if (!list?.length) return
-    store.pendingAtts = null
-    let next = [...atts]
+    store.pendingAttachments = null
+    let next = [...attachments]
     for (const p of list) {
       const i = /^\d+$/.test(p.tag ?? '') ? Number(p.tag) : -1
       const src = p.source
@@ -97,7 +97,7 @@
         next = [...next, { name: p.name, path: p.path, file: p.file }]
       }
     }
-    atts = next
+    attachments = next
   })
 
   /* 文件引用 chips（资源页「添加到对话」回流）：同文件（规范化路径键）
@@ -147,19 +147,19 @@
   <div class="main-col">
     <Timeline />
     <InputBar
-      {atts}
-      refs={fileRefs}
-      onRemove={removeAtts}
+      {attachments}
+      fileRefs={fileRefs}
+      onRemove={removeAttachment}
       onEditImage={(i) => {
-        const a = atts[i]
+        const a = attachments[i]
         if (a?.path) store.openFileAt(a.path)
         else if (a?.file) store.openDraftImage(a.file, String(i))
       }}
       onAddFiles={(fs) => void addFiles(fs)}
-      onClearFiles={clearAtts}
-      onRemoveRef={removeRef}
-      onOpenRef={(p) => store.openFileAt(p)}
-      onClearRefs={clearRefs}
+      onClearFiles={clearAttachments}
+      onRemoveFileRef={removeRef}
+      onOpenFileRef={(p) => store.openFileAt(p)}
+      onClearFileRefs={clearRefs}
     />
   </div>
   <aside class="side">

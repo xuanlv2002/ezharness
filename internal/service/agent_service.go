@@ -45,6 +45,7 @@ import (
 	"ezharness/internal/osfs"
 	"ezharness/internal/tools"
 	"ezharness/internal/warp/modeldump"
+	"ezharness/internal/warp/noempty"
 	"ezharness/internal/warp/toolarg"
 	"ezharness/internal/warp/visionguard"
 )
@@ -128,7 +129,7 @@ func (a *AgentService) Assemble(s *domain.Session, st domain.Settings) {
 	traceHook := hooks.NewTrace(s.Fsys, s.Sess, func() string { return main.Name })
 	trimHook := hooks.NewTrim(provider, traceHook,
 		window*st.TrimPercent/100, // 水位=窗口百分比，随模型自适应（换模型 Reassemble 重算）
-		window, // 模型窗口（整理提示展示水位比例用）
+		window,                    // 模型窗口（整理提示展示水位比例用）
 	)
 
 	// 能力槽启用态：图片识别槽启用 → agent 获得图片识别工具
@@ -153,7 +154,7 @@ func (a *AgentService) Assemble(s *domain.Session, st domain.Settings) {
 
 	// visionguard 最内层（紧贴 provider）：无视觉模型每次实际请求（含 retry）
 	// 剥历史图片消息（请求视图，落盘不动，换回多模态自动恢复）
-	modelWarps := []warp.ModelHandler{modeldump.Warp(), modelretry.Warp(), visionguard.Warp(mainVision)}
+	modelWarps := []warp.ModelHandler{modeldump.Warp(), modelretry.Warp(), noempty.Warp(), visionguard.Warp(mainVision)}
 	agentTools := append(tools.SaveApp(s.Fsys), tools.SharedTerm(a.Term)...)
 	if visionOn {
 		agentTools = append(agentTools, tools.ImageRecognize(a)...)
@@ -176,7 +177,7 @@ func (a *AgentService) Assemble(s *domain.Session, st domain.Settings) {
 			contextfix.New(),
 			filetools.New(s.Fsys, filetools.WithWorkDir(ResolveWorkDir(st.WorkDir)), filetools.WithImageHandler(readImage)),
 			skilltool.New(s.Fsys, hooks.SkillsDir, disabledSkills),
-			remindHook, // 系统提醒：变更段插 <res_change>? + 快照段插 agent_status；OnEnd 收尾 <end_reason>
+			remindHook,         // 系统提醒：变更段插 <res_change>? + 快照段插 agent_status；OnEnd 收尾 <end_reason>
 			hooks.NewRefFile(), // 有引用轮次在输入前插 <reference_file> 结构化告知（附件+文件页标注统一，模型按需 read_file）
 			approver,
 			asker,
@@ -184,7 +185,7 @@ func (a *AgentService) Assemble(s *domain.Session, st domain.Settings) {
 			NewMcpHook(s.Fsys),
 			offload.New(s.Fsys, offload.WithSkip(askuser.ToolName, task.ToolName, skilltool.ToolName), offload.WithReplayTool("read_file")), // load_skill 返回的指令集是后续行动依据,卸载再回读纯浪费
 			hooks.NewGuard(s.Fsys, window), // 窗口余量兜底：offload 豁免名单（read_file 等）的大结果放不下时卸载，须在 offload 之后
-			trimHook, // OnLoop 回边水位整理（就地截断，立即生效），OnToolStart 拦模型主动整理
+			trimHook,                       // OnLoop 回边水位整理（就地截断，立即生效），OnToolStart 拦模型主动整理
 			traceHook,
 			s.Sess, // 最后落盘
 		),
@@ -241,7 +242,7 @@ func (a *AgentService) RecognizeImage(ctx context.Context, path, question string
 	prompt += "\n输出将直接交给另一个 agent 使用，请客观、结构化，不要寒暄。"
 	prov := buildProvider(m)
 	resp, err := prov.Invoke(ctx, &types.ModelRequest{Messages: []types.Message{{
-		Role: types.RoleUser,
+		Role:    types.RoleUser,
 		Content: prompt,
 		Images: []types.ImagePart{{
 			MimeType: mimeOf(path),
@@ -268,9 +269,12 @@ func mimeOf(path string) string {
 	return "image/jpeg"
 }
 
-/* Reassemble 重建全部存活分支的 agent（配置变更后；运行中的分支
+/*
+	Reassemble 重建全部存活分支的 agent（配置变更后；运行中的分支
+
 跳过——保留旧 wiring 到其轮结束，下次变更追平）。活动分支 busy
-仍返回 ErrBusy 保持前端提示语义。 */
+仍返回 ErrBusy 保持前端提示语义。
+*/
 func (a *AgentService) Reassemble(st domain.Settings) error {
 	if a.Hub.Active.Busy() {
 		return domain.ErrBusy
@@ -473,7 +477,7 @@ func buildSystemBase(ctx context.Context, st domain.Settings, fsys osfs.OS) stri
 	}
 	if len(skills) > 0 {
 		b.WriteString("\n\n<skills>\n（本清单由系统运行时生成，不在任何文件里；技能正文在 " +
-			memRoot+"/skills/<名>/SKILL.md，可用文件工具编辑，改动下个 session 生效；"+
+			memRoot + "/skills/<名>/SKILL.md，可用文件工具编辑，改动下个 session 生效；" +
 			"使用前先调用 load_skill 获取完整指令与脚本路径）")
 		for _, sk := range skills {
 			fmt.Fprintf(&b, "\n- %s: %s", sk.Name, sk.Description)
@@ -505,10 +509,13 @@ func mcpListLines(fsys osfs.OS) []string {
 	return out
 }
 
-/* termReportFn 共享终端状态面（remind 变更段对比基线用：终端清单变更 +
+/*
+	termReportFn 共享终端状态面（remind 变更段对比基线用：终端清单变更 +
+
 用户手动输入收割）；nil 服务返回 nil。终端全局共享，清单实时全量——各会话的
 ResSnapshot 基线独立对比（A 会话首轮见到 B 会话开的终端同样报"新增"，
-模型各自知悉全局终端水位）。 */
+模型各自知悉全局终端水位）。
+*/
 func termReportFn(t *TerminalService) func() hooks.TermReport {
 	if t == nil {
 		return nil

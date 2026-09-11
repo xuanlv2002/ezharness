@@ -55,11 +55,11 @@ type ModelProvider interface {
 ID = 当前叶 session ID（compact 换代随之更新）；RootID = 所属分支根
 （稳定，注册表键与前端路由用它）。 */
 type Session struct {
-	ID      string
-	RootID  string
-	Fsys    osfs.OS
-	Sess    *hooks.Store
-	Topics  *hooks.Topics
+	ID     string
+	RootID string
+	Fsys   osfs.OS
+	Sess   *hooks.Store
+	Topics *hooks.Topics
 
 	mu         sync.Mutex
 	history    []types.Message
@@ -72,6 +72,7 @@ type Session struct {
 	snap       *hooks.SessionSnap // bootstrap 恢复的快照（Assemble 读取；nil = 新建）
 	sysP       *hooks.SysPrompt   // system 来源（Assemble 创建；resume/compact 热更）
 	turnFrames [][]byte           // 本轮聚合帧缓存（刷新回放重建时间线；轮开始清空）
+	turnRefs   []hooks.RefFile    // 本轮引用（StartRun 存入：loop_start 帧附带供回放重建 chips）
 }
 
 /* Attach 注入装配产物（service 层构造，领域持有引用）。 */
@@ -238,6 +239,7 @@ func (s *Session) StartRun(ctx context.Context, text string, refs []hooks.RefFil
 		core.WithHistory(modelViewLocked(s.history)...),
 		hooks.WithRefFiles(refs))
 	s.cur = &runState{ctx: turnCtx, cancel: cancel}
+	s.turnRefs = refs
 	s.turnFrames = nil
 	s.mu.Unlock()
 	return h, cancel, nil
@@ -260,6 +262,7 @@ func (s *Session) FinishRun(state *types.LoopState, runErr error) {
 		}
 	}
 	s.cur = nil
+	s.turnRefs = nil
 	s.pending = map[string]Event{}
 	s.mu.Unlock()
 }
@@ -331,6 +334,34 @@ func (s *Session) DecideAnswer(a askuser.Answer) {
 	sendDecision(s, w.AnswerCh, a, a.CallID)
 }
 
+/* withTurnRefs 把 loop_start 帧的 string 载荷扩为{text, files, fileRefs}
+（items 空 = 附件 chip，非空 = 引用 chip，与 SendMessage 合并口径一致）。 */
+func withTurnRefs(data json.RawMessage, refs []hooks.RefFile) json.RawMessage {
+	var text string
+	_ = json.Unmarshal(data, &text)
+	type namedPath struct {
+		Name string `json:"name"`
+		Path string `json:"path"`
+	}
+	payload := struct {
+		Text     string          `json:"text"`
+		Files    []namedPath     `json:"files,omitempty"`
+		FileRefs []hooks.RefFile `json:"fileRefs,omitempty"`
+	}{Text: text}
+	for _, r := range refs {
+		if len(r.Items) == 0 {
+			payload.Files = append(payload.Files, namedPath{Name: filepath.Base(filepath.FromSlash(r.Path)), Path: r.Path})
+		} else {
+			payload.FileRefs = append(payload.FileRefs, r)
+		}
+	}
+	b, err := json.Marshal(payload)
+	if err != nil {
+		return data
+	}
+	return b
+}
+
 /* ── SSE 订阅（领域事件出口，HTTP 帧写出在 controller）── */
 
 /* Subscribe 注册一个订阅者，返回事件 channel 与注销函数。 */
@@ -347,8 +378,13 @@ func (s *Session) Subscribe() (<-chan []byte, func()) {
 }
 
 /* Publish 向全部订阅者扇出事件帧；人机请求登记 pending 供断线重放，
-聚合帧缓存进 turnFrames 供整轮回放（刷新重建时间线）。 */
+聚合帧缓存进 turnFrames 供整轮回放（刷新重建时间线）。主轮 loop_start
+帧附带本轮引用（运行中切回分支时前端按回放重建 user 块的 chips——
+本轮消息要等 FinishRun 才并入历史，getHistory 里没有）。 */
 func (s *Session) Publish(e Event) {
+	if e.Type == "loop_start" && e.ForkID == "" && len(s.turnRefs) > 0 {
+		e.Data = withTurnRefs(e.Data, s.turnRefs)
+	}
 	data, err := json.Marshal(e)
 	if err != nil {
 		return
@@ -490,16 +526,14 @@ type Hub struct {
 }
 
 /* NewHub 创建领域根：加载配置记录（缺失文件自动创建默认）与累计生命体征，
-迁移旧索引，并恢复活动会话。 */
+并恢复活动会话。 */
 func NewHub() *Hub {
 	h := &Hub{Fsys: osfs.OS{}, branches: map[string]*Session{}}
 	h.Models = ensureModelsConfig(h.Fsys)
 	h.Settings = ensureSettings(h.Fsys)
 	h.ToolRules = ensureToolRules(h.Fsys)
 	h.Stats = NewStats(h.Fsys)
-	migrateLegacyMemory(h.Fsys)
 	h.Topics = hooks.NewTopics(h.Fsys)
-	h.Topics.MigrateIndex(context.Background())
 	h.Active = h.bootstrap()
 	return h
 }
@@ -548,7 +582,7 @@ func (h *Hub) Sessions() []*Session {
 	return out
 }
 
-/* ensureModelsConfig 加载 models.json（含旧扁平迁移），文件不存在则写盘默认（零配置首启自动创建）。 */
+/* ensureModelsConfig 加载 models.json，文件不存在则写盘默认（零配置首启自动创建）。 */
 func ensureModelsConfig(fsys osfs.OS) ModelsConfig {
 	if _, err := fsys.Read(context.Background(), "models.json"); err != nil {
 		m := DefaultModelsConfig()
@@ -556,16 +590,6 @@ func ensureModelsConfig(fsys osfs.OS) ModelsConfig {
 		return m
 	}
 	return LoadModelsConfig(fsys)
-}
-
-/* migrateLegacyMemory 旧版单文件记忆迁移：memory.md → memory/longterm/harness.md。 */
-func migrateLegacyMemory(fsys osfs.OS) {
-	if _, err := fsys.Read(context.Background(), hooks.HarnessMd); err == nil {
-		return // 已有新布局
-	}
-	if data, err := fsys.Read(context.Background(), "memory.md"); err == nil && len(data) > 0 {
-		_ = fsys.Write(context.Background(), hooks.HarnessMd, data)
-	}
 }
 
 /* ensureSettings 加载 settings.json，文件不存在则写盘默认。 */
@@ -589,10 +613,10 @@ func ensureToolRules(fsys osfs.OS) []ToolRule {
 }
 
 /*
-bootstrap 恢复最近修改且未封存的存档，没有则新建。旧版平铺
-sessions/<id>.json 不在候选内（ListMain 只认目录项），共存不崩。
-恢复的 systemPrompt 不重新组装：快照里的 base/summary 直接注入
-SysPrompt，记忆/skill/mcp 变更等到下个 session 才生效。
+bootstrap 恢复最近修改且未封存的存档，没有则新建（ListMain 只认
+目录项，fork 存档不混入候选）。恢复的 systemPrompt 不重新组装：
+快照里的 base/summary 直接注入 SysPrompt，记忆/skill/mcp 变更等到
+下个 session 才生效。
 */
 func (h *Hub) bootstrap() *Session {
 	ctx := context.Background()
@@ -613,11 +637,7 @@ func (h *Hub) bootstrap() *Session {
 		if err != nil || snap.Archived {
 			continue
 		}
-		root := snap.LineRoot
-		if root == "" {
-			root = hooks.RootOf(ctx, h.Fsys, c.id) // 沿边上溯兜底（不依赖被回填的 LineRoot）
-		}
-		s := h.newSession(c.id, root, snap)
+		s := h.newSession(c.id, snap.LineRoot, snap)
 		s.restoreFrom(snap)
 		h.Register(s)
 		return s
@@ -678,13 +698,13 @@ func (h *Hub) newSession(id string, rootID string, snap *hooks.SessionSnap) *Ses
 		rootID = id // 新线：自成一根
 	}
 	s := &Session{
-		ID:     id,
-		RootID: rootID,
-		Fsys:   h.Fsys,
-		Sess:   hooks.NewStore(h.Fsys, id),
-		Topics: h.Topics,
-		snap:   snap,
-		subs:   map[chan []byte]struct{}{},
+		ID:      id,
+		RootID:  rootID,
+		Fsys:    h.Fsys,
+		Sess:    hooks.NewStore(h.Fsys, id),
+		Topics:  h.Topics,
+		snap:    snap,
+		subs:    map[chan []byte]struct{}{},
 		pending: map[string]Event{},
 	}
 	s.Sess.SetLineRoot(rootID)

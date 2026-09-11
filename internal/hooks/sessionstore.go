@@ -2,8 +2,8 @@
 sessionstore 将会话以文件夹布局持久化：sessions/<id>/session.json 是
 可恢复快照（消息历史、固定 systemPrompt、工具清单、compact 链引用），
 fork 子循环写 sessions/<主ID>/forks/<forkID>/session.json（剥离 seed
-只存增量）。旧版平铺 sessions/<id>.json 不迁移不读取，ListMain 只认
-目录项——fork 归属主会话子目录，天然不混入恢复候选。
+只存增量）。ListMain 只认目录项——fork 归属主会话子目录，天然不混入
+恢复候选。
 */
 package hooks
 
@@ -55,19 +55,18 @@ type SessionSnap struct {
 	CreatedAt      int64           `json:"createdAt"`
 	Title          string          `json:"title,omitempty"` // session 自己的名称（本代首条 user；与线标题独立）
 	Input          string          `json:"input,omitempty"`
-	Messages       []types.Message `json:"messages"` // 剥离 system（systemPrompt 单独 pin）
+	Messages       []types.Message `json:"messages"`               // 剥离 system（systemPrompt 单独 pin）
 	SystemPrompt   string          `json:"systemPrompt"`           // 渲染后完整 system（恢复零逻辑）
 	SystemBase     string          `json:"systemBase"`             // 基础段（人格+记忆+skill/mcp 列表）
 	SummaryBlock   string          `json:"summaryBlock,omitempty"` // compact 摘要段
 	Tools          []string        `json:"tools,omitempty"`
 	Model          string          `json:"model,omitempty"`
-	PrevSession    string          `json:"prevSession,omitempty"`    // 兼容别名：compress 边目标（旧读者用，新代码读 TargetID）
 	CompactSummary string          `json:"compactSummary,omitempty"` // 上一 session 的摘要
-	TargetID       string          `json:"targetId,omitempty"`   // 向上边目标（""=空根）
-	Anchor         int             `json:"anchor,omitempty"`     // fork：复制的消息前缀长度
-	SeedKind       string          `json:"seedKind,omitempty"`   // new | fork | compress
-	LineRoot       string          `json:"lineRoot,omitempty"`   // 所属分支根 ID（冗余，链操作 O(1)）
-	ForkedFrom     *ForkOrigin     `json:"forkedFrom,omitempty"` // 分叉出处（展示元数据）
+	TargetID       string          `json:"targetId,omitempty"`       // 向上边目标（""=空根）
+	Anchor         int             `json:"anchor,omitempty"`         // fork：复制的消息前缀长度
+	SeedKind       string          `json:"seedKind,omitempty"`       // new | fork | compress
+	LineRoot       string          `json:"lineRoot,omitempty"`       // 所属分支根 ID（冗余，链操作 O(1)）
+	ForkedFrom     *ForkOrigin     `json:"forkedFrom,omitempty"`     // 分叉出处（展示元数据）
 	LastOutputAt   int64           `json:"lastOutputAt,omitempty"`   // agent_status 距上次输出用
 	Snapshot       *ResSnapshot    `json:"snapshot,omitempty"`       // 资源清单快照（nil = 基线未建）
 	Usage          types.Usage     `json:"usage"`                    // 本会话累计用量（状态卡展示）
@@ -82,21 +81,21 @@ type SessionSnap struct {
 
 /* Store 实现 EndHook：每轮结束落盘快照，SetID 切换会话。 */
 type Store struct {
-	fsys fs.FileSystem
-	mu   sync.Mutex
-	id   string
-	title string // session 自己的名称（与线标题独立：线=分支身份，session=世代名）
-	sys  *SysPrompt // system 唯一来源，OnEnd 取值 pin 进快照
-	tool string     // 主模型名（宿主注入）
-	snap *ResSnapshot
-	last int64 // lastOutputAt（status hook 维护）
-	prevID string // compact 链：上一 session ID（SetPrev 设置）
-	prevSum string // compact 链：上一 session 摘要
-	edge     SnapEdge // 当前会话向上边（恢复/fork 时注入，OnEnd 落盘）
-	lineRoot string   // 所属分支根 ID（SetID 不清：compact 换代不换线）
-	usage types.Usage // 本会话累计用量（OnEnd 累计并随快照落盘）
-	runID string // 本轮开始时的会话 ID（compact 轮内切库时拒绝把用量记入新库）
-	ctx   func() (tokens, window int) // 上下文水位与窗口（宿主注入，快照落盘用）
+	fsys     fs.FileSystem
+	mu       sync.Mutex
+	id       string
+	title    string     // session 自己的名称（与线标题独立：线=分支身份，session=世代名）
+	sys      *SysPrompt // system 唯一来源，OnEnd 取值 pin 进快照
+	tool     string     // 主模型名（宿主注入）
+	snap     *ResSnapshot
+	last     int64                       // lastOutputAt（status hook 维护）
+	prevID   string                      // compact 链：上一 session ID（SetPrev 设置）
+	prevSum  string                      // compact 链：上一 session 摘要
+	edge     SnapEdge                    // 当前会话向上边（恢复/fork 时注入，OnEnd 落盘）
+	lineRoot string                      // 所属分支根 ID（SetID 不清：compact 换代不换线）
+	usage    types.Usage                 // 本会话累计用量（OnEnd 累计并随快照落盘）
+	runID    string                      // 本轮开始时的会话 ID（compact 轮内切库时拒绝把用量记入新库）
+	ctx      func() (tokens, window int) // 上下文水位与窗口（宿主注入，快照落盘用）
 }
 
 /* NewStore 创建存储 hook。id 为空自动生成。 */
@@ -354,8 +353,7 @@ func (h *Store) OnEnd(ctx context.Context, state *types.LoopState) error {
 		}
 		out.TargetID, out.Anchor, out.SeedKind, out.ForkedFrom = edge.TargetID, edge.Anchor, edge.SeedKind, edge.ForkedFrom
 		if edge.SeedKind == "compress" && edge.TargetID != "" {
-			// 兼容别名：compress 边同时写 prevSession（旧读者/前端过渡期）
-			out.PrevSession, out.CompactSummary = edge.TargetID, prevSum
+			out.CompactSummary = prevSum
 		}
 	}
 	if fork {
@@ -442,7 +440,7 @@ func LoadDecisions(ctx context.Context, fsys fs.FileSystem, id string) []Decisio
 	return out
 }
 
-/* LoadSnap 读取指定会话快照（sessions/<id>/session.json），旧格式自动归一化。 */
+/* LoadSnap 读取指定会话快照（sessions/<id>/session.json）。 */
 func LoadSnap(ctx context.Context, fsys fs.FileSystem, id string) (*SessionSnap, error) {
 	data, err := fsys.Read(ctx, SessionsDir+"/"+id+"/session.json")
 	if err != nil {
@@ -452,31 +450,7 @@ func LoadSnap(ctx context.Context, fsys fs.FileSystem, id string) (*SessionSnap,
 	if err := json.Unmarshal(data, &s); err != nil {
 		return nil, fmt.Errorf("sessionstore: decode %s: %w", id, err)
 	}
-	NormalizeSnap(&s)
 	return &s, nil
-}
-
-/* NormalizeSnap 归一化旧快照：PrevSession 线性链映射为 compress 边。 */
-func NormalizeSnap(s *SessionSnap) {
-	if s.TargetID == "" && s.PrevSession != "" {
-		s.TargetID = s.PrevSession
-		s.SeedKind = "compress"
-	}
-}
-
-/* RootOf 沿向上边走到线根（compress 链头；fork/空根自成根）。
-兜底路径：迁移回填会重写 session.json 破坏 mtime，bootstrap 依赖
-此函数而非 LineRoot 字段选线。带上限防意外环。 */
-func RootOf(ctx context.Context, fsys fs.FileSystem, id string) string {
-	cur := id
-	for i := 0; i < 64; i++ {
-		s, err := LoadSnap(ctx, fsys, cur)
-		if err != nil || s.TargetID == "" || s.SeedKind == "fork" || s.SeedKind == "new" {
-			break
-		}
-		cur = s.TargetID
-	}
-	return cur
 }
 
 /* SaveSnap 写回会话快照（sessions/<snap.ID>/session.json，失败返回 error）。 */
@@ -557,7 +531,7 @@ func snapLastAssistant(msgs []types.Message) string {
 	return ""
 }
 
-/* ListMain 返回主会话 ID 清单（只认 sessions/ 下的目录项，忽略旧平铺文件）。 */
+/* ListMain 返回主会话 ID 清单（只认 sessions/ 下的目录项）。 */
 func ListMain(ctx context.Context, fsys fs.FileSystem) ([]string, error) {
 	entries, err := fsys.List(ctx, SessionsDir)
 	if err != nil {

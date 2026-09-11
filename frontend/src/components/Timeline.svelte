@@ -237,7 +237,7 @@
             text={ub.text}
             images={ub.images}
             files={ub.files}
-            refs={ub.refs}
+            fileRefs={ub.fileRefs}
             role="user"
             onFork={ub.owner && ub.msgIdx !== undefined ? () => void store.forkFrom(ub.owner!, ub.msgIdx!) : undefined}
           />

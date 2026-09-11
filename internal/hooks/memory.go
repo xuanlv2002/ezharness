@@ -17,14 +17,11 @@ import (
 
 /* 记忆体系目录布局（工作目录相对）。 */
 const (
-	MemoryDir      = "memory"
-	LongtermDir    = "memory/longterm"
-	SkillsDir      = "memory/skills"
-	HarnessMd      = LongtermDir + "/harness.md"
+	MemoryDir   = "memory"
+	LongtermDir = "memory/longterm"
+	SkillsDir   = "memory/skills"
+	HarnessMd   = LongtermDir + "/harness.md"
 )
-
-/* MemoryFile 是初始加载进上下文的索引文件（兼容旧名引用）。 */
-const MemoryFile = HarnessMd
 
 /*
 SkillDirOf 从 SKILL.md 的 FS 路径提取技能目录名。目录名是技能的
@@ -71,7 +68,7 @@ func (m *Memory) Name() string { return "memory" }
 
 /* OnStart 读 harness.md 拼接进 system（文件缺失/为空则跳过）。 */
 func (m *Memory) OnStart(ctx context.Context, state *types.LoopState) error {
-	data, err := m.fsys.Read(ctx, MemoryFile)
+	data, err := m.fsys.Read(ctx, HarnessMd)
 	if err != nil || len(strings.TrimSpace(string(data))) == 0 {
 		return nil
 	}

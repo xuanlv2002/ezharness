@@ -3,14 +3,14 @@ reference_file 是资源引用告知 hook：带引用的轮次在用户输入前
 <reference_file> user 记录，统一承载本轮引用的全部文件——附件（整
 文件引用，只给路径）与文件页标注（路径+片段行号+备注）。一切皆资源：
 文件本体不进上下文，模型按需 read_file 读取真身；前端历史重建按同一
-标签解析引用 chips（旧会话的 <upload_file> 由前端兼容解析）。无引用
+标签解析引用 chips。无引用
 轮次零开销（不插消息）。
 */
 package hooks
 
 import (
 	"context"
-	"fmt"
+	"encoding/json"
 	"slices"
 	"strings"
 
@@ -58,41 +58,33 @@ func (h *RefFileHook) Name() string { return "reffile" }
 /* maxRefSel 单条片段注入上限（按 rune 截断，全文可 read_file）。 */
 const maxRefSel = 6000
 
-/* OnStart 在本轮输入前插入引用记录（startHooks 运行时末条必为本轮 input）。 */
+/*
+	OnStart 在本轮输入前插入引用记录（startHooks 运行时末条必为本轮 input）。
+
+标签体是纯 JSON 载荷（前端 JSON.parse 重建 chips）。
+*/
 func (h *RefFileHook) OnStart(_ context.Context, state *types.LoopState) error {
 	refs, _ := state.Metadata[MetaRefFiles].([]RefFile)
 	if len(refs) == 0 {
 		return nil
 	}
-	var b strings.Builder
-	b.WriteString("<" + RefTag + ">\n用户本轮引用了以下本地文件（可用 read_file 读取）：\n")
-	for _, r := range refs {
-		b.WriteString("- " + r.Path + "\n")
-		for i, it := range r.Items {
-			head := ""
-			if len(r.Items) > 1 {
-				head = fmt.Sprintf("【片段 %d】", i+1)
-			}
-			lines := fmt.Sprintf("行 %d", it.From)
-			if it.To > it.From {
-				lines = fmt.Sprintf("行 %d-%d", it.From, it.To)
-			}
-			note := ""
-			if it.Note != "" {
-				note = "，备注：" + it.Note
-			}
-			fmt.Fprintf(&b, "  %s（%s%s）：\n", head, lines, note)
-			sel := strings.ReplaceAll(it.Sel, "\r\n", "\n")
+	for i := range refs {
+		for j := range refs[i].Items {
+			sel := strings.ReplaceAll(refs[i].Items[j].Sel, "\r\n", "\n")
 			if rs := []rune(sel); len(rs) > maxRefSel {
-				sel = string(rs[:maxRefSel]) + "…（已截断）"
-			}
-			for _, line := range strings.Split(strings.TrimRight(sel, "\n"), "\n") {
-				b.WriteString("  " + line + "\n")
+				refs[i].Items[j].Sel = string(rs[:maxRefSel]) + "…（已截断）"
 			}
 		}
 	}
-	b.WriteString("</" + RefTag + ">")
-	msg := types.Message{Role: types.RoleUser, Content: b.String()}
+	payload := struct {
+		Hint string    `json:"hint"`
+		Refs []RefFile `json:"refs"`
+	}{Hint: "用户本轮引用了以下本地文件，可用 read_file 读取", Refs: refs}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return nil
+	}
+	msg := types.Message{Role: types.RoleUser, Content: "<" + RefTag + ">\n" + string(body) + "\n</" + RefTag + ">"}
 	if n := len(state.Messages); n > 0 && state.Messages[n-1].Role == types.RoleUser {
 		state.Messages = slices.Insert(state.Messages, n-1, msg)
 	} else {

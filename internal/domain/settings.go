@@ -36,7 +36,7 @@ type ModelEntry struct {
 	Protocol      string            `json:"protocol,omitempty"`      // API 协议：openai（默认）| responses | anthropic
 }
 
-/* 协议类型常量（Protocol 字段取值；空串按 openai 处理，旧档零迁移）。 */
+/* 协议类型常量（Protocol 字段取值；空串按 openai 处理）。 */
 const (
 	ProtocolOpenAI    = "openai"    // OpenAI Chat Completions（/chat/completions）
 	ProtocolResponses = "responses" // OpenAI Responses 格式（/responses，DeepSeek/Codex 等）
@@ -62,38 +62,17 @@ func DefaultModelsConfig() ModelsConfig {
 	}
 }
 
-/* LoadModelsConfig 读 models.json；兼容旧扁平结构（apiKey/model/baseUrl）
-并迁移为 main 槽单条目（原文件备份 .bak）。 */
+/* LoadModelsConfig 读 models.json，缺失或损坏回落默认值。 */
 func LoadModelsConfig(fsys fs.FileSystem) ModelsConfig {
-	out := DefaultModelsConfig()
 	data, err := fsys.Read(context.Background(), "models.json")
 	if err != nil {
-		return out
+		return DefaultModelsConfig()
 	}
 	var mc ModelsConfig
 	if json.Unmarshal(data, &mc) == nil && (len(mc.Main)+len(mc.Vision)+len(mc.Image)+len(mc.Audio)) > 0 {
-		mc.normalizeProtocol()
-		if mc.normalizeEnabled() {
-			_ = SaveModelsConfig(fsys, mc) // 旧存档无启用条目：点亮首条后回写
-		}
 		return mc
 	}
-	/* 旧扁平结构迁移 */
-	var old struct {
-		APIKey  string `json:"apiKey"`
-		Model   string `json:"model"`
-		BaseURL string `json:"baseUrl"`
-	}
-	if json.Unmarshal(data, &old) == nil && old.Model != "" {
-		e := ModelEntry{Name: old.Model, BaseURL: old.BaseURL, APIKey: old.APIKey, Enabled: true}
-		if e.BaseURL == "" {
-			e.BaseURL = out.Main[0].BaseURL
-		}
-		out.Main = []ModelEntry{e}
-		_ = fsys.Write(context.Background(), "models.json.bak", data)
-		_ = SaveModelsConfig(fsys, out)
-	}
-	return out
+	return DefaultModelsConfig()
 }
 
 /* SaveModelsConfig 落盘模型四槽。 */
@@ -103,40 +82,6 @@ func SaveModelsConfig(fsys fs.FileSystem, m ModelsConfig) error {
 		return err
 	}
 	return fsys.Write(context.Background(), "models.json", data)
-}
-
-/* normalizeEnabled 每槽非空且无启用条目时点亮首条（对齐 ActiveMain
-兜底取首条的语义，让前端选中态与实际生效模型一致）；返回是否变更。 */
-func (m *ModelsConfig) normalizeEnabled() bool {
-	changed := false
-	for _, slot := range []*[]ModelEntry{&m.Main, &m.Vision, &m.Image, &m.Audio} {
-		if len(*slot) == 0 {
-			continue
-		}
-		enabled := false
-		for _, e := range *slot {
-			if e.Enabled {
-				enabled = true
-				break
-			}
-		}
-		if !enabled {
-			(*slot)[0].Enabled = true
-			changed = true
-		}
-	}
-	return changed
-}
-
-/* normalizeProtocol 内存态把空协议归一为 openai（旧档零迁移，不回写）。 */
-func (m *ModelsConfig) normalizeProtocol() {
-	for _, slot := range []*[]ModelEntry{&m.Main, &m.Vision, &m.Image, &m.Audio} {
-		for i := range *slot {
-			if (*slot)[i].Protocol == "" {
-				(*slot)[i].Protocol = ProtocolOpenAI
-			}
-		}
-	}
 }
 
 /* ActiveMain 返回主模型槽的生效条目（enabled 优先，否则首条；空槽 nil）。 */

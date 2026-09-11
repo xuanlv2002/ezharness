@@ -59,7 +59,7 @@ func TestArchiveSession(t *testing.T) {
 		!strings.Contains(ns.SystemPrompt, "rebuilt base") {
 		t.Fatalf("new snapshot wrong: msgs=%d sys=%.80s", len(ns.Messages), ns.SystemPrompt)
 	}
-	if ns.TargetID != "old-session" || ns.SeedKind != "compress" || ns.PrevSession != "old-session" {
+	if ns.TargetID != "old-session" || ns.SeedKind != "compress" {
 		t.Fatalf("new snapshot edge wrong: %+v", ns)
 	}
 	if ns.LineRoot != "old-session" {

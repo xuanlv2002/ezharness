@@ -51,20 +51,6 @@ func (c *TopicController) Delete(g *gin.Context) {
 	g.JSON(http.StatusOK, gin.H{"ok": true})
 }
 
-/* Resume POST /api/topics/:id/resume（切换到线，id=线根 ID）。 */
-func (c *TopicController) Resume(g *gin.Context) {
-	if err := c.Svc.Resume(g.Request.Context(), g.Param("id")); err != nil {
-		switch {
-		case errors.Is(err, service.ErrTopicNotFound):
-			g.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
-		default:
-			g.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		}
-		return
-	}
-	g.JSON(http.StatusOK, gin.H{"id": c.Svc.Hub.Active.RootID})
-}
-
 /* NewBranch POST /api/branches/new（开新线）。 */
 func (c *TopicController) NewBranch(g *gin.Context) {
 	s := c.Svc.NewBranch()

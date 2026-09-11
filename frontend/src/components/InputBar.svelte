@@ -1,28 +1,28 @@
 <script lang="ts">
   import { onMount } from 'svelte'
-  import { store, type Att, type FileRef } from '../lib/store.svelte'
+  import { store, type Attachment, type FileRef } from '../lib/store.svelte'
   import { fileBaseName, isImagePath, isTextFilePath } from '../lib/textfile'
 
   let {
-    atts = [],
-    refs = [],
+    attachments = [],
+    fileRefs = [],
     onRemove,
     onEditImage,
     onAddFiles,
     onClearFiles,
-    onRemoveRef,
-    onOpenRef,
-    onClearRefs,
+    onRemoveFileRef,
+    onOpenFileRef,
+    onClearFileRefs,
   }: {
-    atts?: Att[]
-    refs?: FileRef[]
+    attachments?: Attachment[]
+    fileRefs?: FileRef[]
     onRemove?: (i: number) => void
     onEditImage?: (i: number) => void
     onAddFiles?: (fs: File[]) => void
     onClearFiles?: () => void
-    onRemoveRef?: (i: number) => void
-    onOpenRef?: (path: string) => void
-    onClearRefs?: () => void
+    onRemoveFileRef?: (i: number) => void
+    onOpenFileRef?: (path: string) => void
+    onClearFileRefs?: () => void
   } = $props()
 
   let text = $state('')
@@ -31,8 +31,8 @@
 
   /* 附件缩略：真身路径走文件服务源（与聊天记录同源，带版本参数——
   画板写回后强制刷新）；path 空 = 占位（拖入暂存中）或画板草稿（file） */
-  const thumbs = $derived(
-    atts.map((a) => {
+  const thumbnails = $derived(
+    attachments.map((a) => {
       const isImage = isImagePath(a.name)
       const v = a.path ? (store.imgVer[a.path] ?? 0) : 0
       return {
@@ -60,25 +60,27 @@
 
   async function send() {
     const t = text.trim()
-    if (!t && !atts.length && !refs.length) return
+    if (!t && !attachments.length && !fileRefs.length) return
     if (store.archivingRootId === store.activeId) {
       store.lastStatus = '正在归档当前话题，完成后即可继续对话（可先切换分支）'
       return
     }
-    if (atts.some((a) => !a.path && !a.file)) {
+    if (attachments.some((a) => !a.path && !a.file)) {
       store.lastStatus = '附件仍在暂存中，稍候再发送'
       return
     }
-    if (atts.length > MAX_FILES) {
+    if (attachments.length > MAX_FILES) {
       store.lastStatus = `附件最多 ${MAX_FILES} 个，多余的未发送`
     }
-    const sendAtts = atts.slice(0, MAX_FILES)
+    const sendAttachments = attachments.slice(0, MAX_FILES)
+    const sendFileRefs = fileRefs.slice(0, MAX_FILES)
     text = ''
     onClearFiles?.()
-    onClearRefs?.()
-    /* 画板草稿（path 空有 file）由 store 在发送时 stash 持久化；refs
-    统一进 <reference_file> 记录（不再展开进正文） */
-    await store.send(t, sendAtts, refs.slice(0, MAX_FILES))
+    onClearFileRefs?.()
+    /* 画板草稿（path 空有 file）由 store 在发送时 stash 持久化；fileRefs
+    统一进 <reference_file> 记录。attachments/fileRefs 必须在
+    onClear* 之前拷贝——props 解构是 live getter，清空后再取读到 [] */
+    await store.send(t, sendAttachments, sendFileRefs)
   }
 
   function onKey(e: KeyboardEvent) {
@@ -115,9 +117,9 @@
   {:else if store.lastStatus}
     <div class="status">{store.lastStatus}</div>
   {/if}
-  {#if atts.length || refs.length}
+  {#if attachments.length || fileRefs.length}
     <div class="attachments">
-      {#each thumbs as t, i (i)}
+      {#each thumbnails as t, i (i)}
         <div class="att" class:pending={!t.ready}>
           {#if t.isImage}
             <button class="thumb" disabled={!t.ready} onclick={() => onEditImage?.(i)}
@@ -153,8 +155,8 @@
           </button>
         </div>
       {/each}
-      {#each refs as r, i (i)}
-        <button class="ref" onclick={() => onOpenRef?.(r.path)}
+      {#each fileRefs as r, i (i)}
+        <button class="ref" onclick={() => onOpenFileRef?.(r.path)}
           title={`${r.path}（点击在文件页打开）`}>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
             <path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" />
@@ -162,7 +164,7 @@
           </svg>
           <span class="ref-name">{fileBaseName(r.path)}</span>
           {#if r.items.length}<span class="ref-n">{r.items.length} 条标注</span>{/if}
-          <span class="att-x" onclick={(e) => { e.stopPropagation(); onRemoveRef?.(i) }} role="button" tabindex="-1" title="移除引用">
+          <span class="att-x" onclick={(e) => { e.stopPropagation(); onRemoveFileRef?.(i) }} role="button" tabindex="-1" title="移除引用">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
               <path d="M6 6l12 12M18 6L6 18" />
             </svg>
@@ -197,14 +199,14 @@
           <rect x="7" y="7" width="10" height="10" rx="1.5" />
         </svg>
       </button>
-      <button class="send ghost" onclick={() => void send()} disabled={!text.trim() && !atts.length && !refs.length} title="终止当前轮并发送新指令">
+      <button class="send ghost" onclick={() => void send()} disabled={!text.trim() && !attachments.length && !fileRefs.length} title="终止当前轮并发送新指令">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
           <path d="M12 19V5" />
           <path d="M5 12l7-5 5 5" />
         </svg>
       </button>
     {:else}
-      <button class="send" onclick={() => void send()} disabled={!text.trim() && !atts.length && !refs.length} title="发送">
+      <button class="send" onclick={() => void send()} disabled={!text.trim() && !attachments.length && !fileRefs.length} title="发送">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
           <path d="M12 19V5" />
           <path d="M5 12l7-5 5 5" />

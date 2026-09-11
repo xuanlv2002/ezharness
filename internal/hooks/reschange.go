@@ -100,9 +100,12 @@ func termKey(t StatusTerm) string {
 	return fmt.Sprintf("%s|%s|%v|%s", t.ID, t.Name, t.Exited, t.Origin)
 }
 
-/* diffTerms 对比终端基线产出变更：新增（报创建来源——用户手动开的
+/*
+	diffTerms 对比终端基线产出变更：新增（报创建来源——用户手动开的
+
 终端对模型是未知状态，须显式区分）、已退出（退出态翻转）、已修改
-（名称/来源变化）、已关闭（消失，AI 可感知用户关掉了自己开的终端）。 */
+（名称/来源变化）、已关闭（消失，AI 可感知用户关掉了自己开的终端）。
+*/
 func diffTerms(oldS, newS []string) []string {
 	parse := func(s string) (id, name, origin string, exited bool) {
 		parts := strings.SplitN(s, "|", 4)

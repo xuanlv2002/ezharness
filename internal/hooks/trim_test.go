@@ -188,10 +188,10 @@ func TestViewStartFromKept(t *testing.T) {
 	}
 	hist := []types.Message{
 		{Role: types.RoleSystem, Content: "sys"},
-		{Role: types.RoleUser, Content: "f1"},  // 1 早期档案
-		{Role: types.RoleUser, Content: "f2"},  // 2 早期档案
-		{Role: types.RoleUser, Content: "m5"},  // 3 marker1 保留段
-		{Role: types.RoleUser, Content: "m6"},  // 4 marker1 保留段
+		{Role: types.RoleUser, Content: "f1"},   // 1 早期档案
+		{Role: types.RoleUser, Content: "f2"},   // 2 早期档案
+		{Role: types.RoleUser, Content: "m5"},   // 3 marker1 保留段
+		{Role: types.RoleUser, Content: "m6"},   // 4 marker1 保留段
 		mk("2"),                                 // 5 marker1（kept=2 → 保留段 3-4）
 		{Role: types.RoleUser, Content: "new1"}, // 6 marker2 保留段
 		mk("1"),                                 // 7 marker2（kept=1 → 保留段 6）

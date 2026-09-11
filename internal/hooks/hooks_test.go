@@ -2,7 +2,6 @@ package hooks
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
@@ -120,60 +119,6 @@ func TestTopicsMatch(t *testing.T) {
 	}
 	if got := len(tp.Match("数据库")); got != 1 {
 		t.Fatalf("match title = %d", got)
-	}
-}
-
-/* 旧扁平索引 → 分支索引一次性重建：compress 链归组为一条线，
-LeafID=最新世代，各快照回填 LineRoot；已是新格式时幂等跳过。 */
-func TestMigrateIndex(t *testing.T) {
-	ctx := context.Background()
-	fsys := memFS{}
-	writeSnap := func(s *SessionSnap) {
-		data, _ := json.Marshal(s)
-		_ = fsys.Write(ctx, SessionsDir+"/"+s.ID+"/session.json", data)
-	}
-	// 线 1：gen1 → gen2(compress)，gen1 已归档；线 2：独立根
-	writeSnap(&SessionSnap{ID: "gen1", CreatedAt: 100, Messages: []types.Message{{Role: types.RoleUser, Content: "话题一"}},
-		Archived: true})
-	writeSnap(&SessionSnap{ID: "gen2", CreatedAt: 200, PrevSession: "gen1", CompactSummary: "摘要"})
-	writeSnap(&SessionSnap{ID: "root2", CreatedAt: 300, Messages: []types.Message{{Role: types.RoleUser, Content: "话题二"}}})
-	// 旧格式索引：每世代一条、Kind=compact
-	_ = fsys.Write(ctx, "topics.json", []byte(`[{"id":"gen1","title":"旧标题","kind":"compact"}]`))
-
-	tp := NewTopics(fsys)
-	tp.MigrateIndex(ctx)
-
-	list := tp.Load()
-	if len(list) != 2 {
-		t.Fatalf("expect 2 lines, got %+v", list)
-	}
-	var l1, l2 TopicEntry
-	for _, e := range list {
-		switch e.ID {
-		case "gen1":
-			l1 = e
-		case "root2":
-			l2 = e
-		}
-	}
-	if l1.LeafID != "gen2" || l1.Kind != "new" || l1.Title != "旧标题" {
-		t.Fatalf("line1 wrong: %+v", l1)
-	}
-	if l2.LeafID != "root2" || l2.Kind != "new" {
-		t.Fatalf("line2 wrong: %+v", l2)
-	}
-	// LineRoot 回填
-	for id, want := range map[string]string{"gen1": "gen1", "gen2": "gen1", "root2": "root2"} {
-		s, err := LoadSnap(ctx, fsys, id)
-		if err != nil || s.LineRoot != want {
-			t.Fatalf("lineRoot of %s = %v (want %s), err=%v", id, s.LineRoot, want, err)
-		}
-	}
-	// 幂等：新格式重跑不再触发
-	tp2 := NewTopics(fsys)
-	tp2.MigrateIndex(ctx)
-	if got := len(tp2.Load()); got != 2 {
-		t.Fatalf("remigrate should be no-op, got %d", got)
 	}
 }
 
@@ -312,8 +257,8 @@ func TestDiffTerms(t *testing.T) {
 	}
 	newS := []string{
 		"t1|build-server|false|用户", // 名称变化 → 修改
-		"t2|logs|false|AI",          // 不变
-		"t4|deploy|false|AI",        // 新增
+		"t2|logs|false|AI",         // 不变
+		"t4|deploy|false|AI",       // 新增
 	}
 	got := diffTerms(oldS, newS)
 	joined := strings.Join(got, ";")

@@ -267,13 +267,13 @@ func fileMtime(path string) string {
 
 /* GetMemory 返回 harness.md 内容。 */
 func (m *MemoryService) GetMemory() string {
-	data, _ := m.Hub.Fsys.Read(context.Background(), hooks.MemoryFile)
+	data, _ := m.Hub.Fsys.Read(context.Background(), hooks.HarnessMd)
 	return string(data)
 }
 
 /* SaveMemory 写入 harness.md（下一轮对话即注入 system）。 */
 func (m *MemoryService) SaveMemory(content string) error {
-	return m.Hub.Fsys.Write(context.Background(), hooks.MemoryFile, []byte(content))
+	return m.Hub.Fsys.Write(context.Background(), hooks.HarnessMd, []byte(content))
 }
 
 /* ── 技能管理：启停 / 删除 / zip 新建 ── */

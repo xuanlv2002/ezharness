@@ -43,7 +43,6 @@ func (a *app) setTerm(t *service.TerminalService) {
 
 /* newApp 创建应用并切到数据目录（进程 cwd 即数据根）。 */
 func newApp(c config.Config) (*app, error) {
-	adoptLegacy(c.DataDir)
 	if err := os.MkdirAll(c.DataDir, 0o755); err != nil {
 		return nil, err
 	}
@@ -51,32 +50,6 @@ func newApp(c config.Config) (*app, error) {
 		return nil, err
 	}
 	return &app{cfg: c}, nil
-}
-
-/*
-adoptLegacy 收编旧版（cwd 直存）数据：数据目录是默认值且尚无
-settings.json，而应用根存在旧布局（settings.json / sessions/）时，
-整体拷入（已存在的文件跳过）。仅升级首跑发生一次。
-*/
-func adoptLegacy(dataDir string) {
-	if filepath.Clean(dataDir) != filepath.Clean(config.ResolveDataDir("")) {
-		return
-	}
-	if _, err := os.Stat(filepath.Join(dataDir, "settings.json")); err == nil {
-		return
-	}
-	root := config.Root()
-	hasOld := false
-	for _, f := range []string{"topics.json", "memory.md", "mcp.json", "sessions"} {
-		if _, err := os.Stat(filepath.Join(root, f)); err == nil {
-			hasOld = true
-			break
-		}
-	}
-	if !hasOld {
-		return
-	}
-	_ = service.MigrateData(root, dataDir)
 }
 
 /* start 启动第一代 server（端口占用失败即退出）。 */

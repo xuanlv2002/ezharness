@@ -2,7 +2,6 @@
 topics 是分支（线）索引：topics.json。条目身份 = 线根 session ID，
 LeafID 指向当前叶子（compact 换代只更新 LeafID，不新增条目）。
 Kind 记录线的起源（new | fork），Origin 是 fork 线的展示元数据。
-旧扁平格式（每世代一条、Kind=compact）在 MigrateIndex 里一次性重建。
 */
 package hooks
 
@@ -18,14 +17,14 @@ import (
 
 /* TopicEntry 是一条分支（线）的索引项。 */
 type TopicEntry struct {
-	ID        string      `json:"id"`                // 线根 session ID
-	LeafID    string      `json:"leafId,omitempty"`  // 当前叶子（compact 时更新）
+	ID        string      `json:"id"`               // 线根 session ID
+	LeafID    string      `json:"leafId,omitempty"` // 当前叶子（compact 时更新）
 	Title     string      `json:"title"`
 	Summary   string      `json:"summary,omitempty"`
 	CreatedAt int64       `json:"createdAt"`
 	UpdatedAt int64       `json:"updatedAt,omitempty"` // 线内最新活动时间
 	Msgs      int         `json:"msgs"`
-	Kind      string      `json:"kind,omitempty"` // new | fork
+	Kind      string      `json:"kind,omitempty"`   // new | fork
 	Origin    *ForkOrigin `json:"origin,omitempty"` // fork 线的分叉源（展示）
 }
 

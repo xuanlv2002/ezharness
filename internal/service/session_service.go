@@ -293,6 +293,6 @@ func (s *SessionService) Summarize(ctx context.Context, rootID string) (string, 
 func memoryExists(fsys interface {
 	Read(ctx context.Context, path string) ([]byte, error)
 }) bool {
-	data, err := fsys.Read(context.Background(), hooks.MemoryFile)
+	data, err := fsys.Read(context.Background(), hooks.HarnessMd)
 	return err == nil && len(strings.TrimSpace(string(data))) > 0
 }

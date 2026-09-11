@@ -17,8 +17,11 @@ func (fakeProv) Invoke(_ context.Context, _ *types.ModelRequest) (*types.ModelRe
 	return &types.ModelResponse{Content: "ok"}, nil
 }
 
-/* 端到端：真实 Agent + RefFileHook，带引用轮次的历史必须含 <reference_file>
-记录且位于用户输入之前（前端 buildBlocks 按"记录→下一个 user 块"挂 chips）。 */
+/*
+	端到端：真实 Agent + RefFileHook，带引用轮次的历史必须含 <reference_file>
+
+记录且位于用户输入之前（前端 buildBlocks 按"记录→下一个 user 块"挂 chips）。
+*/
 func TestRefFileE2EInjection(t *testing.T) {
 	agent := core.NewAgent(fakeProv{}, core.WithHooks(NewRefFile()))
 	state, err := agent.Run(context.Background(), "看下这个文件",
@@ -29,13 +32,13 @@ func TestRefFileE2EInjection(t *testing.T) {
 	var sb strings.Builder
 	for _, m := range state.Messages {
 		sb.WriteString(string(m.Role))
-		sb.WriteString(":"+m.Content+"\n---\n")
+		sb.WriteString(":" + m.Content + "\n---\n")
 	}
 	all := sb.String()
 	if !strings.Contains(all, "<reference_file>") {
 		t.Fatalf("no reference_file in messages:\n%s", all)
 	}
-	if !strings.Contains(all, "- C:/w/tmp/att-1-0-note.md") {
+	if !strings.Contains(all, `"path":"C:/w/tmp/att-1-0-note.md"`) {
 		t.Fatalf("ref path missing:\n%s", all)
 	}
 	// 顺序：记录必须在输入前（挂在下一个 user 块）

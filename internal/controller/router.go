@@ -67,7 +67,6 @@ func NewRouter(c Controllers, dist fs.FS) *gin.Engine {
 		api.GET("/topics", c.Topics.List)
 		api.GET("/topics/:id", c.Topics.Get)
 		api.DELETE("/topics/:id", c.Topics.Delete)
-		api.POST("/topics/:id/resume", c.Topics.Resume)
 
 		api.POST("/branches/new", c.Topics.NewBranch)
 		api.POST("/branches/:id/activate", c.Topics.Activate)

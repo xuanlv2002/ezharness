@@ -69,9 +69,9 @@
   （发送时才 stash），tag/source 供 ChatView 原位替换 */
   function addToChat(f: File) {
     if (tab.path) {
-      store.pendingAtts = [{ name: fileBaseName(tab.path), path: tab.path }]
+      store.pendingAttachments = [{ name: fileBaseName(tab.path), path: tab.path }]
     } else {
-      store.pendingAtts = [{ name: f.name, file: f, tag: tab.draftTag ?? '', source: tab.draftSource ?? null }]
+      store.pendingAttachments = [{ name: f.name, file: f, tag: tab.draftTag ?? '', source: tab.draftSource ?? null }]
     }
   }
 </script>

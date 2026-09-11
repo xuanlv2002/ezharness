@@ -219,9 +219,6 @@ func (t *TopicService) Switch(ctx context.Context, rootID string) error {
 	return nil
 }
 
-/* Resume 兼容入口：切换到线（id=线根 ID）。 */
-func (t *TopicService) Resume(ctx context.Context, id string) error { return t.Switch(ctx, id) }
-
 /*
 Delete 删除分支：清线上全部世代目录（LineRoot 归属）+ 索引条目 + 注册表。
 运行中拒绝；删活动分支时先换到全新分支。

@@ -81,9 +81,6 @@ func ArchiveSession(ctx context.Context, p provider.ModelProvider, fsys fs.FileS
 	// 新库初始快照先落盘：内存切换后任一时刻重启，新库都是可恢复形态
 	newID := NewSessionID()
 	root := sess.LineRoot()
-	if root == "" {
-		root = oldID // 未索引线的兜底（迁移后不达）
-	}
 	now := time.Now()
 	initSnap := SessionSnap{
 		ID:             newID,
@@ -95,8 +92,7 @@ func ArchiveSession(ctx context.Context, p provider.ModelProvider, fsys fs.FileS
 		TargetID:       oldID,
 		SeedKind:       "compress",
 		LineRoot:       root,
-		PrevSession:    oldID,       // 兼容别名：compress 边同时写 prevSession（旧读者过渡期）
-		CompactSummary: summaryText, //
+		CompactSummary: summaryText,
 		CtxWindow:      old.CtxWindow,
 		StartedAt:      now,
 		EndedAt:        now,
@@ -107,7 +103,7 @@ func ArchiveSession(ctx context.Context, p provider.ModelProvider, fsys fs.FileS
 		}
 	}
 
-	sess.SetID(newID)     // 用量/折叠档案/边清零，lineRoot 保留（换代不换线）
+	sess.SetID(newID) // 用量/折叠档案/边清零，lineRoot 保留（换代不换线）
 	sess.SetPrev(oldID, summaryText)
 	if trace != nil {
 		trace.SetTrace(newID)

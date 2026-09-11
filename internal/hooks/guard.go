@@ -30,8 +30,8 @@ import (
 )
 
 const (
-	guardHead          = 512  // 摘要保留的头部长度（字符）
-	guardCharsPerToken = 1.2  // 保守估算系数：字符数 → token 数
+	guardHead          = 512               // 摘要保留的头部长度（字符）
+	guardCharsPerToken = 1.2               // 保守估算系数：字符数 → token 数
 	guardDir           = ".ezloop/offload" // 与 offload 同目录，回放体验统一
 )
 
@@ -71,10 +71,13 @@ func (g *Guard) OnToolEnd(ctx context.Context, state *types.LoopState, result *t
 	return nil
 }
 
-/* usedTokens 估算当前消息历史的 token 量：优先用 provider 报告的
+/*
+	usedTokens 估算当前消息历史的 token 量：优先用 provider 报告的
+
 Usage（最后一次模型调用的 prompt+completion），再补估其后追加的
 消息（本轮 tool_calls 参数与同批先完成的工具结果）。无 Usage 数据
-时全量按字符粗估。 */
+时全量按字符粗估。
+*/
 func (g *Guard) usedTokens(state *types.LoopState) int {
 	if state.LastResponse != nil {
 		used := state.LastResponse.Usage.PromptTokens + state.LastResponse.Usage.CompletionTokens

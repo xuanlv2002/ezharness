@@ -18,7 +18,7 @@ import {
 
 /* 输入框附件（一切皆资源）：path = 已有真身（引用，发送不复制）；
    file = 画板草稿（发送时才 stash 持久化）；两者皆空 = 拖入暂存中占位 */
-export interface Att {
+export interface Attachment {
   name: string
   path?: string
   file?: File
@@ -85,7 +85,7 @@ export type Block = { uid: number } & (
       files?: { name: string; path?: string }[]
       /* 文件引用 chips（文件页「添加到对话」→<reference_file>）：count
          = 标注条数（历史重建不还原片段全文，chip 点击回跳文件页） */
-      refs?: { path: string; count: number }[]
+      fileRefs?: { path: string; count: number }[]
       owner?: string
       msgIdx?: number
     }
@@ -116,7 +116,7 @@ function baseName(p: string): string {
   return i >= 0 ? p.slice(i + 1) : p
 }
 
-/* 解析 <agent_status> 载荷（旧格式 JSON；新格式中文文本返回 null） */
+/* 解析 <agent_status> 的 JSON 载荷；中文语义化文本返回 null */
 function parseStatus(content: string): StatusPayload | null {
   const open = '<agent_status>'
   const close = '</agent_status>'
@@ -211,10 +211,10 @@ class AppStore {
   draftOpen = $state<{ source: File | null; tag: string; seq: number } | null>(null)
   private draftSeq = 0
   /* 待回流附件（查看器「添加到对话」/Wails 拖入 att.stashed）：ChatView
-     消费进输入框 atts（tag 匹配且身份一致时原位替换，否则追加） */
-  pendingAtts = $state<(Att & { tag?: string; source?: File | null })[] | null>(null)
+     消费进输入框附件（tag 匹配且身份一致时原位替换，否则追加） */
+  pendingAttachments = $state<(Attachment & { tag?: string; source?: File | null })[] | null>(null)
   /* 文件页「添加到对话」的待回流引用（路径+标注片段，行号已算好）；
-     ChatView 消费进输入框 refs chips（同 path 替换去重） */
+     ChatView 消费进输入框引用 chips（同 path 替换去重） */
   pendingFileRef = $state<FileRef | null>(null)
   /* 图片写回后的缩略图版本（按路径 bump：同 URL 的 img 立即换 src，
      含历史 chips——引用同一资源，处处显示最新；跨会话由 HTTP 304 兜底） */
@@ -398,19 +398,17 @@ class AppStore {
     const dmap = new Map((decisions || []).map((d) => [d.callId, d.resolution]))
     const forkQueue = [...(forks || [])]
     const out: Block[] = []
-    let pendingFiles: { name: string; path?: string }[] | undefined // 引用记录（<reference_file>/旧 <upload_file>）待挂到下一个 user 块
-    let pendingRefs: { path: string; count: number }[] | undefined // 带标注的引用（文件页「添加到对话」）
     for (let mi = 0; mi < messages.length; mi++) {
       const m = messages[mi]
       if (m.role === 'user') {
-        const d = parseStatus(m.content) // 旧格式：JSON 载荷
+        const d = parseStatus(m.content) // JSON 载荷
         if (d) {
           // 状态记录仅水位异常时入时间线，平时只在右上角
           if (d.suggestCompact) {
             out.push({ kind: 'status', uid: this.nuid(), text: m.content, data: d })
           }
         } else if (m.content.includes('<agent_status>')) {
-          // 新格式：中文语义化文本；仅水位异常行进时间线
+          // 中文语义化文本；仅水位异常行进时间线
           // （文案是"建议调用 trim_context 整理上下文"，关键词取"整理上下文"）
           if (m.content.includes('整理上下文')) {
             out.push({ kind: 'status', uid: this.nuid(), text: m.content, data: null })
@@ -419,26 +417,25 @@ class AppStore {
           // 资源变更记录：remind 变更段按需插入（实时由 res.change 事件渲染）
           const items = [...m.content.matchAll(/^- (.+)$/gm)].map((x) => x[1].trim()).filter(Boolean)
           if (items.length) out.push({ kind: 'reschange', uid: this.nuid(), items })
-        } else if (m.content.includes('<reference_file>') || m.content.includes('<upload_file>')) {
-          /* 引用记录（新 <reference_file>，兼容旧 <upload_file>）：顶层
-          「- 路径」行 = 引用；其下缩进的「【片段」行 = 文件页标注条数
-          （历史 chip 不还原片段全文，点击回跳文件页读真身）。无标注的
-          引用渲染为附件 chips，带标注的渲染为引用 chips。 */
-          const legacy = m.content.includes('<upload_file>')
-          const refsAll: { path: string; count: number }[] = []
-          let cur: { path: string; count: number } | null = null
-          for (const l of m.content.split('\n')) {
-            const m2 = l.match(/^- (.+)$/)
-            if (m2) {
-              const node = { path: m2[1].trim(), count: 0 }
-              refsAll.push(node)
-              cur = legacy ? null : node
-            } else if (cur && l.startsWith('  【片段')) {
-              cur.count++
+        } else if (m.content.includes('<reference_file>')) {
+          /* 引用记录独立成块（与用户输入各一条消息，不合并）。标签体是
+          纯 JSON：refs[].items 空 = 整文件引用（附件 chips），非空 =
+          带标注引用（引用 chips，count=标注条数；片段全文不还原，点击
+          回跳文件页读真身）。损坏载荷不渲染。 */
+          const inner = m.content.replace(/^[\s\S]*?<reference_file>|<\/reference_file>[\s\S]*$/g, '').trim()
+          try {
+            const payload = JSON.parse(inner) as { refs?: { path: string; items?: unknown[] }[] }
+            const refsAll = payload.refs ?? []
+            const refFiles = refsAll.filter((r) => !r.items?.length).map((r) => ({ name: baseName(r.path), path: r.path }))
+            const refMarked = refsAll
+              .filter((r) => r.items?.length)
+              .map((r) => ({ path: r.path, count: r.items!.length }))
+            if (refFiles.length || refMarked.length) {
+              out.push({ kind: 'user', uid: this.nuid(), text: '', files: refFiles, fileRefs: refMarked })
             }
+          } catch {
+            /* 损坏记录不渲染 */
           }
-          pendingFiles = refsAll.filter((r) => r.count === 0).map((r) => ({ name: baseName(r.path), path: r.path }))
-          pendingRefs = refsAll.filter((r) => r.count > 0)
         } else if (m.content.includes('<image_loaded>')) {
           // read_file 图片已进上下文：渲染为缩略图小行（paths 在标签体内，每行一个）
           const inner = m.content.replace(/^[\s\S]*?<image_loaded>|<\/image_loaded>[\s\S]*$/g, '')
@@ -452,10 +449,10 @@ class AppStore {
           out.push({ kind: 'endtick', uid: this.nuid(), icon: endIcon(detail), title: detail })
         } else if (m.content.includes('<context_trim')) {
           out.push({ kind: 'note', uid: this.nuid(), text: `✂️ ${trimText(m.content)}` })
+        } else if (!m.content.trim() && !m.images?.length) {
+          // 空输入（纯附件轮，引用已由上一块独立呈现）：不渲染
         } else {
-          out.push({ kind: 'user', uid: this.nuid(), text: m.content, images: m.images, files: pendingFiles, refs: pendingRefs, owner, msgIdx: mi })
-          pendingFiles = undefined
-          pendingRefs = undefined
+          out.push({ kind: 'user', uid: this.nuid(), text: m.content, images: m.images, owner, msgIdx: mi })
         }
       } else if (m.role === 'assistant') {
         if (m.content || m.reasoning) {
@@ -634,9 +631,9 @@ class AppStore {
      再执行新指令；等待超时则放弃并提示。附件/引用统一为工作目录路径
     （<reference_file> 记录告知模型）；画板草稿（path 空有 file）此时才
      stash 持久化——失败则原样保留输入框内容。 */
-  async send(text: string, atts: Att[] = [], refs: FileRef[] = []) {
-    if (!this.activeId || (!text.trim() && !atts.length && !refs.length)) return
-    if (atts.some((a) => !a.path && !a.file)) {
+  async send(text: string, attachments: Attachment[] = [], fileRefs: FileRef[] = []) {
+    if (!this.activeId || (!text.trim() && !attachments.length && !fileRefs.length)) return
+    if (attachments.some((a) => !a.path && !a.file)) {
       this.lastStatus = '附件仍在暂存中，稍候再发送'
       return
     }
@@ -648,32 +645,38 @@ class AppStore {
         return
       }
     }
-    let final: FilePayload[] = atts.map((a) => ({ name: a.name, path: a.path! }))
-    const drafts = atts.filter((a) => !a.path && a.file)
+    let final: FilePayload[] = attachments.map((a) => ({ name: a.name, path: a.path! }))
+    const drafts = attachments.filter((a) => !a.path && a.file)
     if (drafts.length) {
       try {
         const paths = await api.stash(drafts.map((d) => d.file!))
         const by = new Map(drafts.map((d, i) => [d, paths[i]]))
-        final = atts.map((a) => (by.has(a) ? { name: a.name, path: by.get(a)! } : { name: a.name, path: a.path! }))
+        final = attachments.map((a) => (by.has(a) ? { name: a.name, path: by.get(a)! } : { name: a.name, path: a.path! }))
       } catch (e) {
         this.lastStatus = `画板草稿暂存失败：${(e as Error).message}`
         return
       }
     }
-    const uid = this.nuid()
-    this.blocks.push({
-      kind: 'user',
-      uid,
-      text,
-      files: final.map((a) => ({ name: a.name, path: a.path })),
-      refs: refs.map((r) => ({ path: r.path, count: r.items.length })),
-    })
-    this.pendingUserUid = uid
+    /* 引用与用户输入各成一块（与消息历史同构：reference_file 记录是独立
+    user 消息）；pendingUserUid 记第一块 uid——replay.sync 截断时两块一起切 */
+    const turnFiles = final.map((a) => ({ name: a.name, path: a.path }))
+    const turnFileRefs = fileRefs.map((r) => ({ path: r.path, count: r.items.length }))
+    let firstUid = 0
+    if (turnFiles.length || turnFileRefs.length) {
+      firstUid = this.nuid()
+      this.blocks.push({ kind: 'user', uid: firstUid, text: '', files: turnFiles, fileRefs: turnFileRefs })
+    }
+    if (text) {
+      const uid = this.nuid()
+      this.blocks.push({ kind: 'user', uid, text })
+      if (!firstUid) firstUid = uid
+    }
+    this.pendingUserUid = firstUid
     this.pendingUserText = text
     this.busy = true
     this.lastStatus = ''
     try {
-      await api.send(this.activeId, text, final, refs)
+      await api.send(this.activeId, text, final, fileRefs)
       void this.refreshBranches() // 首次发言落线索引 + 运行指示
     } catch (e) {
       this.busy = false
@@ -720,20 +723,6 @@ class AppStore {
     this.settings = s
     this.lastStatus = '设置已保存（模型与提示即时生效）'
     await this.refreshStatus()
-  }
-
-  async resumeTopic(id: string) {
-    try {
-      const r = await api.resumeTopic(id)
-      this.activeId = r.id
-      await this.loadHistory()
-      this.resubscribe()
-      this.blocks.push({ kind: 'note', uid: this.nuid(), text: '⟲ 已切换到该分支' })
-      await this.refreshStatus()
-      await this.refreshBranches()
-    } catch (e) {
-      this.lastStatus = `切换分支失败：${(e as Error).message}`
-    }
   }
 
   /* ── 分支三操作 ── */
@@ -948,8 +937,12 @@ class AppStore {
         break
       }
       case 'loop_start': {
-        // 回放重建：本轮 user 输入（实时路径 send 已本地 push，同文本去重）
-        const text = typeof ev.data === 'string' ? ev.data : ''
+        /* 回放重建：本轮 user 输入（实时路径 send 已本地 push，同文本去重）。
+        主轮带引用时载荷是对象 {text, files, fileRefs}（后端 Publish 附带——
+        本轮消息要等轮结束才并入历史，运行中切回分支全靠回放帧重建 chips） */
+        const d = ev.data
+        const obj = d && typeof d === 'object' ? d : null
+        const text = typeof d === 'string' ? d : (obj?.text ?? '')
         // 新一轮开始：上一轮的资源变更不再挂右上角（res.change 按需推送不自动清）
         if (!ev.forkId) this.liveChanges = []
         if (ev.forkId) {
@@ -962,12 +955,29 @@ class AppStore {
           break
         }
         // 本地已 push 过本轮输入（含实时与重放截断后的重建）才跳过——
-        // 不再依赖"最后一个块"比对（断线重连时尾部已是模型输出，会误判重复）；
-        // 重建 push 后同样记录标记（多次重连的截断依据）
-        if (text && text !== this.pendingUserText) {
-          const uid = this.nuid()
-          this.blocks.push({ kind: 'user', uid, text })
-          this.pendingUserUid = uid
+        // 按 pendingUserText 标记判重（断线重连时尾部已是模型输出，末块
+        // 比对会误判重复）；重建 push 后同样记录标记（多次重连的截断依据）。纯附件轮
+        // （text 空）按附件存在 + pendingUserUid 判：空文本无法作去重键。
+        // 重建与 send 同构：引用块 + 输入块各一条
+        const turnFiles = obj?.files
+        const turnFileRefs = obj?.fileRefs?.map((r: { path: string; items?: unknown[] }) => ({
+          path: r.path,
+          count: r.items?.length ?? 0,
+        }))
+        const rebuildText = !!text && text !== this.pendingUserText
+        const rebuildRefs = (!!turnFiles?.length || !!turnFileRefs?.length) && !this.pendingUserUid
+        if (rebuildText || rebuildRefs) {
+          let firstUid = 0
+          if (rebuildRefs) {
+            firstUid = this.nuid()
+            this.blocks.push({ kind: 'user', uid: firstUid, text: '', files: turnFiles, fileRefs: turnFileRefs })
+          }
+          if (rebuildText) {
+            const uid = this.nuid()
+            this.blocks.push({ kind: 'user', uid, text })
+            if (!firstUid) firstUid = uid
+          }
+          this.pendingUserUid = firstUid
           this.pendingUserText = text
         }
         break
@@ -1096,6 +1106,12 @@ class AppStore {
           t.err = d.err || ''
           t.state = 'done'
         }
+        // 工具结果携带图片加载标记：实时渲染缩略图行（历史路径走
+        // <image_loaded> user 消息，两条路径渲染同一 imgload 块）
+        const loadedPaths = [...String(d.content || '').matchAll(/<image_loaded path="([^"]*)"\s*\/>/g)].map((m) => m[1])
+        if (loadedPaths.length) {
+          bs.push({ kind: 'imgload', uid: this.nuid(), paths: loadedPaths, images: [] })
+        }
         if (!ev.forkId) this.lastTool = ''
         break
       }
@@ -1188,16 +1204,6 @@ class AppStore {
         const msg = typeof ev.data === 'string' ? ev.data : JSON.stringify(ev.data ?? '')
         const bs = ev.forkId ? this.ensureFork(ev.forkId).blocks : this.blocks
         bs.push({ kind: 'assistant', uid: this.nuid(), text: `⚠️ ${msg}`, reasoning: '', streaming: false })
-        break
-      }
-      case 'filetools.image_loaded': {
-        // read_file 图片进上下文（OnLoop 加载点推送）：实时渲染缩略图小行，
-        // 缩略图走工作目录文件服务（与历史 <image_loaded> 消息同款渲染）
-        const paths: string[] = Array.isArray(ev.data) ? ev.data : []
-        if (paths.length) {
-          const bs = ev.forkId ? this.ensureFork(ev.forkId).blocks : this.blocks
-          bs.push({ kind: 'imgload', uid: this.nuid(), paths, images: [] })
-        }
         break
       }
       case 'res.change': {

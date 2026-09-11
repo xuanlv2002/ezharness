@@ -69,8 +69,8 @@ type Trim struct {
 	threshold int // 水位阈值（prompt tokens），<=0 禁用自动整理
 	window    int // 模型窗口（提示展示水位比例用）
 
-	mu      sync.Mutex                     // 并发契约：pending 登记互斥
-	pending map[*types.LoopState]bool      // 排队的整理（OnToolStart 登记，OnLoop 消费）
+	mu      sync.Mutex                // 并发契约：pending 登记互斥
+	pending map[*types.LoopState]bool // 排队的整理（OnToolStart 登记，OnLoop 消费）
 }
 
 /* NewTrim 创建整理 hook。 */

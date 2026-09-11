@@ -9,7 +9,7 @@
     text,
     images,
     files,
-    refs,
+    fileRefs,
     reasoning = '',
     streaming = false,
     role,
@@ -18,7 +18,7 @@
     text: string
     images?: ImagePayload[]
     files?: { name: string; path?: string }[]
-    refs?: { path: string; count: number }[]
+    fileRefs?: { path: string; count: number }[]
     reasoning?: string
     streaming?: boolean
     role: 'user' | 'assistant'
@@ -168,9 +168,9 @@
           {/each}
         </div>
       {/if}
-      {#if refs?.length}
+      {#if fileRefs?.length}
         <div class="fchips">
-          {#each refs as r, i (i)}
+          {#each fileRefs as r, i (i)}
             <button class="fchip ref" onclick={() => store.openFileAt(r.path)} title={`${r.path}（点击在资源页打开）`}>
               <span class="fico">🔗</span>
               <span class="fname">{r.path.split(/[/\\]/).pop()}{r.count > 1 ? ` · ${r.count} 条标注` : r.count === 1 ? ' · 1 条标注' : ''}</span>

@@ -2,6 +2,7 @@ package hooks
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -30,14 +31,31 @@ func TestRefFileOnStart(t *testing.T) {
 	if !strings.HasPrefix(got, "<"+RefTag+">") || !strings.HasSuffix(got, "</"+RefTag+">") {
 		t.Fatalf("bad wrap: %q", got)
 	}
-	if !strings.Contains(got, "- C:/data/workspace/tmp/att-x.png") {
-		t.Fatalf("whole-file path line missing: %q", got)
+	// 标签体纯 JSON：hint + refs（items 空=整文件引用，非空=带标注）
+	var payload struct {
+		Hint string `json:"hint"`
+		Refs []struct {
+			Path  string `json:"path"`
+			Items []struct {
+				Sel  string `json:"sel"`
+				Note string `json:"note"`
+				From int    `json:"from"`
+				To   int    `json:"to"`
+			} `json:"items"`
+		} `json:"refs"`
 	}
-	if !strings.Contains(got, "（行 12-13，备注：循环有 bug）") {
-		t.Fatalf("annotated item line missing: %q", got)
+	body := strings.TrimSuffix(strings.TrimPrefix(got, "<"+RefTag+">"), "</"+RefTag+">")
+	if err := json.Unmarshal([]byte(strings.TrimSpace(body)), &payload); err != nil {
+		t.Fatalf("payload not JSON: %v\n%s", err, got)
 	}
-	if !strings.Contains(got, "  def foo():") {
-		t.Fatalf("snippet body missing: %q", got)
+	if payload.Hint == "" || len(payload.Refs) != 2 {
+		t.Fatalf("payload wrong: %+v", payload)
+	}
+	if payload.Refs[0].Path != "C:/data/workspace/tmp/att-x.png" || len(payload.Refs[0].Items) != 0 {
+		t.Fatalf("whole-file ref wrong: %+v", payload.Refs[0])
+	}
+	if payload.Refs[1].Items[0].Note != "循环有 bug" || payload.Refs[1].Items[0].Sel == "" {
+		t.Fatalf("annotated item wrong: %+v", payload.Refs[1].Items[0])
 	}
 }
 

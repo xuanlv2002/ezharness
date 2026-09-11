@@ -316,8 +316,8 @@ export const api = {
     ),
 
   /* 发送消息：附件/引用统一为路径（<reference_file> 记录告知模型） */
-  send: (id: string, text: string, files?: FilePayload[], refs?: FileRef[]) =>
-    post<{ ok: boolean }>(`/api/sessions/${id}/messages`, { text, files, refs }),
+  send: (id: string, text: string, files?: FilePayload[], fileRefs?: FileRef[]) =>
+    post<{ ok: boolean }>(`/api/sessions/${id}/messages`, { text, files, refs: fileRefs }),
   /* 附件暂存（拖入即落盘 tmp/ 拿真身路径）：multipart 多文件一次上 */
   stash: async (files: File[]): Promise<string[]> => {
     const form = new FormData()
@@ -410,8 +410,6 @@ export const api = {
     fetch(`/api/topics/${id}`).then(
       json<{ entry: TopicEntry; messages: HistoryMessage[]; summary?: string }>,
     ),
-
-  resumeTopic: (id: string) => post<{ id: string }>(`/api/topics/${id}/resume`),
 
   /* 分支三操作：开新线 / 从源会话第 anchor 条消息（含）复制前缀分叉 / 切换分支 */
   newBranch: () => post<{ id: string }>('/api/branches/new'),

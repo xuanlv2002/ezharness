@@ -24,12 +24,9 @@ type ChatService struct {
 	Hub *domain.Hub
 }
 
-/* resolve 按线根 ID 定位分支（未知/为空回落活动分支，兼容过渡期）。 */
+/* resolve 按线根 ID 定位分支（nil = 未加载分支）。 */
 func (c *ChatService) resolve(rootID string) *domain.Session {
-	if s := c.Hub.SessionOf(rootID); s != nil {
-		return s
-	}
-	return c.Hub.Active
+	return c.Hub.SessionOf(rootID)
 }
 
 /* Send 启动一轮异步运行：引用为工作目录内路径的结构化列表（附件 =
@@ -41,6 +38,9 @@ func (c *ChatService) Send(rootID, text string, refs []hooks.RefFile) error {
 		return domain.ErrNoAPIKey
 	}
 	s := c.resolve(rootID)
+	if s == nil {
+		return ErrTopicNotFound
+	}
 	h, cancel, err := s.StartRun(context.Background(), text, refs)
 	if err != nil {
 		return err
@@ -78,27 +78,37 @@ func (c *ChatService) Send(rootID, text string, refs []hooks.RefFile) error {
 }
 
 /* Cancel 取消当前轮。 */
-func (c *ChatService) Cancel(rootID string) { c.resolve(rootID).Cancel() }
+func (c *ChatService) Cancel(rootID string) {
+	if s := c.resolve(rootID); s != nil {
+		s.Cancel()
+	}
+}
 
 /* DecideApprove 回传审批决策。 */
-func (c *ChatService) DecideApprove(rootID, callID string, approve bool, reason string) {
+func (c *ChatService) DecideApprove(rootID, callID string, ok bool, reason string) {
 	s := c.resolve(rootID)
+	if s == nil {
+		return
+	}
 	res := "已批准"
-	if !approve {
+	if !ok {
 		res = "已拒绝"
 		if reason != "" {
 			res = "已拒绝：" + reason
 		}
 	}
 	c.recordDecision(s, "approve", callID, res)
-	s.DecideApprove(approveDecision(callID, approve, reason))
+	s.DecideApprove(approve.Decision{CallID: callID, Approve: ok, Reason: reason})
 }
 
 /* DecideAnswer 回传提问回答。 */
 func (c *ChatService) DecideAnswer(rootID, callID, input string) {
 	s := c.resolve(rootID)
+	if s == nil {
+		return
+	}
 	c.recordDecision(s, "ask", callID, input)
-	s.DecideAnswer(answerOf(callID, input))
+	s.DecideAnswer(askuser.Answer{CallID: callID, Input: input})
 }
 
 /* recordDecision 持久化决策记录（轮末刷新后工具卡徽标用）并发
@@ -152,12 +162,4 @@ func (c *ChatService) refreshLine(s *domain.Session) {
 		}
 	}
 	_ = c.Hub.Topics.UpdateLeaf(s.RootID, s.ID, "", time.Now().UnixMilli(), len(msgs))
-}
-
-func approveDecision(callID string, ok bool, reason string) approve.Decision {
-	return approve.Decision{CallID: callID, Approve: ok, Reason: reason}
-}
-
-func answerOf(callID, input string) askuser.Answer {
-	return askuser.Answer{CallID: callID, Input: input}
 }
