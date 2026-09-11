@@ -10,10 +10,11 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-/* 发送校验矩阵：text/files 至少其一、附件个数、单附件大小。 */
+/* 发送形态校验：text/files 至少其一、附件个数（路径沙箱校验依赖
+Hub，在手测/集成覆盖；两用例均在解 Hub 前返回，nil Svc 安全）。 */
 func TestSendMessageValidation(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	c := &ChatController{Svc: nil} // 校验在进 Svc 前完成，nil 不触发
+	c := &ChatController{Svc: nil}
 
 	post := func(body string) int {
 		w := httptest.NewRecorder()
@@ -31,18 +32,12 @@ func TestSendMessageValidation(t *testing.T) {
 		"files": func() []map[string]string {
 			out := make([]map[string]string, 9)
 			for i := range out {
-				out[i] = map[string]string{"name": "a.txt", "mimeType": "text/plain", "data": "aGk="}
+				out[i] = map[string]string{"name": "a.txt", "path": "C:/w/tmp/att-a.txt"}
 			}
 			return out
 		}(),
 	})
 	if got := post(string(many)); got != http.StatusBadRequest {
 		t.Fatalf("too many files: %d", got)
-	}
-	big, _ := json.Marshal(map[string]any{
-		"files": []map[string]string{{"name": "big.bin", "mimeType": "application/octet-stream", "data": strings.Repeat("a", maxAttachBase64+1)}},
-	})
-	if got := post(string(big)); got != http.StatusBadRequest {
-		t.Fatalf("oversized file: %d", got)
 	}
 }

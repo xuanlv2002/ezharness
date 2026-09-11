@@ -29,6 +29,11 @@ export function isTextFilePath(p: string): boolean {
   return TEXT_NAMES.has(base) || (i > 0 && TEXT_EXTS.has(base.slice(i + 1)))
 }
 
+/* 图片判定（附件 chips 分流：图片进画板标注，文本进文件页编辑） */
+export function isImagePath(p: string): boolean {
+  return /\.(png|jpe?g|gif|webp|bmp|svg)$/i.test(p)
+}
+
 /* 去重键：分隔符与尾斜杠归一（C:\a.py 与 C:/a.py 同一 tab） */
 export function normFileKey(p: string): string {
   return p.trim().replace(/\\/g, '/').replace(/\/+$/, '')

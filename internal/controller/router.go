@@ -60,8 +60,8 @@ func NewRouter(c Controllers, dist fs.FS) *gin.Engine {
 		api.GET("/memory", c.Settings.GetMemory)
 		api.POST("/memory", c.Settings.SaveMemory)
 		api.GET("/memory/config", c.Settings.GetMemoryConfig)
-		api.POST("/memory/skills", c.Settings.CreateSkill)         // zip base64 新建技能
-		api.DELETE("/memory/skills/:id", c.Settings.DeleteSkill)   // 删除技能目录
+		api.POST("/memory/skills", c.Settings.CreateSkill)             // zip base64 新建技能
+		api.DELETE("/memory/skills/:id", c.Settings.DeleteSkill)       // 删除技能目录
 		api.POST("/memory/skills/:id/enabled", c.Settings.ToggleSkill) // 启停技能
 
 		api.GET("/topics", c.Topics.List)
@@ -84,9 +84,11 @@ func NewRouter(c Controllers, dist fs.FS) *gin.Engine {
 		api.GET("/apps", c.Apps.List)
 		api.POST("/apps/open", c.Apps.Open)
 
-		api.GET("/workspace/file", c.Workspace.File)  // 工作目录文件预览（附件 chips 源）
-		api.HEAD("/workspace/file", c.Workspace.File) // 同上（文件页轮询 Last-Modified 用；gin 不自动映射 HEAD→GET）
-		api.POST("/workspace/save", c.Workspace.Save) // 工作目录文本保存（file:// 编辑器）
+		api.GET("/workspace/file", c.Workspace.File)         // 工作目录文件预览（附件 chips 源）
+		api.HEAD("/workspace/file", c.Workspace.File)        // 同上（文件页轮询 Last-Modified 用；gin 不自动映射 HEAD→GET）
+		api.POST("/workspace/save", c.Workspace.Save)        // 工作目录文本保存（资源查看器·文本）
+		api.POST("/workspace/save-bin", c.Workspace.SaveBin) // 二进制写回（资源查看器·图片画板保存）
+		api.POST("/workspace/stash", c.Workspace.Stash)      // 附件暂存（拖入即落盘 tmp/，发送只传路径引用）
 
 		/* 魔法看板·共享终端：WS 多路复用 + REST 管理 */
 		api.GET("/terminal/ws", c.Terminal.Ws)

@@ -237,6 +237,7 @@
             text={ub.text}
             images={ub.images}
             files={ub.files}
+            refs={ub.refs}
             role="user"
             onFork={ub.owner && ub.msgIdx !== undefined ? () => void store.forkFrom(ub.owner!, ub.msgIdx!) : undefined}
           />
@@ -279,14 +280,14 @@
           {#each seg.b.paths as p, i (p)}
             {#if seg.b.images[i]}
               <img src={`data:${seg.b.images[i].mimeType};base64,${seg.b.images[i].data}`} alt={p} loading="lazy"
-                onclick={() => void store.editImage(`data:${seg.b.images[i].mimeType};base64,${seg.b.images[i].data}`, p.split(/[/\\]/).pop() || p)}
-                title="点击进画板编辑" />
+                onclick={() => void store.openBase64Draft(`data:${seg.b.images[i].mimeType};base64,${seg.b.images[i].data}`, p.split(/[/\\]/).pop() || p)}
+                title="转为画板草稿编辑" />
             {:else}
               <!-- 实时路径：工具结果只有路径，缩略图走工作目录文件服务 -->
               <img src={`/api/workspace/file?path=${encodeURIComponent(p)}`} alt={p} loading="lazy"
-                onclick={() => void store.editImage(`/api/workspace/file?path=${encodeURIComponent(p)}`, p.split(/[/\\]/).pop() || p)}
+                onclick={() => store.openFileAt(p)}
                 onerror={(e) => ((e.currentTarget as HTMLImageElement).style.display = 'none')}
-                title="点击进画板编辑" />
+                title="点击在画板编辑（保存写回）" />
             {/if}
           {/each}
           <span class="label">已加载上下文</span>

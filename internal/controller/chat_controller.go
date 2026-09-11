@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -13,14 +15,12 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"ezharness/internal/domain"
+	"ezharness/internal/hooks"
 	"ezharness/internal/service"
 )
 
-/* 附件输入限制（文件落盘暂存，不进上下文，上限可放宽于旧图片直传）。 */
-const (
-	maxAttachFiles    = 8        // 单条消息附件数上限
-	maxAttachBase64   = 20 << 20 // 单文件 base64 字符数上限（约 15MB 原始内容）
-)
+/* 附件输入限制（拖入即暂存，发送只传 tmp/ 路径引用）。 */
+const maxAttachFiles = 8 // 单条消息附件数上限
 
 /* ChatController 对话表现层。 */
 type ChatController struct {
@@ -30,41 +30,79 @@ type ChatController struct {
 /*
 	SendMessage POST /api/sessions/:id/messages（:id=分支根 ID）。
 
-文本与附件至少其一；附件为内嵌 base64，服务层落盘工作目录 tmp/
-（不进上下文），路径经 <upload_file> 记录告知模型，响应回传落盘路径
-（前端回填附件 chips 的预览源）。
+文本与引用至少其一；引用统一为工作目录内路径（一切皆资源：拖入暂存
+的 tmp 文件、画板编辑的图片、AI 生成的文件均可引用）——files 是整
+文件引用（附件 chips），refs 带标注片段（文件页「添加到对话」），均
+经 <reference_file> 记录告知模型。路径必须落在工作目录内且文件存在
+——工作目录本就是 AI 沙箱，引用无越权面。
 */
 func (c *ChatController) SendMessage(g *gin.Context) {
 	var body struct {
 		Text  string `json:"text"`
 		Files []struct {
-			Name     string `json:"name"`
-			MimeType string `json:"mimeType"`
-			Data     string `json:"data"`
+			Name string `json:"name"`
+			Path string `json:"path"`
 		} `json:"files"`
+		Refs []struct {
+			Path  string `json:"path"`
+			Items []struct {
+				Sel  string `json:"sel"`
+				Note string `json:"note"`
+				From int    `json:"from"`
+				To   int    `json:"to"`
+			} `json:"items"`
+		} `json:"refs"`
 	}
 	if err := g.ShouldBindJSON(&body); err != nil {
 		g.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	if strings.TrimSpace(body.Text) == "" && len(body.Files) == 0 {
+	if strings.TrimSpace(body.Text) == "" && len(body.Files) == 0 && len(body.Refs) == 0 {
 		g.JSON(http.StatusBadRequest, gin.H{"error": "text required"})
 		return
 	}
-	if len(body.Files) > maxAttachFiles {
-		g.JSON(http.StatusBadRequest, gin.H{"error": "附件过多（单条最多 8 个）"})
+	if len(body.Files)+len(body.Refs) > maxAttachFiles {
+		g.JSON(http.StatusBadRequest, gin.H{"error": "引用过多（单条最多 8 个）"})
 		return
 	}
-	files := make([]domain.Attachment, 0, len(body.Files))
+	workDir := service.ResolveWorkDir(c.Svc.Hub.SettingsSnapshot().WorkDir)
+	checkPath := func(name, p string) (string, bool) {
+		abs, err := filepath.Abs(filepath.FromSlash(p))
+		if err != nil || p == "" {
+			g.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("引用 %s 路径无效", name)})
+			return "", false
+		}
+		rel, err := filepath.Rel(workDir, abs)
+		if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			g.JSON(http.StatusForbidden, gin.H{"error": fmt.Sprintf("引用 %s 不在工作目录内", name)})
+			return "", false
+		}
+		if info, err := os.Stat(abs); err != nil || info.IsDir() {
+			g.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("引用 %s 不存在或已失效", name)})
+			return "", false
+		}
+		return filepath.ToSlash(abs), true
+	}
+	refs := make([]hooks.RefFile, 0, len(body.Files)+len(body.Refs))
 	for _, f := range body.Files {
-		if len(f.Data) > maxAttachBase64 {
-			g.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("附件 %s 过大（不超过 15MB）", f.Name)})
+		abs, ok := checkPath(f.Name, f.Path)
+		if !ok {
 			return
 		}
-		files = append(files, domain.Attachment{Name: f.Name, MimeType: f.MimeType, Data: f.Data})
+		refs = append(refs, hooks.RefFile{Path: abs})
 	}
-	paths, err := c.Svc.Send(g.Param("id"), body.Text, files)
-	if err != nil {
+	for _, r := range body.Refs {
+		abs, ok := checkPath(filepath.Base(filepath.FromSlash(r.Path)), r.Path)
+		if !ok {
+			return
+		}
+		items := make([]hooks.RefItem, 0, len(r.Items))
+		for _, it := range r.Items {
+			items = append(items, hooks.RefItem{Sel: it.Sel, Note: it.Note, From: it.From, To: it.To})
+		}
+		refs = append(refs, hooks.RefFile{Path: abs, Items: items})
+	}
+	if err := c.Svc.Send(g.Param("id"), body.Text, refs); err != nil {
 		if errors.Is(err, domain.ErrBusy) {
 			g.JSON(http.StatusConflict, gin.H{"error": err.Error()})
 			return
@@ -76,7 +114,7 @@ func (c *ChatController) SendMessage(g *gin.Context) {
 		g.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	g.JSON(http.StatusOK, gin.H{"ok": true, "files": paths})
+	g.JSON(http.StatusOK, gin.H{"ok": true})
 }
 
 /* CancelTurn POST /api/sessions/:id/cancel（:id=分支根 ID）。 */

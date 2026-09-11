@@ -2,21 +2,25 @@
   import { onMount } from 'svelte'
 
   /*
-  魔法画板（对象模型）：元素存对象数组，静态层缓存到离屏 buf，
-  拖动/笔画期间只叠加活动元素（rAF 节流）。
+  魔法画板（图片查看器的画布引擎，对象模型）：元素存对象数组，静态层
+  缓存到离屏 buf，拖动/笔画期间只叠加活动元素（rAF 节流）。
   工具：选择（拖动 / Del 删除 / 双击改字）、画笔、白笔、矩形、
   椭圆、箭头、文本。贴入图片作底图垫底；导出走离屏合成。
-  作为看板 tab 常驻（keep-alive）：active 仅在本 tab 激活时为真，
-  键盘监听与尺寸测量都按此守卫（display:none 下 clientWidth=0）。
+  常驻保活（keep-alive）：active 仅在本 tab 激活时为真，键盘监听与
+  尺寸测量都按此守卫（display:none 下 clientWidth=0）。
+  exportFile 供外层（ImageViewer 保存写回）取合成产物；onDone 是
+  底部主按钮（「添加到对话」）的回流。
   */
   let {
     source = null,
     active = false,
+    doneLabel = '添加到聊天',
     onDone,
   }: {
     source?: File | null
     active?: boolean
-    onDone: (f: File) => void
+    doneLabel?: string
+    onDone?: (f: File) => void
   } = $props()
 
   /* ── 常量与类型 ── */
@@ -473,14 +477,23 @@
 
   /* ── 导出与生命周期 ── */
 
-  function finish() {
+  /* exportFile 合成当前画布（底图+元素）为 PNG File——保存写回与
+  「添加到对话」共用的导出通道 */
+  export async function exportFile(): Promise<File> {
     const off = document.createElement('canvas')
     off.width = W
     off.height = H
     paintTo(off.getContext('2d')!, elements)
-    off.toBlob((blob) => {
-      if (blob) onDone(new File([blob], `画板-${Date.now()}.png`, { type: 'image/png' }))
-    }, 'image/png')
+    return new Promise((resolve, reject) => {
+      off.toBlob((blob) => {
+        if (blob) resolve(new File([blob], `画板-${Date.now()}.png`, { type: 'image/png' }))
+        else reject(new Error('导出失败'))
+      }, 'image/png')
+    })
+  }
+
+  async function finish() {
+    onDone?.(await exportFile())
   }
 
   async function init() {
@@ -655,7 +668,7 @@
         </button>
       </div>
     </div>
-    <button class="done" onclick={finish}>添加到聊天</button>
+    <button class="done" onclick={() => void finish()}>{doneLabel}</button>
   </footer>
 </section>
 

@@ -2,14 +2,14 @@
   import { marked } from 'marked'
   import DOMPurify from 'dompurify'
   import { api, type ImagePayload } from '../lib/api'
-  import { isDesktop } from '../lib/desktop'
-  import { fileBaseName, isTextFilePath } from '../lib/textfile'
+  import { fileBaseName, isImagePath } from '../lib/textfile'
   import { store } from '../lib/store.svelte'
 
   let {
     text,
     images,
     files,
+    refs,
     reasoning = '',
     streaming = false,
     role,
@@ -18,6 +18,7 @@
     text: string
     images?: ImagePayload[]
     files?: { name: string; path?: string }[]
+    refs?: { path: string; count: number }[]
     reasoning?: string
     streaming?: boolean
     role: 'user' | 'assistant'
@@ -87,9 +88,9 @@
         .then(() => (store.lastStatus = `正在打开快应用 ${id}`))
         .catch((err: unknown) => (store.lastStatus = `打开快应用失败：${(err as Error).message}`))
     } else if (kind === 'file') {
-      /* 文本白名单门禁在此（后端沙箱之外的入口门禁） */
-      if (isTextFilePath(id)) store.openFileAt(id)
-      else store.lastStatus = `该类型文件暂不支持预览编辑：${id}`
+      /* 资源页按类型路由（registry）：文本进编辑器、图片进画板、
+      html/pdf 有专属查看器、其余占位提示 */
+      store.openFileAt(id)
     }
   }
 
@@ -138,26 +139,9 @@
     }
   }
 
-  /* 附件预览地址（工作目录文件服务；path 未回填前不可预览） */
-  const fileUrl = (p?: string) => (p ? `/api/workspace/file?path=${encodeURIComponent(p)}` : '')
-
-  /* 打开附件：桌面壳经系统浏览器（WebView 内导航会顶掉 SPA），浏览器模式新标签 */
-  function openFile(p?: string) {
-    const url = fileUrl(p)
-    if (!url) return
-    const abs = new URL(url, location.href).toString()
-    if (isDesktop) {
-      void fetch('/api/window/open-url', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url: abs }),
-      })
-    } else {
-      window.open(abs, '_blank', 'noopener')
-    }
-  }
-
-  const isImagePath = (name: string) => /\.(png|jpe?g|gif|webp|bmp|svg)$/i.test(name)
+  /* 附件预览地址（工作目录文件服务；带版本参数——画板写回后强制刷新） */
+  const fileUrl = (p?: string) =>
+    p ? `/api/workspace/file?path=${encodeURIComponent(p)}${(store.imgVer[p] ?? 0) ? `&v=${store.imgVer[p]}` : ''}` : ''
 </script>
 
 {#if role === 'user'}
@@ -168,10 +152,8 @@
         <div class="fchips">
           {#each files as f, i (i)}
             <button class="fchip"
-              onclick={() => (isImagePath(f.name) && f.path
-                ? void store.editImage(fileUrl(f.path), f.name)
-                : openFile(f.path))}
-              title={isImagePath(f.name) && f.path ? `${f.name}（点击进画板编辑）` : f.path || f.name} disabled={!f.path}>
+              onclick={() => f.path && store.openFileAt(f.path)}
+              title={f.path ? `${f.path}（点击在资源页打开——图片可编辑写回）` : f.name} disabled={!f.path}>
               {#if isImagePath(f.name)}
                 {#if f.path}
                   <img src={fileUrl(f.path)} alt={f.name} loading="lazy" />
@@ -186,12 +168,22 @@
           {/each}
         </div>
       {/if}
+      {#if refs?.length}
+        <div class="fchips">
+          {#each refs as r, i (i)}
+            <button class="fchip ref" onclick={() => store.openFileAt(r.path)} title={`${r.path}（点击在资源页打开）`}>
+              <span class="fico">🔗</span>
+              <span class="fname">{r.path.split(/[/\\]/).pop()}{r.count > 1 ? ` · ${r.count} 条标注` : r.count === 1 ? ' · 1 条标注' : ''}</span>
+            </button>
+          {/each}
+        </div>
+      {/if}
       {#if images?.length}
         <div class="imgs">
           {#each images as img, i (i)}
             <img src={`data:${img.mimeType};base64,${img.data}`} alt="附件图片 {i + 1}" loading="lazy"
-              onclick={() => void store.editImage(`data:${img.mimeType};base64,${img.data}`, `图片 ${i + 1}.png`)}
-              title="点击进画板编辑" />
+              onclick={() => void store.openBase64Draft(`data:${img.mimeType};base64,${img.data}`, `图片 ${i + 1}.png`)}
+              title="转为画板草稿编辑" />
           {/each}
         </div>
       {/if}

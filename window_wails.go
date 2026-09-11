@@ -63,6 +63,9 @@ func openWindow(a *app) {
 		MinWidth:  MinWindowW,
 		Hidden:    true, // 尺寸钳制后再显示，避免超大窗口闪现
 		Frameless: true,
+		// OS 文件拖放（默认 false = 拖入被拦截，HTML5 DnD 收不到；
+		// 开启后 Wails 接管外部拖入，页面内 HTML5 拖放不受影响）
+		EnableFileDrop: true,
 		// 组合宿主 + 非客户区支持：前者让 WndProc 接入宿主命中路由
 		// （边缘缩放 resizeBorderHitTest + app-region 拖拽命中），后者开启
 		// WebView2 对 CSS app-region 的解析。二者缺一则边缘无法缩放。
@@ -94,6 +97,11 @@ func openWindow(a *app) {
 	// 不显示：超时兜底，与事件路径经 CAS 幂等合流。若显示恒比事件
 	// 晚 ~2s 即兜底触发（事件丢失），其余慢在 WebView2 初始化/页面加载
 	time.AfterFunc(2*time.Second, show)
+
+	// OS 文件拖放不在此处理（前端 window 级 HTML5 drop 统一 stash：
+	// WebView2 下 dataTransfer.files 可用，与浏览器行为一致且无双通道
+	// 去重问题）。EnableFileDrop 仍须开启——Wails 注入的 dragenter 在
+	// 无 data-file-drop-target 命中时会设 dropEffect=none，drop 即被禁。
 
 	// 关闭拦截：实时读设置决定隐藏或放行（CloseToTray 运行时生效）。
 	// quitting 是退出意图（托盘退出/前端确认退出）：Quit() 会触发关窗流程，

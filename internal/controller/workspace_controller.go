@@ -3,7 +3,10 @@
 package controller
 
 import (
+	"fmt"
+	"io"
 	"mime"
+	"mime/multipart"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -63,6 +66,9 @@ func (c *WorkspaceController) File(g *gin.Context) {
 	}
 	g.Header("Content-Type", ct)
 	g.Header("Content-Disposition", "inline")
+	/* 图片等被画板原地写回：允许缓存但强制 revalidate（未变 304 几乎
+	零开销，写回后 mtime 变必拿新图）——防启发式缓存直出旧图 */
+	g.Header("Cache-Control", "no-cache")
 	/* 真实 mtime 作 modtime：Last-Modified/304 语义正确，前端文件页
 	轮询 HEAD 对比即可感知磁盘变更（AI write_file 等） */
 	http.ServeContent(g.Writer, g.Request, filepath.Base(abs), info.ModTime(), f)
@@ -110,4 +116,114 @@ func (c *WorkspaceController) Save(g *gin.Context) {
 		return
 	}
 	g.JSON(http.StatusOK, gin.H{"ok": true})
+}
+
+/* maxStashSize 单文件暂存上限（20MB，与旧 base64 直传量级一致）；二进制写回同限。 */
+const maxStashSize = 20 << 20
+
+/*
+Stash POST /api/workspace/stash（multipart，字段名 file 可多个）：把
+拖入/粘贴/画板产物写入工作目录 tmp/ 暂存区，返回落盘路径——"拖入即
+暂存"：输入框附件立刻有真身路径（chip 可点开编辑），发送时只传路径
+引用，不再走 base64。
+*/
+func (c *WorkspaceController) Stash(g *gin.Context) {
+	form, err := g.MultipartForm()
+	if err != nil {
+		g.JSON(http.StatusBadRequest, gin.H{"error": "invalid multipart"})
+		return
+	}
+	heads := form.File["file"]
+	if len(heads) == 0 {
+		g.JSON(http.StatusBadRequest, gin.H{"error": "no file"})
+		return
+	}
+	for _, fh := range heads {
+		if fh.Size > maxStashSize {
+			g.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": fmt.Sprintf("文件 %s 过大（不超过 20MB）", fh.Filename)})
+			return
+		}
+	}
+	inputs, err := readMultipart(heads)
+	if err != nil {
+		g.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	paths, err := service.StashFiles(g.Request.Context(), c.Hub, inputs)
+	if err != nil {
+		g.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	g.JSON(http.StatusOK, gin.H{"ok": true, "files": paths})
+}
+
+/*
+SaveBin POST /api/workspace/save-bin（multipart：path + file）：二进制
+写回工作目录内已有文件（画板编辑图片的原地保存通道——一切皆资源，
+编辑即写回真身）。沙箱与 Save 一致，大小上限 20MB。
+*/
+func (c *WorkspaceController) SaveBin(g *gin.Context) {
+	path := g.PostForm("path")
+	if path == "" {
+		g.JSON(http.StatusBadRequest, gin.H{"error": "path required"})
+		return
+	}
+	fh, err := g.FormFile("file")
+	if err != nil {
+		g.JSON(http.StatusBadRequest, gin.H{"error": "file required"})
+		return
+	}
+	if fh.Size > maxStashSize {
+		g.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": "文件过大（不超过 20MB）"})
+		return
+	}
+	workDir := service.ResolveWorkDir(c.Hub.SettingsSnapshot().WorkDir)
+	abs, err := filepath.Abs(filepath.FromSlash(path))
+	if err != nil {
+		g.JSON(http.StatusBadRequest, gin.H{"error": "invalid path"})
+		return
+	}
+	rel, err := filepath.Rel(workDir, abs)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		g.JSON(http.StatusForbidden, gin.H{"error": "path outside workspace"})
+		return
+	}
+	if info, err := os.Stat(abs); err != nil || info.IsDir() {
+		g.JSON(http.StatusBadRequest, gin.H{"error": "target not found"})
+		return
+	}
+	f, err := fh.Open()
+	if err != nil {
+		g.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	defer f.Close()
+	data, err := io.ReadAll(f)
+	if err != nil {
+		g.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	if err := c.Hub.Fsys.Write(g.Request.Context(), abs, data); err != nil {
+		g.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	g.JSON(http.StatusOK, gin.H{"ok": true})
+}
+
+/* readMultipart 把 multipart 文件头读成暂存输入（大小预检在调用方）。 */
+func readMultipart(heads []*multipart.FileHeader) ([]service.StashInput, error) {
+	inputs := make([]service.StashInput, 0, len(heads))
+	for _, fh := range heads {
+		f, err := fh.Open()
+		if err != nil {
+			return nil, err
+		}
+		data, readErr := io.ReadAll(f)
+		f.Close()
+		if readErr != nil {
+			return nil, readErr
+		}
+		inputs = append(inputs, service.StashInput{Name: fh.Filename, Data: data})
+	}
+	return inputs, nil
 }

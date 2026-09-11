@@ -6,6 +6,7 @@ import {
   type BranchView,
   type DecisionRecord,
   type FilePayload,
+  type FileRef,
   type ForkSummary,
   type HistoryMessage,
   type ImagePayload,
@@ -14,6 +15,15 @@ import {
   type Status,
   type StatusPayload,
 } from './api'
+
+/* 输入框附件（一切皆资源）：path = 已有真身（引用，发送不复制）；
+   file = 画板草稿（发送时才 stash 持久化）；两者皆空 = 拖入暂存中占位 */
+export interface Att {
+  name: string
+  path?: string
+  file?: File
+}
+export type { FileRef }
 
 export interface ToolBlockData {
   id: string
@@ -73,6 +83,9 @@ export type Block = { uid: number } & (
       text: string
       images?: ImagePayload[]
       files?: { name: string; path?: string }[]
+      /* 文件引用 chips（文件页「添加到对话」→<reference_file>）：count
+         = 标注条数（历史重建不还原片段全文，chip 点击回跳文件页） */
+      refs?: { path: string; count: number }[]
       owner?: string
       msgIdx?: number
     }
@@ -95,19 +108,6 @@ export interface TotalUsage {
 
 function nowHM(): string {
   return new Date().toTimeString().slice(0, 5)
-}
-
-/* File 读成上传载荷（base64 不含 data: 前缀，与后端解码约定一致） */
-function fileToPayload(f: File): Promise<FilePayload> {
-  return new Promise((resolve, reject) => {
-    const r = new FileReader()
-    r.onload = () => {
-      const s = String(r.result)
-      resolve({ name: f.name, mimeType: f.type || 'application/octet-stream', data: s.slice(s.indexOf(',') + 1) })
-    }
-    r.onerror = () => reject(r.error ?? new Error('read failed'))
-    r.readAsDataURL(f)
-  })
 }
 
 /* 路径取文件名（chips 展示用；兼容 / 与 \ 两种分隔符） */
@@ -205,19 +205,26 @@ class AppStore {
   /* 通知跳转主时间线锚点（ChatView effect 消费滚动后清空；tick 依赖供
   跨分支切换后块加载完成重试） */
   jumpMain = $state('')
-  /* 画板：开合/画板底图（编辑附件时为原 File）与待回流产物。
-     boardSeq 在每次"从关到开"时递增（Panel 用 {#key} 重建画板=新画布）；
-     pendingBoardFile 由 ChatView 消费进附件列表（tag 为编辑目标下标） */
-  boardOpen = $state(false)
-  boardSeq = $state(0)
-  boardSource = $state<File | null>(null)
-  pendingBoardFile = $state<{ file: File; tag: string; source: File | null } | null>(null)
+  /* 画板草稿（图片查看器的未保存新图）：draftOpen 是「打开/续编草稿」
+     请求（source = 续编底图，tag = 来源附件下标，seq 递增 = 画布重建），
+     ResourcePane 消费；草稿 tab 全局唯一，重进即以 chip 当前内容重建 */
+  draftOpen = $state<{ source: File | null; tag: string; seq: number } | null>(null)
+  private draftSeq = 0
+  /* 待回流附件（查看器「添加到对话」/Wails 拖入 att.stashed）：ChatView
+     消费进输入框 atts（tag 匹配且身份一致时原位替换，否则追加） */
+  pendingAtts = $state<(Att & { tag?: string; source?: File | null })[] | null>(null)
+  /* 文件页「添加到对话」的待回流引用（路径+标注片段，行号已算好）；
+     ChatView 消费进输入框 refs chips（同 path 替换去重） */
+  pendingFileRef = $state<FileRef | null>(null)
+  /* 图片写回后的缩略图版本（按路径 bump：同 URL 的 img 立即换 src，
+     含历史 chips——引用同一资源，处处显示最新；跨会话由 HTTP 304 兜底） */
+  imgVer = $state<Record<string, number>>({})
   /* 共享终端抽屉(独立于画板 overlay,与聊天并存):收起仅滑出,
      WS/xterm 常驻保活。termFocus 是外部请求定位的终端 id
      （supper_url term:// 点击入口；TerminalTab 消费后清空）。
      drawerTool 是抽屉内工具页（终端/文件互斥显隐，双 pane 常驻保活）；
      fileFocus 是待打开的文件路径（supper_url file:// 点击入口，
-     FilePane 消费后清空） */
+     ResourcePane 消费后清空） */
   termDrawerOpen = $state(false)
   termFocus = $state('')
   drawerTool = $state<'term' | 'file'>('term')
@@ -391,7 +398,8 @@ class AppStore {
     const dmap = new Map((decisions || []).map((d) => [d.callId, d.resolution]))
     const forkQueue = [...(forks || [])]
     const out: Block[] = []
-    let pendingFiles: { name: string; path?: string }[] | undefined // <upload_file> 待挂到下一个 user 块
+    let pendingFiles: { name: string; path?: string }[] | undefined // 引用记录（<reference_file>/旧 <upload_file>）待挂到下一个 user 块
+    let pendingRefs: { path: string; count: number }[] | undefined // 带标注的引用（文件页「添加到对话」）
     for (let mi = 0; mi < messages.length; mi++) {
       const m = messages[mi]
       if (m.role === 'user') {
@@ -411,10 +419,26 @@ class AppStore {
           // 资源变更记录：remind 变更段按需插入（实时由 res.change 事件渲染）
           const items = [...m.content.matchAll(/^- (.+)$/gm)].map((x) => x[1].trim()).filter(Boolean)
           if (items.length) out.push({ kind: 'reschange', uid: this.nuid(), items })
-        } else if (m.content.includes('<upload_file>')) {
-          // 附件路径记录：路径挂到紧跟其后的真实 user 块（chips 渲染）
-          const paths = [...m.content.matchAll(/^- (.+)$/gm)].map((x) => x[1].trim()).filter(Boolean)
-          if (paths.length) pendingFiles = paths.map((p) => ({ name: baseName(p), path: p }))
+        } else if (m.content.includes('<reference_file>') || m.content.includes('<upload_file>')) {
+          /* 引用记录（新 <reference_file>，兼容旧 <upload_file>）：顶层
+          「- 路径」行 = 引用；其下缩进的「【片段」行 = 文件页标注条数
+          （历史 chip 不还原片段全文，点击回跳文件页读真身）。无标注的
+          引用渲染为附件 chips，带标注的渲染为引用 chips。 */
+          const legacy = m.content.includes('<upload_file>')
+          const refsAll: { path: string; count: number }[] = []
+          let cur: { path: string; count: number } | null = null
+          for (const l of m.content.split('\n')) {
+            const m2 = l.match(/^- (.+)$/)
+            if (m2) {
+              const node = { path: m2[1].trim(), count: 0 }
+              refsAll.push(node)
+              cur = legacy ? null : node
+            } else if (cur && l.startsWith('  【片段')) {
+              cur.count++
+            }
+          }
+          pendingFiles = refsAll.filter((r) => r.count === 0).map((r) => ({ name: baseName(r.path), path: r.path }))
+          pendingRefs = refsAll.filter((r) => r.count > 0)
         } else if (m.content.includes('<image_loaded>')) {
           // read_file 图片已进上下文：渲染为缩略图小行（paths 在标签体内，每行一个）
           const inner = m.content.replace(/^[\s\S]*?<image_loaded>|<\/image_loaded>[\s\S]*$/g, '')
@@ -429,8 +453,9 @@ class AppStore {
         } else if (m.content.includes('<context_trim')) {
           out.push({ kind: 'note', uid: this.nuid(), text: `✂️ ${trimText(m.content)}` })
         } else {
-          out.push({ kind: 'user', uid: this.nuid(), text: m.content, images: m.images, files: pendingFiles, owner, msgIdx: mi })
+          out.push({ kind: 'user', uid: this.nuid(), text: m.content, images: m.images, files: pendingFiles, refs: pendingRefs, owner, msgIdx: mi })
           pendingFiles = undefined
+          pendingRefs = undefined
         }
       } else if (m.role === 'assistant') {
         if (m.content || m.reasoning) {
@@ -517,41 +542,32 @@ class AppStore {
     this.activeForkId = ''
   }
 
-  /* ── 魔法看板 ── */
+  /* ── 魔法看板（图片查看器的画布引擎，草稿入口） ── */
 
-  /* openBoard 打开画板；source 为编辑中的附件底图（tag 为其下标，
-     回流时据此替换）。从关到开时递增 boardSeq（画板重建=新画布）。 */
-  openBoard(source: File | null = null, tag = '') {
-    if (!this.boardOpen) this.boardSeq++
-    this.boardSource = source
-    this.boardTag = tag
-    this.boardOpen = true
+  /* openDraftImage 打开画板草稿（画笔钮/草稿 chip 续编/旧 base64 图片）：
+     source = 续编底图（无则空白画布），tag = 来源附件下标（「添加到
+     对话」时据此替换原 chip）。seq 每次递增 = 画布重建（草稿 tab 唯一，
+     重进即以 chip 当前内容重建）。 */
+  openDraftImage(source: File | null = null, tag = '') {
+    this.draftOpen = { source, tag, seq: ++this.draftSeq }
+    this.drawerTool = 'file'
+    this.termDrawerOpen = true
   }
 
-  /* completeBoard 画板产物回流：交给 ChatView 消费（替换编辑目标或追加）。 */
-  completeBoard(file: File) {
-    this.pendingBoardFile = { file, tag: this.boardTag, source: this.boardSource }
-    this.boardOpen = false
+  /* bumpImg 图片写回后按路径递增缩略图版本（同 URL 的 img 立即换 src，
+     含聊天历史 chips——引用同一资源，处处显示最新）。 */
+  bumpImg(path: string) {
+    this.imgVer = { ...this.imgVer, [path]: (this.imgVer[path] ?? 0) + 1 }
   }
 
-  closeBoard() {
-    this.boardOpen = false
-  }
-
-  toggleBoard() {
-    if (this.boardOpen) this.closeBoard()
-    else this.openBoard()
-  }
-
-  /* editImage 把一张图片（src = data: 或工作目录文件服务 URL）作为底图
-     直接打开魔法画板编辑——产物经 completeBoard 回流进输入框附件，
-     直接关闭画板则无事发生。时间线/附件缩略图的点击入口。 */
-  async editImage(src: string, name: string) {
+  /* openBase64Draft 把无路径的内存图片（旧多模态 base64 历史）转草稿：
+     dataURL → File → openDraftImage。 */
+  async openBase64Draft(src: string, name: string) {
     try {
       const r = await fetch(src)
       if (!r.ok) throw new Error('read fail')
       const blob = await r.blob()
-      this.openBoard(new File([blob], name || 'image.png', { type: blob.type || 'image/png' }))
+      this.openDraftImage(new File([blob], name || 'image.png', { type: blob.type || 'image/png' }))
     } catch {
       this.lastStatus = '图片读取失败，未能打开画板'
     }
@@ -615,10 +631,15 @@ class AppStore {
   /* ── 发送 / 取消 ── */
 
   /* 打断式发送：运行中再来指令 = 先终止当前轮（等引擎真正退出，含工具树杀），
-     再执行新指令；等待超时则放弃并提示。附件先读 base64，落盘路径由响应
-     回传（chips 缩略图源）。 */
-  async send(text: string, files?: File[]) {
-    if (!this.activeId || (!text.trim() && !files?.length)) return
+     再执行新指令；等待超时则放弃并提示。附件/引用统一为工作目录路径
+    （<reference_file> 记录告知模型）；画板草稿（path 空有 file）此时才
+     stash 持久化——失败则原样保留输入框内容。 */
+  async send(text: string, atts: Att[] = [], refs: FileRef[] = []) {
+    if (!this.activeId || (!text.trim() && !atts.length && !refs.length)) return
+    if (atts.some((a) => !a.path && !a.file)) {
+      this.lastStatus = '附件仍在暂存中，稍候再发送'
+      return
+    }
     if (this.busy) {
       this.lastStatus = '正在终止当前轮…'
       await this.cancel()
@@ -627,28 +648,32 @@ class AppStore {
         return
       }
     }
+    let final: FilePayload[] = atts.map((a) => ({ name: a.name, path: a.path! }))
+    const drafts = atts.filter((a) => !a.path && a.file)
+    if (drafts.length) {
+      try {
+        const paths = await api.stash(drafts.map((d) => d.file!))
+        const by = new Map(drafts.map((d, i) => [d, paths[i]]))
+        final = atts.map((a) => (by.has(a) ? { name: a.name, path: by.get(a)! } : { name: a.name, path: a.path! }))
+      } catch (e) {
+        this.lastStatus = `画板草稿暂存失败：${(e as Error).message}`
+        return
+      }
+    }
     const uid = this.nuid()
     this.blocks.push({
       kind: 'user',
       uid,
       text,
-      files: files?.map((f) => ({ name: f.name })),
+      files: final.map((a) => ({ name: a.name, path: a.path })),
+      refs: refs.map((r) => ({ path: r.path, count: r.items.length })),
     })
     this.pendingUserUid = uid
     this.pendingUserText = text
     this.busy = true
     this.lastStatus = ''
     try {
-      const payloads = files?.length ? await Promise.all(files.map(fileToPayload)) : undefined
-      const res = await api.send(this.activeId, text, payloads)
-      if (res?.files?.length) {
-        const b = this.blocks.find((x) => x.uid === uid)
-        if (b && b.kind === 'user') {
-          res.files.forEach((p, i) => {
-            if (b.files?.[i]) b.files[i].path = p
-          })
-        }
-      }
+      await api.send(this.activeId, text, final, refs)
       void this.refreshBranches() // 首次发言落线索引 + 运行指示
     } catch (e) {
       this.busy = false

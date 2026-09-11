@@ -12,7 +12,6 @@
   import McpView from './components/McpView.svelte'
   import SecurityView from './components/SecurityView.svelte'
   import SettingsView from './components/SettingsView.svelte'
-  import Panel from './components/board/Panel.svelte'
   import WorkspaceDrawer from './components/board/WorkspaceDrawer.svelte'
 
   let view = $state<'chat' | 'models' | 'memory' | 'knowledge' | 'tools' | 'mcp' | 'security' | 'settings'>('chat')
@@ -64,8 +63,8 @@
         <SettingsView />
       {/if}
     </main>
-    <!-- 工作区抽屉（终端/文件双工具页）：推挤式右布局列（.app flex 行内，
-    打开挤窄 main；pane 常驻挂载保活） -->
+    <!-- 工作区抽屉（终端/文件/画板三工具页）：推挤式右布局列（.app flex
+    行内，打开挤窄 main；pane 常驻挂载保活） -->
     <WorkspaceDrawer />
   </div>
 </div>
@@ -75,9 +74,6 @@
   <span>·</span>
   <a href="https://github.com/xuanlv2002/ezloop" target="_blank" rel="noreferrer">powered by ezloop</a>
 </footer>
-
-<!-- 魔法看板（画板/浏览器大 overlay）：fixed 定位，不参与 view 切换 -->
-<Panel />
 
 <style>
   .shell {

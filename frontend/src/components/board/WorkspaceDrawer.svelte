@@ -1,27 +1,38 @@
 <script lang="ts">
   import { store } from '../../lib/store.svelte'
   import TerminalTab from './TerminalTab.svelte'
-  import FilePane from './FilePane.svelte'
+  import ResourcePane from '../viewer/ResourcePane.svelte'
 
   /*
   工作区抽屉：推挤式右布局列（非悬浮 overlay）——打开时占布局宽度，
-  聊天主列被挤窄不遮挡。工具页（终端/文件）互斥显隐，双 pane 常驻
-  挂载保活（终端 WS/xterm、文件 buffer/备注/选区互不丢失）；入口是
-  右侧悬浮列的两个独立 mini 钮（store.toggleDrawerTool）。
-  宽度与视口联动让位：主列保住 ~782px 内容安全宽（80 字符代码行不出
-  横向滚动），抽屉在余量内取宽；余量不足先压抽屉、保底 280px。
-  动画 = width 展开（内层 .inner 恒宽 var(--term-w)：过渡期间内容不
-  重排、xterm 不反复 fit；窗口 resize 时 --term-w 变化经 var 继承
-  同步到 inner，ResizeObserver 自动 fit）。
+  聊天主列被挤窄不遮挡。工具页（终端/资源查看器）互斥显隐，双 pane
+  常驻挂载保活（终端 WS/xterm、资源 tab 的 buffer/标注/画布互不
+  丢失）；入口是右侧悬浮列的两个独立 mini 钮（store.toggleDrawerTool）。
+  宽度两页统一（画板比例）：与视口联动让位，主列保 ~700px 内容宽
+  （80 字符代码行 624 + 滚动槽/卡 padding 仍安全）；余量不足先压
+  抽屉、保底 280px。
+  动画 = width 展开（内层 .inner 恒宽 var(--pane-w)：过渡期间内容不
+  重排、xterm 不反复 fit；窗口 resize 时宽度变化经 var 继承同步到
+  inner，ResizeObserver 自动 fit）。
   */
   const open = $derived(store.termDrawerOpen)
   const tool = $derived(store.drawerTool)
+
+  /* Escape 收抽屉（焦点在输入框/标注浮条时忽略——它们的 Esc 归自己） */
+  function onKey(e: KeyboardEvent) {
+    if (e.key !== 'Escape' || !open) return
+    const el = document.activeElement
+    if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA')) return
+    store.closeTermDrawer()
+  }
 </script>
+
+<svelte:window onkeydown={onKey} />
 
 <aside class="drawer" class:open={open} role="complementary" aria-label="工作区">
   <div class="inner">
     <header>
-      <h3>{tool === 'term' ? '共享终端' : '文件'}</h3>
+      <h3>{tool === 'term' ? '共享终端' : '资源'}</h3>
       <span class="hint">{tool === 'term' ? '用户与 AI 共写 · 收起不中断' : '查看 · 编辑 · 发给 AI'}</span>
       <button class="close" onclick={() => store.closeTermDrawer()} title="收起">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
@@ -34,18 +45,18 @@
         <TerminalTab active={open && tool === 'term'} />
       </div>
       <div class="pane" class:hidden={tool !== 'file'}>
-        <FilePane active={open && tool === 'file'} />
+        <ResourcePane active={open && tool === 'file'} />
       </div>
     </div>
   </div>
 </aside>
 
 <style>
-  /* 782px = 主列内容安全宽（96 inner padding + 34 双侧滚动槽 + 28
-  卡 padding + 624 八十字符代码行）；侧栏宽经 --sidebar-w 联动
-  （收 64 / 展 176）。余量不足时抽屉先让位，保底 280 */
+  /* 两页统一宽（画板比例）：主列保 ~700px 内容宽（624 八十字符代码行
+  + 34 滚动槽 + 28 卡 padding = 686 仍安全）；侧栏宽经 --sidebar-w
+  联动（收 64 / 展 176）。余量不足时抽屉先让位，保底 280 */
   .drawer {
-    --term-w: max(280px, min(620px, 42vw, calc(100vw - var(--sidebar-w, 64px) - 782px)));
+    --pane-w: max(280px, min(960px, 58vw, calc(100vw - var(--sidebar-w, 64px) - 700px)));
     flex: none;
     width: 0;
     overflow: hidden;
@@ -54,14 +65,14 @@
     transition: width 0.28s var(--ease-out);
   }
   .drawer.open {
-    width: var(--term-w);
+    width: var(--pane-w);
   }
-  /* 内层恒宽（继承 --term-w）：外层宽度过渡时内容不重排；窗口
-  resize 时 --term-w 变化随之更新，RO fit 跟随实际宽 */
+  /* 内层恒宽（继承 --pane-w）：外层宽度过渡时内容不重排；窗口
+  resize 时宽度变化随之更新，RO fit 跟随实际宽 */
   .inner {
     display: flex;
     flex-direction: column;
-    width: var(--term-w);
+    width: var(--pane-w);
     height: 100%;
   }
   header {

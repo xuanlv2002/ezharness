@@ -2,7 +2,9 @@
   "permissions": {
     "allow": [
       "Bash(go env *)",
-      "Bash(grep -rn \"func.*Write\" \"$\\(go env GOMODCACHE\\)/github.com/xuanlv2002/ezloop\"*/fs/osfs/osfs.go)"
+      "Bash(grep -rn \"func.*Write\" \"$\\(go env GOMODCACHE\\)/github.com/xuanlv2002/ezloop\"*/fs/osfs/osfs.go)",
+      "Bash(gofmt -w internal/controller/router.go internal/controller/workspace_controller.go internal/service/stash.go)",
+      "Bash(go build *)"
     ]
   }
 }

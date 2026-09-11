@@ -5,7 +5,10 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>ezharness</title>
   </head>
-  <body>
+  <!-- data-file-drop-target 必须保留：Wails 注入的 dragenter 若
+       closest 不到该属性元素会设 dropEffect=none，drop 即被禁。
+       拖放遮罩反馈统一由前端 dropzone 承担（浏览器/桌面壳一套 UI） -->
+  <body data-file-drop-target>
     <div id="app"></div>
     <script type="module" src="/src/main.ts"></script>
   </body>

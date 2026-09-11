@@ -177,7 +177,7 @@ func (a *AgentService) Assemble(s *domain.Session, st domain.Settings) {
 			filetools.New(s.Fsys, filetools.WithWorkDir(ResolveWorkDir(st.WorkDir)), filetools.WithImageHandler(readImage)),
 			skilltool.New(s.Fsys, hooks.SkillsDir, disabledSkills),
 			remindHook, // 系统提醒：变更段插 <res_change>? + 快照段插 agent_status；OnEnd 收尾 <end_reason>
-			hooks.NewUploadFile(), // 有附件轮次在输入前插 <upload_file> 路径告知（模型按需 read_file）
+			hooks.NewRefFile(), // 有引用轮次在输入前插 <reference_file> 结构化告知（附件+文件页标注统一，模型按需 read_file）
 			approver,
 			asker,
 			task.New(),

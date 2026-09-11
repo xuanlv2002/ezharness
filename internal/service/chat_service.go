@@ -8,11 +8,6 @@ package service
 
 import (
 	"context"
-	"encoding/base64"
-	"fmt"
-	"path/filepath"
-	"strings"
-	"sync/atomic"
 	"time"
 
 	"github.com/xuanlv2002/ezloop/event"
@@ -37,20 +32,18 @@ func (c *ChatService) resolve(rootID string) *domain.Session {
 	return c.Hub.Active
 }
 
-/* Send 启动一轮异步运行：附件先落盘 tmp/（base64 不入上下文），事件流
-扇出 SSE，结束更新历史并发 turn_end。返回附件落盘路径（无附件为 nil）。 */
-func (c *ChatService) Send(rootID, text string, files []domain.Attachment) ([]string, error) {
+/* Send 启动一轮异步运行：引用为工作目录内路径的结构化列表（附件 =
+整文件引用，文件页标注 = 片段+行号+备注；表现层已校验归属），统一经
+<reference_file> 记录告知模型。事件流扇出 SSE，结束更新历史并发
+turn_end。 */
+func (c *ChatService) Send(rootID, text string, refs []hooks.RefFile) error {
 	if main := c.Hub.ModelsSnapshot().ActiveMain(); main == nil || main.APIKey == "" {
-		return nil, domain.ErrNoAPIKey
-	}
-	paths, err := c.saveAttachments(files)
-	if err != nil {
-		return nil, err
+		return domain.ErrNoAPIKey
 	}
 	s := c.resolve(rootID)
-	h, cancel, err := s.StartRun(context.Background(), text, paths)
+	h, cancel, err := s.StartRun(context.Background(), text, refs)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	c.ensureIndexed(s, text) // 首次发言落线索引（分支面板/重启恢复依据）
 
@@ -81,61 +74,7 @@ func (c *ChatService) Send(rootID, text string, files []domain.Attachment) ([]st
 		c.refreshLine(s)
 		s.Publish(domain.TurnEnd(stop, iters, usage, waitErr, time.Since(started).Milliseconds()))
 	}()
-	return paths, nil
-}
-
-/* attSeq 是同秒内附件落盘的序号（防重名覆盖）。 */
-var attSeq atomic.Int64
-
-/* saveAttachments 把附件写入 <工作目录>/tmp/，返回绝对路径列表
-（正斜杠风格，与 <upload_file> 记录、read_file 的路径约定一致）。 */
-func (c *ChatService) saveAttachments(files []domain.Attachment) ([]string, error) {
-	if len(files) == 0 {
-		return nil, nil
-	}
-	dir := filepath.ToSlash(filepath.Join(
-		ResolveWorkDir(c.Hub.SettingsSnapshot().WorkDir), "tmp"))
-	seq := time.Now().Format("20060102-150405")
-	paths := make([]string, 0, len(files))
-	for _, f := range files {
-		data, err := base64.StdEncoding.DecodeString(f.Data)
-		if err != nil {
-			return nil, fmt.Errorf("附件 %s base64 解码失败: %w", f.Name, err)
-		}
-		name := fmt.Sprintf("%s/att-%s-%d-%s", dir, seq,
-			attSeq.Add(1), sanitizeName(f.Name))
-		if err := c.Hub.Fsys.Write(context.Background(), name, data); err != nil {
-			return nil, fmt.Errorf("附件 %s 落盘失败: %w", f.Name, err)
-		}
-		paths = append(paths, name)
-	}
-	return paths, nil
-}
-
-/* sanitizeName 净化原始文件名为安全的落盘名（去路径分隔符与 Windows
-非法字符，截断超长名）。 */
-func sanitizeName(name string) string {
-	name = filepath.Base(filepath.FromSlash(name))
-	var b strings.Builder
-	for _, r := range name {
-		if strings.ContainsRune(`\/:*?"<>|`, r) {
-			r = '_'
-		}
-		b.WriteRune(r)
-	}
-	out := b.String()
-	if n := len(out); n > 80 {
-		dot := strings.LastIndex(out, ".")
-		if dot > 0 && n-dot <= 12 { // 保留短扩展名
-			out = out[:72] + "…" + out[dot:]
-		} else {
-			out = out[:80]
-		}
-	}
-	if out == "" || out == "." {
-		out = "file"
-	}
-	return out
+	return nil
 }
 
 /* Cancel 取消当前轮。 */
