@@ -76,7 +76,7 @@
 
   /* term:// / app:// / file:// chip 点击委托（{@html} 渲染无法直接绑事件） */
   function onBodyClick(e: MouseEvent) {
-    const el = (e.target as HTMLElement).closest('span[data-supper-kind]')
+    const el = (e.target as HTMLElement).closest<HTMLElement>('span[data-supper-kind]')
     if (!el) return
     const kind = el.dataset.supperKind
     const id = el.dataset.supperId || ''

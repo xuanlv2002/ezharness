@@ -2,7 +2,7 @@
   import type { Block } from '../lib/store.svelte'
   import ToolBlock from './ToolBlock.svelte'
 
-  let { blocks, open, onToggle }: { blocks: Block[]; open: boolean; onToggle: () => void } =
+  let { blocks, open, onToggle }: { blocks: Extract<Block, { kind: 'tool' }>[]; open: boolean; onToggle: () => void } =
     $props()
 
   /* 名称统计（terminal ×6、read_file ×2…）与当前执行中的工具 */
@@ -10,7 +10,6 @@
     const m = new Map<string, number>()
     let active = ''
     for (const b of blocks) {
-      if (b.kind !== 'tool') continue
       const n = b.name || 'tool'
       m.set(n, (m.get(n) || 0) + 1)
       if (b.state === 'running' || b.state === 'building') active = n

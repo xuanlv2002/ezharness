@@ -223,6 +223,7 @@
 </script>
 
 {#if selected}
+  {@const sel = selected}
   <div class="page" bind:this={detailPage}>
     <button class="back" onclick={() => (selected = null)}>← MCP 服务器</button>
     <div class="detail-head">
@@ -259,17 +260,17 @@
         class="conn"
         class:on={selected.connected}
         disabled={connecting === selected.name}
-        onclick={() => (connectedTools[selected.name]?.length ? disconnect(selected) : connect(selected))}
+        onclick={() => (connectedTools[sel.name]?.length ? disconnect(sel) : connect(sel))}
       >
         {connecting === selected.name ? '连接中…' : connectedTools[selected.name]?.length ? '断开会话' : '建立会话'}
       </button>
       {#if selected.transport === 'http'}
         <button class="op" onclick={startEdit}>{editing ? '收起编辑' : '编辑'}</button>
       {/if}
-      <button class="op danger" onclick={() => removeServer(selected)}>删除</button>
+      <button class="op danger" onclick={() => removeServer(sel)}>删除</button>
       <span class="op-label">
         启用
-        <button class="toggle" class:on={selected.enabled} onclick={() => toggle(selected)} role="switch" aria-checked={selected.enabled} tabindex="0">
+        <button class="toggle" class:on={selected.enabled} onclick={() => toggle(sel)} role="switch" aria-checked={selected.enabled} tabindex="0">
           <i></i>
         </button>
       </span>
@@ -304,7 +305,7 @@
         <p class="lead">建立会话后可查看工具清单并在此试调用。</p>
       {:else if connectedTools[selected.name]?.length}
         {#each connectedTools[selected.name] as t (t.name)}
-          <button class="tool-row" onclick={() => toggleTool(selected, t)}>
+          <button class="tool-row" onclick={() => toggleTool(sel, t)}>
             <span class="tool-name">{t.name}</span>
             {#if t.description}
               <span class="tool-desc">{t.description}</span>
@@ -317,7 +318,7 @@
               {/each}
               <textarea spellcheck="false" rows="5" bind:value={callDraft}></textarea>
               <div class="add-actions">
-                <button class="add-ok" disabled={calling} onclick={() => invoke(selected.name)}>{calling ? '调用中…' : '调用'}</button>
+                <button class="add-ok" disabled={calling} onclick={() => invoke(sel.name)}>{calling ? '调用中…' : '调用'}</button>
                 <button class="add-no" onclick={() => (openTool = '')}>收起</button>
               </div>
               {#if callResult}

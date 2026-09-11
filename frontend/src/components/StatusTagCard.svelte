@@ -6,8 +6,8 @@
   const hm = $derived(data ? data.now.slice(11) : '')
   const fmt = (n: number) => (n >= 10000 ? Math.round(n / 1000) + 'k' : String(n))
 
-  /* 新格式（中文语义化文本）解析时间与水位警示，与旧 JSON 载荷渲染
-  对齐——历史重建不再全文铺开。资源变更不在快照里（见 ResChangeCard） */
+  /* 中文语义化文本解析时间与水位警示（JSON 载荷渲染对齐——历史重建
+     与实时同一版式）。资源变更不在快照里（见 ResChangeCard） */
   const parsed = $derived.by(() => {
     const text = raw.replace(/^<agent_status>|<\/agent_status>$/g, '').trim()
     let time = ''

@@ -3,7 +3,7 @@
 
   let { data }: { data: ToolBlockData } = $props()
   /* null＝用户未操作：未完成（building/running）默认展开（过程可见），
-     done 默认折叠；用户点击后固定，不再随状态切换 */
+     done 默认折叠；用户点击后固定展开态 */
   let open = $state<boolean | null>(null)
 
   /* 当前可见性：未操作时执行中展开、完成折叠 */
