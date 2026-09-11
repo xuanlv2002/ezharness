@@ -565,10 +565,6 @@ class AppStore {
     this.termDrawerOpen = true
   }
 
-  setDrawerTool(t: 'term' | 'file') {
-    this.drawerTool = t
-  }
-
   closeTermDrawer() {
     this.termDrawerOpen = false
   }
@@ -675,17 +671,6 @@ class AppStore {
   async cancel() {
     if (!this.activeId) return
     await api.cancel(this.activeId).catch(() => {})
-  }
-
-  async summarize() {
-    if (!this.activeId) return
-    this.lastStatus = '摘要中…'
-    try {
-      const { text } = await api.summarize(this.activeId)
-      this.blocks.push({ kind: 'assistant', uid: this.nuid(), text: `📝 ${text}`, reasoning: '', streaming: false })
-    } catch (e) {
-      this.lastStatus = `摘要失败：${(e as Error).message}`
-    }
   }
 
   /* ── 设置 / 话题 ── */

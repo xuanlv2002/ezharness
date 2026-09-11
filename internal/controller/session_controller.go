@@ -1,13 +1,11 @@
-/* SessionController：bootstrap/status/history/summary。 */
+/* SessionController：bootstrap/status/history/fork。 */
 package controller
 
 import (
-	"errors"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
 
-	"ezharness/internal/domain"
 	"ezharness/internal/service"
 )
 
@@ -53,18 +51,4 @@ func (c *SessionController) Fork(g *gin.Context) {
 		return
 	}
 	g.JSON(http.StatusOK, d)
-}
-
-/* Summary POST /api/sessions/:id/summary（:id=分支根 ID）。 */
-func (c *SessionController) Summary(g *gin.Context) {
-	text, err := c.Svc.Summarize(g.Request.Context(), g.Param("id"))
-	if err != nil {
-		if errors.Is(err, service.ErrEmptySession) || errors.Is(err, domain.ErrNoAPIKey) {
-			g.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-			return
-		}
-		g.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-	g.JSON(http.StatusOK, gin.H{"text": text})
 }

@@ -48,7 +48,6 @@ func NewRouter(c Controllers, dist fs.FS) *gin.Engine {
 		api.GET("/notifications", c.Chat.Notifications)
 		api.POST("/sessions/:id/messages", c.Chat.SendMessage)
 		api.POST("/sessions/:id/cancel", c.Chat.CancelTurn)
-		api.POST("/sessions/:id/summary", c.Session.Summary)
 		api.POST("/sessions/:id/fork", c.Topics.ForkBranch) // :id=源会话，body{anchor}复制前缀开新线
 
 		api.GET("/settings", c.Settings.GetSettings)

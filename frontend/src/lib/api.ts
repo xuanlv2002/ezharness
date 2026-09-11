@@ -345,8 +345,6 @@ export const api = {
 
   listNotifications: () => fetch('/api/notifications').then(json<NotificationGroup[]>),
 
-  summarize: (id: string) => post<{ text: string }>(`/api/sessions/${id}/summary`),
-
   getSettings: () => fetch('/api/settings').then(json<Settings>),
 
   saveSettings: (s: Settings) => post<{ ok: boolean }>('/api/settings', s),

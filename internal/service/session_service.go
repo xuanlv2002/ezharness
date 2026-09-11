@@ -5,22 +5,17 @@ package service
 
 import (
 	"context"
-	"errors"
 	"slices"
 	"strings"
 
 	"github.com/xuanlv2002/ezloop/ext/hook/skill"
-	"github.com/xuanlv2002/ezloop/ext/hook/summary"
 	"github.com/xuanlv2002/ezloop/types"
 
 	"ezharness/internal/domain"
 	"ezharness/internal/hooks"
 )
 
-/* ErrEmptySession 表示会话无消息可摘要。 */
-var ErrEmptySession = errors.New("empty session")
-
-/* SessionService 会话查询与摘要用例。 */
+/* SessionService 会话查询用例。 */
 type SessionService struct {
 	Hub *domain.Hub
 }
@@ -247,24 +242,4 @@ func (s *SessionService) Prev(ctx context.Context, id string) (*PrevData, bool, 
 	return &PrevData{ID: prev.ID, Title: title, Summary: prev.CompactSummary,
 		Messages: prev.Messages, Forks: hooks.ListForks(ctx, s.Hub.Fsys, prev.ID),
 		PrevSession: prev.TargetID}, true, nil
-}
-
-/* Summarize 生成指定分支当前会话摘要（模型调用）。 */
-func (s *SessionService) Summarize(ctx context.Context, rootID string) (string, error) {
-	if main := s.Hub.ModelsSnapshot().ActiveMain(); main == nil || main.APIKey == "" {
-		return "", domain.ErrNoAPIKey
-	}
-	sess := s.Hub.SessionOf(rootID)
-	if sess == nil {
-		return "", ErrTopicNotFound
-	}
-	hist := sess.History()
-	if len(hist) == 0 {
-		return "", ErrEmptySession
-	}
-	w := sess.Wired()
-	if w == nil {
-		return "", ErrEmptySession
-	}
-	return summary.Summarize(ctx, w.Provider, hist, "")
 }
