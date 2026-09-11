@@ -87,6 +87,10 @@ func buildProvider(m *domain.ModelEntry) provider.ModelProvider {
 /* Assemble 按配置装配 agent 并注入会话（主模型取 models 四槽 main 启用条目）。 */
 func (a *AgentService) Assemble(s *domain.Session, st domain.Settings) {
 	ctx := context.Background()
+	maxIters := 12 // 单轮最大模型迭代次数（设置页可配；0/负数回落默认 12）
+	if st.MaxIterations > 0 {
+		maxIters = st.MaxIterations
+	}
 
 	main := a.Hub.ModelsSnapshot().ActiveMain()
 	if main == nil {
@@ -94,10 +98,10 @@ func (a *AgentService) Assemble(s *domain.Session, st domain.Settings) {
 	}
 	provider := buildProvider(main)
 
-	// system 两段式：每 session 固定——已有 SysPrompt 直接复用（Resume/
-	// compact 热更过的状态是本 session 的真相，重建不得回退到旧快照）；
-	// 恢复的会话从快照还原（记忆/skill/mcp 变更等下个 session），新会话
-	// 组装一次后固定，直到 compact 创建新 session。
+	// system 两段式：每 session 固定——会话已有 SysPrompt 直接复用（compact
+	// 热更过的状态是本 session 的真相，重建不得回退到快照）；恢复的会话从
+	// 快照还原（记忆/skill/mcp 变更等下个 session），新会话组装一次后固定，
+	// 直到 compact 创建新 session。
 	var sys *hooks.SysPrompt
 	if sp := s.SysPromptRef(); sp != nil {
 		sys = sp
@@ -115,7 +119,7 @@ func (a *AgentService) Assemble(s *domain.Session, st domain.Settings) {
 
 	window := main.ContextWindow
 	if window <= 0 {
-		window = 128000 // 旧 models.json 无 contextWindow 字段的兜底
+		window = 128000 // 条目未填窗口时的兜底
 	}
 	s.Sess.BindCtx(func() (int, int) { return s.CtxTokens(), window })
 	disabledSkills := func() []string { return a.Hub.SettingsSnapshot().DisabledSkills }
@@ -189,7 +193,7 @@ func (a *AgentService) Assemble(s *domain.Session, st domain.Settings) {
 			traceHook,
 			s.Sess, // 最后落盘
 		),
-		core.WithLoopParams(core.LoopParams{MaxIterations: maxIters(st)}),
+		core.WithLoopParams(core.LoopParams{MaxIterations: maxIters}),
 		core.WithStreaming(true),
 	)
 
@@ -201,14 +205,6 @@ func (a *AgentService) Assemble(s *domain.Session, st domain.Settings) {
 		Trace:     traceHook,
 		ToolNames: toolNames,
 	})
-}
-
-/* maxIters 单轮最大模型迭代次数（设置页可配；0/负数回落默认 12）。 */
-func maxIters(st domain.Settings) int {
-	if st.MaxIterations <= 0 {
-		return 12
-	}
-	return st.MaxIterations
 }
 
 /* visionModel 返回图片识别槽的启用条目（无则 nil）。 */
@@ -240,12 +236,22 @@ func (a *AgentService) RecognizeImage(ctx context.Context, path, question string
 		prompt = "识别这张图片的内容：先概述是什么，再按需提取其中的文字、数据、代码或关键细节。"
 	}
 	prompt += "\n输出将直接交给另一个 agent 使用，请客观、结构化，不要寒暄。"
+	// 按扩展名推图片 MIME（识别模型通用要求 image/*）
+	mime := "image/jpeg"
+	switch strings.ToLower(filepath.Ext(path)) {
+	case ".png":
+		mime = "image/png"
+	case ".webp":
+		mime = "image/webp"
+	case ".gif":
+		mime = "image/gif"
+	}
 	prov := buildProvider(m)
 	resp, err := prov.Invoke(ctx, &types.ModelRequest{Messages: []types.Message{{
 		Role:    types.RoleUser,
 		Content: prompt,
 		Images: []types.ImagePart{{
-			MimeType: mimeOf(path),
+			MimeType: mime,
 			Data:     base64.StdEncoding.EncodeToString(data),
 		}},
 	}}})
@@ -254,19 +260,6 @@ func (a *AgentService) RecognizeImage(ctx context.Context, path, question string
 	}
 	a.Hub.RecordVisionUsage(&resp.Usage)
 	return resp.Content, nil
-}
-
-/* mimeOf 按扩展名推图片 MIME（识别模型通用要求 image/*）。 */
-func mimeOf(path string) string {
-	switch strings.ToLower(filepath.Ext(path)) {
-	case ".png":
-		return "image/png"
-	case ".webp":
-		return "image/webp"
-	case ".gif":
-		return "image/gif"
-	}
-	return "image/jpeg"
 }
 
 /*
@@ -416,7 +409,7 @@ buildSystemBase 组装 session 的 system 基础段：人格 + SystemExtra +
 标签化注入块（<memory> 长期记忆结构+索引 / <skills> 技能列表 /
 <mcp> MCP 列表）。只在 session 创建时调用一次（同 session 不变）；
 skill 全文与记忆细节不注入（模型按需用文件工具读取），列表变更要等
-下个 session 才进 system，过渡期靠 remind 变更段的 <res_change> 告知模型。
+下个 session 才进 system，期间由 remind 变更段的 <res_change> 告知模型。
 */
 func buildSystemBase(ctx context.Context, st domain.Settings, fsys osfs.OS) string {
 	var b strings.Builder
@@ -461,7 +454,7 @@ func buildSystemBase(ctx context.Context, st domain.Settings, fsys osfs.OS) stri
 		"- 索引 " + memRoot + "/longterm/harness.md：长期记忆入口，全文见下方，可用文件工具直接更新\n" +
 		"- 主题记忆 " + memRoot + "/longterm/：按主题的记忆文件（如 user.md），按需创建，不进上下文，用 findstr/grep 检索\n" +
 		"- 技能 " + memRoot + "/skills/：沉淀的技能，每技能一个子目录（清单见 <skills>）\n" +
-		"- 话题存档 " + filepath.ToSlash(filepath.Join(dataDir, "sessions")) + "/：历史会话全文（compact 后的旧库；在数据目录下，不在 memory 里）\n" +
+		"- 话题存档 " + filepath.ToSlash(filepath.Join(dataDir, "sessions")) + "/：历代会话全文（compact 归档的世代；在数据目录下，不在 memory 里）\n" +
 		"# 索引 harness.md 全文\n" +
 		hooks.EnsureHarnessMd(ctx, fsys) +
 		"\n</memory>")

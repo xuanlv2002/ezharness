@@ -147,7 +147,7 @@ func TestForkAnchorAlignment(t *testing.T) {
 
 	// 内存 history 含 system 首条——History() 剥掉后 msgIdx 基准与盘上一致
 	hist := append([]types.Message{{Role: types.RoleSystem, Content: "sys"}}, src.Messages...)
-	if got := stripSystemMsgs(hist); len(got) != len(src.Messages) || got[0].Content != "q1" {
+	if got := hooks.StripSystem(hist); len(got) != len(src.Messages) || got[0].Content != "q1" {
 		t.Fatalf("History must strip system for anchor alignment: %+v", got)
 	}
 

@@ -76,7 +76,7 @@ type SessionSnap struct {
 	StopReason     string          `json:"stopReason"`
 	StartedAt      time.Time       `json:"startedAt"`
 	EndedAt        time.Time       `json:"endedAt"`
-	Archived       bool            `json:"archived"` // compact 后旧库封存，不再作恢复候选
+	Archived       bool            `json:"archived"` // compact 后上一世代封存，不作恢复候选
 }
 
 /* Store 实现 EndHook：每轮结束落盘快照，SetID 切换会话。 */
@@ -292,7 +292,7 @@ func (h *Store) OnEnd(ctx context.Context, state *types.LoopState) error {
 	} else if folded := FoldedOf(state); len(folded) > 0 {
 		full = MergeFull(nil, state)
 	}
-	msgs := stripSystem(full)
+	msgs := StripSystem(full)
 	if fork && state.SeedLen > 0 && state.SeedLen <= len(msgs) {
 		// SeedLen 含 system（fork.go 语义），stripSystem 后数组少 1：
 		// 起点 -1 才不会把 seed 后首条（任务 input / trim marker）剥掉
@@ -385,8 +385,9 @@ func toolNames(state *types.LoopState) []string {
 	return out
 }
 
-/* stripSystem 剥离 system 消息（system 由 SysPrompt 单独 pin）。 */
-func stripSystem(msgs []types.Message) []types.Message {
+/* StripSystem 剥离 system 消息（system 由 SysPrompt 单独 pin；
+GET /sessions 响应与盘上快照共用此基准，分叉对位）。 */
+func StripSystem(msgs []types.Message) []types.Message {
 	out := make([]types.Message, 0, len(msgs))
 	for _, m := range msgs {
 		if m.Role != types.RoleSystem {

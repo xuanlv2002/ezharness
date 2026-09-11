@@ -45,7 +45,16 @@ func (c *ChatService) Send(rootID, text string, refs []hooks.RefFile) error {
 	if err != nil {
 		return err
 	}
-	c.ensureIndexed(s, text) // 首次发言落线索引（分支面板/重启恢复依据）
+	// 首次发言落线索引（NewBranch 延迟建索引防空线粉尘；fork 线创建时已索引）
+	if _, ok := c.Hub.Topics.Get(s.RootID); !ok {
+		now := time.Now().UnixMilli()
+		_ = c.Hub.Topics.Add(hooks.TopicEntry{
+			ID: s.RootID, LeafID: s.ID,
+			Title:    hooks.FirstUserTitle([]types.Message{{Role: types.RoleUser, Content: text}}),
+			Kind:     "new",
+			CreatedAt: now, UpdatedAt: now, Msgs: len(s.History()),
+		})
+	}
 
 	go func() {
 		started := time.Now()
@@ -71,7 +80,16 @@ func (c *ChatService) Send(rootID, text string, refs []hooks.RefFile) error {
 		cancel() // 释放 turnCtx（决策 select 的 Done 依赖）
 		c.Hub.Stats.AddTurn(usage)
 		c.Hub.RecordUsage(usage) // 主模型条目用量累计
-		c.refreshLine(s)
+		// 轮末刷新线（叶子/活动时间/规模）；未命名线按本代首条真实 user 命名
+		if entry, ok := c.Hub.Topics.Get(s.RootID); ok {
+			msgs := s.History()
+			if entry.Title == "" || entry.Title == "未命名" {
+				if t := hooks.FirstUserTitle(msgs); t != "未命名话题" {
+					c.Hub.Topics.SetTitle(s.RootID, t)
+				}
+			}
+			_ = c.Hub.Topics.UpdateLeaf(s.RootID, s.ID, "", time.Now().UnixMilli(), len(msgs))
+		}
 		s.Publish(domain.TurnEnd(stop, iters, usage, waitErr, time.Since(started).Milliseconds()))
 	}()
 	return nil
@@ -122,44 +140,4 @@ func (c *ChatService) recordDecision(s *domain.Session, kind, callID, resolution
 	})
 	s.Publish(domain.Event{Type: "decision.resolved", Data: domain.Raw(
 		map[string]string{"id": callID, "resolution": resolution})})
-}
-
-/*
-ensureIndexed 首次发言时落线索引（NewBranch 延迟建索引，防空线粉尘）。
-fork/迁移线创建时已索引，此处只兜 new 线。
-*/
-func (c *ChatService) ensureIndexed(s *domain.Session, firstText string) {
-	if s.RootID == "" {
-		return
-	}
-	if _, ok := c.Hub.Topics.Get(s.RootID); ok {
-		return
-	}
-	now := time.Now().UnixMilli()
-	title := hooks.FirstUserTitle([]types.Message{{Role: types.RoleUser, Content: firstText}})
-	_ = c.Hub.Topics.Add(hooks.TopicEntry{
-		ID: s.RootID, LeafID: s.ID, Title: title, Kind: "new",
-		CreatedAt: now, UpdatedAt: now, Msgs: len(s.History()),
-	})
-}
-
-/* refreshLine 轮末刷新线（叶子/活动时间/规模）。命名规范：分支名是身份
-——new 线首条 chat 命名（ensureIndexed）、fork 线锚点消息命名（创建时）、
-归档不改名（未创建新分支）。此处仅兜底：未命名线（fork 锚点空等）按
-本代首条真实 user 命名，已命名的线不随后续消息改标题。 */
-func (c *ChatService) refreshLine(s *domain.Session) {
-	if s.RootID == "" {
-		return
-	}
-	entry, ok := c.Hub.Topics.Get(s.RootID)
-	if !ok {
-		return
-	}
-	msgs := s.History()
-	if entry.Title == "" || entry.Title == "未命名" {
-		if t2 := hooks.FirstUserTitle(msgs); t2 != "未命名话题" {
-			c.Hub.Topics.SetTitle(s.RootID, t2)
-		}
-	}
-	_ = c.Hub.Topics.UpdateLeaf(s.RootID, s.ID, "", time.Now().UnixMilli(), len(msgs))
 }

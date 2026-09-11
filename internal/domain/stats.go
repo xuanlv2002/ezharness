@@ -10,7 +10,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/xuanlv2002/ezloop/ext/fs"
 	"github.com/xuanlv2002/ezloop/types"
 
 	"ezharness/internal/osfs"
@@ -112,6 +111,3 @@ func (s *Stats) saveLocked() {
 	}
 	_ = s.fsys.Write(context.Background(), statsFile, data)
 }
-
-/* 编译期确认 fs.FileSystem 兼容引用（osfs.OS 实现之）。 */
-var _ fs.FileSystem = osfs.OS{}

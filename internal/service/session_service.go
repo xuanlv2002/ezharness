@@ -41,13 +41,14 @@ func (s *SessionService) Bootstrap() BootstrapData {
 	st := s.Hub.SettingsSnapshot()
 	p := st.TrimPercent
 	w := st.WorkDir
+	memData, memErr := s.Hub.Fsys.Read(context.Background(), hooks.HarnessMd)
 	return BootstrapData{
 		SessionID:    sess.RootID,
 		LeafID:       sess.ID,
 		Branches:     buildBranchViews(s.Hub),
 		Settings:     SettingsView{SystemExtra: st.SystemExtra, TrimPercent: &p, WorkDir: &w},
 		Status:       s.Snapshot(),
-		MemoryExists: memoryExists(s.Hub.Fsys),
+		MemoryExists: memErr == nil && len(strings.TrimSpace(string(memData))) > 0,
 	}
 }
 
@@ -86,14 +87,6 @@ type Status struct {
 	TopicsCount      int      `json:"topicsCount"`
 }
 
-/* mainModelName 返回主模型名（空槽显示空）。 */
-func mainModelName(h *domain.Hub) string {
-	if m := h.ModelsSnapshot().ActiveMain(); m != nil {
-		return m.Name
-	}
-	return ""
-}
-
 /* Snapshot 汇总活动会话状态。 */
 func (s *SessionService) Snapshot() Status {
 	sess := s.Hub.Active
@@ -126,11 +119,12 @@ func (s *SessionService) Snapshot() Status {
 		}
 	}
 	vision := false
+	modelName := ""
 	if m := s.Hub.ModelsSnapshot().ActiveMain(); m != nil {
-		vision = m.Vision
+		vision, modelName = m.Vision, m.Name
 	}
 	return Status{
-		Model:            mainModelName(s.Hub),
+		Model:            modelName,
 		ModelVision:      vision,
 		SessionID:        sess.ID,
 		RootID:           sess.RootID,
@@ -149,13 +143,11 @@ func (s *SessionService) Snapshot() Status {
 	}
 }
 
-/* History 返回指定分支的当前历史（rootID 路由；未知回落活动分支）。 */
+/* History 返回指定分支的当前历史（rootID 路由；未知分支返回空数据）。 */
 func (s *SessionService) History(rootID string) HistoryData {
-	var sess *domain.Session
-	if v := s.Hub.SessionOf(rootID); v != nil {
-		sess = v
-	} else {
-		sess = s.Hub.Active
+	sess := s.Hub.SessionOf(rootID)
+	if sess == nil {
+		return HistoryData{}
 	}
 	edge := sess.Sess.Edge()
 	if edge.TargetID == "" {
@@ -169,7 +161,7 @@ func (s *SessionService) History(rootID string) HistoryData {
 		ID:      sess.ID,
 		RootID:  sess.RootID,
 		Busy:    sess.Busy(),
-		Messages: stripSystemMsgs(sess.History()),
+		Messages: hooks.StripSystem(sess.History()),
 		TargetID: edge.TargetID,
 		SeedKind: edge.SeedKind,
 		CanPrev:  s.canPrev(context.Background(), sess.ID),
@@ -178,17 +170,6 @@ func (s *SessionService) History(rootID string) HistoryData {
 	h.Decisions = hooks.LoadDecisions(context.Background(), sess.Fsys, h.ID)
 	h.Forks = hooks.ListForks(context.Background(), sess.Fsys, h.ID)
 	return h
-}
-
-/* stripSystemMsgs 剥 system 消息（GET 响应与盘上快照同基准，分叉对位）。 */
-func stripSystemMsgs(msgs []types.Message) []types.Message {
-	out := make([]types.Message, 0, len(msgs))
-	for _, m := range msgs {
-		if m.Role != types.RoleSystem {
-			out = append(out, m)
-		}
-	}
-	return out
 }
 
 /* canPrev 判定 id 上翻是否还有上一级（与 Prev 同规则：fork 换源后算）。 */
@@ -273,11 +254,9 @@ func (s *SessionService) Summarize(ctx context.Context, rootID string) (string, 
 	if main := s.Hub.ModelsSnapshot().ActiveMain(); main == nil || main.APIKey == "" {
 		return "", domain.ErrNoAPIKey
 	}
-	var sess *domain.Session
-	if v := s.Hub.SessionOf(rootID); v != nil {
-		sess = v
-	} else {
-		sess = s.Hub.Active
+	sess := s.Hub.SessionOf(rootID)
+	if sess == nil {
+		return "", ErrTopicNotFound
 	}
 	hist := sess.History()
 	if len(hist) == 0 {
@@ -288,11 +267,4 @@ func (s *SessionService) Summarize(ctx context.Context, rootID string) (string, 
 		return "", ErrEmptySession
 	}
 	return summary.Summarize(ctx, w.Provider, hist, "")
-}
-
-func memoryExists(fsys interface {
-	Read(ctx context.Context, path string) ([]byte, error)
-}) bool {
-	data, err := fsys.Read(context.Background(), hooks.HarnessMd)
-	return err == nil && len(strings.TrimSpace(string(data))) > 0
 }

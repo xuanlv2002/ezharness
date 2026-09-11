@@ -118,14 +118,13 @@ func (c *WorkspaceController) Save(g *gin.Context) {
 	g.JSON(http.StatusOK, gin.H{"ok": true})
 }
 
-/* maxStashSize 单文件暂存上限（20MB，与旧 base64 直传量级一致）；二进制写回同限。 */
+/* maxStashSize 单文件暂存上限（20MB）；二进制写回同限。 */
 const maxStashSize = 20 << 20
 
 /*
 Stash POST /api/workspace/stash（multipart，字段名 file 可多个）：把
 拖入/粘贴/画板产物写入工作目录 tmp/ 暂存区，返回落盘路径——"拖入即
-暂存"：输入框附件立刻有真身路径（chip 可点开编辑），发送时只传路径
-引用，不再走 base64。
+暂存"：输入框附件立刻有真身路径（chip 可点开编辑），发送时只传路径引用。
 */
 func (c *WorkspaceController) Stash(g *gin.Context) {
 	form, err := g.MultipartForm()

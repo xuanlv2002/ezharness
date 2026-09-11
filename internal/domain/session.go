@@ -98,22 +98,19 @@ func (s *Session) History() []types.Message {
 	return out
 }
 
-/* setHistory 原子替换历史（轮结束/恢复话题）。 */
+/* setHistory 原子替换历史（测试/恢复会话用）。 */
 func (s *Session) setHistory(msgs []types.Message) {
 	s.mu.Lock()
 	s.history = msgs
 	s.mu.Unlock()
 }
 
-/* ReplaceHistory 原子替换历史（service 层恢复话题用例调用）。 */
-func (s *Session) ReplaceHistory(msgs []types.Message) { s.setHistory(msgs) }
-
 /*
-modelView 返回发给模型的历史：最后一个 <context_trim> marker（含）
-之后的消息——marker 携带折叠段摘要，是新旧上下文的衔接点；marker
-之前的不进上下文。无 marker 时全量（含 fork seed 前缀语义不变）。
+ModelView 返回发给模型的历史：最后一个 <context_trim> marker（含）
+之后的消息——marker 携带折叠段摘要，是折叠前后上下文的衔接点；
+无 marker 时全量。归档摘要的输入用它（含 marker 摘要链）。
 */
-func (s *Session) modelView() []types.Message {
+func (s *Session) ModelView() []types.Message {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return modelViewLocked(s.history)
@@ -126,9 +123,6 @@ func modelViewLocked(history []types.Message) []types.Message {
 	}
 	return history[start:]
 }
-
-/* ModelView 返回发给模型的上下文视图（归档摘要的输入，含 marker 摘要链）。 */
-func (s *Session) ModelView() []types.Message { return s.modelView() }
 
 /* Busy 报告是否有一轮运行中。 */
 func (s *Session) Busy() bool {
@@ -334,34 +328,6 @@ func (s *Session) DecideAnswer(a askuser.Answer) {
 	sendDecision(s, w.AnswerCh, a, a.CallID)
 }
 
-/* withTurnRefs 把 loop_start 帧的 string 载荷扩为{text, files, fileRefs}
-（items 空 = 附件 chip，非空 = 引用 chip，与 SendMessage 合并口径一致）。 */
-func withTurnRefs(data json.RawMessage, refs []hooks.RefFile) json.RawMessage {
-	var text string
-	_ = json.Unmarshal(data, &text)
-	type namedPath struct {
-		Name string `json:"name"`
-		Path string `json:"path"`
-	}
-	payload := struct {
-		Text     string          `json:"text"`
-		Files    []namedPath     `json:"files,omitempty"`
-		FileRefs []hooks.RefFile `json:"fileRefs,omitempty"`
-	}{Text: text}
-	for _, r := range refs {
-		if len(r.Items) == 0 {
-			payload.Files = append(payload.Files, namedPath{Name: filepath.Base(filepath.FromSlash(r.Path)), Path: r.Path})
-		} else {
-			payload.FileRefs = append(payload.FileRefs, r)
-		}
-	}
-	b, err := json.Marshal(payload)
-	if err != nil {
-		return data
-	}
-	return b
-}
-
 /* ── SSE 订阅（领域事件出口，HTTP 帧写出在 controller）── */
 
 /* Subscribe 注册一个订阅者，返回事件 channel 与注销函数。 */
@@ -383,15 +349,41 @@ func (s *Session) Subscribe() (<-chan []byte, func()) {
 本轮消息要等 FinishRun 才并入历史，getHistory 里没有）。 */
 func (s *Session) Publish(e Event) {
 	if e.Type == "loop_start" && e.ForkID == "" && len(s.turnRefs) > 0 {
-		e.Data = withTurnRefs(e.Data, s.turnRefs)
+		// 载荷扩为 {text, files, fileRefs}：items 空 = 附件 chip，非空 = 引用 chip
+		var text string
+		_ = json.Unmarshal(e.Data, &text)
+		type namedPath struct {
+			Name string `json:"name"`
+			Path string `json:"path"`
+		}
+		payload := struct {
+			Text     string          `json:"text"`
+			Files    []namedPath     `json:"files,omitempty"`
+			FileRefs []hooks.RefFile `json:"fileRefs,omitempty"`
+		}{Text: text}
+		for _, r := range s.turnRefs {
+			if len(r.Items) == 0 {
+				payload.Files = append(payload.Files, namedPath{Name: filepath.Base(filepath.FromSlash(r.Path)), Path: r.Path})
+			} else {
+				payload.FileRefs = append(payload.FileRefs, r)
+			}
+		}
+		if b, err := json.Marshal(payload); err == nil {
+			e.Data = b
+		}
 	}
 	data, err := json.Marshal(e)
 	if err != nil {
 		return
 	}
 	s.mu.Lock()
-	if id, ok := decisionCallID(e); ok {
-		s.pending[id] = e
+	if e.Type == "approve.request" || e.Type == "askuser.request" {
+		var d struct {
+			ID string `json:"id"`
+		}
+		if json.Unmarshal(e.Data, &d) == nil && d.ID != "" {
+			s.pending[d.ID] = e
+		}
 	}
 	if replayable(e.Type) {
 		s.turnFrames = append(s.turnFrames, data)
@@ -495,20 +487,6 @@ func (s *Session) clearPending(callID string) {
 	s.mu.Unlock()
 }
 
-/* decisionCallID 提取人机请求帧的工具调用 ID。 */
-func decisionCallID(e Event) (string, bool) {
-	switch e.Type {
-	case "approve.request", "askuser.request":
-		var d struct {
-			ID string `json:"id"`
-		}
-		if json.Unmarshal(e.Data, &d) == nil && d.ID != "" {
-			return d.ID, true
-		}
-	}
-	return "", false
-}
-
 /* ── Hub：设置、分支注册表与当前活动分支 ── */
 
 /* Hub 管理应用级单例状态。Active 是当前分支；branches 按线根 ID 注册
@@ -529,9 +507,25 @@ type Hub struct {
 并恢复活动会话。 */
 func NewHub() *Hub {
 	h := &Hub{Fsys: osfs.OS{}, branches: map[string]*Session{}}
-	h.Models = ensureModelsConfig(h.Fsys)
-	h.Settings = ensureSettings(h.Fsys)
-	h.ToolRules = ensureToolRules(h.Fsys)
+	ctx := context.Background()
+	if _, err := h.Fsys.Read(ctx, "models.json"); err != nil {
+		h.Models = DefaultModelsConfig()
+		_ = SaveModelsConfig(h.Fsys, h.Models)
+	} else {
+		h.Models = LoadModelsConfig(h.Fsys)
+	}
+	if _, err := h.Fsys.Read(ctx, "settings.json"); err != nil {
+		h.Settings = DefaultSettings()
+		_ = SaveSettings(h.Fsys, h.Settings)
+	} else {
+		h.Settings = LoadSettings(h.Fsys)
+	}
+	if _, err := h.Fsys.Read(ctx, "toolRules.json"); err != nil {
+		h.ToolRules = DefaultToolRules()
+		_ = SaveToolRules(h.Fsys, h.ToolRules)
+	} else {
+		h.ToolRules = LoadToolRules(h.Fsys)
+	}
 	h.Stats = NewStats(h.Fsys)
 	h.Topics = hooks.NewTopics(h.Fsys)
 	h.Active = h.bootstrap()
@@ -580,36 +574,6 @@ func (h *Hub) Sessions() []*Session {
 		out = append(out, s)
 	}
 	return out
-}
-
-/* ensureModelsConfig 加载 models.json，文件不存在则写盘默认（零配置首启自动创建）。 */
-func ensureModelsConfig(fsys osfs.OS) ModelsConfig {
-	if _, err := fsys.Read(context.Background(), "models.json"); err != nil {
-		m := DefaultModelsConfig()
-		_ = SaveModelsConfig(fsys, m)
-		return m
-	}
-	return LoadModelsConfig(fsys)
-}
-
-/* ensureSettings 加载 settings.json，文件不存在则写盘默认。 */
-func ensureSettings(fsys osfs.OS) Settings {
-	if _, err := fsys.Read(context.Background(), "settings.json"); err != nil {
-		st := DefaultSettings()
-		_ = SaveSettings(fsys, st)
-		return st
-	}
-	return LoadSettings(fsys)
-}
-
-/* ensureToolRules 加载 toolRules.json，文件不存在则写盘默认。 */
-func ensureToolRules(fsys osfs.OS) []ToolRule {
-	if _, err := fsys.Read(context.Background(), "toolRules.json"); err != nil {
-		rules := DefaultToolRules()
-		_ = SaveToolRules(fsys, rules)
-		return rules
-	}
-	return LoadToolRules(fsys)
 }
 
 /*

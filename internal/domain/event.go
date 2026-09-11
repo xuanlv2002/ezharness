@@ -140,10 +140,17 @@ func mapTaskEvent(out *Event, e event.Event) {
 		}
 	case "task.end":
 		if s, ok := e.Data.(*types.LoopState); ok {
+			answer := ""
+			for i := len(s.Messages) - 1; i >= 0; i-- {
+				if s.Messages[i].Role == types.RoleAssistant {
+					answer = s.Messages[i].Content
+					break
+				}
+			}
 			out.Data = raw(TaskEndData{
 				StopReason: string(s.StopReason),
 				Iterations: s.Iteration,
-				Answer:     lastAssistant(s),
+				Answer:     answer,
 			})
 		}
 	}
@@ -173,15 +180,6 @@ func TurnEnd(stop string, iterations int, usage *types.Usage, err error, elapsed
 		}
 	}
 	return Event{Type: "turn_end", Ts: time.Now().UnixMilli(), Data: raw(d)}
-}
-
-func lastAssistant(s *types.LoopState) string {
-	for i := len(s.Messages) - 1; i >= 0; i-- {
-		if s.Messages[i].Role == types.RoleAssistant {
-			return s.Messages[i].Content
-		}
-	}
-	return ""
 }
 
 /* Raw 序列化为事件 Data 载荷（跨包构造事件用）。 */

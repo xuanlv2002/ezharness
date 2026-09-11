@@ -281,7 +281,7 @@ func (t *TopicService) Tree(ctx context.Context) []SessionNode {
 			continue
 		}
 		// session 名称：优先快照 Title（本代首条 user / fork 锚点），
-		// 旧数据无字段时 FirstUserTitle 兜底；叶子不再借用线标题（分离）
+		// 空则 FirstUserTitle 兜底；叶子不借用线标题（身份分离）
 		title := snap.Title
 		if title == "" {
 			title = hooks.FirstUserTitle(snap.Messages)

@@ -49,22 +49,11 @@ func (t *Topics) loadLocked() []TopicEntry {
 	if err != nil {
 		return nil
 	}
-	var raw []TopicEntry
-	if json.Unmarshal(data, &raw) != nil {
+	var list []TopicEntry
+	if json.Unmarshal(data, &list) != nil {
 		return nil
 	}
-	// 同 ID 去重（保留最后一条）：历史 bug 可能写入重复条目，读侧自愈
-	out := make([]TopicEntry, 0, len(raw))
-	idx := map[string]int{}
-	for _, e := range raw {
-		if i, ok := idx[e.ID]; ok {
-			out[i] = e
-		} else {
-			idx[e.ID] = len(out)
-			out = append(out, e)
-		}
-	}
-	return out
+	return list
 }
 
 func (t *Topics) saveLocked(list []TopicEntry) error {

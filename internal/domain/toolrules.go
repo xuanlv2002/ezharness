@@ -58,9 +58,7 @@ func DefaultToolRules() []ToolRule {
 	}
 }
 
-/*
-LoadToolRules 读 toolRules.json；缺失或空档回落内置默认，无旧版适配。
-*/
+/* LoadToolRules 读 toolRules.json；缺失或空档回落内置默认。 */
 func LoadToolRules(fsys fs.FileSystem) []ToolRule {
 	data, err := fsys.Read(context.Background(), "toolRules.json")
 	if err != nil {
