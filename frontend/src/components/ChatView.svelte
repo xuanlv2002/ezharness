@@ -264,6 +264,10 @@
   }
   .chat > .side > :global(*) {
     pointer-events: auto;
+  }
+  /* 阴影只给卡片；entries 容器透明无背景，容器级阴影会把整组按钮
+     连同间隙圈成一块白色长条，视觉上黏成一个控件 */
+  .chat > .side > :global(*:not(.entries)) {
     box-shadow: 0 4px 16px rgb(0 0 0 / 8%);
   }
   .side > :global(.panel) {
@@ -286,6 +290,7 @@
     background: var(--bg);
     color: var(--muted);
     border-radius: 10px;
+    box-shadow: 0 4px 16px rgb(0 0 0 / 8%);
     transition:
       background var(--dur-fast) var(--ease-out),
       color var(--dur-fast) var(--ease-out),
