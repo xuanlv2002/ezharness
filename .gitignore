@@ -4,8 +4,8 @@
 # 构建产物
 .task/
 *.exe
-core/dist/
-desktop/release/
+dist
+bin/
 release/
 
 # 系统垃圾

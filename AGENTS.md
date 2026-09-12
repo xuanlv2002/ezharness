@@ -111,26 +111,25 @@ main 是唯一对话模型（Vision 开关决定图片进上下文还是落盘�
 
 - **三层结构**：`frontend/`（Svelte 双入口：index.html 主应用 +
   browser.html 浏览器窗口页）、`core/`（Go sidecar，module ezharness/core，
-  前端产物构建时拷入 core/dist 后 go:embed）、`desktop/`（Electron 壳：
-  主进程 + preload + electron-builder 配置）。业务全在 core，desktop 只做
-  壳与桌面资产（窗口/托盘/内嵌浏览器）
-- 构建：版本单源 `script/version.yaml`（脚本同步 frontend 页脚
-  ezharness-v<version>/dev 与 desktop 打包版本，勿手改 package.json）；
-  `script/dev.bat` 与 `script/release.bat` 同一条三段链——前端 → 拷
-  core/dist → go build 出根目录 ezharness-core.exe → electron-builder；
-  dev 出 `release/dev/ezharness-dev.exe`，release 出
-  `release/v<version>/` 安装包 + 绿色版（细节见 docs/build.md）
+  前端产物构建时拷入 core/web/dist 后 go:embed）、`desktop/`（Electron
+  壳：主进程 + preload + electron-builder 配置）。业务全在 core，desktop
+  只做壳与桌面资产（窗口/托盘/内嵌浏览器）
+- 构建：版本单源 `script/version.yaml`（release.bat 同步 frontend 页脚
+  ezharness-v<version> 与 desktop 打包版本，勿手改 package.json）；
+  `script/dev.bat` 是调试脚本——前端构建 → 拷 core/web/dist → go build
+  出 bin/ezharness-core.exe → desktop 里 npm run start 前台跑 Electron
+  （无打包）；`script/release.bat` 三段链全走 + electron-builder，产物
+  直出 `release/v<version>/` 安装包 + 绿色版（细节见 docs/build.md）
 - 应用根 = **core exe 所在目录**（config Root()，`--root` 参数可覆盖：
   portable 绿色版由 desktop 注入 PORTABLE_EXECUTABLE_DIR 后传参，数据
   跟随 exe）：
-  ezharness.json 与 data/ 就地生成。开发时 exe 构建到仓库根（dev 也如此）；
+  ezharness.json 与 data/ 就地生成。开发时 exe 在 bin/，数据落 bin/；
   打包后 core 在 resources/，配置数据落在 resources/（安装版同规则）
-- Electron 壳经 `process.resourcesPath`（打包）/仓库根（dev）找 core exe
-  与 ezharness.json；改路径逻辑两处（desktop/src/main/index.js 的 coreDir
-  与 spawn）要同步
+- Electron 壳经 `process.resourcesPath`（打包）/`bin/`（dev）找 core
+  exe；改路径逻辑（desktop/src/main/index.js 的 coreDir/repoRoot）要同步
 - `go run ./core` 会把 exe 放 go-build 临时目录，config 按 exe 位置找不到
   ezharness.json → 回落默认端口 5260 + 空数据目录。**验证须
-  `go build -o xxx.exe ./core` 后在配置所在目录运行**
+  `go build -o bin/ezharness-core.exe ./core` 后在配置所在目录运行**
 - 进程 CWD = 数据目录（启动时 chdir），data 下文件用相对路径直接操作
 - ezloop 是本地 replace（`../../ezloop`，core/go.mod），能不动就不动
 - `fs.FileSystem` 接口无删除能力：删目录用 `os.RemoveAll`（service 层有 os 先例）

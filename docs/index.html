@@ -595,12 +595,12 @@ core（ezharness-core.exe · Go sidecar）
     <h3>1.7 开发与发布</h3>
     <div class="codeblock">
       <div class="bar"><span class="dot r"></span><span class="dot y"></span><span class="dot g"></span><span class="name">script</span></div>
-<pre>script\version.yaml        <span class="c"># 版本单源：frontend 页脚 ezharness-v&lt;version&gt; · desktop 打包版本（脚本自动同步）</span>
-script\dev.bat             <span class="c"># 开发构建：三段链 → release\dev\ezharness-dev.exe（页脚 ezharness-dev）</span>
-script\release.bat         <span class="c"># 发布打包：同链 + NSIS → release\v&lt;version&gt;\ 安装包 + 绿色版</span></pre>
+<pre>script\version.yaml        <span class="c"># 版本单源：frontend 页脚 ezharness-v&lt;version&gt; · desktop 打包版本（release.bat 同步）</span>
+script\dev.bat             <span class="c"># 调试：前端构建 + core 编译（bin\）→ npm run start 前台跑 Electron（无打包）</span>
+script\release.bat         <span class="c"># 发布打包：三段链 + NSIS → release\v&lt;version&gt;\ 安装包 + 绿色版</span></pre>
     </div>
     <ul>
-      <li>三段链（两脚本共用）：前端 vite build（双入口）→ 拷 <code class="inline">frontend/dist → core/dist</code> → <code class="inline">go build</code> 出根目录 ezharness-core.exe → electron-builder（extraResources 内嵌 core）；开发与发布同一条路径，无 dev server</li>
+      <li>构建链：前端 vite build（双入口）→ 拷 <code class="inline">frontend/dist → core/web/dist</code> → <code class="inline">go build</code> 出 <code class="inline">bin\ezharness-core.exe</code> → electron-builder（extraResources 内嵌 core，产物直出 <code class="inline">release\v&lt;version&gt;\</code>）；dev.bat 只走前两段后直接跑壳，release.bat 走完整链打包</li>
       <li>验证链：<code class="inline">cd core &amp;&amp; go build ./... &amp;&amp; go vet ./...</code> + <code class="inline">cd frontend &amp;&amp; npm run build</code>；desktop 主进程 JS 用 <code class="inline">node --check</code> 过一遍</li>
       <li><code class="inline">go run ./core</code> 会把 exe 放临时目录导致 config 找不到应用根——验证须 <code class="inline">go build -o xxx.exe ./core</code> 后在配置所在目录运行</li>
     </ul>

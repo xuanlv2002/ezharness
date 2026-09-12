@@ -24,9 +24,11 @@ function pageBase() {
   return process.env.EZHARNESS_DEV_URL || `http://127.0.0.1:${corePort}`
 }
 
-/* core exe 所在目录：打包后在 resources/；开发模式为仓库根 */
+/* core exe 所在目录：打包后在 resources/；开发模式在仓库根 bin/ */
 function coreDir() {
-  return app.isPackaged ? process.resourcesPath : path.resolve(__dirname, '../../..')
+  return app.isPackaged
+    ? process.resourcesPath
+    : path.join(path.resolve(__dirname, '../../..'), 'bin')
 }
 
 /* 配置目录：portable 绿色版自解压到临时目录运行，配置与数据须锚定到

@@ -151,16 +151,16 @@ flowchart LR
 
 ## 开发
 
-前置依赖：[Go](https://go.dev/dl/)、[Node.js](https://nodejs.org/)（含 npm），以及本地 [ezloop](https://github.com/xuanlv2002/ezloop) 仓库（`core/go.mod` replace 指向 `../../ezloop`）。frontend / desktop 依赖脚本首次运行自动 `npm install`；electron 下载已配 npmmirror 镜像（`desktop/.npmrc`），无需手动设置。
+前置依赖：[Go](https://go.dev/dl/)、[Node.js](https://nodejs.org/)（含 npm），以及本地 [ezloop](https://github.com/xuanlv2002/ezloop) 仓库（`core/go.mod` replace 指向 `../../ezloop`）。electron 下载已配 npmmirror 镜像（`desktop/.npmrc`），无需手动设置。
 
-版本单源 `script/version.yaml`。两个脚本（[script/](script/)）走同一条三段构建链（前端 → core → electron-builder），从任意目录调用均可：
+版本单源 `script/version.yaml`（release.bat 同步页脚与打包版本）。脚本（[script/](script/)）从任意目录调用均可：
 
 ```sh
-script\dev.bat           # 开发构建 -> release\dev\ezharness-dev.exe（页脚 ezharness-dev）
+script\dev.bat           # 调试：前端构建 + core 编译（bin\）-> npm run start 前台跑 Electron
 script\release.bat       # 发布打包 -> release\v<版本>\ 安装包 + 绿色版
 ```
 
-- 应用根 = core exe 所在目录：首次启动自动创建 `ezharness.json` 与 `data/`，零配置可用；开发 exe 构建在仓库根，与产品行为完全一致
+- 应用根 = core exe 所在目录：首次启动自动创建 `ezharness.json` 与 `data/`，零配置可用；开发 exe 在 `bin\`，数据跟 exe 落 `bin\`
 - 设置页改端口/数据目录后进程内换代重启：收尾运行轮落盘 → chdir → 重建 Hub/Router
 
 ## 文档
