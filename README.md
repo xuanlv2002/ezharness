@@ -10,7 +10,7 @@
 
 [![Go Version](https://img.shields.io/badge/go-1.25%2B-00ADD8?logo=go)](https://go.dev)
 [![Frontend](https://img.shields.io/badge/frontend-Svelte%205-ff3e00?logo=svelte)](https://svelte.dev)
-[![Desktop](https://img.shields.io/badge/desktop-wails%20v3-00add8)](https://v3alpha.wails.io)
+[![Desktop](https://img.shields.io/badge/desktop-electron-47848f)](https://www.electronjs.org/)
 [![Platform](https://img.shields.io/badge/platform-Windows-blue?logo=windows)](https://github.com/xuanlv2002/ezharness/releases)
 [![License](https://img.shields.io/badge/license-Apache--2.0-green)](LICENSE)
 
@@ -71,27 +71,33 @@ flowchart TB
 1. 下载安装包，双击运行；
 2. 按引导选择安装目录，自动创建开始菜单与桌面快捷方式，可选「添加到 PATH」。
 
-首次启动到「模型」页填 apiKey 后即可对话。纯 server 形态（无窗口，浏览器访问）：`EZHARNESS_NO_WINDOW=1` 启动后访问 `http://127.0.0.1:<port>`——与桌面窗口同一份页面。
+首次启动到「模型」页填 apiKey 后即可对话。纯 server 形态（无桌面壳，浏览器访问）：直接运行 `ezharness-core.exe` 后访问 `http://127.0.0.1:<port>`——与桌面端同一份页面（浏览器控制等桌面专属能力自动降级）。
 
 ## 架构
 
-单二进制，一进程三角色；桌面窗口与浏览器访问的是同一个服务，行为完全一致：
+三层结构：Electron 桌面壳 + Go sidecar 后端 + 端无关前端页面；桌面端与 web 端访问的是同一个 core 服务：
 
 ```mermaid
 flowchart TB
-    subgraph EXE["ezharness.exe · 单二进制 · 一进程三角色"]
-        W["wails 窗口壳<br/>无边框主窗 · 快应用子窗 · 托盘"]
-        G["gin server<br/>静态资源 · /api/* · SSE 事件流 · /apps/*"]
-        A["agent 引擎<br/>ezloop core · 随会话装配"]
+    subgraph DESKTOP["desktop/ · Electron 壳"]
+        W["主窗口 / 托盘 / 快应用子窗"]
+        B["内嵌浏览器<br/>WebContentsView 标签页"]
     end
-    BR["🌐 浏览器"] --> G
-    W -- "真实网络地址 · SSE 可用" --> G
-    G --> A
+    subgraph CORE["core/ · ezharness-core.exe · Go sidecar"]
+        G["gin server<br/>静态页面 · /api/* · SSE · WS"]
+        A["agent 引擎<br/>ezloop · browser_*/term_* 工具面"]
+    end
+    FE["frontend/ · Svelte 双入口<br/>主应用 + 浏览器窗口页"]
+    DESKTOP -- "spawn + health" --> CORE
+    W -- "loadURL(core 伺服页面)" --> G
+    BR["🌐 浏览器(web 端)"] --> G
+    B -- "桥 WS /api/browser/bridge<br/>JSON-RPC 工具调用" --> A
 ```
 
-- 后端 Go + gin，三层 MVC（controller → service → domain）；前端 Svelte 5 + Vite + TypeScript
-- 通信 REST + SSE（事件流）+ WebSocket（终端）
-- 前端恒内嵌单二进制，无 dev server；监听默认 `127.0.0.1`（不触发防火墙弹窗）
+- core：Go + gin，三层 MVC（controller → service → domain），业务全在这里；桌面专属能力（内嵌浏览器）经桥协议接入，端无关
+- desktop：Electron 壳——窗口/托盘/生命周期 + 浏览器资产（WebContentsView，AI 经桥控制、用户原生操作）
+- frontend：Svelte 5 + Vite + TypeScript，core 伺服（同源 REST/SSE/WS），web 端自动降级
+- 监听默认 `127.0.0.1`（不触发防火墙弹窗）；`exe 在哪运行，配置与数据就在哪生成`
 
 ## 核心能力
 
@@ -141,24 +147,20 @@ flowchart LR
 - **决策链路**：四档审批策略（ask/black/white/auto，人机与内部工具恒免审），DecisionCard 嵌时间线，断线可重放
 - **全局通知栏**：汇总所有分支（含后台分支与分身）的未决请求——agent 需要人时一定能找到人；内联直接决策
 - **共享终端**：人机共用同一个真实 shell（ConPTY 全局池），`readMark` 单游标读即消费；用户手敲的命令进 agent_status——agent 每轮知道你在终端干了什么
-- **路线图**：同样的「真实实例 + 单游标 + 人机双写」模式后续扩展到浏览器
+- **共享浏览器**：desktop 内嵌真实 Chromium（每标签独立视图），AI 经桥控制、用户原生接管同一页面；`browser_start` 自动弹出共见
 
 ## 开发
 
-前置依赖：[Go](https://go.dev/dl/)、[Node.js](https://nodejs.org/)；ezloop 作为普通 Go 模块自动拉取。出安装包另需 wails3 CLI 与 NSIS：
-
-```sh
-go install github.com/wailsapp/wails/v3/cmd/wails3@latest
-```
+前置依赖：[Go](https://go.dev/dl/)、[Node.js](https://nodejs.org/)、[Task](https://taskfile.dev/)；ezloop 作为普通 Go 模块自动拉取（本地开发走 replace）。desktop 依赖首次 `cd desktop && npm install`（国内可设 `ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/`）。
 
 日常用两个脚本（[script/](script/)），从任意目录调用均可：
 
 ```sh
-script\dev.bat           # 开发调试：npm run build -> go build -> 启动 exe
-script\release.bat       # 发布：出 build\dist\ezharness.exe + bin\installer.exe
+script\dev.bat           # 开发调试：vite 热更 + Electron 壳（core 用已构建 exe）
+script\release.bat       # 发布：前端+core 全量构建 -> electron-builder 出 desktop\release\ 安装包
 ```
 
-- 应用根 = exe 所在目录：首次启动自动创建 `ezharness.json` 与 `data/`，零配置可用；开发数据因此落在 `build/dist/`，与产品行为完全一致
+- 应用根 = core exe 所在目录：首次启动自动创建 `ezharness.json` 与 `data/`，零配置可用；开发 exe 构建在仓库根，与产品行为完全一致
 - 设置页改端口/数据目录后进程内换代重启：收尾运行轮落盘 → chdir → 重建 Hub/Router
 
 ## 文档

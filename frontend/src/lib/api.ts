@@ -353,8 +353,9 @@ export const api = {
 
   getApps: () => fetch('/api/apps').then(json<{ apps: AppEntry[] }>),
 
-  /* 桌面壳为快应用开独立子窗口（浏览器访问 503，调用方回落新标签页） */
-  openApp: (name: string) => post<{ ok: boolean }>('/api/apps/open', { name }),
+  /* 快应用名单校验（chip 的 id 来自模型输出不可信），返回路径与标题；
+     开窗由调用方执行：desktop 壳 IPC 子窗口 / web 新标签页 */
+  openApp: (name: string) => post<{ ok: boolean; path: string; title: string }>('/api/apps/open', { name }),
 
   /* 工作目录文本文件保存（file:// 编辑器）；沙箱同 /api/workspace/file */
   saveFile: (path: string, content: string) =>

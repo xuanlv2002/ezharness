@@ -35,7 +35,7 @@
     }
     const onDragOver = (e: DragEvent) => {
       if (!e.dataTransfer?.types.includes('Files')) return
-      e.preventDefault() // 允许 drop（Wails 注入的监听只 preventDefault 它自己的）
+      e.preventDefault() // 允许 drop
     }
     const onDrop = (e: DragEvent) => {
       e.preventDefault()
@@ -80,7 +80,7 @@
     attachments = []
   }
 
-  /* 待回流附件（查看器「添加到对话」/Wails 拖入）：草稿带 tag 时
+  /* 待回流附件（查看器「添加到对话」/拖入暂存）：草稿带 tag 时
   原位替换来源 chip（身份一致校验：file 引用相等），否则追加。本页
   未挂载时积压在 store，回对话页后首跑消费，跨页不丢。 */
   $effect(() => {
@@ -183,13 +183,16 @@
           <path d="M12 16.5h7" />
         </svg>
       </button>
-      <button class="entry" class:active={store.termDrawerOpen && store.drawerTool === 'browser'}
-        onclick={() => store.toggleDrawerTool('browser')} title="共享浏览器（AI 操控 · 镜像可接管）">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-          <circle cx="12" cy="12" r="9" />
-          <path d="M3 12h18M12 3a15 15 0 0 1 0 18M12 3a15 15 0 0 0 0 18" />
-        </svg>
-      </button>
+      {#if (window as any).ez?.browser}
+        <!-- 共享浏览器：desktop 资产，独立窗口（AI start 自动弹出，此钮切换显隐）；web 端不显示 -->
+        <button class="entry"
+          onclick={() => (window as any).ez.browser.toggleWindow()} title="共享浏览器（AI 操控 · 独立窗口共见）">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="9" />
+            <path d="M3 12h18M12 3a15 15 0 0 1 0 18M12 3a15 15 0 0 0 0 18" />
+          </svg>
+        </button>
+      {/if}
       <button class="entry" class:active={store.termDrawerOpen && store.drawerTool === 'file'}
         onclick={() => store.toggleDrawerTool('file')} title="资源（查看 · 编辑 · 发给 AI——文本/图片/网页等）">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">

@@ -92,7 +92,12 @@
     } else if (kind === 'app') {
       void api
         .openApp(id)
-        .then(() => (store.lastStatus = `正在打开快应用 ${id}`))
+        .then((r) => {
+          const desktopWindow = (window as any).ez?.window
+          if (desktopWindow) desktopWindow.openApp(r.path, r.title)
+          else window.open(r.path, '_blank')
+          store.lastStatus = `正在打开快应用 ${id}`
+        })
         .catch((err: unknown) => (store.lastStatus = `打开快应用失败：${(err as Error).message}`))
     } else if (kind === 'file') {
       /* 资源页按类型路由（registry）：文本进编辑器、图片进画板、

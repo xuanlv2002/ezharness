@@ -1,7 +1,6 @@
 <script lang="ts">
   import { store } from '../../lib/store.svelte'
   import TerminalTab from './TerminalTab.svelte'
-  import BrowserTab from './BrowserTab.svelte'
   import ResourcePane from '../viewer/ResourcePane.svelte'
 
   /*
@@ -33,8 +32,8 @@
 <aside class="drawer" class:open={open} role="complementary" aria-label="工作区">
   <div class="inner">
     <header>
-      <h3>{tool === 'term' ? '共享终端' : tool === 'browser' ? '浏览器镜像' : '资源'}</h3>
-      <span class="hint">{tool === 'term' ? '用户与 AI 共写 · 收起不中断' : tool === 'browser' ? 'AI 操控 · 大窗可接管' : '查看 · 编辑 · 发给 AI'}</span>
+      <h3>{tool === 'term' ? '共享终端' : '资源'}</h3>
+      <span class="hint">{tool === 'term' ? '用户与 AI 共写 · 收起不中断' : '查看 · 编辑 · 发给 AI'}</span>
       <button class="close" onclick={() => store.closeTermDrawer()} title="收起">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
           <path d="M6 6l12 12M18 6L6 18" />
@@ -44,9 +43,6 @@
     <div class="body">
       <div class="pane" class:hidden={tool !== 'term'}>
         <TerminalTab active={open && tool === 'term'} />
-      </div>
-      <div class="pane" class:hidden={tool !== 'browser'}>
-        <BrowserTab active={open && tool === 'browser'} />
       </div>
       <div class="pane" class:hidden={tool !== 'file'}>
         <ResourcePane active={open && tool === 'file'} />

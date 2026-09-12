@@ -1,57 +1,41 @@
 version: '3'
 
-vars:
-  APP_NAME: "ezharness"
-  BIN_DIR: "build/dist"
-  PACKAGE_MANAGER: '{{.PACKAGE_MANAGER | default "npm"}}'
-  # Target OS for build/package/run. Defaults to the host OS, and is overridden
-  # by `wails3 build GOOS=...` (or the GOOS env var) for cross-compilation. The
-  # tasks below dispatch to the matching platform Taskfile via this variable.
-  GOOS: '{{.GOOS | default OS}}'
-
-includes:
-  common: ./build/Taskfile.yml
-  windows: ./build/windows/Taskfile.yml
-  darwin: ./build/darwin/Taskfile.yml
-  linux: ./build/linux/Taskfile.yml
+# 三层构建：frontend（Svelte 双入口）→ core（Go sidecar，内嵌前端产物）
+# → desktop（Electron 壳，electron-builder 打包）
 
 tasks:
-  build:
-    summary: Builds the application
+  build:frontend:
+    summary: 前端构建（index.html 主应用 + browser.html 浏览器窗口页）
+    dir: frontend
     cmds:
-      - task: "{{.GOOS}}:build"
+      - npm run build
+
+  build:core:
+    summary: 同步前端产物到 core/dist 并构建 ezharness-core.exe（exe 所在目录=配置与数据目录）
+    deps: [build:frontend]
+    cmds:
+      - cmd: powershell -NoProfile -Command "Remove-Item -Recurse -Force core/dist -ErrorAction SilentlyContinue; Copy-Item -Recurse frontend/dist core/dist"
+        platforms: [windows]
+      - go build -o ezharness-core.exe ./core
+
+  build:
+    summary: 全量构建（前端 + core）
+    cmds:
+      - task: build:core
+
+  dev:
+    summary: 开发模式（vite 热更 + Electron 壳；core 用已构建 exe，无则先构建）
+    cmds:
+      - cmd: if not exist ezharness-core.exe ( task build:core )
+        platforms: [windows]
+      - cmd: start "ezharness vite" cmd /c "cd frontend && npm run dev"
+        platforms: [windows]
+      - cmd: timeout /t 3 /nobreak >nul && cd desktop && set EZHARNESS_DEV_URL=http://localhost:5173&& npx electron .
+        platforms: [windows]
 
   package:
-    summary: Packages a production build of the application
+    summary: 发布打包（electron-builder 出 NSIS 安装包，内嵌 core exe）
+    deps: [build:core]
+    dir: desktop
     cmds:
-      - task: "{{.GOOS}}:package"
-
-  run:
-    summary: Runs the application
-    cmds:
-      - task: "{{.GOOS}}:run"
-
-  setup:docker:
-    summary: Builds Docker image for cross-compilation (~800MB download)
-    cmds:
-      - task: common:setup:docker
-
-  build:server:
-    summary: Builds the application in server mode (no GUI, HTTP server only)
-    cmds:
-      - task: common:build:server
-
-  run:server:
-    summary: Runs the application in server mode
-    cmds:
-      - task: common:run:server
-
-  build:docker:
-    summary: Builds a Docker image for server mode deployment
-    cmds:
-      - task: common:build:docker
-
-  run:docker:
-    summary: Builds and runs the Docker image
-    cmds:
-      - task: common:run:docker
+      - npx electron-builder --win

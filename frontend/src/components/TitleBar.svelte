@@ -1,63 +1,43 @@
 <script lang="ts">
+  import { onMount } from 'svelte'
   import { isDesktop } from '../lib/desktop'
 
   /* 桌面壳标题栏：?desktop 参数时渲染（桌面窗口 URL 带 ?desktop=1）。
-     三键/状态走 /api/window/*（Go 侧桥接原生窗口），拖拽与双击最大化由
-     WebView2 原生非客户区支持处理（CSS app-region），浏览器访问不渲染 */
+     三键/关闭流程走 desktop 壳的 preload IPC（window.ez），拖拽由
+     app-region 处理，浏览器访问不渲染 */
   const desktop = isDesktop
+
+  /* desktop 壳能力（web 端为 undefined，防御性判空） */
+  function ezWindow(): any | undefined {
+    return (window as any).ez?.window
+  }
 
   let maximized = $state(false)
 
-  /* 关闭询问（页面 modal）：后端未配置托盘时点 X 返回 prompt=true 弹出；
-     勾选「以后最小化到托盘」由后端持久化，之后点 X 直接最小化 */
+  /* 关闭询问（页面 modal）：未配置托盘时点 X 返回 prompt=true 弹出；
+     勾选「以后最小化到托盘」由壳持久化到设置，之后点 X 直接隐藏 */
   let closePrompt = $state(false)
   let trayChoice = $state(false)
 
-  function post(action: string): Promise<Response> {
-    return fetch(`/api/window/${action}`, { method: 'POST' })
-  }
-
   async function syncMax() {
-    try {
-      const r = await fetch('/api/window/state')
-      if (r.ok) maximized = (await r.json()).maximized === true
-    } catch {
-      /* 状态获取失败保持原样 */
-    }
+    maximized = (await ezWindow()?.isMaximized()) ?? false
   }
 
   async function toggleMax() {
-    try {
-      const r = await post('max')
-      if (r.ok) maximized = (await r.json()).maximized === true
-    } catch {
-      void syncMax()
-    }
+    maximized = (await ezWindow()?.toggleMaximize()) ?? false
   }
 
   async function onClose() {
-    try {
-      const r = await post('close')
-      if (r.ok && (await r.json()).prompt) {
-        trayChoice = false
-        closePrompt = true
-      }
-    } catch {
-      /* 后端不可达保持原样 */
+    const r = await ezWindow()?.closeRequest()
+    if (r?.prompt) {
+      trayChoice = false
+      closePrompt = true
     }
   }
 
-  async function decideClose() {
+  function decideClose() {
     closePrompt = false
-    try {
-      await fetch('/api/window/close-decision', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ tray: trayChoice, remember: trayChoice }),
-      })
-    } catch {
-      /* 后端不可达保持原样 */
-    }
+    ezWindow()?.closeDecision(trayChoice, trayChoice)
   }
 
   /* 最大化状态跟随：拖拽还原/系统快捷键改变窗口态时同步按钮图标 */
@@ -67,13 +47,19 @@
     window.addEventListener('resize', syncMax)
     return () => window.removeEventListener('resize', syncMax)
   })
+
+  /* 系统级关闭（Alt+F4/任务栏）由壳转到页面弹确认框 */
+  onMount(() => ezWindow()?.onClosePrompt(() => {
+    trayChoice = false
+    closePrompt = true
+  }))
 </script>
 
 {#if desktop}
   <div class="titlebar">
     <span class="name">ezharness</span>
     <div class="btns">
-      <button class="tbtn" onclick={() => void post('min')} title="最小化">
+      <button class="tbtn" onclick={() => ezWindow()?.minimize()} title="最小化">
         <svg viewBox="0 0 12 12"><path d="M1 6h10" stroke="currentColor" stroke-width="1.2" /></svg>
       </button>
       <button class="tbtn" onclick={toggleMax} title={maximized ? '还原' : '最大化'}>
@@ -104,7 +90,7 @@
         </label>
         <div class="close-btns">
           <button class="cb cancel" onclick={() => (closePrompt = false)}>取消</button>
-          <button class="cb ok" onclick={() => void decideClose()}>关闭</button>
+          <button class="cb ok" onclick={() => decideClose()}>关闭</button>
         </div>
       </div>
     </div>

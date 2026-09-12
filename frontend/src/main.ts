@@ -32,8 +32,8 @@ LOGO.forEach((line, i) => {
 const app = mount(App, { target: document.getElementById('app')! })
 
 /* 外部链接拦截（捕获阶段）：点击消息/页面里的外链在系统浏览器打开。
-   桌面壳 WebView 当前页导航会离开应用（SPA 被顶掉无法返回），绝不能
-   放行；浏览器模式直接 window.open；同源相对链接（快应用等）不拦。 */
+   桌面壳窗口当前页导航会离开应用（SPA 被顶掉无法返回），绝不能放行；
+   浏览器模式直接 window.open；同源相对链接（快应用等）不拦。 */
 document.addEventListener(
   'click',
   (e) => {
@@ -50,12 +50,9 @@ document.addEventListener(
     if (origin === location.origin) return
     e.preventDefault()
     e.stopPropagation()
-    if (isDesktop) {
-      void fetch('/api/window/open-url', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url: href }),
-      })
+    const desktopWindow = (window as any).ez?.window
+    if (isDesktop && desktopWindow) {
+      desktopWindow.openUrl(href)
     } else {
       window.open(href, '_blank', 'noopener')
     }
