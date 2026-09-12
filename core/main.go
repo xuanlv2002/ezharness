@@ -18,6 +18,7 @@ tools/hooks 为领域扩展，osfs/config 为基础设施。main 只做装配。
 package main
 
 import (
+	"flag"
 	"fmt"
 	"log"
 	"os"
@@ -37,6 +38,10 @@ import (
 var appStart = time.Now()
 
 func main() {
+	root := flag.String("root", "", "应用根目录(配置与数据所在;缺省=exe 所在目录)")
+	flag.Parse()
+	config.SetRoot(*root)
+
 	c, err := config.Load()
 	if err != nil {
 		fmt.Println(err)

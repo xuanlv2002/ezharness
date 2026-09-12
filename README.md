@@ -62,7 +62,7 @@ flowchart TB
 
 **方式一：绿色版（下载 exe）**
 
-1. 下载 `ezharness.exe`，放入任意文件夹（如 `D:\ezharness`）；
+1. 下载绿色版 `ezharness-v<版本>.exe`（可改名 `ezharness.exe`），放入任意文件夹（如 `D:\ezharness`）；
 2. 将该文件夹加入 PATH 环境变量；
 3. 任意终端输入 `ezharness` 启动。首次运行在同目录自动生成 `ezharness.json` 与 `data\`。
 

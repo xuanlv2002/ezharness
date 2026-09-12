@@ -70,7 +70,7 @@
 </div>
 
 <footer class="brand-foot" class:away={store.termDrawerOpen}>
-  <a href="https://github.com/xuanlv2002/ezharness" target="_blank" rel="noreferrer">ezharness v{pkg.version}</a>
+  <a href="https://github.com/xuanlv2002/ezharness" target="_blank" rel="noreferrer">ezharness-{pkg.version}</a>
   <span>·</span>
   <a href="https://github.com/xuanlv2002/ezloop" target="_blank" rel="noreferrer">powered by ezloop</a>
 </footer>

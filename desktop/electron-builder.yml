@@ -15,9 +15,12 @@ extraResources:
 win:
   target:
     - nsis
-    - zip
+    - portable
   icon: ../assets/icon.png
 nsis:
   oneClick: false
   allowToChangeInstallationDirectory: true
   perMachine: false
+  artifactName: ezharness-v${version}-setup.exe
+portable:
+  artifactName: ezharness-v${version}.exe

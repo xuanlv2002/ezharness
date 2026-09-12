@@ -49,20 +49,35 @@ type appFile struct {
 }
 
 var (
-	rootOnce sync.Once
-	rootAbs  string
-	fileMu   sync.Mutex
+	rootOnce     sync.Once
+	rootAbs      string
+	rootOverride string
+	fileMu       sync.Mutex
 )
 
 /*
-	Root 返回应用根目录（配置文件所在）= exe 所在目录。首次调用即锚定为
+SetRoot 显式指定应用根（portable 绿色版定位：exe 自解压运行时把配置与
+数据锚定到 exe 所在目录，而非临时解压目录）。必须在首次 Root() 前
+调用（main 解析启动参数后立即设置）。
+*/
+func SetRoot(dir string) {
+	if dir = strings.TrimSpace(dir); dir != "" {
+		rootOverride = dir
+	}
+}
 
-绝对路径（在进程 chdir 到数据目录之前），此后不受 cwd 变化影响。
+/*
+	Root 返回应用根目录（配置文件所在）= exe 所在目录（--root 显式
+	指定时用之）。首次调用即锚定为绝对路径（在进程 chdir 到数据目录
+
+之前），此后不受 cwd 变化影响。
 */
 func Root() string {
 	rootOnce.Do(func() {
 		v := "."
-		if exe, err := os.Executable(); err == nil {
+		if rootOverride != "" {
+			v = rootOverride
+		} else if exe, err := os.Executable(); err == nil {
 			v = filepath.Dir(exe)
 		}
 		if abs, err := filepath.Abs(v); err == nil {

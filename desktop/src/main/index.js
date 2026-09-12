@@ -24,15 +24,21 @@ function pageBase() {
   return process.env.EZHARNESS_DEV_URL || `http://127.0.0.1:${corePort}`
 }
 
-/* core 根目录：打包后 core exe 与配置在 resources/；开发模式为仓库根 */
+/* core exe 所在目录：打包后在 resources/；开发模式为仓库根 */
 function coreDir() {
   return app.isPackaged ? process.resourcesPath : path.resolve(__dirname, '../../..')
 }
 
-/* readCoreConfig 读 core 同目录 ezharness.json（缺失按默认端口） */
+/* 配置目录：portable 绿色版自解压到临时目录运行，配置与数据须锚定到
+exe 所在目录（PORTABLE_EXECUTABLE_DIR 由 portable 运行器注入） */
+function configDir() {
+  return process.env.PORTABLE_EXECUTABLE_DIR || coreDir()
+}
+
+/* readCoreConfig 读配置目录 ezharness.json（缺失按默认端口） */
 function readCoreConfig() {
   try {
-    return JSON.parse(fs.readFileSync(path.join(coreDir(), 'ezharness.json'), 'utf8'))
+    return JSON.parse(fs.readFileSync(path.join(configDir(), 'ezharness.json'), 'utf8'))
   } catch {
     return {}
   }
@@ -43,13 +49,17 @@ function startCore() {
   const cfg = readCoreConfig()
   corePort = cfg.port || 5260
   const exe = process.env.EZHARNESS_CORE_EXE ||
-    path.join(coreDir(), 'ezharness-core.exe') // dev 也构建到仓库根：exe 目录=配置与数据目录
+    path.join(coreDir(), 'ezharness-core.exe')
   if (!fs.existsSync(exe)) {
     console.error(`core 不存在: ${exe}（先构建 core）`)
     app.quit()
     return Promise.reject(new Error('core missing'))
   }
-  coreProc = spawn(exe, [], { cwd: coreDir(), stdio: 'inherit' })
+  const args = []
+  if (process.env.PORTABLE_EXECUTABLE_DIR) {
+    args.push('--root', process.env.PORTABLE_EXECUTABLE_DIR)
+  }
+  coreProc = spawn(exe, args, { cwd: configDir(), stdio: 'inherit' })
   coreProc.on('exit', () => {
     if (!quitting) {
       console.error('core 进程退出，桌面壳随之退出')

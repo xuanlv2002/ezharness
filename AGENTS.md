@@ -114,11 +114,15 @@ main 是唯一对话模型（Vision 开关决定图片进上下文还是落盘�
   前端产物构建时拷入 core/dist 后 go:embed）、`desktop/`（Electron 壳：
   主进程 + preload + electron-builder 配置）。业务全在 core，desktop 只做
   壳与桌面资产（窗口/托盘/内嵌浏览器）
-- 构建：`task build`（前端 → 拷 core/dist → go build 出根目录
-  ezharness-core.exe）；开发 `script/dev.bat`（vite 热更 + Electron 壳，
-  `EZHARNESS_DEV_URL` 指向 5173，/api 经 vite 代理到 core）；发布
-  `script/release.bat`（electron-builder 出 NSIS + zip 到 desktop/release/）
-- 应用根 = **core exe 所在目录**（config Root()，无环境变量覆盖）：
+- 构建：版本单源 `script/version.yaml`（脚本同步 frontend 页脚
+  ezharness-v<version>/dev 与 desktop 打包版本，勿手改 package.json）；
+  `script/dev.bat` 与 `script/release.bat` 同一条三段链——前端 → 拷
+  core/dist → go build 出根目录 ezharness-core.exe → electron-builder；
+  dev 出 `release/dev/ezharness-dev.exe`，release 出
+  `release/v<version>/` 安装包 + 绿色版（细节见 docs/build.md）
+- 应用根 = **core exe 所在目录**（config Root()，`--root` 参数可覆盖：
+  portable 绿色版由 desktop 注入 PORTABLE_EXECUTABLE_DIR 后传参，数据
+  跟随 exe）：
   ezharness.json 与 data/ 就地生成。开发时 exe 构建到仓库根（dev 也如此）；
   打包后 core 在 resources/，配置数据落在 resources/（安装版同规则）
 - Electron 壳经 `process.resourcesPath`（打包）/仓库根（dev）找 core exe
