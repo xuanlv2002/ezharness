@@ -14,11 +14,12 @@
     { key: 'white', label: '白名单', full: '白名单免审：仅名单内的操作放行' },
     { key: 'auto', label: '免审', full: '全部免审' },
   ]
-  type ListKind = 'command' | 'path' | 'tool'
+  type ListKind = 'command' | 'path' | 'tool' | 'url'
   const listMeta: Record<ListKind, { label: string; ph: string }> = {
     command: { label: '命令或前缀', ph: 'git status' },
     path: { label: '路径或前缀', ph: 'C:\\Projects\\' },
     tool: { label: 'server 或 server.tool', ph: 'github.create_issue' },
+    url: { label: 'URL 或域名前缀', ph: 'https://github.com' },
   }
 
   interface RuleRow {
@@ -42,6 +43,16 @@
     term_read: { desc: '读取共享终端新输出', kind: 'tool' },
     term_list: { desc: '列出共享终端', kind: 'tool' },
     term_close: { desc: '关闭共享终端', kind: 'tool' },
+    browser_start: { desc: '新建共享浏览器标签（首次使用自动下载 Chromium）', kind: 'tool' },
+    browser_navigate: { desc: '导航到网址（白名单填 URL/域名前缀放行常去站点）', kind: 'url' },
+    browser_click: { desc: '点击页面元素', kind: 'tool' },
+    browser_type: { desc: '在页面输入文本', kind: 'tool' },
+    browser_key: { desc: '按键 / 组合键', kind: 'tool' },
+    browser_scroll: { desc: '滚动页面', kind: 'tool' },
+    browser_read: { desc: '读页面正文 / 链接清单', kind: 'tool' },
+    browser_screenshot: { desc: '页面截图（多模态看图，只读）', kind: 'tool' },
+    browser_list: { desc: '列出共享浏览器标签', kind: 'tool' },
+    browser_close: { desc: '关闭共享浏览器标签', kind: 'tool' },
     image_recognize: { desc: '图片识别（识别槽模型驱动，只读）', kind: 'tool' },
     task: { desc: 'fork 分身执行子任务（分身继承主 agent 策略）', kind: 'tool', noList: true },
     save_app: { desc: '保存快应用 html', kind: 'tool' },

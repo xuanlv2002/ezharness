@@ -24,6 +24,7 @@ type Controllers struct {
 	App       *AppController
 	Window    *WindowController
 	Terminal  *TerminalController
+	Browser   *BrowserController
 	Workspace *WorkspaceController
 }
 
@@ -93,6 +94,12 @@ func NewRouter(c Controllers, dist fs.FS) *gin.Engine {
 		api.GET("/terminal/list", c.Terminal.List)
 		api.POST("/terminal/create", c.Terminal.Create)
 		api.POST("/terminal/close", c.Terminal.Close)
+
+		/* 魔法看板·共享浏览器：WS 镜像/输入多路复用 + REST 管理 */
+		api.GET("/browser/ws", c.Browser.Ws)
+		api.GET("/browser/list", c.Browser.List)
+		api.POST("/browser/create", c.Browser.Create)
+		api.POST("/browser/close", c.Browser.Close)
 
 		api.POST("/window/min", c.Window.Minimise)
 		api.POST("/window/max", c.Window.ToggleMaximise)

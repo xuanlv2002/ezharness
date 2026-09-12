@@ -52,8 +52,9 @@ import (
 
 /* AgentService 装配领域会话的运行时。 */
 type AgentService struct {
-	Hub  *domain.Hub
-	Term *TerminalService // 共享终端（魔法看板），可空：term_* 工具与状态注入的前提
+	Hub     *domain.Hub
+	Term    *TerminalService // 共享终端（魔法看板），可空：term_* 工具与状态注入的前提
+	Browser *BrowserService  // 共享浏览器（魔法看板），可空：browser_* 工具注入的前提
 }
 
 /*
@@ -160,14 +161,21 @@ func (a *AgentService) Assemble(s *domain.Session, st domain.Settings) {
 	// 剥历史图片消息（请求视图，落盘不动，换回多模态自动恢复）
 	modelWarps := []warp.ModelHandler{modeldump.Warp(), modelretry.Warp(), noempty.Warp(), visionguard.Warp(mainVision)}
 	agentTools := append(tools.SaveApp(s.Fsys), tools.SharedTerm(a.Term)...)
+	agentTools = append(agentTools, tools.SharedBrowser(a.Browser)...)
 	if visionOn {
 		agentTools = append(agentTools, tools.ImageRecognize(a)...)
+	}
+	if a.Browser != nil {
+		a.Browser.SetVisionProbe(mainVision) // 截图返回形态随主模型视觉能力实时裁决
 	}
 	toolNames := []string{
 		"read_file", "write_file", "edit_file", "terminal", "save_app",
 		askuser.ToolName, task.ToolName,
 		"mcp_router", hooks.TrimTool, skilltool.ToolName,
 		"term_start", "term_send", "term_read", "term_list", "term_close",
+		"browser_start", "browser_navigate", "browser_click", "browser_type",
+		"browser_key", "browser_scroll", "browser_read", "browser_screenshot",
+		"browser_list", "browser_close",
 	}
 	if visionOn {
 		toolNames = append(toolNames, tools.ImageRecognizeTool)
@@ -349,6 +357,12 @@ func matchRuleList(list []string, ruleTool string, args json.RawMessage) bool {
 		}
 		_ = json.Unmarshal(args, &a)
 		key = a.Path
+	case "browser_navigate":
+		var a struct {
+			URL string `json:"url"`
+		}
+		_ = json.Unmarshal(args, &a)
+		key = a.URL
 	case "mcp.*":
 		var a struct {
 			Server string `json:"server"`
@@ -372,6 +386,9 @@ func matchRuleList(list []string, ruleTool string, args json.RawMessage) bool {
 		}
 		if ruleTool == "mcp.*" && strings.HasPrefix(key, e+".") {
 			return true // server 前缀放行整站（点边界：time 不误命中 timeX）
+		}
+		if ruleTool == "browser_navigate" && strings.HasPrefix(key, strings.TrimSuffix(e, "/")+"/") {
+			return true // URL 前缀放行整站（斜杠边界：github.com 不误命中 github.com.evil.com）
 		}
 		if ruleTool != "terminal" && ruleTool != "term_start" && ruleTool != "term_send" && ruleTool != "mcp.*" && strings.HasPrefix(key, e) {
 			return true // 路径前缀
@@ -440,12 +457,18 @@ func buildSystemBase(ctx context.Context, st domain.Settings, fsys osfs.OS) stri
 		"（省去先 read_file 再复制的往返；单文件上限 200000 字符，读不到会报错）；\n" +
 		"# 输出占位：回复中给用户可点击的入口用 <$supper_url>类型://标识</$supper_url> 包裹——" +
 		"https:// 外部链接、term://终端id（term_list 可查；长驻程序运行中或任务收尾时把终端入口交付给用户）、" +
+		"browser://浏览器标签id（browser_list 可查；浏览器操作期间把入口交付给用户，用户点击即达镜像页实时共见，要点操作时唤起大窗接管）、" +
 		"app://快应用名（save_app 生成后在回复中引用，用户点击即开）、" +
 		"file://工作目录内文本文件的绝对路径（write_file/read_file 等操作过的代码与文档，交付入口供用户点击查看编辑）；\n" +
 		"# 共享终端（term_start/term_send 等）：魔法看板里的多终端，用户与你实时共见同一屏幕，全局共享（所有会话可用同一批终端）；" +
 		"term_list 查看全部（含用户手开的），term_start 新建（带描述，可附带首条命令）；\n" +
 		"# term_send 发命令并等输出静默返回（也用于应答交互/发 \\u0003 中断），term_read 游标式续读（只返回新增），term_close 关闭；\n" +
 		"# 需要交互式应答/状态保留/长驻程序/想让用户看到过程时用 term_* 系列，一次性无状态命令仍用 terminal；\n" +
+		"# 共享浏览器（browser_start/browser_navigate 等）：真实 Chromium，页面镜像到魔法看板·浏览器页，用户实时共见，要点操作时在浏览器页唤起真窗口接管；" +
+		"browser_start 新建标签并导航（首次使用会自动下载 Chromium 需等待，timeoutMs 放宽），browser_navigate 跳转，" +
+		"browser_read 读正文/链接清单，browser_screenshot 截图（多模态直接看图定位），" +
+		"browser_click/browser_type/browser_key/browser_scroll 操作页面（优先 CSS 选择器，定位不了先截图按视口坐标），" +
+		"browser_list/browser_close 管理；检索、查资料、操作网页用浏览器，与 terminal（本机命令）互补；\n" +
 		"# 用户手动在终端里的操作会出现在轮首 <res_change> 资源变更提示里，留意并在需要时接续。\n" +
 		"</workspace>")
 	memRoot := filepath.ToSlash(filepath.Join(dataDir, "memory"))

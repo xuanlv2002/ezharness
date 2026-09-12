@@ -30,14 +30,22 @@ type app struct {
 	hub    *domain.Hub // 当前代领域根（换代重建；退出/换代收尾用）
 	srv    *http.Server
 	winCtl *controller.WindowController
-	term   *service.TerminalService // 当前代共享终端（换代重建；收尾杀全部 shell）
-	boot   atomic.Int64             // 服务代际（换代重启递增，跨代共享）
+	term    *service.TerminalService // 当前代共享终端（换代重建；收尾杀全部 shell）
+	browser *service.BrowserService  // 当前代共享浏览器（换代重建；收尾关被控 Chromium）
+	boot    atomic.Int64             // 服务代际（换代重启递增，跨代共享）
 }
 
 /* setTerm 记录当前代共享终端（buildRouter 装配时调用）。 */
 func (a *app) setTerm(t *service.TerminalService) {
 	a.mu.Lock()
 	a.term = t
+	a.mu.Unlock()
+}
+
+/* setBrowser 记录当前代共享浏览器（buildRouter 装配时调用）。 */
+func (a *app) setBrowser(b *service.BrowserService) {
+	a.mu.Lock()
+	a.browser = b
 	a.mu.Unlock()
 }
 
@@ -121,12 +129,16 @@ OnEnd 落盘，不等待直接退出会丢整轮），再直接 Close 关 HTTP�
 */
 func (a *app) shutdownGeneration() {
 	a.mu.Lock()
-	hub, srv, term := a.hub, a.srv, a.term
+	hub, srv, term, browser := a.hub, a.srv, a.term, a.browser
 	a.srv = nil
 	a.term = nil
+	a.browser = nil
 	a.mu.Unlock()
 	if term != nil {
 		term.Shutdown(3 * time.Second) // 换代=换数据目录:杀全部终端 shell
+	}
+	if browser != nil {
+		browser.Shutdown(3 * time.Second) // 被控浏览器整体退出并清理临时 profile
 	}
 	if hub != nil {
 		hub.Active.Shutdown(5 * time.Second)

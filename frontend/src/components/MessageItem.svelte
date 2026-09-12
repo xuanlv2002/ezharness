@@ -63,6 +63,11 @@
             const id = escHtml(m[1])
             return `<span class="supper-url act" data-supper-kind="app" data-supper-id="${id}" role="button" tabindex="0">▶ 快应用 ${id}</span>`
           }
+          m = t.match(/^browser:\/\/([^\s]+)$/i)
+          if (m) {
+            const id = escHtml(m[1])
+            return `<span class="supper-url act" data-supper-kind="browser" data-supper-id="${id}" role="button" tabindex="0">▣ 浏览器 ${id}</span>`
+          }
           m = t.match(/^file:\/\/(.+)$/i)
           if (m) {
             const p = m[1].trim()
@@ -82,6 +87,8 @@
     const id = el.dataset.supperId || ''
     if (kind === 'term') {
       store.openTermAt(id)
+    } else if (kind === 'browser') {
+      store.openBrowserAt(id)
     } else if (kind === 'app') {
       void api
         .openApp(id)

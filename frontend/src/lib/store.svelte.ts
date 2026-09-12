@@ -199,7 +199,11 @@ class AppStore {
      ResourcePane 消费后清空） */
   termDrawerOpen = $state(false)
   termFocus = $state('')
-  drawerTool = $state<'term' | 'file'>('term')
+  drawerTool = $state<'term' | 'browser' | 'file'>('term')
+  /* browserFocus 是待定位的浏览器标签 id（supper_url browser:// 点击入口，
+     BrowserTab 消费后清空）；fileFocus 是待打开的文件路径（file:// 入口，
+     ResourcePane 消费后清空） */
+  browserFocus = $state('')
   fileFocus = $state('')
   private boardTag = ''
   /* 模型调用进行中（model_start→model_end），思考指示用 */
@@ -223,14 +227,23 @@ class AppStore {
 
   private unsub: (() => void) | null = null
   private uidSeq = 0
-  /* term_* 工具的抽屉自动拉开:免审调用延迟 ~1s 打开(tool_start 先于
+  /* 工具触发的抽屉自动拉开:免审调用延迟 ~1s 打开(tool_start 先于
   approve.request 到达,1s 内无审批请求即视为免审直接执行);进入审批
   则等用户批准(decision.resolved=已批准)才打开——未批准时命令不会
-  运行,提前弹出只是打扰。只有产生可见终端活动的工具(start/send)才
-  自动拉——list/read/close 是查询管理类,弹抽屉纯打扰。 */
-  private termAutoOpen = new Set(['term_start', 'term_send'])
-  private termOpenTimers = new Map<string, ReturnType<typeof setTimeout>>()
-  private termApprovals = new Map<string, string>()
+  运行,提前弹出只是打扰。只有产生可见工作区活动的工具才自动拉——
+  list/read/close/screenshot 是查询管理类,弹抽屉纯打扰。 */
+  private autoOpenDrawers = new Map<string, 'term' | 'browser'>([
+    ['term_start', 'term'],
+    ['term_send', 'term'],
+    ['browser_start', 'browser'],
+    ['browser_navigate', 'browser'],
+    ['browser_click', 'browser'],
+    ['browser_type', 'browser'],
+    ['browser_key', 'browser'],
+    ['browser_scroll', 'browser'],
+  ])
+  private toolOpenTimers = new Map<string, ReturnType<typeof setTimeout>>()
+  private toolApprovals = new Map<string, 'term' | 'browser'>()
   /* 本轮本地已 push 的 user 块（send 时记录，turn_end/replay.sync 清除）：
   loop_start 到达时同文本跳过（实时路径防双 push）；SSE 重连回放时按 uid
   截断本地本轮块，让整轮回放帧干净重建（防 user/回复块重复） */
@@ -542,10 +555,10 @@ class AppStore {
     }
   }
 
-  /* openTermDrawer 拉开共享终端抽屉（AI term_* 实际执行时调用；
+  /* openDrawer 拉开共享终端抽屉到指定工具页（AI 工具实际执行时调用；
      抽屉与聊天并存，不打断当前视图）。 */
-  private openTermDrawer() {
-    this.drawerTool = 'term'
+  private openDrawer(tool: 'term' | 'browser') {
+    this.drawerTool = tool
     this.termDrawerOpen = true
   }
 
@@ -565,13 +578,21 @@ class AppStore {
     this.termDrawerOpen = true
   }
 
+  /* openBrowserAt 拉开抽屉浏览器页并定位到指定标签（supper_url browser:// 点击）。 */
+  openBrowserAt(id: string) {
+    if (!id) return
+    this.browserFocus = id
+    this.drawerTool = 'browser'
+    this.termDrawerOpen = true
+  }
+
   closeTermDrawer() {
     this.termDrawerOpen = false
   }
 
   /* 工具入口 mini 钮的开关语义：开着且已是该工具页 → 收起；
      否则切到该工具页并拉开 */
-  toggleDrawerTool(t: 'term' | 'file') {
+  toggleDrawerTool(t: 'term' | 'browser' | 'file') {
     if (this.termDrawerOpen && this.drawerTool === t) this.termDrawerOpen = false
     else {
       this.drawerTool = t
@@ -947,10 +968,11 @@ class AppStore {
           this.markToolDecision(d.id, d.resolution || '')
           this.removeResolvedDecisions(d.id)
         }
-        // term_* 审批通过 → 现在才拉开终端抽屉（拒绝则什么都不做）
-        if (d.id && this.termApprovals.has(d.id)) {
-          this.termApprovals.delete(d.id)
-          if ((d.resolution || '').startsWith('已批准')) this.openTermDrawer()
+        // term_*/browser_* 审批通过 → 现在才拉开对应抽屉页（拒绝则什么都不做）
+        if (d.id && this.toolApprovals.has(d.id)) {
+          const drawer = this.toolApprovals.get(d.id)
+          this.toolApprovals.delete(d.id)
+          if ((d.resolution || '').startsWith('已批准') && drawer) this.openDrawer(drawer)
         }
         break
       }
@@ -1039,16 +1061,18 @@ class AppStore {
           })
         }
         if (!ev.forkId) this.lastTool = d.name || ''
-        // AI 用共享终端工具:延迟拉开终端抽屉(见 termOpenTimers 注释——
-        // 审批路径由 approve.request 取消计时,批准后才拉;名单外的查询类不拉)
-        if (this.termAutoOpen.has(d.name || '') && d.id && !this.termApprovals.has(d.id)) {
+        // AI 用共享工作区工具(终端/浏览器):延迟拉开对应抽屉页(见
+        // autoOpenDrawers 注释——审批路径由 approve.request 取消计时,
+        // 批准后才拉;名单外的查询类不拉)
+        const drawer = this.autoOpenDrawers.get(d.name || '')
+        if (drawer && d.id && !this.toolApprovals.has(d.id)) {
           const id = d.id
-          this.termOpenTimers.get(id) && clearTimeout(this.termOpenTimers.get(id))
-          this.termOpenTimers.set(
+          this.toolOpenTimers.get(id) && clearTimeout(this.toolOpenTimers.get(id))
+          this.toolOpenTimers.set(
             id,
             setTimeout(() => {
-              this.termOpenTimers.delete(id)
-              this.openTermDrawer()
+              this.toolOpenTimers.delete(id)
+              this.openDrawer(drawer)
             }, 1000),
           )
         }
@@ -1100,11 +1124,11 @@ class AppStore {
       case 'askuser.request': {
         const d = ev.data || {}
         const id = d.id || ''
-        // term_* 进入审批：取消免审弹板计时，等批准后再弹
-        if (ev.type === 'approve.request' && this.termOpenTimers.has(id)) {
-          clearTimeout(this.termOpenTimers.get(id))
-          this.termOpenTimers.delete(id)
-          this.termApprovals.set(id, d.name || '')
+        // term_*/browser_* 进入审批：取消免审弹板计时，等批准后再弹
+        if (ev.type === 'approve.request' && this.toolOpenTimers.has(id)) {
+          clearTimeout(this.toolOpenTimers.get(id))
+          this.toolOpenTimers.delete(id)
+          this.toolApprovals.set(id, this.autoOpenDrawers.get(d.name || '') ?? 'term')
         }
         // 分身请求路由进分身聊天框（不进主时间线）；bs=目标块数组
         const bs = ev.forkId ? this.ensureFork(ev.forkId).blocks : this.blocks

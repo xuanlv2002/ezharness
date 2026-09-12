@@ -16,7 +16,7 @@ ezharness-dev
 # 前端
 frontend/node_modules/
 frontend/dist/
-
+node_modules
 # 运行时数据（会话存档/话题索引/设置/记忆/MCP 配置）
 sessions/
 topics.json

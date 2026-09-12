@@ -78,7 +78,11 @@ func (a *app) buildRouter() *gin.Engine {
 	termSvc := service.NewTerminalService(service.ResolveWorkDir(hub.SettingsSnapshot().WorkDir))
 	a.setTerm(termSvc)
 
-	agents := &service.AgentService{Hub: hub, Term: termSvc}
+	// 共享浏览器(魔法看板):同一 workDir 下截图目录;换代随 shutdownGeneration 重建
+	browserSvc := service.NewBrowserService(service.ResolveWorkDir(hub.SettingsSnapshot().WorkDir))
+	a.setBrowser(browserSvc)
+
+	agents := &service.AgentService{Hub: hub, Term: termSvc, Browser: browserSvc}
 	agents.Assemble(hub.Active, hub.SettingsSnapshot())
 
 	appSvc := &service.AppService{
@@ -100,6 +104,7 @@ func (a *app) buildRouter() *gin.Engine {
 		App:       &controller.AppController{Svc: appSvc},
 		Window:    a.winCtl,
 		Terminal:  &controller.TerminalController{Svc: termSvc},
+		Browser:   &controller.BrowserController{Svc: browserSvc},
 		Workspace: &controller.WorkspaceController{Hub: hub},
 	}
 	return controller.NewRouter(controllers, distFS())

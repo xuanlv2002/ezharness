@@ -183,6 +183,13 @@
           <path d="M12 16.5h7" />
         </svg>
       </button>
+      <button class="entry" class:active={store.termDrawerOpen && store.drawerTool === 'browser'}
+        onclick={() => store.toggleDrawerTool('browser')} title="共享浏览器（AI 操控 · 镜像可接管）">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="9" />
+          <path d="M3 12h18M12 3a15 15 0 0 1 0 18M12 3a15 15 0 0 0 0 18" />
+        </svg>
+      </button>
       <button class="entry" class:active={store.termDrawerOpen && store.drawerTool === 'file'}
         onclick={() => store.toggleDrawerTool('file')} title="资源（查看 · 编辑 · 发给 AI——文本/图片/网页等）">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
