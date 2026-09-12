@@ -67,6 +67,13 @@ release\v<version>\ezharness-v<version>.exe          绿色版 exe
 
 ## 国内镜像（首次装依赖/打包）
 
+electron 本体与 NSIS/winCodeSign 等打包二进制默认从 GitHub 下载，国内极慢。已两层配置 npmmirror 镜像，通常无需再管：
+
+- 用户级环境变量 `ELECTRON_MIRROR` / `ELECTRON_BUILDER_BINARIES_MIRROR`（setx 永久生效）
+- `desktop/.npmrc`（npm config 形式，兜底 electron postinstall）
+
+手动临时指定（如换机器）：
+
 ```bat
 set ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/
 set ELECTRON_BUILDER_BINARIES_MIRROR=https://npmmirror.com/mirrors/electron-builder-binaries/

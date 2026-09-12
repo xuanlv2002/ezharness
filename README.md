@@ -151,13 +151,13 @@ flowchart LR
 
 ## 开发
 
-前置依赖：[Go](https://go.dev/dl/)、[Node.js](https://nodejs.org/)、[Task](https://taskfile.dev/)；ezloop 作为普通 Go 模块自动拉取（本地开发走 replace）。desktop 依赖首次 `cd desktop && npm install`（国内可设 `ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/`）。
+前置依赖：[Go](https://go.dev/dl/)、[Node.js](https://nodejs.org/)（含 npm），以及本地 [ezloop](https://github.com/xuanlv2002/ezloop) 仓库（`core/go.mod` replace 指向 `../../ezloop`）。frontend / desktop 依赖脚本首次运行自动 `npm install`；electron 下载已配 npmmirror 镜像（`desktop/.npmrc`），无需手动设置。
 
-日常用两个脚本（[script/](script/)），从任意目录调用均可：
+版本单源 `script/version.yaml`。两个脚本（[script/](script/)）走同一条三段构建链（前端 → core → electron-builder），从任意目录调用均可：
 
 ```sh
-script\dev.bat           # 开发调试：vite 热更 + Electron 壳（core 用已构建 exe）
-script\release.bat       # 发布：前端+core 全量构建 -> electron-builder 出 desktop\release\ 安装包
+script\dev.bat           # 开发构建 -> release\dev\ezharness-dev.exe（页脚 ezharness-dev）
+script\release.bat       # 发布打包 -> release\v<版本>\ 安装包 + 绿色版
 ```
 
 - 应用根 = core exe 所在目录：首次启动自动创建 `ezharness.json` 与 `data/`，零配置可用；开发 exe 构建在仓库根，与产品行为完全一致
@@ -166,10 +166,9 @@ script\release.bat       # 发布：前端+core 全量构建 -> electron-builder
 ## 文档
 
 - **[docs/index.html](docs/index.html)** — 项目主页（设计理念 · 树状会话 · 上下文工程 · 人机交互 · 架构与构建）
-- [docs/sessions.md](docs/sessions.md) — 树状 session 管理
-- [docs/context.md](docs/context.md) — 单上下文管理（trim / agent_status / 事件流）
+- [docs/md/](docs/md/) — 深读底稿：architecture / session / runtime / frontend / hooks
 - [docs/interaction.md](docs/interaction.md) — 以人为核心的人机交互设计
-- [docs/build.md](docs/build.md) — 构建方案设计
+- [docs/build.md](docs/build.md) — 构建方案
 - [AGENTS.md](AGENTS.md) — 开发备忘与踩坑清单
 
 ---

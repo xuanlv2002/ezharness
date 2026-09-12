@@ -399,7 +399,7 @@
     <div class="hero-cards">
       <div class="card">
         <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><line x1="17.5" y1="14" x2="17.5" y2="21"/><line x1="14" y1="17.5" x2="21" y2="17.5"/></svg>
-        <div class="t">第一章 · 系统整体架构</div><div class="d">双仓库分界、三层 MVC、进程三角色、三通道通信、数据目录与换代生命周期</div>
+        <div class="t">第一章 · 系统整体架构</div><div class="d">双仓库分界、三层结构（desktop 壳 × core sidecar × 前端）、三通道通信、数据目录与换代生命周期</div>
       </div>
       <div class="card">
         <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="12" r="3"/><line x1="8.2" y1="7.4" x2="15.8" y2="10.8"/><line x1="8.2" y1="16.6" x2="15.8" y2="13.2"/></svg>
@@ -419,7 +419,7 @@
   <!-- ═══════════════ 01 系统整体架构 ═══════════════ -->
   <section id="ch-arch">
     <h2><span class="no">第一章</span>系统整体架构</h2>
-    <p class="sub">ezharness = 基于 <b>ezloop 引擎</b>的桌面 agent harness（gin 三层 MVC + 内嵌前端）。启动即对本机全权（文件不限目录 + 原生 shell）；桌面形态为单二进制内嵌前端 + 原生 WebView 窗口，<code class="inline">EZHARNESS_NO_WINDOW=1</code> 回落纯 server 模式。</p>
+    <p class="sub">ezharness = 基于 <b>ezloop 引擎</b>的桌面 agent harness。启动即对本机全权（文件不限目录 + 原生 shell）。三层结构：<b>desktop</b>（Electron 壳：窗口 / 托盘 / 内嵌浏览器）拉起 <b>core</b>（Go sidecar，gin 三层 MVC + 内嵌前端）伺服 <b>frontend</b>（端无关页面，双入口）；core 也可直接运行——浏览器访问同一份页面（浏览器控制等桌面专属能力自动降级）。</p>
 
     <h3 id="arch-repos">1.1 双仓库：引擎 × 宿主</h3>
     <table>
@@ -445,12 +445,12 @@
 flowchart TB
     UI["🖥 前端 SPA（Svelte 5 runes）&lt;br/&gt;store.svelte · api.ts · term.ts"]:::ui
 
-    subgraph shell["桌面壳 · main.go / app.go"]
+    subgraph shell["core 装配 · core/main.go / app.go"]
         CFG["config · ezharness.json（应用根）&lt;br/&gt;chdir 数据目录 · 换代 restart · boot 代际"]:::layer
     end
 
     subgraph EZH["ezharness 宿主 · 装配 + 产品域"]
-        C["controller 表现层&lt;br/&gt;9 组 gin handler"]:::layer
+        C["controller 表现层&lt;br/&gt;10 组 gin handler"]:::layer
         S["service 用例层&lt;br/&gt;Chat / Session / Topic / Settings / Terminal / Agent…"]:::layer
         D["domain · Session 聚合 + Hub&lt;br/&gt;零 HTTP 依赖"]:::layer
         H["internal/hooks（宿主侧）&lt;br/&gt;sysprompt · remind · trim · sessionstore&lt;br/&gt;uploadfile · guard · trace"]:::layer
@@ -489,26 +489,40 @@ flowchart TB
     </div>
     <div class="diagram-cap">分层链路：controller（表现）→ service（用例）→ domain（会话聚合与事件）；tools / hooks 为领域扩展，osfs / config 为基础设施，main 只做装配。</div>
 
-    <h3>1.3 一进程三角色</h3>
+    <h3>1.3 三层结构：desktop 壳 × core sidecar × 前端页面</h3>
     <div class="diagram-card">
 <pre class="mermaid">
 flowchart TB
-    subgraph EXE["ezharness.exe · 单二进制 · 一进程三角色"]
-        W["wails 窗口壳&lt;br/&gt;无边框主窗 · 快应用子窗 · 托盘"]:::role
-        G["gin server&lt;br/&gt;前端静态资源 · /api/* · SSE 事件流 · /apps/*"]:::role
-        A["agent 引擎&lt;br/&gt;ezloop core · 随会话装配"]:::role
+    subgraph DESK["desktop/ · ezharness.exe · Electron 壳"]
+        MW["主窗口 / 托盘 / 快应用子窗&lt;br/&gt;无边框主窗（前端 TitleBar 自绘）"]:::role
+        BW["内嵌浏览器窗口&lt;br/&gt;WebContentsView 标签页（desktop 资产）"]:::role
     end
-    BR["🌐 浏览器（纯 server 形态）"]:::misc
+
+    subgraph COREP["core/ · ezharness-core.exe · Go sidecar"]
+        G["gin server&lt;br/&gt;前端页面 · /api/* · SSE 事件流 · /apps/*"]:::layer
+        A["agent 引擎&lt;br/&gt;ezloop core · 随会话装配"]:::engine2
+    end
+
+    UI["🖥 前端页面 · Svelte 双入口&lt;br/&gt;index.html 主应用 + browser.html 浏览器窗口页"]:::ui
+    BR["🌐 浏览器（web 端形态）"]:::misc
+
+    DESK -. "spawn + health 轮询&lt;br/&gt;退出随壳 kill" .-> COREP
+    MW -- "loadURL 同源页面" --> G
+    BW -- "loadURL /browser.html&lt;br/&gt;（标签条/地址栏 UI 框架）" --> G
+    BW -. "browser_* 工具&lt;br/&gt;WS 桥 /api/browser/bridge" .-> G
     BR --> G
-    W -- "真实网络地址&lt;br/&gt;不经资产桥 · SSE 可用" --> G
     G --> A
 
     classDef role fill:#072331,stroke:#00add8,color:#9be5f7
+    classDef layer fill:#072331,stroke:#00add8,color:#9be5f7
+    classDef engine2 fill:#07281b,stroke:#34d399,color:#a7f3d0
+    classDef ui fill:#0b1322,stroke:#33496e,color:#c4cede
     classDef misc fill:#0b1322,stroke:#33496e,color:#c4cede
-    style EXE fill:#0a101d,stroke:#33496e,stroke-dasharray:6 4
+    style DESK fill:#0a101d,stroke:#33496e,stroke-dasharray:6 4
+    style COREP fill:#0a101d,stroke:#00add8,stroke-dasharray:6 4
 </pre>
     </div>
-    <div class="diagram-cap">桌面窗口与浏览器访问同一份页面、同一个服务，行为完全一致。窗口壳不走 wails 资产桥（Windows 下会缓冲整个响应），一律走本进程真实地址。</div>
+    <div class="diagram-cap">桌面壳 spawn core sidecar，健康就绪后开窗加载 core 伺服的页面（同源访问，前端 API 零适配）；业务全在 core，desktop 只做壳与桌面资产。共享浏览器是 desktop 的资产：core 的 browser_* 工具经 WS 桥转发到壳的 WebContentsView 执行器，桥未连接（web 端访问）时工具报「仅桌面端可用」。</div>
 
     <h3 id="arch-channels">1.4 前后端三通道</h3>
     <table>
@@ -516,7 +530,7 @@ flowchart TB
       <tr>
         <td><b>HTTP REST</b></td>
         <td><code>127.0.0.1:5260</code>（可配）</td>
-        <td>全部用例操作：会话 / 设置 / 模型 / 分支 / mcp / apps / 窗口 / 工作目录文件预览。错误形态 <code>400: {"error":"xx"}</code></td>
+        <td>全部用例操作：会话 / 设置 / 模型 / 分支 / mcp / apps / 工作目录文件预览。错误形态 <code>400: {"error":"xx"}</code></td>
       </tr>
       <tr>
         <td><b>SSE</b></td>
@@ -528,15 +542,20 @@ flowchart TB
         <td><code>GET /api/terminal/ws</code></td>
         <td>共享终端：单连接多路复用全部终端（帧带 id 路由），hello 帧带各终端快照，重连即恢复</td>
       </tr>
+      <tr>
+        <td><b>WS</b></td>
+        <td><code>GET /api/browser/bridge</code></td>
+        <td>共享浏览器桥：desktop 壳连入，<code>browser_*</code> 工具以 JSON-RPC 转发到壳的 WebContentsView 执行器；桥未连接时工具报「仅桌面端可用」</td>
+      </tr>
     </table>
-    <p class="sub">前端手写 fetch 层（无 wails bindings），恒内嵌单二进制（<code class="inline">embed.go</code>，dist 缺失则 go build 直接报错）。</p>
+    <p class="sub">前端手写 fetch 层（端无关，无桌面绑定）；core 经 <code class="inline">go:embed</code> 内嵌前端产物（dist 缺失则 go build 直接报错）；桌面壳经 preload IPC 暴露 <code class="inline">window.ez</code>（窗口控制 / 浏览器窗口），web 端无此对象即自动降级。</p>
 
     <h3 id="arch-data">1.5 数据目录布局</h3>
     <p class="sub">应用根 = exe 所在目录（<code class="inline">config.Root()</code> 锚定，不受 chdir 影响）；进程 cwd = 数据目录（启动时 chdir），ezloop 各 hook 的相对路径存储自动落此。</p>
     <div class="codeblock">
       <div class="bar"><span class="dot r"></span><span class="dot y"></span><span class="dot g"></span><span class="name">数据目录（进程 cwd）</span></div>
-<pre>D:\ezharness\                  <span class="c"># 应用根 = exe 所在目录</span>
-├─ ezharness.exe
+<pre>D:\ezharness\                  <span class="c"># 应用根 = exe 所在目录（portable 绿色版经 --root 锚定到 exe 旁）</span>
+├─ ezharness.exe              <span class="c"># desktop 壳（安装版/绿色版；core 内嵌于其 resources\）</span>
 ├─ ezharness.json              <span class="c"># 端口 / 监听 / dataDir / 窗口尺寸（结构配置）</span>
 └─ data\                       <span class="c"># 数据目录（dataDir 空 = 应用根下 data/）</span>
    ├─ settings.json            <span class="c"># WorkDir / TrimPercent / MaxIterations / DisabledSkills</span>
@@ -557,11 +576,16 @@ flowchart TB
     <h3 id="arch-lifecycle">1.6 应用生命周期</h3>
     <div class="codeblock">
       <div class="bar"><span class="dot r"></span><span class="dot y"></span><span class="dot g"></span><span class="name">startup</span></div>
-<pre>main()
- ├─ config.Load()           <span class="c"># 读应用根 ezharness.json（缺失建默认）</span>
- ├─ newApp(cfg)             <span class="c"># adoptLegacy 收编旧数据 → MkdirAll → os.Chdir(数据目录)</span>
- ├─ a.start()               <span class="c"># net.Listen 预占端口 → buildRouter() → srv.Serve</span>
- └─ openWindow(a)           <span class="c"># 阻塞至退出（或 NO_WINDOW 等信号）→ stop()</span></pre>
+<pre>desktop 壳（ezharness.exe · Electron 主进程）
+ ├─ 读 ezharness.json         <span class="c"># 应用根（portable 用 PORTABLE_EXECUTABLE_DIR）</span>
+ ├─ spawn ezharness-core.exe  <span class="c"># core 退出 → 壳随之退出</span>
+ └─ health 轮询就绪           <span class="c"># /api/app/health（30s 超时）→ 主窗 loadURL core 地址</span>
+
+core（ezharness-core.exe · Go sidecar）
+ ├─ config.Load()             <span class="c"># 读应用根 ezharness.json（缺失建默认；--root 可覆盖根）</span>
+ ├─ newApp(cfg)               <span class="c"># MkdirAll → os.Chdir(数据目录)</span>
+ ├─ a.start()                 <span class="c"># net.Listen 预占端口 → buildRouter() → srv.Serve</span>
+ └─ 信号等待（Interrupt/SIGTERM）→ stop()</pre>
     </div>
     <ul>
       <li><b>buildRouter 换代重建</b>：<code class="inline">domain.NewHub()</code>（含 bootstrap 恢复）→ TerminalService → AgentService.Assemble → 全部 controller。设置页改端口 / 数据目录触发<b>换代</b>：shutdownGeneration（杀终端 shell → 取消运行轮并等落盘 → 关 server）→ syncDrained → chdir → buildRouter；<code class="inline">boot</code> 代际计数跨代共享，前端据此判断新服务就绪</li>
@@ -571,14 +595,14 @@ flowchart TB
     <h3>1.7 开发与发布</h3>
     <div class="codeblock">
       <div class="bar"><span class="dot r"></span><span class="dot y"></span><span class="dot g"></span><span class="name">script</span></div>
-<pre>script\dev.bat            <span class="c"># 开发直跑：npm run build → go build → 启动 exe</span>
-script\release.bat        <span class="c"># 发布：wails3 task package → exe + installer（带版本号目录）</span>
-wails3 task build         <span class="c"># 产物 build/dist/（图标 / 版本信息自动嵌入）</span></pre>
+<pre>script\version.yaml        <span class="c"># 版本单源：frontend 页脚 ezharness-v&lt;version&gt; · desktop 打包版本（脚本自动同步）</span>
+script\dev.bat             <span class="c"># 开发构建：三段链 → release\dev\ezharness-dev.exe（页脚 ezharness-dev）</span>
+script\release.bat         <span class="c"># 发布打包：同链 + NSIS → release\v&lt;version&gt;\ 安装包 + 绿色版</span></pre>
     </div>
     <ul>
-      <li>无热重载 / dev server——已彻底移除 dev 模式，开发与发布同一条路径</li>
-      <li>验证链：<code class="inline">go build ./... &amp;&amp; go vet ./... &amp;&amp; go test ./...</code> + <code class="inline">cd frontend &amp;&amp; npm run build</code>；起服务 <code class="inline">EZHARNESS_NO_WINDOW=1</code></li>
-      <li><code class="inline">go run .</code> 会把 exe 放临时目录导致 config 找不到应用根——验证须 <code class="inline">go build -o xxx.exe .</code> 后在产物目录运行</li>
+      <li>三段链（两脚本共用）：前端 vite build（双入口）→ 拷 <code class="inline">frontend/dist → core/dist</code> → <code class="inline">go build</code> 出根目录 ezharness-core.exe → electron-builder（extraResources 内嵌 core）；开发与发布同一条路径，无 dev server</li>
+      <li>验证链：<code class="inline">cd core &amp;&amp; go build ./... &amp;&amp; go vet ./...</code> + <code class="inline">cd frontend &amp;&amp; npm run build</code>；desktop 主进程 JS 用 <code class="inline">node --check</code> 过一遍</li>
+      <li><code class="inline">go run ./core</code> 会把 exe 放临时目录导致 config 找不到应用根——验证须 <code class="inline">go build -o xxx.exe ./core</code> 后在配置所在目录运行</li>
     </ul>
   </section>
 
@@ -1223,7 +1247,7 @@ flowchart LR
       <tr><td><code>&lt;image_loaded path=…/&gt;</code> 自闭合</td><td>read_file 工具结果</td><td>✓（保留不改写）</td><td>工具卡结果原文</td><td>同左（不解析）</td></tr>
       <tr><td><code>&lt;end_reason&gt;</code></td><td>remind 收尾段</td><td>✓</td><td>turn_end 合成 endtick</td><td>正则提取字段</td></tr>
       <tr><td><code>&lt;context_trim kept="N"&gt;</code></td><td>trim</td><td>✓</td><td>session.trim 事件（note 块）</td><td>标签 → note 分割线</td></tr>
-      <tr><td><code>&lt;$supper_url&gt;…</code></td><td>模型输出占位语法</td><td>✓（正文）</td><td>marked extension 实时解析：https:// 外链 / term://终端id 拉开终端抽屉定位 / app://快应用名 开子窗</td><td>同左（同一渲染管线）</td></tr>
+      <tr><td><code>&lt;$supper_url&gt;…</code></td><td>模型输出占位语法</td><td>✓（正文）</td><td>marked extension 实时解析：https:// 外链 / term://终端id 拉开终端抽屉定位 / app://快应用名 开子窗 / browser://标签id 聚焦共享浏览器窗口</td><td>同左（同一渲染管线）</td></tr>
       <tr><td><code>&lt;@toolArg&gt;…</code></td><td>模型工具参数</td><td>✓（入史保持原文）</td><td>工具卡显示原文</td><td>同左</td></tr>
     </table>
     <div class="tip warn">
@@ -1281,9 +1305,37 @@ flowchart LR
       <li>readMark 单游标：term_send 与 term_read 共用，send 返回增量后必须推进，否则 read 重复输出</li>
     </ul>
 
+    <h3>共享浏览器：AI 操作、用户共见</h3>
+    <div class="diagram-card">
+<pre class="mermaid">
+flowchart LR
+    subgraph COREP["core · 桥服务端"]
+        BT["browser_* 工具十件套&lt;br/&gt;定义/审批在 core（tools 层不感知实现）"]:::core
+    end
+    subgraph DESK["desktop · 浏览器窗口 = 壳的资产"]
+        EXE["执行器&lt;br/&gt;WebContentsView.webContents 直接操作"]:::side
+        VIEW["👤 用户共见&lt;br/&gt;原生交互（点击 / IME / 视频）"]:::side
+    end
+    AI["🤖 agent"]:::side -- "工具调用" --> BT
+    BT -- "WS 桥 /api/browser/bridge&lt;br/&gt;JSON-RPC 转发 + 回执" --> EXE
+    EXE --- VIEW
+
+    classDef core fill:#072331,stroke:#00add8,color:#9be5f7
+    classDef side fill:#0b1322,stroke:#33496e,color:#c4cede
+    style COREP fill:#0a101d,stroke:#00add8,stroke-dasharray:6 4
+    style DESK fill:#0a101d,stroke:#33496e,stroke-dasharray:6 4
+</pre>
+    </div>
+    <div class="diagram-cap">真实浏览器 = Electron 主进程的 WebContentsView（每标签一个，partition persist:ezbrowser 登录态共享）；浏览器窗口只加载 core 伺服的 /browser.html 做 UI 框架（标签条 / 地址栏），内容区由主进程 setBounds 贴靠。</div>
+    <ul>
+      <li><b>AI 开始操作 → 浏览器窗口自动弹出置前</b>（共见）；<b>用户关窗 = 隐藏保留</b>（标签后台存活，AI 可能正在用）</li>
+      <li>核心链路：AI 调 <code class="inline">browser_start / navigate / click / type / read / screenshot</code> 等 → core 经 WS 桥转发 → 壳执行器直接操作对应标签的 webContents → 回执（截图 base64 回传落盘，多模态可读）</li>
+      <li>桥未连接（web 端访问）时工具报「仅桌面端可用」——主应用无浏览器残缺 UI，端无关原则</li>
+    </ul>
+
     <div class="tip">
-      <b>快速上手：</b>Releases 下载 exe 放入任意文件夹（加入 PATH 即可）——<b>exe 在哪运行，配置与数据就在哪生成</b>（ezharness.json + data\ 就地创建，零配置可用）。「模型」页填 apiKey 即可对话；
-      <code class="inline">EZHARNESS_NO_WINDOW=1</code> 回落纯 server 形态（浏览器访问同一份页面）。
+      <b>快速上手：</b>Releases 下载绿色版 / 安装包——<b>exe 在哪运行，配置与数据就在哪生成</b>（ezharness.json + data\ 就地创建，零配置可用）。「模型」页填 apiKey 即可对话；
+      纯 server 形态：直接运行 ezharness-core.exe，浏览器访问 <code class="inline">http://127.0.0.1:&lt;port&gt;</code>——与桌面端同一份页面（浏览器控制等桌面专属能力自动降级）。
     </div>
   </section>
 
