@@ -54,7 +54,7 @@ type browserTabArgs struct {
 
 type browserActionArgs struct {
 	Action    string `json:"action" desc:"navigate=打开新网址;click=点击元素;type=输入文本;key=按键;scroll=滚动"`
-	TabID     string `json:"tabId,omitempty" desc:"目标标签 id(browser_tab 的 list 查看),省略=最近使用的标签"`
+	TabID     string `json:"tabId" desc:"目标标签 id(必填;browser_tab 的 list 可查)"`
 	URL       string `json:"url,omitempty" desc:"navigate:要打开的网址"`
 	TimeoutMs int    `json:"timeoutMs,omitempty" desc:"navigate:等待上限毫秒,默认 20000"`
 	Selector  string `json:"selector,omitempty" desc:"click/type:CSS 选择器(如 a.login、#search button;type 省略=在当前焦点处输入)"`
@@ -68,7 +68,7 @@ type browserActionArgs struct {
 }
 
 type browserReadArgs struct {
-	TabID string `json:"tabId,omitempty" desc:"目标标签 id,省略=最近使用的标签"`
+	TabID string `json:"tabId" desc:"目标标签 id(必填;browser_tab 的 list 可查)"`
 	Mode  string `json:"mode,omitempty" desc:"text=页面正文(默认);links=链接清单(文字→地址);screenshot=视口截图;full_page=整页截图"`
 	Chars int    `json:"chars,omitempty" desc:"text/links:返回字符数上限,默认 4000,上限 20000"`
 }

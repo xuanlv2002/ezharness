@@ -3,6 +3,7 @@
   import { fileBaseName, normFileKey } from '../../lib/textfile'
   import { store } from '../../lib/store.svelte'
   import { kindOf, MAX_BYTES, type ResTab } from './registry'
+  import KindIcon from './KindIcon.svelte'
   import TextViewer from './viewers/TextViewer.svelte'
   import ImageViewer from './viewers/ImageViewer.svelte'
   import HtmlViewer from './viewers/HtmlViewer.svelte'
@@ -206,7 +207,7 @@
   <div class="strip">
     {#each tabs as t (t.key)}
       <button class="strip-item" class:active={current === t.key} onclick={() => (current = t.key)} title={t.path || '画板草稿（未保存）'}>
-        <span class="kind">{t.kind === 'image' ? '🖼' : t.kind === 'markdown' ? '📝' : t.kind === 'html' ? '🌐' : t.kind === 'pdf' ? '📕' : '📄'}</span>
+        <span class="kind"><KindIcon kind={t.kind} /></span>
         <span class="name">{t.name}</span>
         {#if t.kind !== 'image' && t.content !== t.saved}<i class="dirty"></i>{/if}
         <span class="x" onclick={(e) => { e.stopPropagation(); closeTab(t.key) }} role="button" tabindex="-1" title="关闭">
@@ -244,7 +245,7 @@
     {:else if !imageTabs.length}
       <div class="empty">
         <p>还没有打开的资源</p>
-        <p class="hint">对话中出现 <code>📄 文件名</code> 入口时点击即可打开 · 🖌 可从输入框画笔新建图片草稿</p>
+        <p class="hint">对话中出现 <code>文件名</code> 入口时点击即可打开 · 画笔钮可新建图片草稿</p>
       </div>
     {/if}
     <!-- 图片 tab：per-tab 实例保活（画板画布状态不可数据化） -->
