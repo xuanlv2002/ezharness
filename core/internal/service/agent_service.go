@@ -172,9 +172,7 @@ func (a *AgentService) Assemble(s *domain.Session, st domain.Settings) {
 		askuser.ToolName, task.ToolName,
 		"mcp_router", hooks.TrimTool, skilltool.ToolName,
 		"term_start", "term_send", "term_read", "term_list", "term_close",
-		"browser_start", "browser_navigate", "browser_click", "browser_type",
-		"browser_key", "browser_scroll", "browser_read", "browser_screenshot",
-		"browser_list", "browser_close",
+		"browser_tab", "browser_action", "browser_read",
 	}
 	if visionOn {
 		toolNames = append(toolNames, tools.ImageRecognizeTool)
@@ -311,6 +309,26 @@ func (a *AgentService) needsApprove(c *types.ToolCall) bool {
 			return false
 		}
 		name = "mcp.*" // tool_call 按 server.tool 名单走四档
+	}
+	if name == "browser_tab" {
+		// 标签清单只读无副作用，四档下一律免审（open/close 才是管控面）
+		var a struct {
+			Action string `json:"action"`
+		}
+		_ = json.Unmarshal(c.Args, &a)
+		if a.Action == "list" {
+			return false
+		}
+	}
+	if name == "browser_action" {
+		// 导航独立管控（URL 名单可配常去站点），其余页面操作走 browser_action 规则
+		var a struct {
+			Action string `json:"action"`
+		}
+		_ = json.Unmarshal(c.Args, &a)
+		if a.Action == "navigate" {
+			name = "browser_navigate"
+		}
 	}
 	rules := a.Hub.ToolRulesSnapshot()
 	var rule *domain.ToolRule
@@ -456,18 +474,18 @@ func buildSystemBase(ctx context.Context, st domain.Settings, fsys osfs.OS) stri
 		"（省去先 read_file 再复制的往返；单文件上限 200000 字符，读不到会报错）；\n" +
 		"# 输出占位：回复中给用户可点击的入口用 <$supper_url>类型://标识</$supper_url> 包裹——" +
 		"https:// 外部链接、term://终端id（term_list 可查；长驻程序运行中或任务收尾时把终端入口交付给用户）、" +
-		"browser://浏览器标签id（browser_list 可查；浏览器操作期间把入口交付给用户，用户点击即展开浏览器抽屉页并定位标签，实时共见）、" +
+		"browser://浏览器标签id（browser_tab 的 list 可查；浏览器操作期间把入口交付给用户，用户点击即展开浏览器抽屉页并定位标签，实时共见）、" +
 		"app://快应用名（save_app 生成后在回复中引用，用户点击即开）、" +
 		"file://工作目录内文本文件的绝对路径（write_file/read_file 等操作过的代码与文档，交付入口供用户点击查看编辑）；\n" +
 		"# 共享终端（term_start/term_send 等）：魔法看板里的多终端，用户与你实时共见同一屏幕，全局共享（所有会话可用同一批终端）；" +
 		"term_list 查看全部（含用户手开的），term_start 新建（带描述，可附带首条命令）；\n" +
 		"# term_send 发命令并等输出静默返回（也用于应答交互/发 \\u0003 中断），term_read 游标式续读（只返回新增），term_close 关闭；\n" +
 		"# 需要交互式应答/状态保留/长驻程序/想让用户看到过程时用 term_* 系列，一次性无状态命令仍用 terminal；\n" +
-		"# 共享浏览器（browser_start/browser_navigate 等）：真实 Chromium，内嵌于桌面端工作区抽屉（browser_start 自动展开抽屉页，用户实时共见、可直接接管操作）；" +
-		"browser_start 新建标签并导航（首次使用会自动下载 Chromium 需等待，timeoutMs 放宽），browser_navigate 跳转，" +
-		"browser_read 读正文/链接清单，browser_screenshot 截图（多模态直接看图定位），" +
-		"browser_click/browser_type/browser_key/browser_scroll 操作页面（优先 CSS 选择器，定位不了先截图按视口坐标），" +
-		"browser_list/browser_close 管理；检索、查资料、操作网页用浏览器，与 terminal（本机命令）互补；\n" +
+		"# 共享浏览器（browser_tab/browser_action/browser_read）：真实 Chromium，内嵌于桌面端工作区抽屉（browser_tab open 自动展开抽屉页，用户实时共见、可直接接管操作）；" +
+		"browser_tab 管标签（action=open 新建并可选导航——首次使用会自动下载 Chromium 需等待，timeoutMs 放宽；list 清单；close 关闭），" +
+		"browser_action 操作页面（action=navigate 跳转 / click 点击 / type 输入 / key 按键 / scroll 滚动；优先 CSS 选择器，定位不了先截图按视口坐标），" +
+		"browser_read 读页面（mode=text 正文 / links 链接清单 / screenshot 视口截图 / full_page 整页截图，多模态直接看图定位）；" +
+		"检索、查资料、操作网页用浏览器，与 terminal（本机命令）互补；\n" +
 		"# 用户手动在终端里的操作会出现在轮首 <res_change> 资源变更提示里，留意并在需要时接续。\n" +
 		"</workspace>")
 	memRoot := filepath.ToSlash(filepath.Join(dataDir, "memory"))

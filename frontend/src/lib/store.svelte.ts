@@ -232,7 +232,7 @@ class AppStore {
   private autoOpenDrawers = new Map<string, DrawerTool>([
     ['term_start', 'term'],
     ['term_send', 'term'],
-    ['browser_start', 'browser'],
+    ['browser_tab:open', 'browser'],
   ])
   private toolOpenTimers = new Map<string, ReturnType<typeof setTimeout>>()
   private toolApprovals = new Map<string, DrawerTool>()
@@ -584,6 +584,17 @@ class AppStore {
 
   closeTermDrawer() {
     this.termDrawerOpen = false
+  }
+
+  /* 抽屉自动展开匹配：先按 工具名:action 精确查（browser_tab:open），再按工具名查 */
+  private drawerFor(name: string, argsText: string): DrawerTool | undefined {
+    let action = ''
+    try {
+      action = String(JSON.parse(argsText)?.action || '')
+    } catch {
+      /* args 非对象 */
+    }
+    return this.autoOpenDrawers.get(action ? `${name}:${action}` : name) || this.autoOpenDrawers.get(name)
   }
 
   /* 工具入口 mini 钮的开关语义：开着且已是该工具页 → 收起；
@@ -1060,7 +1071,7 @@ class AppStore {
         // AI 用共享工作区工具(终端/浏览器):延迟拉开对应抽屉页(见
         // autoOpenDrawers 注释——审批路径由 approve.request 取消计时,
         // 批准后才拉;名单外的查询类不拉)
-        const drawer = this.autoOpenDrawers.get(d.name || '')
+        const drawer = this.drawerFor(d.name || '', args)
         if (drawer && d.id && !this.toolApprovals.has(d.id)) {
           const id = d.id
           this.toolOpenTimers.get(id) && clearTimeout(this.toolOpenTimers.get(id))
@@ -1120,18 +1131,18 @@ class AppStore {
       case 'askuser.request': {
         const d = ev.data || {}
         const id = d.id || ''
+        let args = d.args
+        if (typeof args !== 'string') args = JSON.stringify(args ?? {})
         // term_*/browser_* 进入审批：取消免审弹板计时，等批准后再弹
         if (ev.type === 'approve.request' && this.toolOpenTimers.has(id)) {
           clearTimeout(this.toolOpenTimers.get(id))
           this.toolOpenTimers.delete(id)
-          this.toolApprovals.set(id, this.autoOpenDrawers.get(d.name || '') ?? 'term')
+          this.toolApprovals.set(id, this.drawerFor(d.name || '', args) ?? 'term')
         }
         // 分身请求路由进分身聊天框（不进主时间线）；bs=目标块数组
         const bs = ev.forkId ? this.ensureFork(ev.forkId).blocks : this.blocks
         // 去重：SSE 断线重连会重放 pending 帧
         if (!id || bs.some((b) => b.kind === 'decision' && b.id === id)) break
-        let args = d.args
-        if (typeof args !== 'string') args = JSON.stringify(args ?? {})
         // 工具卡补插：刷新/重放时本轮快照未含此调用（turn 未落盘），
         // 决策卡之前补一个执行中的工具卡
         if (!bs.some((b) => b.kind === 'tool' && b.id === id)) {

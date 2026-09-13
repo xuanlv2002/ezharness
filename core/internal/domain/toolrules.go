@@ -51,18 +51,14 @@ func DefaultToolRules() []ToolRule {
 		{Tool: "term_list", Level: LevelAuto},
 		{Tool: "term_read", Level: LevelAuto},
 		{Tool: "term_close", Level: LevelAuto},
-		/* 共享浏览器（魔法看板）：开标签与导航默认审批（navigate 白名单可配
-		URL/域名前缀放行常去站点）；页面内操作/读取/截图/管理免审 */
-		{Tool: "browser_start", Level: LevelAsk},
+		/* 共享浏览器（魔法看板）：标签开关与导航默认审批（navigate 白名单可配
+		URL/域名前缀放行常去站点——browser_action 的 navigate 走本条规则，
+		其余页面操作走 browser_action）；读取/截图只读免审；browser_tab 的
+		list 恒免审（needsApprove） */
+		{Tool: "browser_tab", Level: LevelAsk},
 		{Tool: "browser_navigate", Level: LevelAsk},
-		{Tool: "browser_click", Level: LevelAuto},
-		{Tool: "browser_type", Level: LevelAuto},
-		{Tool: "browser_key", Level: LevelAuto},
-		{Tool: "browser_scroll", Level: LevelAuto},
+		{Tool: "browser_action", Level: LevelAuto},
 		{Tool: "browser_read", Level: LevelAuto},
-		{Tool: "browser_screenshot", Level: LevelAuto},
-		{Tool: "browser_list", Level: LevelAuto},
-		{Tool: "browser_close", Level: LevelAuto},
 		{Tool: "task", Level: LevelAsk},
 		{Tool: "save_app", Level: LevelAsk},
 		{Tool: "image_recognize", Level: LevelAuto}, // 图片识别（识别槽模型驱动，只读）

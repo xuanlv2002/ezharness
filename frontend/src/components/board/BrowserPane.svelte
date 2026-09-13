@@ -102,7 +102,7 @@
   {#if !ezBrowser()}
     <div class="fallback">
       <p>浏览器抽屉仅桌面端（ezharness desktop）可用</p>
-      <p class="sub">AI 的 browser_* 工具在桌面端运行时自动打开此抽屉；web 端暂无内嵌浏览器</p>
+      <p class="sub">AI 的浏览器工具在桌面端运行时自动打开此抽屉；web 端暂无内嵌浏览器</p>
     </div>
   {:else}
     <div class="strip">
