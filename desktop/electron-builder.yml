@@ -16,7 +16,7 @@ win:
   target:
     - nsis
     - portable
-  icon: ../assets/icon.png
+  # 图标用默认约定位置 desktop/build/icon.png（越出项目目录的路径 app-builder 不识别，会静默回落 Electron 默认图标）
 nsis:
   oneClick: false
   allowToChangeInstallationDirectory: true
