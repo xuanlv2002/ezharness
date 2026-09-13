@@ -59,6 +59,9 @@ func DefaultToolRules() []ToolRule {
 		{Tool: "task", Level: LevelAsk},
 		{Tool: "save_app", Level: LevelAsk},
 		{Tool: "image_recognize", Level: LevelAuto}, // 图片识别（识别槽模型驱动，只读）
+		{Tool: "ask_user", Level: LevelAuto},
+		{Tool: "trim_context", Level: LevelAuto},
+		{Tool: "load_skill", Level: LevelAuto},
 		{Tool: "mcp.*", Level: LevelAsk},
 	}
 }

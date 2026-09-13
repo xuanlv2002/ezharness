@@ -52,6 +52,9 @@
     image_recognize: { desc: '图片识别（识别槽模型驱动，只读）' },
     task: { desc: 'fork 分身执行子任务（分身继承主 agent 策略）' },
     save_app: { desc: '保存快应用 html' },
+    ask_user: { desc: '向用户提问收集信息（交互工具）' },
+    trim_context: { desc: '模型整理压缩上下文（内部整理）' },
+    load_skill: { desc: '加载技能指令集（内部读取）' },
     'mcp.*': {
       desc: 'MCP 工具调用（名单填 server 或 server.tool，如 time.getCurrentTime；发现类恒免审）',
       kind: 'mcpTool',

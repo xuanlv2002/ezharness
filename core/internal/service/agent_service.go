@@ -293,10 +293,6 @@ func (a *AgentService) Reassemble(st domain.Settings) error {
 改策略即时生效（无需重建 agent）。
 */
 func (a *AgentService) needsApprove(c *types.ToolCall) bool {
-	switch c.Name {
-	case askuser.ToolName, skilltool.ToolName, hooks.TrimTool:
-		return false // 交互与内部工具不属用户管控面（加载技能/整理上下文均为只读元操作）
-	}
 	name := c.Name
 	if name == "mcp_router" {
 		// ezloop mcp 是单一 router 工具，二段式（action/server/tool 在 args）。
