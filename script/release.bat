@@ -26,7 +26,8 @@ powershell -NoProfile -Command "Remove-Item -Recurse -Force core/web/dist -Error
 echo [release] building core...
 if not exist bin mkdir bin
 cd core
-go build -o ..\bin\ezharness-core.exe .
+rem -H windowsgui: core 以 GUI 子系统编译，桌面壳（无控制台）spawn 它时不会弹出空终端窗口
+go build -ldflags "-H windowsgui" -o ..\bin\ezharness-core.exe .
 if errorlevel 1 exit /b 1
 cd ..
 

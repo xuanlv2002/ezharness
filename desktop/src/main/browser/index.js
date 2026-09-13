@@ -223,11 +223,14 @@ function sendKey(wc, key, modifiers) {
 }
 
 /* screenshot 视口截图；fullPage 走 CDP captureBeyondViewport。
-窗口隐藏时 capturePage 可能空白——统一优先 CDP，失败回落 capturePage。 */
+窗口隐藏/视图卸载时 capturePage 可能空白甚至 reject(UnknownVizError:
+视图未上屏无合成 surface)——统一优先 capturePage,空图或抛错回落 CDP。 */
 async function screenshot(wc, fullPage) {
   if (fullPage) return cdpScreenshot(wc, { captureBeyondViewport: true })
-  const image = await wc.capturePage()
-  if (!image.isEmpty()) return image.toPNG().toString('base64')
+  try {
+    const image = await wc.capturePage()
+    if (!image.isEmpty()) return image.toPNG().toString('base64')
+  } catch { /* 视图未上屏:回落 CDP */ }
   return cdpScreenshot(wc, {})
 }
 
@@ -422,11 +425,17 @@ function registerIpc() {
   ipcMain.on('ez-browser:select', (_e, tabId) => selectTab(tabId))
   ipcMain.on('ez-browser:close', (_e, tabId) => closeTab(tabId))
 
-  /* 主应用入口：地球钮切换浏览器窗口显隐；browser:// chip 定位标签 */
+  /* 主应用入口：地球钮切换浏览器窗口显隐；browser:// chip 定位标签。
+     已存在的窗口在此纯切换——不能走 ensureBrowserWindow：它对已存在
+     窗口会置前 show，紧接的 isVisible 必为 true，toggle 随即 hide，
+     隐藏态被唤起时窗口闪现即隐 */
   ipcMain.on('ez-browser:toggle-window', () => {
+    if (browserWindow && !browserWindow.isDestroyed()) {
+      if (browserWindow.isVisible()) browserWindow.hide()
+      else { browserWindow.show(); browserWindow.focus() }
+      return
+    }
     ensureBrowserWindow()
-    if (browserWindow.isVisible()) browserWindow.hide()
-    else { browserWindow.show(); browserWindow.focus() }
   })
   ipcMain.on('ez-browser:focus-tab', (_e, tabId) => {
     if (!tabs.has(tabId)) return

@@ -72,6 +72,8 @@ func (s *BrowserService) ModelSeesImages() bool {
 
 /* AttachBridge desktop 桥连入(顶替旧连接并唤醒其挂起调用);此后 pump 读回执。 */
 func (s *BrowserService) AttachBridge(conn *websocket.Conn) {
+	// 截图回执是整帧 base64(可达数 MB),默认 32KB 读限会读爆断桥
+	conn.SetReadLimit(64 << 20)
 	s.mu.Lock()
 	old := s.conn
 	s.conn = conn
