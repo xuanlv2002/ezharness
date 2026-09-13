@@ -2,12 +2,16 @@
   import { onDestroy, onMount } from 'svelte'
 
   /*
-  浏览器窗口页面（desktop 专用，独立 BrowserWindow 加载）：标签条 +
-  地址栏 + 内容区占位。真实页面由 desktop 主进程的 WebContentsView 渲染
-  并贴靠内容区（ResizeObserver 上报 rect）；本页只是 UI 框架——标签
-  清单经 IPC 订阅主进程，新建/切换/关闭/导航全部转发主进程。
-  web 端直接访问时无 desktop 能力，显示降级提示。
+  共享浏览器抽屉页（desktop 专用）：标签条 + 地址栏 + 内容区占位。
+  真实页面由 desktop 主进程的 WebContentsView 渲染并贴靠内容区；
+  本页只是 UI 框架——标签清单经 IPC 订阅主进程，新建/切换/关闭/
+  导航全部转发主进程。web 端直接访问时无 desktop 能力，显示降级提示。
+  active = 抽屉开着且当前是浏览器页：false 时上报零矩形让主进程藏
+  视图；true 时除 ResizeObserver 外再逐帧上报 ~350ms——抽屉宽度
+  过渡期间内容区恒宽、RO 不触发，但内容区 x 在动，需逐帧重贴。
   */
+
+  let { active = false }: { active?: boolean } = $props()
 
   type TabInfo = { id: string; name: string; origin: string; url: string; title: string; loading: boolean }
 
@@ -70,6 +74,22 @@
 
   onDestroy(() => ro?.disconnect())
 
+  /* 抽屉显隐联动视图贴靠/收起（零矩形绕过 reportRect 的 <10 守卫） */
+  $effect(() => {
+    const api = ezBrowser()
+    if (!api) return
+    if (!active) {
+      api.reportRect({ x: 0, y: 0, width: 0, height: 0 })
+      return
+    }
+    let frames = 21 // ~350ms（60fps）：覆盖抽屉宽度过渡全程
+    const tick = () => {
+      reportRect()
+      if (frames-- > 0) requestAnimationFrame(tick)
+    }
+    tick()
+  })
+
   $effect(() => {
     /* 标签切换时内容区不变，但主进程需要重贴激活视图 */
     if (current) ezBrowser()?.select?.(current)
@@ -78,11 +98,11 @@
 
 <svelte:window onresize={reportRect} />
 
-<div class="browser-app">
+<div class="browser-pane">
   {#if !ezBrowser()}
     <div class="fallback">
-      <p>浏览器窗口仅桌面端（ezharness desktop）可用</p>
-      <p class="sub">AI 的 browser_* 工具在桌面端运行时自动打开此窗口；web 端暂无内嵌浏览器</p>
+      <p>浏览器抽屉仅桌面端（ezharness desktop）可用</p>
+      <p class="sub">AI 的 browser_* 工具在桌面端运行时自动打开此抽屉；web 端暂无内嵌浏览器</p>
     </div>
   {:else}
     <div class="strip">
@@ -128,14 +148,12 @@
 </div>
 
 <style>
-  .browser-app {
+  .browser-pane {
     display: flex;
     flex-direction: column;
-    height: 100vh;
+    height: 100%;
     min-height: 0;
     gap: 8px;
-    padding: 8px 10px 10px;
-    background: var(--bg);
   }
   .strip {
     display: flex;

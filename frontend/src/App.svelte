@@ -92,9 +92,9 @@
   }
   main {
     flex: 1;
-    /* 主列布局下限：极端组合（终端开+窗口压到 MinWindowW）下防内容
-    挤碎；= MinWindowW 1000 - 64 侧栏 - 280 终端保底 */
-    min-width: 656px;
+    /* 主列手机宽下限：抽屉展开时主列压到 480（与窗口 minWidth 840 =
+    480 + 64 侧栏 + 280 抽屉保底 + 余量 对齐）防内容挤碎 */
+    min-width: 480px;
     min-height: 0;
     display: flex;
     flex-direction: column;

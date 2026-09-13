@@ -2,21 +2,27 @@
   import { store } from '../../lib/store.svelte'
   import TerminalTab from './TerminalTab.svelte'
   import ResourcePane from '../viewer/ResourcePane.svelte'
+  import BrowserPane from './BrowserPane.svelte'
 
   /*
   工作区抽屉：推挤式右布局列（非悬浮 overlay）——打开时占布局宽度，
-  聊天主列被挤窄不遮挡。工具页（终端/资源查看器）互斥显隐，双 pane
-  常驻挂载保活（终端 WS/xterm、资源 tab 的 buffer/标注/画布互不
-  丢失）；入口是右侧悬浮列的两个独立 mini 钮（store.toggleDrawerTool）。
-  宽度两页统一（画板比例）：与视口联动让位，主列保 ~700px 内容宽
-  （80 字符代码行 624 + 滚动槽/卡 padding 仍安全）；余量不足先压
-  抽屉、保底 280px。
+  聊天主列被挤窄不遮挡。工具页（终端/资源查看器/共享浏览器）互斥显
+  隐，多 pane 常驻挂载保活（终端 WS/xterm、资源 tab 的 buffer/标注/
+  画布、浏览器标签条互不丢失）；入口是右侧悬浮列的 mini 钮
+  （store.toggleDrawerTool）。宽度统一（画板比例）：与视口联动让位，
+  主列压到手机宽保底 480px；余量不足先压抽屉、保底 280px。
   动画 = width 展开（内层 .inner 恒宽 var(--pane-w)：过渡期间内容不
   重排、xterm 不反复 fit；窗口 resize 时宽度变化经 var 继承同步到
   inner，ResizeObserver 自动 fit）。
   */
   const open = $derived(store.termDrawerOpen)
   const tool = $derived(store.drawerTool)
+  const TITLES: Record<string, [string, string]> = {
+    term: ['共享终端', '用户与 AI 共写 · 收起不中断'],
+    file: ['资源', '查看 · 编辑 · 发给 AI'],
+    browser: ['共享浏览器', 'AI 操控 · 实时共见'],
+  }
+  const title = $derived(TITLES[tool] ?? TITLES.term)
 
   /* Escape 收抽屉（焦点在输入框/标注浮条时忽略——它们的 Esc 归自己） */
   function onKey(e: KeyboardEvent) {
@@ -32,8 +38,8 @@
 <aside class="drawer" class:open={open} role="complementary" aria-label="工作区">
   <div class="inner">
     <header>
-      <h3>{tool === 'term' ? '共享终端' : '资源'}</h3>
-      <span class="hint">{tool === 'term' ? '用户与 AI 共写 · 收起不中断' : '查看 · 编辑 · 发给 AI'}</span>
+      <h3>{title[0]}</h3>
+      <span class="hint">{title[1]}</span>
       <button class="close" onclick={() => store.closeTermDrawer()} title="收起">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
           <path d="M6 6l12 12M18 6L6 18" />
@@ -47,16 +53,19 @@
       <div class="pane" class:hidden={tool !== 'file'}>
         <ResourcePane active={open && tool === 'file'} />
       </div>
+      <div class="pane" class:hidden={tool !== 'browser'}>
+        <BrowserPane active={open && tool === 'browser'} />
+      </div>
     </div>
   </div>
 </aside>
 
 <style>
-  /* 两页统一宽（画板比例）：主列保 ~700px 内容宽（624 八十字符代码行
-  + 34 滚动槽 + 28 卡 padding = 686 仍安全）；侧栏宽经 --sidebar-w
-  联动（收 64 / 展 176）。余量不足时抽屉先让位，保底 280 */
+  /* 各页统一宽（画板比例）：抽屉展开时主列压到手机宽保底 480px；
+  侧栏宽经 --sidebar-w 联动（收 64 / 展 176）。余量不足时抽屉先让位，
+  保底 280 */
   .drawer {
-    --pane-w: max(280px, min(960px, 58vw, calc(100vw - var(--sidebar-w, 64px) - 700px)));
+    --pane-w: max(280px, min(960px, 58vw, calc(100vw - var(--sidebar-w, 64px) - 480px)));
     flex: none;
     width: 0;
     overflow: hidden;

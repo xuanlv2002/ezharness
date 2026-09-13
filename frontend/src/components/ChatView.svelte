@@ -184,9 +184,9 @@
         </svg>
       </button>
       {#if (window as any).ez?.browser}
-        <!-- 共享浏览器：desktop 资产，独立窗口（AI start 自动弹出，此钮切换显隐）；web 端不显示 -->
-        <button class="entry"
-          onclick={() => (window as any).ez.browser.toggleWindow()} title="共享浏览器（AI 操控 · 独立窗口共见）">
+        <!-- 共享浏览器：desktop 资产，抽屉页（AI start 自动展开）；web 端不显示 -->
+        <button class="entry" class:active={store.termDrawerOpen && store.drawerTool === 'browser'}
+          onclick={() => store.toggleDrawerTool('browser')} title="共享浏览器（AI 操控 · 实时共见）">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
             <circle cx="12" cy="12" r="9" />
             <path d="M3 12h18M12 3a15 15 0 0 1 0 18M12 3a15 15 0 0 0 0 18" />

@@ -106,6 +106,9 @@ export interface TotalUsage {
   cached: number
 }
 
+/* 工作区抽屉的工具页（互斥单选）：终端 / 资源查看 / 共享浏览器 */
+export type DrawerTool = 'term' | 'file' | 'browser'
+
 /* 路径取文件名（chips 展示用；支持 / 与 \ 两种分隔符） */
 function baseName(p: string): string {
   const i = Math.max(p.lastIndexOf('/'), p.lastIndexOf('\\'))
@@ -196,9 +199,9 @@ class AppStore {
      （supper_url term:// 点击入口；TerminalTab 消费后清空） */
   termDrawerOpen = $state(false)
   termFocus = $state('')
-  /* drawerTool 是抽屉内工具页（终端/文件互斥显隐，双 pane 常驻保活）；
-     fileFocus 是待打开的文件路径（file:// 入口，ResourcePane 消费后清空） */
-  drawerTool = $state<'term' | 'file'>('term')
+  /* drawerTool 是抽屉内工具页（终端/文件/浏览器互斥显隐，多 pane 常驻
+     保活）；fileFocus 是待打开的文件路径（file:// 入口，ResourcePane 消费后清空） */
+  drawerTool = $state<DrawerTool>('term')
   fileFocus = $state('')
   private boardTag = ''
   /* 模型调用进行中（model_start→model_end），思考指示用 */
@@ -225,14 +228,14 @@ class AppStore {
   /* 工具触发的抽屉自动拉开:免审调用延迟 ~1s 打开(tool_start 先于
   approve.request 到达,1s 内无审批请求即视为免审直接执行);进入审批
   则等用户批准(decision.resolved=已批准)才打开——未批准时命令不会
-  运行,提前弹出只是打扰。浏览器工具不弹抽屉:共见由 desktop 壳的
-  浏览器窗口承担(AI start 时自动弹出)。 */
-  private autoOpenDrawers = new Map<string, 'term'>([
+  运行,提前弹出只是打扰。浏览器共见 = 自动拉开浏览器抽屉页。 */
+  private autoOpenDrawers = new Map<string, DrawerTool>([
     ['term_start', 'term'],
     ['term_send', 'term'],
+    ['browser_start', 'browser'],
   ])
   private toolOpenTimers = new Map<string, ReturnType<typeof setTimeout>>()
-  private toolApprovals = new Map<string, 'term'>()
+  private toolApprovals = new Map<string, DrawerTool>()
   /* 本轮本地已 push 的 user 块（send 时记录，turn_end/replay.sync 清除）：
   loop_start 到达时同文本跳过（实时路径防双 push）；SSE 重连回放时按 uid
   截断本地本轮块，让整轮回放帧干净重建（防 user/回复块重复） */
@@ -544,9 +547,9 @@ class AppStore {
     }
   }
 
-  /* openDrawer 拉开共享终端抽屉到终端页（AI 工具实际执行时调用；
+  /* openDrawer 拉开抽屉到指定工具页（AI 工具实际执行时调用；
      抽屉与聊天并存，不打断当前视图）。 */
-  private openDrawer(tool: 'term') {
+  private openDrawer(tool: DrawerTool) {
     this.drawerTool = tool
     this.termDrawerOpen = true
   }
@@ -567,13 +570,16 @@ class AppStore {
     this.termDrawerOpen = true
   }
 
-  /* openBrowserAt 唤起浏览器窗口并定位到指定标签（supper_url browser://
+  /* openBrowserAt 拉开浏览器抽屉页并定位到指定标签（supper_url browser://
      点击）；浏览器是 desktop 资产，web 端提示降级。 */
   openBrowserAt(id: string) {
     if (!id) return
     const browserApi = (window as any).ez?.browser
-    if (browserApi) browserApi.focusTab(id)
-    else this.lastStatus = '浏览器窗口仅桌面端可用'
+    if (browserApi) {
+      browserApi.focusTab(id)
+      this.drawerTool = 'browser'
+      this.termDrawerOpen = true
+    } else this.lastStatus = '浏览器仅桌面端可用'
   }
 
   closeTermDrawer() {
@@ -582,7 +588,7 @@ class AppStore {
 
   /* 工具入口 mini 钮的开关语义：开着且已是该工具页 → 收起；
      否则切到该工具页并拉开 */
-  toggleDrawerTool(t: 'term' | 'file') {
+  toggleDrawerTool(t: DrawerTool) {
     if (this.termDrawerOpen && this.drawerTool === t) this.termDrawerOpen = false
     else {
       this.drawerTool = t

@@ -3,8 +3,8 @@ ezharness core：Go sidecar（ezharness-core.exe），基于 ezloop 内核的
 harness 后端（gin + 三层 MVC）。启动即对本机全权（文件不限目录 +
 shell），在哪启动操作哪台设备。
 
-桌面形态由 desktop/（Electron 壳）拉起本进程：主窗口与浏览器窗口都
-加载本进程伺服的页面；也可直接运行（浏览器访问的 web 端形态，浏览器
+桌面形态由 desktop/（Electron 壳）拉起本进程：主窗口（含工作区抽屉
+的终端/资源/浏览器页）加载本进程伺服的页面；也可直接运行（浏览器访问的 web 端形态，浏览器
 控制等桌面专属能力自动降级）。端口与数据目录经应用根 ezharness.json
 配置（缺失自动创建），可在设置页修改并进程内重启（换代）。
 

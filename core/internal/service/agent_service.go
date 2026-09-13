@@ -457,14 +457,14 @@ func buildSystemBase(ctx context.Context, st domain.Settings, fsys osfs.OS) stri
 		"（省去先 read_file 再复制的往返；单文件上限 200000 字符，读不到会报错）；\n" +
 		"# 输出占位：回复中给用户可点击的入口用 <$supper_url>类型://标识</$supper_url> 包裹——" +
 		"https:// 外部链接、term://终端id（term_list 可查；长驻程序运行中或任务收尾时把终端入口交付给用户）、" +
-		"browser://浏览器标签id（browser_list 可查；浏览器操作期间把入口交付给用户，用户点击即唤起浏览器窗口并定位标签，实时共见）、" +
+		"browser://浏览器标签id（browser_list 可查；浏览器操作期间把入口交付给用户，用户点击即展开浏览器抽屉页并定位标签，实时共见）、" +
 		"app://快应用名（save_app 生成后在回复中引用，用户点击即开）、" +
 		"file://工作目录内文本文件的绝对路径（write_file/read_file 等操作过的代码与文档，交付入口供用户点击查看编辑）；\n" +
 		"# 共享终端（term_start/term_send 等）：魔法看板里的多终端，用户与你实时共见同一屏幕，全局共享（所有会话可用同一批终端）；" +
 		"term_list 查看全部（含用户手开的），term_start 新建（带描述，可附带首条命令）；\n" +
 		"# term_send 发命令并等输出静默返回（也用于应答交互/发 \\u0003 中断），term_read 游标式续读（只返回新增），term_close 关闭；\n" +
 		"# 需要交互式应答/状态保留/长驻程序/想让用户看到过程时用 term_* 系列，一次性无状态命令仍用 terminal；\n" +
-		"# 共享浏览器（browser_start/browser_navigate 等）：真实 Chromium，内嵌于桌面端浏览器窗口（browser_start 自动弹出，用户实时共见、可直接接管操作）；" +
+		"# 共享浏览器（browser_start/browser_navigate 等）：真实 Chromium，内嵌于桌面端工作区抽屉（browser_start 自动展开抽屉页，用户实时共见、可直接接管操作）；" +
 		"browser_start 新建标签并导航（首次使用会自动下载 Chromium 需等待，timeoutMs 放宽），browser_navigate 跳转，" +
 		"browser_read 读正文/链接清单，browser_screenshot 截图（多模态直接看图定位），" +
 		"browser_click/browser_type/browser_key/browser_scroll 操作页面（优先 CSS 选择器，定位不了先截图按视口坐标），" +

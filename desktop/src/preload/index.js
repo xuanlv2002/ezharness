@@ -27,10 +27,9 @@ contextBridge.exposeInMainWorld('ez', {
     navigate: (tabId, url) => ipcRenderer.send('ez-browser:navigate', tabId, url),
     select: (tabId) => ipcRenderer.send('ez-browser:select', tabId),
     close: (tabId) => ipcRenderer.send('ez-browser:close', tabId),
-    /* 浏览器窗口（browser.html 专用）：内容区 rect 上报（WebContentsView 贴靠） */
+    /* 主窗口抽屉页（BrowserPane）：内容区 rect 上报（WebContentsView 贴靠） */
     reportRect: (rect) => ipcRenderer.send('ez-browser:content-rect', rect),
-    /* 主应用入口：切换浏览器窗口显隐 / browser:// chip 定位标签 */
-    toggleWindow: () => ipcRenderer.send('ez-browser:toggle-window'),
+    /* browser:// chip 定位标签（前端同时展开抽屉页） */
     focusTab: (tabId) => ipcRenderer.send('ez-browser:focus-tab', tabId),
   },
 })

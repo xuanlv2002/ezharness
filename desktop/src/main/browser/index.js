@@ -1,31 +1,31 @@
 /*
-共享浏览器（desktop 资产）：独立浏览器窗口 + 每标签一个 WebContentsView。
-浏览器窗口加载 core 伺服的 /browser.html（标签条/地址栏 UI 框架），内容
-区 rect 由 renderer ResizeObserver 上报、主进程 setBounds——WebContentsView
-不在 DOM 流内，显隐与位置全由这里管理。
+共享浏览器（desktop 资产）：主窗口工作区抽屉的浏览器页 + 每标签一个
+WebContentsView。UI（标签条/地址栏）由主窗口页面的 BrowserPane 渲染，
+内容区 rect 由其 ResizeObserver/显隐联动上报、主进程 setBounds——
+WebContentsView 不在 DOM 流内，显隐与位置全由这里管理。
 
 AI 链路：桥客户端连 core 的 /api/browser/bridge，browser_* 工具调用
 （start/navigate/click/type/key/scroll/read/screenshot/list/close）在本
 模块直接操作对应标签的 webContents（executeJavaScript / sendInputEvent /
 capturePage / CDP 整页截图）后回执。
 
-窗口语义：AI start 或用户入口触发时创建并置前（共见）；用户点 X 关闭
-= 隐藏保留（标签后台存活，AI 可能正在用）；应用退出时全部销毁。
+共见语义：AI start 或 browser:// chip 触发时由前端展开浏览器抽屉页，
+视图贴抽屉内容区；抽屉收起/切走时前端上报零矩形，视图随之下线
+（webContents 存活，AI 可继续操作）。应用退出时全部销毁。
 */
-const { BrowserWindow, WebContentsView, ipcMain, session } = require('electron')
-const path = require('path')
+const { WebContentsView, ipcMain, session } = require('electron')
 
 let corePort = 5260
 let getParentWindow = null
 let bridge = null          // WebSocket → core
 let bridgeReconnectTimer = null
 
-let browserWindow = null
 /** @type {Map<string, object>} tabID → {view, name, origin, url, title, loading} */
 const tabs = new Map()
 let seq = 0
 let activeTab = ''
 let contentRect = { x: 0, y: 0, width: 0, height: 0 }
+let paneVisible = false // 抽屉浏览器页是否在上屏（rect 非零）
 
 /* ── 工具函数 ── */
 
@@ -40,11 +40,9 @@ function tabList() {
   }))
 }
 
-/* broadcastTabs 清单变化广播到浏览器窗口（标签条）与主窗口（联动入口）。 */
+/* broadcastTabs 清单变化广播到主窗口（抽屉页标签条与联动入口）。 */
 function broadcastTabs() {
-  const payload = JSON.stringify(tabList())
-  browserWindow?.webContents.send('ez-browser:tabs', payload)
-  getParentWindow()?.webContents.send('ez-browser:tabs', payload)
+  getParentWindow()?.webContents.send('ez-browser:tabs', JSON.stringify(tabList()))
 }
 
 /* stateLine 工具回执的状态头行。 */
@@ -54,49 +52,20 @@ function stateLine(id) {
   return `[浏览器 #${id} "${t.name}"] 页面: ${t.title}${t.loading ? '(加载中)' : ''}`
 }
 
-/* ── 浏览器窗口与视图管理 ── */
+/* ── 视图管理 ── */
 
-/* ensureBrowserWindow 创建（或复用）浏览器窗口并置前。 */
-function ensureBrowserWindow() {
-  if (browserWindow && !browserWindow.isDestroyed()) {
-    browserWindow.show()
-    browserWindow.focus()
-    return
-  }
-  browserWindow = new BrowserWindow({
-    width: 1200,
-    height: 820,
-    title: 'ezharness · 浏览器',
-    autoHideMenuBar: true,
-    show: false,
-    webPreferences: {
-      preload: path.join(__dirname, '../../preload/index.js'),
-    },
-  })
-  const base = process.env.EZHARNESS_DEV_URL || `http://127.0.0.1:${corePort}`
-  browserWindow.loadURL(`${base}/browser.html`)
-  browserWindow.once('ready-to-show', () => browserWindow.show())
-  /* 关窗 = 隐藏保留：标签后台存活（AI 可能正在用），入口可再次唤起 */
-  browserWindow.on('close', (e) => {
-    if (!browserWindow) return
-    e.preventDefault()
-    browserWindow.hide()
-  })
-  browserWindow.on('resize', () => applyBounds())
+/* attachView 挂载激活标签的 view 到主窗口并贴 bounds。 */
+function attachView(tab) {
+  const parent = getParentWindow()
+  if (!parent || parent.isDestroyed()) return
+  parent.contentView.addChildView(tab.view)
+  tab.view.setBounds({ ...contentRect })
 }
 
-/* applyBounds 把激活标签的 view 贴到 renderer 上报的内容区。 */
+/* applyBounds 把激活标签的 view 贴到抽屉内容区。 */
 function applyBounds() {
   const active = tabs.get(activeTab)
-  if (active && browserWindow && !browserWindow.isDestroyed()) {
-    active.view.setBounds({ ...contentRect })
-  }
-}
-
-/* attachView 挂载并贴 bounds（激活路径专用）。 */
-function attachView(tab) {
-  browserWindow.contentView.addChildView(tab.view)
-  tab.view.setBounds({ ...contentRect })
+  if (active && paneVisible) active.view.setBounds({ ...contentRect })
 }
 
 /* selectTab 激活标签：其余视图卸载（webContents 存活，重新挂载即恢复）。 */
@@ -105,11 +74,12 @@ function selectTab(id) {
   if (!next) return
   if (activeTab && activeTab !== id) {
     const prev = tabs.get(activeTab)
-    if (prev) browserWindow?.contentView.removeChildView(prev.view)
+    if (prev) getParentWindow()?.contentView.removeChildView(prev.view)
   }
   activeTab = id
-  if (browserWindow && !browserWindow.isDestroyed()) {
-    if (!browserWindow.contentView.children.includes(next.view)) attachView(next)
+  const parent = getParentWindow()
+  if (parent && !parent.isDestroyed() && paneVisible) {
+    if (!parent.contentView.children.includes(next.view)) attachView(next)
     else applyBounds()
   }
   broadcastTabs()
@@ -117,7 +87,6 @@ function selectTab(id) {
 
 /* createTab 新建标签（origin:"用户"|"AI"）；startURL 空则 about:blank。 */
 function createTab(name, origin, startURL) {
-  ensureBrowserWindow()
   seq += 1
   const id = `b${seq}`
   const url = completeURL(startURL)
@@ -152,18 +121,17 @@ function hostOf(raw) {
   try { return new URL(raw).host } catch { return '' }
 }
 
-/* closeTab 关闭标签（视图销毁）；最后一个标签关掉仅隐藏窗口。 */
+/* closeTab 关闭标签（视图销毁）；空态由抽屉页 UI 呈现。 */
 function closeTab(id) {
   const tab = tabs.get(id)
   if (!tab) return
-  browserWindow?.contentView.removeChildView(tab.view)
+  getParentWindow()?.contentView.removeChildView(tab.view)
   tab.view.webContents.close()
   tabs.delete(id)
   if (activeTab === id) {
     activeTab = ''
     const nextID = [...tabs.keys()].pop()
     if (nextID) selectTab(nextID)
-    else if (browserWindow) browserWindow.hide()
   }
   broadcastTabs()
 }
@@ -223,7 +191,7 @@ function sendKey(wc, key, modifiers) {
 }
 
 /* screenshot 视口截图；fullPage 走 CDP captureBeyondViewport。
-窗口隐藏/视图卸载时 capturePage 可能空白甚至 reject(UnknownVizError:
+抽屉收起/视图卸载时 capturePage 可能空白甚至 reject(UnknownVizError:
 视图未上屏无合成 surface)——统一优先 capturePage,空图或抛错回落 CDP。 */
 async function screenshot(wc, fullPage) {
   if (fullPage) return cdpScreenshot(wc, { captureBeyondViewport: true })
@@ -247,7 +215,7 @@ async function cdpScreenshot(wc, extraParams) {
 const executors = {
   async start({ desc, url, timeoutMs }) {
     const id = createTab(desc, 'AI', '')
-    const head = `[浏览器 #${id} "${desc}" 已创建,内嵌于浏览器窗口,用户实时共见可随时接管]`
+    const head = `[浏览器 #${id} "${desc}" 已创建,内嵌于工作区抽屉,用户实时共见可随时接管]`
     if (!url) return { result: head }
     const tab = tabs.get(id)
     tab.view.webContents.loadURL(completeURL(url))
@@ -321,10 +289,10 @@ const executors = {
     if (!tab) throw new Error(`浏览器标签 ${tabId} 不存在`)
     const amount = amountPx > 0 ? amountPx : 600
     const wc = tab.view.webContents
-    const size = wc.getOwnerBrowserWindow()?.getContentSize() || [800, 600]
+    const bounds = wc.getBounds() // 视口尺寸（挂主窗口后的 view bounds）
     wc.sendInputEvent({
       type: 'mouseWheel',
-      x: size[0] / 2, y: size[1] / 2,
+      x: bounds.width / 2, y: bounds.height / 2,
       deltaY: direction === 'up' ? -amount : amount,
     })
     await delay(200)
@@ -406,13 +374,28 @@ function connectBridge() {
   ws.onerror = () => ws.close()
 }
 
-/* ── renderer IPC（浏览器窗口 UI + 主应用入口） ── */
+/* ── renderer IPC（主窗口抽屉页 UI + 联动入口） ── */
 
 function registerIpc() {
-  /* 浏览器窗口页面：内容区 rect 上报（ResizeObserver） */
+  /* 抽屉页内容区 rect 上报（ResizeObserver + 显隐联动）：
+     非零 = 浏览器页上屏，激活视图贴靠；零 = 页收起/切走，视图下线 */
   ipcMain.on('ez-browser:content-rect', (_e, rect) => {
+    if (!rect || rect.width < 10 || rect.height < 10) {
+      paneVisible = false
+      const active = tabs.get(activeTab)
+      if (active) getParentWindow()?.contentView.removeChildView(active.view)
+      return
+    }
     contentRect = rect
-    applyBounds()
+    paneVisible = true
+    const active = tabs.get(activeTab)
+    if (active) {
+      const parent = getParentWindow()
+      if (parent && !parent.isDestroyed()) {
+        if (!parent.contentView.children.includes(active.view)) attachView(active)
+        else applyBounds()
+      }
+    }
   })
   ipcMain.handle('ez-browser:list', () => JSON.stringify(tabList()))
   ipcMain.on('ez-browser:create', (_e, url) => {
@@ -425,24 +408,9 @@ function registerIpc() {
   ipcMain.on('ez-browser:select', (_e, tabId) => selectTab(tabId))
   ipcMain.on('ez-browser:close', (_e, tabId) => closeTab(tabId))
 
-  /* 主应用入口：地球钮切换浏览器窗口显隐；browser:// chip 定位标签。
-     已存在的窗口在此纯切换——不能走 ensureBrowserWindow：它对已存在
-     窗口会置前 show，紧接的 isVisible 必为 true，toggle 随即 hide，
-     隐藏态被唤起时窗口闪现即隐 */
-  ipcMain.on('ez-browser:toggle-window', () => {
-    if (browserWindow && !browserWindow.isDestroyed()) {
-      if (browserWindow.isVisible()) browserWindow.hide()
-      else { browserWindow.show(); browserWindow.focus() }
-      return
-    }
-    ensureBrowserWindow()
-  })
+  /* browser:// chip 定位标签（前端同时展开抽屉页） */
   ipcMain.on('ez-browser:focus-tab', (_e, tabId) => {
-    if (!tabs.has(tabId)) return
-    ensureBrowserWindow()
-    browserWindow.show()
-    browserWindow.focus()
-    selectTab(tabId)
+    if (tabs.has(tabId)) selectTab(tabId)
   })
 }
 

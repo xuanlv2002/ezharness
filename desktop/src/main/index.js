@@ -98,6 +98,7 @@ function createMainWindow() {
   mainWindow = new BrowserWindow({
     width: cfg.windowWidth || 1280,
     height: cfg.windowHeight || 800,
+    minWidth: 840,
     frame: false,
     show: false,
     autoHideMenuBar: true,
