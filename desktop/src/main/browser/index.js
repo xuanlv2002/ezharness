@@ -34,6 +34,9 @@ function completeURL(raw) {
   return raw.includes('://') ? raw : `https://${raw}`
 }
 
+/* 用户新建标签的默认起始页（AI 的 browser_tab open 不带 url 仍为空白） */
+const HOME_PAGE = 'https://www.google.com'
+
 function tabList() {
   return [...tabs.entries()].map(([id, t]) => ({
     id, name: t.name, origin: t.origin, url: t.url, title: t.title, loading: t.loading,
@@ -399,7 +402,7 @@ function registerIpc() {
   })
   ipcMain.handle('ez-browser:list', () => JSON.stringify(tabList()))
   ipcMain.on('ez-browser:create', (_e, url) => {
-    createTab(hostOf(url || '') || '新标签', '用户', url || '')
+    createTab(hostOf(url || '') || '新标签', '用户', url || HOME_PAGE)
   })
   ipcMain.on('ez-browser:navigate', (_e, tabId, url) => {
     const tab = tabs.get(tabId)

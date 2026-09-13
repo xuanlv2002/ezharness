@@ -10,7 +10,7 @@
   /*
   魔法看板·终端 tab:顶部切换条(全部终端,含 AI 新建的,来源在 tooltip)
   + 每终端一个 xterm 实例(display:none keep-alive,切回不丢屏)。
-  首次激活建连;hello 后无终端则自动新建一个;断线重连靠 hello 快照恢复。
+  首次激活建连;无终端时空态 + 新建按钮(不隐式建);断线重连靠 hello 快照恢复。
   */
   let { active = false }: { active?: boolean } = $props()
 
@@ -26,7 +26,6 @@
   const offs: Array<() => void> = []
   let inited = false
   let ro: ResizeObserver | undefined
-  let autoCreated = false
 
   const enc = new TextEncoder()
 
@@ -105,14 +104,8 @@
     sessions = ss
     if (!ss.length) {
       current = ''
-      /* 首次同步为空 → 自动建一个(用户打开终端 tab 即可用) */
-      if (!autoCreated) {
-        autoCreated = true
-        void termManager.create()
-      }
       return
     }
-    autoCreated = true
     if (!current || !seen.has(current)) {
       /* 切换到新增终端(AI 刚建的)或保底第一个 */
       const fresh = ss.find((s) => !prevIds.includes(s.id) && !s.exited)
@@ -144,7 +137,6 @@
       const info = await termManager.create()
       /* 乐观合并:不等 WS terminals 帧(连接异常时也能立即显示) */
       if (!sessions.find((s) => s.id === info.id)) sessions = [...sessions, info]
-      autoCreated = true
       switchTo(info.id)
     } catch (e) {
       console.error(e)
