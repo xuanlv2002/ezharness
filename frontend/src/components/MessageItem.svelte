@@ -2,13 +2,14 @@
   import { marked } from 'marked'
   import DOMPurify from 'dompurify'
   import { api, type ImagePayload } from '../lib/api'
-  import { isDesktop } from '../lib/desktop'
+  import { fileBaseName, isImagePath } from '../lib/textfile'
   import { store } from '../lib/store.svelte'
 
   let {
     text,
     images,
     files,
+    fileRefs,
     reasoning = '',
     streaming = false,
     role,
@@ -17,6 +18,7 @@
     text: string
     images?: ImagePayload[]
     files?: { name: string; path?: string }[]
+    fileRefs?: { path: string; count: number }[]
     reasoning?: string
     streaming?: boolean
     role: 'user' | 'assistant'
@@ -27,7 +29,8 @@
 
   /* <$supper_url> 特殊渲染语法（占位）：闭合标签解析为可点击 chip——
      http(s) 经系统浏览器打开（复用外链拦截）；term://<终端id> 拉开
-     共享终端抽屉并定位；app://<快应用名> 打开快应用子窗。其他内容
+     共享终端抽屉并定位；app://<快应用名> 打开快应用子窗；
+     file://<绝对路径> 拉开抽屉文件页编辑（文本白名单门禁）。其他内容
      仅展示。流式未闭合时按原文转义显示。 */
   const escHtml = (s: string) =>
     s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
@@ -60,25 +63,46 @@
             const id = escHtml(m[1])
             return `<span class="supper-url act" data-supper-kind="app" data-supper-id="${id}" role="button" tabindex="0">▶ 快应用 ${id}</span>`
           }
+          m = t.match(/^browser:\/\/([^\s]+)$/i)
+          if (m) {
+            const id = escHtml(m[1])
+            return `<span class="supper-url act" data-supper-kind="browser" data-supper-id="${id}" role="button" tabindex="0">▣ 浏览器 ${id}</span>`
+          }
+          m = t.match(/^file:\/\/(.+)$/i)
+          if (m) {
+            const p = m[1].trim()
+            return `<span class="supper-url act" data-supper-kind="file" data-supper-id="${escHtml(p)}" role="button" tabindex="0" title="${escHtml(p)}">📄 ${escHtml(fileBaseName(p))}</span>`
+          }
           return `<a class="supper-url" data-supper-url="${b}">${b}</a>`
         },
       },
     ],
   })
 
-  /* term:// / app:// chip 点击委托（{@html} 渲染无法直接绑事件） */
+  /* term:// / app:// / file:// chip 点击委托（{@html} 渲染无法直接绑事件） */
   function onBodyClick(e: MouseEvent) {
-    const el = (e.target as HTMLElement).closest('span[data-supper-kind]')
+    const el = (e.target as HTMLElement).closest<HTMLElement>('span[data-supper-kind]')
     if (!el) return
     const kind = el.dataset.supperKind
     const id = el.dataset.supperId || ''
     if (kind === 'term') {
       store.openTermAt(id)
+    } else if (kind === 'browser') {
+      store.openBrowserAt(id)
     } else if (kind === 'app') {
       void api
         .openApp(id)
-        .then(() => (store.lastStatus = `正在打开快应用 ${id}`))
+        .then((r) => {
+          const desktopWindow = (window as any).ez?.window
+          if (desktopWindow) desktopWindow.openApp(r.path, r.title)
+          else window.open(r.path, '_blank')
+          store.lastStatus = `正在打开快应用 ${id}`
+        })
         .catch((err: unknown) => (store.lastStatus = `打开快应用失败：${(err as Error).message}`))
+    } else if (kind === 'file') {
+      /* 资源页按类型路由（registry）：文本进编辑器、图片进画板、
+      html/pdf 有专属查看器、其余占位提示 */
+      store.openFileAt(id)
     }
   }
 
@@ -127,26 +151,9 @@
     }
   }
 
-  /* 附件预览地址（工作目录文件服务；path 未回填前不可预览） */
-  const fileUrl = (p?: string) => (p ? `/api/workspace/file?path=${encodeURIComponent(p)}` : '')
-
-  /* 打开附件：桌面壳经系统浏览器（WebView 内导航会顶掉 SPA），浏览器模式新标签 */
-  function openFile(p?: string) {
-    const url = fileUrl(p)
-    if (!url) return
-    const abs = new URL(url, location.href).toString()
-    if (isDesktop) {
-      void fetch('/api/window/open-url', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url: abs }),
-      })
-    } else {
-      window.open(abs, '_blank', 'noopener')
-    }
-  }
-
-  const isImagePath = (name: string) => /\.(png|jpe?g|gif|webp|bmp|svg)$/i.test(name)
+  /* 附件预览地址（工作目录文件服务；带版本参数——画板写回后强制刷新） */
+  const fileUrl = (p?: string) =>
+    p ? `/api/workspace/file?path=${encodeURIComponent(p)}${(store.imgVer[p] ?? 0) ? `&v=${store.imgVer[p]}` : ''}` : ''
 </script>
 
 {#if role === 'user'}
@@ -157,10 +164,8 @@
         <div class="fchips">
           {#each files as f, i (i)}
             <button class="fchip"
-              onclick={() => (isImagePath(f.name) && f.path
-                ? void store.editImage(fileUrl(f.path), f.name)
-                : openFile(f.path))}
-              title={isImagePath(f.name) && f.path ? `${f.name}（点击进画板编辑）` : f.path || f.name} disabled={!f.path}>
+              onclick={() => f.path && store.openFileAt(f.path)}
+              title={f.path ? `${f.path}（点击在资源页打开——图片可编辑写回）` : f.name} disabled={!f.path}>
               {#if isImagePath(f.name)}
                 {#if f.path}
                   <img src={fileUrl(f.path)} alt={f.name} loading="lazy" />
@@ -175,12 +180,22 @@
           {/each}
         </div>
       {/if}
+      {#if fileRefs?.length}
+        <div class="fchips">
+          {#each fileRefs as r, i (i)}
+            <button class="fchip ref" onclick={() => store.openFileAt(r.path)} title={`${r.path}（点击在资源页打开）`}>
+              <span class="fico">🔗</span>
+              <span class="fname">{r.path.split(/[/\\]/).pop()}{r.count > 1 ? ` · ${r.count} 条标注` : r.count === 1 ? ' · 1 条标注' : ''}</span>
+            </button>
+          {/each}
+        </div>
+      {/if}
       {#if images?.length}
         <div class="imgs">
           {#each images as img, i (i)}
             <img src={`data:${img.mimeType};base64,${img.data}`} alt="附件图片 {i + 1}" loading="lazy"
-              onclick={() => void store.editImage(`data:${img.mimeType};base64,${img.data}`, `图片 ${i + 1}.png`)}
-              title="点击进画板编辑" />
+              onclick={() => void store.openBase64Draft(`data:${img.mimeType};base64,${img.data}`, `图片 ${i + 1}.png`)}
+              title="转为画板草稿编辑" />
           {/each}
         </div>
       {/if}

@@ -24,11 +24,23 @@ export interface ImagePayload {
   data: string
 }
 
-/* 附件上传载荷（base64，后端 domain.Attachment；落盘暂存不进上下文） */
+/* 附件引用载荷（一切皆资源：发送只传工作目录内路径，不传内容） */
 export interface FilePayload {
   name: string
-  mimeType: string
-  data: string
+  path: string
+}
+
+/* 文件引用载荷（统一进 <reference_file> 记录）：items 空 = 整文件
+引用（附件 chips），有 = 文件页标注（片段+行号+备注） */
+export interface FileRefItem {
+  sel: string
+  note: string
+  from: number
+  to: number
+}
+export interface FileRef {
+  path: string
+  items: FileRefItem[]
 }
 
 export interface SseEvent {
@@ -303,9 +315,25 @@ export const api = {
       }),
     ),
 
-  /* 附件暂存上传（base64 落盘工作目录 tmp/，不进上下文）；响应回传落盘路径 */
-  send: (id: string, text: string, files?: FilePayload[]) =>
-    post<{ ok: boolean; files?: string[] }>(`/api/sessions/${id}/messages`, { text, files }),
+  /* 发送消息：附件/引用统一为路径（<reference_file> 记录告知模型） */
+  send: (id: string, text: string, files?: FilePayload[], fileRefs?: FileRef[]) =>
+    post<{ ok: boolean }>(`/api/sessions/${id}/messages`, { text, files, refs: fileRefs }),
+  /* 附件暂存（拖入即落盘 tmp/ 拿真身路径）：multipart 多文件一次上 */
+  stash: async (files: File[]): Promise<string[]> => {
+    const form = new FormData()
+    for (const f of files) form.append('file', f, f.name)
+    const r = await fetch('/api/workspace/stash', { method: 'POST', body: form })
+    if (!r.ok) throw new Error((await r.json().catch(() => null) as { error?: string } | null)?.error || r.statusText)
+    return ((await r.json()) as { files?: string[] }).files ?? []
+  },
+  /* 二进制写回（画板图片原地保存：一切皆资源，编辑即写回真身） */
+  saveBin: async (path: string, file: File): Promise<void> => {
+    const form = new FormData()
+    form.append('path', path)
+    form.append('file', file, file.name)
+    const r = await fetch('/api/workspace/save-bin', { method: 'POST', body: form })
+    if (!r.ok) throw new Error((await r.json().catch(() => null) as { error?: string } | null)?.error || r.statusText)
+  },
 
   cancel: (id: string) => post<{ ok: boolean }>(`/api/sessions/${id}/cancel`),
 
@@ -317,8 +345,6 @@ export const api = {
 
   listNotifications: () => fetch('/api/notifications').then(json<NotificationGroup[]>),
 
-  summarize: (id: string) => post<{ text: string }>(`/api/sessions/${id}/summary`),
-
   getSettings: () => fetch('/api/settings').then(json<Settings>),
 
   saveSettings: (s: Settings) => post<{ ok: boolean }>('/api/settings', s),
@@ -327,8 +353,13 @@ export const api = {
 
   getApps: () => fetch('/api/apps').then(json<{ apps: AppEntry[] }>),
 
-  /* 桌面壳为快应用开独立子窗口（浏览器访问 503，调用方回落新标签页） */
-  openApp: (name: string) => post<{ ok: boolean }>('/api/apps/open', { name }),
+  /* 快应用名单校验（chip 的 id 来自模型输出不可信），返回路径与标题；
+     开窗由调用方执行：desktop 壳 IPC 子窗口 / web 新标签页 */
+  openApp: (name: string) => post<{ ok: boolean; path: string; title: string }>('/api/apps/open', { name }),
+
+  /* 工作目录文本文件保存（file:// 编辑器）；沙箱同 /api/workspace/file */
+  saveFile: (path: string, content: string) =>
+    post<{ ok: boolean }>('/api/workspace/save', { path, content }),
 
   getMcp: () => fetch('/api/mcp').then(json<{ servers: McpServerView[] }>),
 
@@ -378,8 +409,6 @@ export const api = {
     fetch(`/api/topics/${id}`).then(
       json<{ entry: TopicEntry; messages: HistoryMessage[]; summary?: string }>,
     ),
-
-  resumeTopic: (id: string) => post<{ id: string }>(`/api/topics/${id}/resume`),
 
   /* 分支三操作：开新线 / 从源会话第 anchor 条消息（含）复制前缀分叉 / 切换分支 */
   newBranch: () => post<{ id: string }>('/api/branches/new'),

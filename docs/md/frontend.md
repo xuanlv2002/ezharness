@@ -96,6 +96,7 @@ flowchart LR
 | ↳ 内容 `https://…` | 同上（外链） | ✓ | chip 点击经系统浏览器打开（复用外链拦截） | 同左 |
 | ↳ 内容 `term://<终端id>` | 同上（终端入口） | ✓ | chip 点击 openTermAt：拉开终端抽屉并定位（TerminalTab 消费 store.termFocus） | 同左 |
 | ↳ 内容 `app://<快应用名>` | 同上（快应用入口） | ✓ | chip 点击 POST /api/apps/open 开子窗 | 同左 |
+| ↳ 内容 `file://<绝对路径>` | 同上（文本文件入口） | ✓ | chip 点击 openFileAt（文本白名单门禁 textfile.ts）：拉开抽屉文件页加载编辑（FilePane 消费 store.fileFocus；保存 POST /api/workspace/save） | 同左 |
 | `<@toolArg>路径</@toolArg>` | 模型工具参数 | ✓（入史参数保持原文） | 工具卡显示原文 | 同左（展开只发生在执行侧） |
 
 **改任一 tag 格式的连带清单**见 AGENTS.md 对应小节；行前缀 `- ` 与关键词"整理上下文"是硬契约。

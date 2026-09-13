@@ -1,0 +1,13 @@
+{
+  "name": "ezharness-desktop",
+  "version": "0.1.2",
+  "description": "ezharness 桌面壳（Electron）：窗口/托盘/生命周期 + 内嵌共享浏览器（WebContentsView）",
+  "main": "src/main/index.js",
+  "scripts": {
+    "start": "electron ."
+  },
+  "devDependencies": {
+    "electron": "latest",
+    "electron-builder": "latest"
+  }
+}

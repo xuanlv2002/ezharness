@@ -1,42 +1,90 @@
-# 构建方案设计
+# 构建方案
 
-目标一句话：**一次构建产出一个自包含的 exe，放到哪里都能跑，数据就地在哪**。没有 dev server、没有热重载、没有环境变量开关——开发与发布走同一条路径。
+目标一句话：**一条三段构建链产出桌面应用，版本单源配置，产物集中在 bin/ 与 release/**。
+调试（dev.bat）只走前两段构建后直接 `npm run start`，发布（release.bat）走完整三段链打包。
 
-## 单二进制形态
+## 三层结构与构建链
 
-- `embed.go`：`//go:embed frontend/dist` 恒内嵌（无 build tag；dist 缺失 go build 直接报错），gin NoRoute 服务 SPA
-- 纯 server 模式唯一例外：`EZHARNESS_NO_WINDOW=1` 不开窗口，浏览器访问
+| 层 | 目录 | 构建 | 产物 |
+|----|------|------|------|
+| 前端页面 | `frontend/` | vite build（双入口 index.html + browser.html） | `frontend/dist/` |
+| 内核 sidecar | `core/` | go build（前端产物拷入 `core/web/dist` 后 go:embed） | `bin/ezharness-core.exe` |
+| 桌面壳 | `desktop/` | electron-builder（extraResources 内嵌 core exe） | `release/v<version>/` 安装包 + 绿色版 |
 
-## 应用根与数据目录（internal/config/cfg.go）
+构建链：
 
-两层分离，启动即确定：
+1. `frontend: npm run build` → `frontend/dist/`
+2. 拷贝 `frontend/dist` → `core/web/dist`（embed 专用目录，gitignore；go:embed 不能跨包目录引用，须拷一次）→ `cd core && go build -o ..\bin\ezharness-core.exe .`
+3. `desktop: npx electron-builder` → 产物直接输出 `release/v<version>/`（仅 release.bat）
 
-| 层 | 文件 | 位置 |
-|----|------|------|
-| 结构配置 | `ezharness.json`（port/listen/dataDir/windowWidth/windowHeight） | 应用根 = **exe 所在目录** |
-| 配置记录 | models.json / settings.json / toolRules.json / mcp.json | 数据目录 |
-| 数据 | sessions/ topics.json memory/ workspace/ apps/ .ezloop/ | 数据目录 |
+dev.bat 走完 1-2 后在 `desktop/` 里 `npm run start` 前台启动 Electron 壳（拉起 `bin/` 下 core exe，无打包）。
 
-- 零配置可启动：缺失自动创建默认（端口 5260、监听 127.0.0.1、数据目录 `data/`）；损坏备份 .bak 重建
-- 启动 `os.Chdir(DataDir)`：进程 cwd 即数据目录，ezloop hook 的相对路径自动落入
-- 监听默认 127.0.0.1（不触发防火墙弹窗），设置页可与端口一起改
+## 版本单源：script/version.yaml
 
-## 重启 = 换代（app.go）
+```yaml
+version: 0.1.2
+```
 
-设置页改端口/数据目录后进程内重启：收尾旧代运行轮落盘（OnEnd 才落盘，不等会丢整轮；SSE 永不 idle，优雅 Shutdown 必等满超时，故 `shutdownGeneration` 主动处理）→ chdir 新目录 → 重建 Hub/Router → 新端口。前端凭 boot 代际计数判断新服务就绪。
+release.bat 读取后同步两处（PowerShell 正则替换，勿手改 package.json 版本）：
 
-## 开发与发布（script/）
+- `frontend/package.json` ← `v<version>`：右下角页脚显示 `ezharness-v<version>`
+- `desktop/package.json` ← `<version>`：electron-builder 打包版本与产物命名用
+- core 无版本内容，不参与同步
 
-- **dev.bat**：`npm run build` → `go build -o build\dist\ezharness.exe .` → 直接运行。开发数据因此落在 `build/dist/`，与产品行为（数据在 exe 旁）完全一致
-- **release.bat**：`wails3 task package` → 产物 `build\dist\ezharness.exe` + `bin\ezharness-amd64-installer.exe`
+发新版只改 `version.yaml` 一处。
 
-## 安装包（build/windows/）
+## 脚本（script/）
 
-- Taskfile 体系：根 Taskfile 派发 GOOS → build/windows/Taskfile（build:native = 前端构建 + generate:syso 图标与版本信息 → `go build -tags production -ldflags="-w -s -H windowsgui"`）
-- **NSIS 默认 user 作用域**（装 `%LOCALAPPDATA%\Programs\ezharness`，无 UAC）：因「应用根 = exe 目录、数据就地生成」，Program Files 普通权限写不进去。per-machine 包：`wails3 task package INSTALL_SCOPE=machine`
-- 安装组件「添加到 PATH」默认勾选（注册表 + WM_SETTINGCHANGE 广播）
-- 元数据：`build/config.yml`（productIdentifier `com.ezharness.app`）→ info.json → syso，版权 (c) 2026, ezharness contributors
+### dev.bat — 调试运行
 
-## 注意事项
+前端构建 + core 编译（构建链 1-2），然后 `desktop/` 里 `npm run start` 前台启动 Electron。无打包产物。
 
-- darwin/linux 交叉编译受 wails v3 beta CGO 限制，Windows 是当前一等平台
+### release.bat — 发布打包
+
+三段构建链 + NSIS/portable 双打包，产出：
+
+```
+release\v<version>\ezharness-v<version>-setup.exe    NSIS 安装包
+release\v<version>\ezharness-v<version>.exe          绿色版 exe
+```
+
+## 运行形态与数据目录
+
+原则：**exe 在哪运行，配置与数据就在哪生成**（core `config.Root()` = exe 目录）。
+
+- `ezharness.json`（端口/窗口尺寸，默认 5260）与 `data/` 就地生成，零配置可启动
+- 安装版：core 在 `resources/`，配置数据落在安装目录（NSIS 默认 user 作用域，
+  无 UAC，保证可写）
+- 绿色版 portable：electron-builder 运行器注入 `PORTABLE_EXECUTABLE_DIR`
+  （exe 所在目录），desktop 据此给 core 传 `--root`，数据跟随 exe 而非自解压
+  临时目录
+- 开发：exe 在 `bin/`，配置数据就在 `bin/` 生成
+
+## 国内镜像（首次装依赖/打包）
+
+electron 本体与 NSIS/winCodeSign 等打包二进制默认从 GitHub 下载，国内极慢。已两层配置 npmmirror 镜像，通常无需再管：
+
+- 用户级环境变量 `ELECTRON_MIRROR` / `ELECTRON_BUILDER_BINARIES_MIRROR`（setx 永久生效）
+- `desktop/.npmrc`（npm config 形式，兜底 electron postinstall）
+
+手动临时指定（如换机器）：
+
+```bat
+set ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/
+set ELECTRON_BUILDER_BINARIES_MIRROR=https://npmmirror.com/mirrors/electron-builder-binaries/
+```
+
+## 脚本编写约定
+
+- bat 必须纯 ASCII + CRLF（cmd 默认 GBK 代码页，UTF-8 中文会乱码）
+- PowerShell 5.1 读写含中文的 JSON 必须显式 `-Encoding UTF8`（默认按 ANSI 读）
+
+## 验证链
+
+改代码后的最小验证：
+
+```bat
+cd core && go build ./... && go vet ./...
+cd frontend && npm run build
+desktop 主进程 JS：node --check 过一遍
+```

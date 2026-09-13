@@ -1,36 +1,24 @@
 <script lang="ts">
+  import type { NoticeData } from '../lib/store.svelte'
+
   /*
   通知栏：agent 的人机交互请求（审批/询问/规划）在此集中呈现。
   可内联完成，也可「查看」跳转到时间线对应卡片（如 fork 内的审批块）。
-  原型阶段纯渲染层，数据由后端下发（SSE 决策请求帧），回调待业务接入。
+  数据由 store.notices 驱动（SSE 决策请求帧 + 全局轮询）。
   */
-  export interface Notice {
-    id: string
-    rootId?: string // 所属分支根（跳转切换分支）
-    kind: 'approve' | 'ask' | 'info'
-    source: string // 'agent'、分支名或 fork 名
-    forkId?: string // 非空＝分身请求：跳转打开分身抽屉
-    title: string
-    detail?: string
-    time: string
-    status: 'pending' | 'done'
-    resolution?: string
-    target?: string // 时间线跳转目标（卡片/块 id）
-  }
-
   let {
     notices = [],
     onResolve,
     onJump,
     onDismiss,
   }: {
-    notices?: Notice[]
+    notices?: NoticeData[]
     onResolve?: (id: string, action: string, input?: string) => void
-    onJump?: (n: Notice) => void
+    onJump?: (n: NoticeData) => void
     onDismiss?: (id: string) => void
   } = $props()
 
-  const kindMeta: Record<Notice['kind'], { label: string; icon: string }> = {
+  const kindMeta: Record<NoticeData['kind'], { label: string; icon: string }> = {
     approve: { label: '审批', icon: '<path d="M12 3l7 3v5c0 4.5-3 8-7 10-4-2-7-5.5-7-10V6l7-3z"/><path d="M9 12l2 2 4-4"/>' },
     ask: { label: '询问', icon: '<circle cx="12" cy="12" r="9"/><path d="M9.5 9.5a2.5 2.5 0 1 1 3.4 2.3c-.6.3-.9.8-.9 1.4v.3"/><path d="M12 17h.01"/>' },
     info: { label: '通知', icon: '<circle cx="12" cy="12" r="9"/><path d="M12 8h.01M12 11v5"/>' },

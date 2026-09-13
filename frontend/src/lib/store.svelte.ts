@@ -6,6 +6,7 @@ import {
   type BranchView,
   type DecisionRecord,
   type FilePayload,
+  type FileRef,
   type ForkSummary,
   type HistoryMessage,
   type ImagePayload,
@@ -14,6 +15,15 @@ import {
   type Status,
   type StatusPayload,
 } from './api'
+
+/* 输入框附件（一切皆资源）：path = 已有真身（引用，发送不复制）；
+   file = 画板草稿（发送时才 stash 持久化）；两者皆空 = 拖入暂存中占位 */
+export interface Attachment {
+  name: string
+  path?: string
+  file?: File
+}
+export type { FileRef }
 
 export interface ToolBlockData {
   id: string
@@ -27,7 +37,7 @@ export interface ToolBlockData {
 
 /* ForkState 是分身聊天框的数据模型：blocks 与主时间线同构，
 实时事件归约与存档回放共用 buildBlocks。owner=所属会话 ID（fork 存档
-在所属库的 forks/ 下，compact 链上的旧库分身懒加载按 owner 取）。 */
+在所属库的 forks/ 下，compact 链上的历代库分身懒加载按 owner 取）。 */
 export interface ForkState {
   id: string
   owner: string
@@ -73,6 +83,9 @@ export type Block = { uid: number } & (
       text: string
       images?: ImagePayload[]
       files?: { name: string; path?: string }[]
+      /* 文件引用 chips（文件页「添加到对话」→<reference_file>）：count
+         = 标注条数（历史重建不还原片段全文，chip 点击回跳文件页） */
+      fileRefs?: { path: string; count: number }[]
       owner?: string
       msgIdx?: number
     }
@@ -93,30 +106,16 @@ export interface TotalUsage {
   cached: number
 }
 
-function nowHM(): string {
-  return new Date().toTimeString().slice(0, 5)
-}
+/* 工作区抽屉的工具页（互斥单选）：终端 / 资源查看 / 共享浏览器 */
+export type DrawerTool = 'term' | 'file' | 'browser'
 
-/* File 读成上传载荷（base64 不含 data: 前缀，与后端解码约定一致） */
-function fileToPayload(f: File): Promise<FilePayload> {
-  return new Promise((resolve, reject) => {
-    const r = new FileReader()
-    r.onload = () => {
-      const s = String(r.result)
-      resolve({ name: f.name, mimeType: f.type || 'application/octet-stream', data: s.slice(s.indexOf(',') + 1) })
-    }
-    r.onerror = () => reject(r.error ?? new Error('read failed'))
-    r.readAsDataURL(f)
-  })
-}
-
-/* 路径取文件名（chips 展示用；兼容 / 与 \ 两种分隔符） */
+/* 路径取文件名（chips 展示用；支持 / 与 \ 两种分隔符） */
 function baseName(p: string): string {
   const i = Math.max(p.lastIndexOf('/'), p.lastIndexOf('\\'))
   return i >= 0 ? p.slice(i + 1) : p
 }
 
-/* 解析 <agent_status> 载荷（旧格式 JSON；新格式中文文本返回 null） */
+/* 解析 <agent_status> 的 JSON 载荷；中文语义化文本返回 null */
 function parseStatus(content: string): StatusPayload | null {
   const open = '<agent_status>'
   const close = '</agent_status>'
@@ -131,15 +130,13 @@ function parseStatus(content: string): StatusPayload | null {
   }
 }
 
-/* 解析 <end_reason> 字段拼一行收尾文案——与 turn_end 实时收尾同款格式
-   （历史回放与实时两条路径的 endtick 文案保持一致）；无字段的旧格式
-   剔除系统提示语后原样压行 */
+/* 解析 <end_reason> 字段拼一行收尾文案（与 turn_end 实时收尾同款格式，
+   历史回放与实时两条路径的 endtick 文案一致；无结束原因字段返回空） */
 function endReasonText(content: string): string {
-  const m = content.match(/<end_reason>([\s\S]*?)<\/end_reason>/)
-  const body = m?.[1] ?? ''
+  const body = content.match(/<end_reason>([\s\S]*?)<\/end_reason>/)?.[1] ?? ''
   const get = (k: string) => body.match(new RegExp(`${k}：\\s*(.+)`))?.[1]?.trim() ?? ''
   const reason = get('结束原因')
-  if (!reason) return body.replace(/（系统自动记录[^）]*）/g, '').trim().replace(/\s+/g, ' ')
+  if (!reason) return ''
   const iters = get('运行轮次')
   const dur = get('运行时长')
   const hm = get('结束时间').slice(11, 16) // YYYY-MM-DD HH:MM:SS → HH:MM
@@ -163,28 +160,6 @@ function trimText(content: string): string {
   return `上下文已整理：此前的对话折叠为摘要。${summary}`
 }
 
-/* 终止原因文案（completed 由调用方排除，不产生提示） */
-function stopNote(reason: string): string {
-  switch (reason) {
-    case 'cancelled':
-      return '用户手动停止本轮'
-    case 'max_iterations':
-      return '达到最大迭代次数上限'
-    case 'error':
-      return '执行出错中止'
-    case 'aborted':
-      return '被策略中止'
-    default:
-      return `本轮结束（${reason}）`
-  }
-}
-
-function fmtDur(totalSecs: number): string {
-  if (totalSecs < 60) return `${totalSecs} 秒`
-  if (totalSecs < 3600) return `${Math.floor(totalSecs / 60)} 分 ${totalSecs % 60} 秒`
-  return `${Math.floor(totalSecs / 3600)} 小时 ${Math.floor((totalSecs % 3600) / 60)} 分钟`
-}
-
 class AppStore {
   /* activeId = 分支根 ID（稳定：compact 换代不变，SSE 订阅/路由键）；
      leafId = 当前叶 session ID（分身存档 owner、上翻游标起点） */
@@ -205,18 +180,29 @@ class AppStore {
   /* 通知跳转主时间线锚点（ChatView effect 消费滚动后清空；tick 依赖供
   跨分支切换后块加载完成重试） */
   jumpMain = $state('')
-  /* 画板：开合/画板底图（编辑附件时为原 File）与待回流产物。
-     boardSeq 在每次"从关到开"时递增（Panel 用 {#key} 重建画板=新画布）；
-     pendingBoardFile 由 ChatView 消费进附件列表（tag 为编辑目标下标） */
-  boardOpen = $state(false)
-  boardSeq = $state(0)
-  boardSource = $state<File | null>(null)
-  pendingBoardFile = $state<{ file: File; tag: string; source: File | null } | null>(null)
+  /* 画板草稿（图片查看器的未保存新图）：draftOpen 是「打开/续编草稿」
+     请求（source = 续编底图，tag = 来源附件下标，seq 递增 = 画布重建），
+     ResourcePane 消费；草稿 tab 全局唯一，重进即以 chip 当前内容重建 */
+  draftOpen = $state<{ source: File | null; tag: string; seq: number } | null>(null)
+  private draftSeq = 0
+  /* 待回流附件（查看器「添加到对话」/拖入暂存 att.stashed）：ChatView
+     消费进输入框附件（tag 匹配且身份一致时原位替换，否则追加） */
+  pendingAttachments = $state<(Attachment & { tag?: string; source?: File | null })[] | null>(null)
+  /* 文件页「添加到对话」的待回流引用（路径+标注片段，行号已算好）；
+     ChatView 消费进输入框引用 chips（同 path 替换去重） */
+  pendingFileRef = $state<FileRef | null>(null)
+  /* 图片写回后的缩略图版本（按路径 bump：同 URL 的 img 立即换 src，
+     含历史 chips——引用同一资源，处处显示最新；跨会话由 HTTP 304 兜底） */
+  imgVer = $state<Record<string, number>>({})
   /* 共享终端抽屉(独立于画板 overlay,与聊天并存):收起仅滑出,
      WS/xterm 常驻保活。termFocus 是外部请求定位的终端 id
      （supper_url term:// 点击入口；TerminalTab 消费后清空） */
   termDrawerOpen = $state(false)
   termFocus = $state('')
+  /* drawerTool 是抽屉内工具页（终端/文件/浏览器互斥显隐，多 pane 常驻
+     保活）；fileFocus 是待打开的文件路径（file:// 入口，ResourcePane 消费后清空） */
+  drawerTool = $state<DrawerTool>('term')
+  fileFocus = $state('')
   private boardTag = ''
   /* 模型调用进行中（model_start→model_end），思考指示用 */
   modelActive = $state(false)
@@ -239,14 +225,17 @@ class AppStore {
 
   private unsub: (() => void) | null = null
   private uidSeq = 0
-  /* term_* 工具的抽屉自动拉开:免审调用延迟 ~1s 打开(tool_start 先于
+  /* 工具触发的抽屉自动拉开:免审调用延迟 ~1s 打开(tool_start 先于
   approve.request 到达,1s 内无审批请求即视为免审直接执行);进入审批
   则等用户批准(decision.resolved=已批准)才打开——未批准时命令不会
-  运行,提前弹出只是打扰。只有产生可见终端活动的工具(start/send)才
-  自动拉——list/read/close 是查询管理类,弹抽屉纯打扰。 */
-  private termAutoOpen = new Set(['term_start', 'term_send'])
-  private termOpenTimers = new Map<string, ReturnType<typeof setTimeout>>()
-  private termApprovals = new Map<string, string>()
+  运行,提前弹出只是打扰。浏览器共见 = 自动拉开浏览器抽屉页。 */
+  private autoOpenDrawers = new Map<string, DrawerTool>([
+    ['term_start', 'term'],
+    ['term_send', 'term'],
+    ['browser_tab:open', 'browser'],
+  ])
+  private toolOpenTimers = new Map<string, ReturnType<typeof setTimeout>>()
+  private toolApprovals = new Map<string, DrawerTool>()
   /* 本轮本地已 push 的 user 块（send 时记录，turn_end/replay.sync 清除）：
   loop_start 到达时同文本跳过（实时路径防双 push）；SSE 重连回放时按 uid
   截断本地本轮块，让整轮回放帧干净重建（防 user/回复块重复） */
@@ -345,7 +334,7 @@ class AppStore {
       if (!res) {
         this.hasPrev = false
       } else {
-        // 旧库分身摘要建骨架（懒加载按所属库 ID 取详情）
+        // 历代库的分身摘要建骨架（懒加载按所属库 ID 取详情）
         for (const fk of res.forks ?? []) {
           if (!this.forks[fk.id]) {
             this.forks[fk.id] = {
@@ -386,18 +375,17 @@ class AppStore {
     const dmap = new Map((decisions || []).map((d) => [d.callId, d.resolution]))
     const forkQueue = [...(forks || [])]
     const out: Block[] = []
-    let pendingFiles: { name: string; path?: string }[] | undefined // <upload_file> 待挂到下一个 user 块
     for (let mi = 0; mi < messages.length; mi++) {
       const m = messages[mi]
       if (m.role === 'user') {
-        const d = parseStatus(m.content) // 旧格式：JSON 载荷
+        const d = parseStatus(m.content) // JSON 载荷
         if (d) {
           // 状态记录仅水位异常时入时间线，平时只在右上角
           if (d.suggestCompact) {
             out.push({ kind: 'status', uid: this.nuid(), text: m.content, data: d })
           }
         } else if (m.content.includes('<agent_status>')) {
-          // 新格式：中文语义化文本；仅水位异常行进时间线
+          // 中文语义化文本；仅水位异常行进时间线
           // （文案是"建议调用 trim_context 整理上下文"，关键词取"整理上下文"）
           if (m.content.includes('整理上下文')) {
             out.push({ kind: 'status', uid: this.nuid(), text: m.content, data: null })
@@ -406,10 +394,25 @@ class AppStore {
           // 资源变更记录：remind 变更段按需插入（实时由 res.change 事件渲染）
           const items = [...m.content.matchAll(/^- (.+)$/gm)].map((x) => x[1].trim()).filter(Boolean)
           if (items.length) out.push({ kind: 'reschange', uid: this.nuid(), items })
-        } else if (m.content.includes('<upload_file>')) {
-          // 附件路径记录：路径挂到紧跟其后的真实 user 块（chips 渲染）
-          const paths = [...m.content.matchAll(/^- (.+)$/gm)].map((x) => x[1].trim()).filter(Boolean)
-          if (paths.length) pendingFiles = paths.map((p) => ({ name: baseName(p), path: p }))
+        } else if (m.content.includes('<reference_file>')) {
+          /* 引用记录独立成块（与用户输入各一条消息，不合并）。标签体是
+          纯 JSON：refs[].items 空 = 整文件引用（附件 chips），非空 =
+          带标注引用（引用 chips，count=标注条数；片段全文不还原，点击
+          回跳文件页读真身）。损坏载荷不渲染。 */
+          const inner = m.content.replace(/^[\s\S]*?<reference_file>|<\/reference_file>[\s\S]*$/g, '').trim()
+          try {
+            const payload = JSON.parse(inner) as { refs?: { path: string; items?: unknown[] }[] }
+            const refsAll = payload.refs ?? []
+            const refFiles = refsAll.filter((r) => !r.items?.length).map((r) => ({ name: baseName(r.path), path: r.path }))
+            const refMarked = refsAll
+              .filter((r) => r.items?.length)
+              .map((r) => ({ path: r.path, count: r.items!.length }))
+            if (refFiles.length || refMarked.length) {
+              out.push({ kind: 'user', uid: this.nuid(), text: '', files: refFiles, fileRefs: refMarked })
+            }
+          } catch {
+            /* 损坏记录不渲染 */
+          }
         } else if (m.content.includes('<image_loaded>')) {
           // read_file 图片已进上下文：渲染为缩略图小行（paths 在标签体内，每行一个）
           const inner = m.content.replace(/^[\s\S]*?<image_loaded>|<\/image_loaded>[\s\S]*$/g, '')
@@ -420,12 +423,13 @@ class AppStore {
           out.push({ kind: 'imgload', uid: this.nuid(), paths, images: m.images || [] })
         } else if (m.content.includes('<end_reason>')) {
           const detail = endReasonText(m.content)
-          out.push({ kind: 'endtick', uid: this.nuid(), icon: endIcon(detail), title: detail })
+          if (detail) out.push({ kind: 'endtick', uid: this.nuid(), icon: endIcon(detail), title: detail })
         } else if (m.content.includes('<context_trim')) {
           out.push({ kind: 'note', uid: this.nuid(), text: `✂️ ${trimText(m.content)}` })
+        } else if (!m.content.trim() && !m.images?.length) {
+          // 空输入（纯附件轮，引用已由上一块独立呈现）：不渲染
         } else {
-          out.push({ kind: 'user', uid: this.nuid(), text: m.content, images: m.images, files: pendingFiles, owner, msgIdx: mi })
-          pendingFiles = undefined
+          out.push({ kind: 'user', uid: this.nuid(), text: m.content, images: m.images, owner, msgIdx: mi })
         }
       } else if (m.role === 'assistant') {
         if (m.content || m.reasoning) {
@@ -512,49 +516,41 @@ class AppStore {
     this.activeForkId = ''
   }
 
-  /* ── 魔法看板 ── */
+  /* ── 魔法看板（图片查看器的画布引擎，草稿入口） ── */
 
-  /* openBoard 打开画板；source 为编辑中的附件底图（tag 为其下标，
-     回流时据此替换）。从关到开时递增 boardSeq（画板重建=新画布）。 */
-  openBoard(source: File | null = null, tag = '') {
-    if (!this.boardOpen) this.boardSeq++
-    this.boardSource = source
-    this.boardTag = tag
-    this.boardOpen = true
+  /* openDraftImage 打开画板草稿（画笔钮/草稿 chip 续编/旧 base64 图片）：
+     source = 续编底图（无则空白画布），tag = 来源附件下标（「添加到
+     对话」时据此替换原 chip）。seq 每次递增 = 画布重建（草稿 tab 唯一，
+     重进即以 chip 当前内容重建）。 */
+  openDraftImage(source: File | null = null, tag = '') {
+    this.draftOpen = { source, tag, seq: ++this.draftSeq }
+    this.drawerTool = 'file'
+    this.termDrawerOpen = true
   }
 
-  /* completeBoard 画板产物回流：交给 ChatView 消费（替换编辑目标或追加）。 */
-  completeBoard(file: File) {
-    this.pendingBoardFile = { file, tag: this.boardTag, source: this.boardSource }
-    this.boardOpen = false
+  /* bumpImg 图片写回后按路径递增缩略图版本（同 URL 的 img 立即换 src，
+     含聊天历史 chips——引用同一资源，处处显示最新）。 */
+  bumpImg(path: string) {
+    this.imgVer = { ...this.imgVer, [path]: (this.imgVer[path] ?? 0) + 1 }
   }
 
-  closeBoard() {
-    this.boardOpen = false
-  }
-
-  toggleBoard() {
-    if (this.boardOpen) this.closeBoard()
-    else this.openBoard()
-  }
-
-  /* editImage 把一张图片（src = data: 或工作目录文件服务 URL）作为底图
-     直接打开魔法画板编辑——产物经 completeBoard 回流进输入框附件，
-     直接关闭画板则无事发生。时间线/附件缩略图的点击入口。 */
-  async editImage(src: string, name: string) {
+  /* openBase64Draft 把无路径的内存图片（消息内 base64，无工作目录真身）转草稿：
+     dataURL → File → openDraftImage。 */
+  async openBase64Draft(src: string, name: string) {
     try {
       const r = await fetch(src)
       if (!r.ok) throw new Error('read fail')
       const blob = await r.blob()
-      this.openBoard(new File([blob], name || 'image.png', { type: blob.type || 'image/png' }))
+      this.openDraftImage(new File([blob], name || 'image.png', { type: blob.type || 'image/png' }))
     } catch {
       this.lastStatus = '图片读取失败，未能打开画板'
     }
   }
 
-  /* openTermDrawer 拉开共享终端抽屉（AI term_* 实际执行时调用；
+  /* openDrawer 拉开抽屉到指定工具页（AI 工具实际执行时调用；
      抽屉与聊天并存，不打断当前视图）。 */
-  private openTermDrawer() {
+  private openDrawer(tool: DrawerTool) {
+    this.drawerTool = tool
     this.termDrawerOpen = true
   }
 
@@ -562,15 +558,53 @@ class AppStore {
      首次打开时 WS hello 到达后由 TerminalTab 消费定位）。 */
   openTermAt(id: string) {
     this.termFocus = id
+    this.drawerTool = 'term'
     this.termDrawerOpen = true
+  }
+
+  /* openFileAt 拉开抽屉文件页并打开指定文件（supper_url file:// 点击）。 */
+  openFileAt(path: string) {
+    if (!path) return
+    this.fileFocus = path
+    this.drawerTool = 'file'
+    this.termDrawerOpen = true
+  }
+
+  /* openBrowserAt 拉开浏览器抽屉页并定位到指定标签（supper_url browser://
+     点击）；浏览器是 desktop 资产，web 端提示降级。 */
+  openBrowserAt(id: string) {
+    if (!id) return
+    const browserApi = (window as any).ez?.browser
+    if (browserApi) {
+      browserApi.focusTab(id)
+      this.drawerTool = 'browser'
+      this.termDrawerOpen = true
+    } else this.lastStatus = '浏览器仅桌面端可用'
   }
 
   closeTermDrawer() {
     this.termDrawerOpen = false
   }
 
-  toggleTermDrawer() {
-    this.termDrawerOpen = !this.termDrawerOpen
+  /* 抽屉自动展开匹配：先按 工具名:action 精确查（browser_tab:open），再按工具名查 */
+  private drawerFor(name: string, argsText: string): DrawerTool | undefined {
+    let action = ''
+    try {
+      action = String(JSON.parse(argsText)?.action || '')
+    } catch {
+      /* args 非对象 */
+    }
+    return this.autoOpenDrawers.get(action ? `${name}:${action}` : name) || this.autoOpenDrawers.get(name)
+  }
+
+  /* 工具入口 mini 钮的开关语义：开着且已是该工具页 → 收起；
+     否则切到该工具页并拉开 */
+  toggleDrawerTool(t: DrawerTool) {
+    if (this.termDrawerOpen && this.drawerTool === t) this.termDrawerOpen = false
+    else {
+      this.drawerTool = t
+      this.termDrawerOpen = true
+    }
   }
 
   /* loadForkDetail 懒加载存档详情（已结束分身的执行记录重建）；运行中的
@@ -590,10 +624,15 @@ class AppStore {
   /* ── 发送 / 取消 ── */
 
   /* 打断式发送：运行中再来指令 = 先终止当前轮（等引擎真正退出，含工具树杀），
-     再执行新指令；等待超时则放弃并提示。附件先读 base64，落盘路径由响应
-     回传（chips 缩略图源）。 */
-  async send(text: string, files?: File[]) {
-    if (!this.activeId || (!text.trim() && !files?.length)) return
+     再执行新指令；等待超时则放弃并提示。附件/引用统一为工作目录路径
+    （<reference_file> 记录告知模型）；画板草稿（path 空有 file）此时才
+     stash 持久化——失败则原样保留输入框内容。 */
+  async send(text: string, attachments: Attachment[] = [], fileRefs: FileRef[] = []) {
+    if (!this.activeId || (!text.trim() && !attachments.length && !fileRefs.length)) return
+    if (attachments.some((a) => !a.path && !a.file)) {
+      this.lastStatus = '附件仍在暂存中，稍候再发送'
+      return
+    }
     if (this.busy) {
       this.lastStatus = '正在终止当前轮…'
       await this.cancel()
@@ -602,28 +641,38 @@ class AppStore {
         return
       }
     }
-    const uid = this.nuid()
-    this.blocks.push({
-      kind: 'user',
-      uid,
-      text,
-      files: files?.map((f) => ({ name: f.name })),
-    })
-    this.pendingUserUid = uid
+    let final: FilePayload[] = attachments.map((a) => ({ name: a.name, path: a.path! }))
+    const drafts = attachments.filter((a) => !a.path && a.file)
+    if (drafts.length) {
+      try {
+        const paths = await api.stash(drafts.map((d) => d.file!))
+        const by = new Map(drafts.map((d, i) => [d, paths[i]]))
+        final = attachments.map((a) => (by.has(a) ? { name: a.name, path: by.get(a)! } : { name: a.name, path: a.path! }))
+      } catch (e) {
+        this.lastStatus = `画板草稿暂存失败：${(e as Error).message}`
+        return
+      }
+    }
+    /* 引用与用户输入各成一块（与消息历史同构：reference_file 记录是独立
+    user 消息）；pendingUserUid 记第一块 uid——replay.sync 截断时两块一起切 */
+    const turnFiles = final.map((a) => ({ name: a.name, path: a.path }))
+    const turnFileRefs = fileRefs.map((r) => ({ path: r.path, count: r.items.length }))
+    let firstUid = 0
+    if (turnFiles.length || turnFileRefs.length) {
+      firstUid = this.nuid()
+      this.blocks.push({ kind: 'user', uid: firstUid, text: '', files: turnFiles, fileRefs: turnFileRefs })
+    }
+    if (text) {
+      const uid = this.nuid()
+      this.blocks.push({ kind: 'user', uid, text })
+      if (!firstUid) firstUid = uid
+    }
+    this.pendingUserUid = firstUid
     this.pendingUserText = text
     this.busy = true
     this.lastStatus = ''
     try {
-      const payloads = files?.length ? await Promise.all(files.map(fileToPayload)) : undefined
-      const res = await api.send(this.activeId, text, payloads)
-      if (res?.files?.length) {
-        const b = this.blocks.find((x) => x.uid === uid)
-        if (b && b.kind === 'user') {
-          res.files.forEach((p, i) => {
-            if (b.files?.[i]) b.files[i].path = p
-          })
-        }
-      }
+      await api.send(this.activeId, text, final, fileRefs)
       void this.refreshBranches() // 首次发言落线索引 + 运行指示
     } catch (e) {
       this.busy = false
@@ -652,17 +701,6 @@ class AppStore {
     await api.cancel(this.activeId).catch(() => {})
   }
 
-  async summarize() {
-    if (!this.activeId) return
-    this.lastStatus = '摘要中…'
-    try {
-      const { text } = await api.summarize(this.activeId)
-      this.blocks.push({ kind: 'assistant', uid: this.nuid(), text: `📝 ${text}`, reasoning: '', streaming: false })
-    } catch (e) {
-      this.lastStatus = `摘要失败：${(e as Error).message}`
-    }
-  }
-
   /* ── 设置 / 话题 ── */
 
   async saveSettings(s: Settings) {
@@ -670,20 +708,6 @@ class AppStore {
     this.settings = s
     this.lastStatus = '设置已保存（模型与提示即时生效）'
     await this.refreshStatus()
-  }
-
-  async resumeTopic(id: string) {
-    try {
-      const r = await api.resumeTopic(id)
-      this.activeId = r.id
-      await this.loadHistory()
-      this.resubscribe()
-      this.blocks.push({ kind: 'note', uid: this.nuid(), text: '⟲ 已切换到该分支' })
-      await this.refreshStatus()
-      await this.refreshBranches()
-    } catch (e) {
-      this.lastStatus = `切换分支失败：${(e as Error).message}`
-    }
   }
 
   /* ── 分支三操作 ── */
@@ -898,9 +922,13 @@ class AppStore {
         break
       }
       case 'loop_start': {
-        // 回放重建：本轮 user 输入（实时路径 send 已本地 push，同文本去重）
-        const text = typeof ev.data === 'string' ? ev.data : ''
-        // 新一轮开始：上一轮的资源变更不再挂右上角（res.change 按需推送不自动清）
+        /* 回放重建：本轮 user 输入（实时路径 send 已本地 push，同文本去重）。
+        主轮带引用时载荷是对象 {text, files, fileRefs}（后端 Publish 附带——
+        本轮消息要等轮结束才并入历史，运行中切回分支全靠回放帧重建 chips） */
+        const d = ev.data
+        const obj = d && typeof d === 'object' ? d : null
+        const text = typeof d === 'string' ? d : (obj?.text ?? '')
+        // 新一轮开始：清空上一轮的资源变更（右上角只挂本轮）（res.change 按需推送不自动清）
         if (!ev.forkId) this.liveChanges = []
         if (ev.forkId) {
           // 分身输入进分身聊天框（含任务包装前缀，即分身收到的原文）
@@ -912,12 +940,29 @@ class AppStore {
           break
         }
         // 本地已 push 过本轮输入（含实时与重放截断后的重建）才跳过——
-        // 不再依赖"最后一个块"比对（断线重连时尾部已是模型输出，会误判重复）；
-        // 重建 push 后同样记录标记（多次重连的截断依据）
-        if (text && text !== this.pendingUserText) {
-          const uid = this.nuid()
-          this.blocks.push({ kind: 'user', uid, text })
-          this.pendingUserUid = uid
+        // 按 pendingUserText 标记判重（断线重连时尾部已是模型输出，末块
+        // 比对会误判重复）；重建 push 后同样记录标记（多次重连的截断依据）。纯附件轮
+        // （text 空）按附件存在 + pendingUserUid 判：空文本无法作去重键。
+        // 重建与 send 同构：引用块 + 输入块各一条
+        const turnFiles = obj?.files
+        const turnFileRefs = obj?.fileRefs?.map((r: { path: string; items?: unknown[] }) => ({
+          path: r.path,
+          count: r.items?.length ?? 0,
+        }))
+        const rebuildText = !!text && text !== this.pendingUserText
+        const rebuildRefs = (!!turnFiles?.length || !!turnFileRefs?.length) && !this.pendingUserUid
+        if (rebuildText || rebuildRefs) {
+          let firstUid = 0
+          if (rebuildRefs) {
+            firstUid = this.nuid()
+            this.blocks.push({ kind: 'user', uid: firstUid, text: '', files: turnFiles, fileRefs: turnFileRefs })
+          }
+          if (rebuildText) {
+            const uid = this.nuid()
+            this.blocks.push({ kind: 'user', uid, text })
+            if (!firstUid) firstUid = uid
+          }
+          this.pendingUserUid = firstUid
           this.pendingUserText = text
         }
         break
@@ -930,10 +975,11 @@ class AppStore {
           this.markToolDecision(d.id, d.resolution || '')
           this.removeResolvedDecisions(d.id)
         }
-        // term_* 审批通过 → 现在才拉开终端抽屉（拒绝则什么都不做）
-        if (d.id && this.termApprovals.has(d.id)) {
-          this.termApprovals.delete(d.id)
-          if ((d.resolution || '').startsWith('已批准')) this.openTermDrawer()
+        // term_*/browser_* 审批通过 → 现在才拉开对应抽屉页（拒绝则什么都不做）
+        if (d.id && this.toolApprovals.has(d.id)) {
+          const drawer = this.toolApprovals.get(d.id)
+          this.toolApprovals.delete(d.id)
+          if ((d.resolution || '').startsWith('已批准') && drawer) this.openDrawer(drawer)
         }
         break
       }
@@ -1003,7 +1049,7 @@ class AppStore {
         const args = typeof d.args === 'string' ? d.args : JSON.stringify(d.args ?? '')
         // 认领流式构造期（building）的同名块：换真实 callID、完整 args、转执行态
         const bs = ev.forkId ? this.ensureFork(ev.forkId).blocks : this.blocks
-        // 去重：决策路径已补插过同 id 工具卡时只补名参，不再push（防重复块乱序）
+        // 去重：决策路径已补插过同 id 工具卡时只补名参（防重复块乱序）
         const dup = bs.find((b) => b.kind === 'tool' && b.id === d.id && b.state !== 'building')
         if (dup && dup.kind === 'tool') {
           if (!dup.name) dup.name = d.name || ''
@@ -1022,16 +1068,18 @@ class AppStore {
           })
         }
         if (!ev.forkId) this.lastTool = d.name || ''
-        // AI 用共享终端工具:延迟拉开终端抽屉(见 termOpenTimers 注释——
-        // 审批路径由 approve.request 取消计时,批准后才拉;名单外的查询类不拉)
-        if (this.termAutoOpen.has(d.name || '') && d.id && !this.termApprovals.has(d.id)) {
+        // AI 用共享工作区工具(终端/浏览器):延迟拉开对应抽屉页(见
+        // autoOpenDrawers 注释——审批路径由 approve.request 取消计时,
+        // 批准后才拉;名单外的查询类不拉)
+        const drawer = this.drawerFor(d.name || '', args)
+        if (drawer && d.id && !this.toolApprovals.has(d.id)) {
           const id = d.id
-          this.termOpenTimers.get(id) && clearTimeout(this.termOpenTimers.get(id))
-          this.termOpenTimers.set(
+          this.toolOpenTimers.get(id) && clearTimeout(this.toolOpenTimers.get(id))
+          this.toolOpenTimers.set(
             id,
             setTimeout(() => {
-              this.termOpenTimers.delete(id)
-              this.openTermDrawer()
+              this.toolOpenTimers.delete(id)
+              this.openDrawer(drawer)
             }, 1000),
           )
         }
@@ -1045,6 +1093,12 @@ class AppStore {
           t.result = d.content || ''
           t.err = d.err || ''
           t.state = 'done'
+        }
+        // 工具结果携带图片加载标记：实时渲染缩略图行（历史路径走
+        // <image_loaded> user 消息，两条路径渲染同一 imgload 块）
+        const loadedPaths = [...String(d.content || '').matchAll(/<image_loaded path="([^"]*)"\s*\/>/g)].map((m) => m[1])
+        if (loadedPaths.length) {
+          bs.push({ kind: 'imgload', uid: this.nuid(), paths: loadedPaths, images: [] })
         }
         if (!ev.forkId) this.lastTool = ''
         break
@@ -1077,18 +1131,18 @@ class AppStore {
       case 'askuser.request': {
         const d = ev.data || {}
         const id = d.id || ''
-        // term_* 进入审批：取消免审弹板计时，等批准后再弹
-        if (ev.type === 'approve.request' && this.termOpenTimers.has(id)) {
-          clearTimeout(this.termOpenTimers.get(id))
-          this.termOpenTimers.delete(id)
-          this.termApprovals.set(id, d.name || '')
+        let args = d.args
+        if (typeof args !== 'string') args = JSON.stringify(args ?? {})
+        // term_*/browser_* 进入审批：取消免审弹板计时，等批准后再弹
+        if (ev.type === 'approve.request' && this.toolOpenTimers.has(id)) {
+          clearTimeout(this.toolOpenTimers.get(id))
+          this.toolOpenTimers.delete(id)
+          this.toolApprovals.set(id, this.drawerFor(d.name || '', args) ?? 'term')
         }
         // 分身请求路由进分身聊天框（不进主时间线）；bs=目标块数组
         const bs = ev.forkId ? this.ensureFork(ev.forkId).blocks : this.blocks
         // 去重：SSE 断线重连会重放 pending 帧
         if (!id || bs.some((b) => b.kind === 'decision' && b.id === id)) break
-        let args = d.args
-        if (typeof args !== 'string') args = JSON.stringify(args ?? {})
         // 工具卡补插：刷新/重放时本轮快照未含此调用（turn 未落盘），
         // 决策卡之前补一个执行中的工具卡
         if (!bs.some((b) => b.kind === 'tool' && b.id === id)) {
@@ -1138,16 +1192,6 @@ class AppStore {
         const msg = typeof ev.data === 'string' ? ev.data : JSON.stringify(ev.data ?? '')
         const bs = ev.forkId ? this.ensureFork(ev.forkId).blocks : this.blocks
         bs.push({ kind: 'assistant', uid: this.nuid(), text: `⚠️ ${msg}`, reasoning: '', streaming: false })
-        break
-      }
-      case 'filetools.image_loaded': {
-        // read_file 图片进上下文（OnLoop 加载点推送）：实时渲染缩略图小行，
-        // 缩略图走工作目录文件服务（与历史 <image_loaded> 消息同款渲染）
-        const paths: string[] = Array.isArray(ev.data) ? ev.data : []
-        if (paths.length) {
-          const bs = ev.forkId ? this.ensureFork(ev.forkId).blocks : this.blocks
-          bs.push({ kind: 'imgload', uid: this.nuid(), paths, images: [] })
-        }
         break
       }
       case 'res.change': {
@@ -1255,16 +1299,32 @@ class AppStore {
         // 每轮收尾：小图标实时入时间线（悬浮显示详情；持久化正文由后端 endnote 写入历史）
         {
           const secs = d.elapsedMs ? Math.round(d.elapsedMs / 1000) : 0
-          const reason = stopNote(d.stopReason || 'completed')
+          const stop = d.stopReason || 'completed'
+          const reason =
+            stop === 'cancelled'
+              ? '用户手动停止本轮'
+              : stop === 'max_iterations'
+                ? '达到最大迭代次数上限'
+                : stop === 'error'
+                  ? '执行出错中止'
+                  : stop === 'aborted'
+                    ? '被策略中止'
+                    : `本轮结束（${stop}）`
           // 错误详情跟在原因后（endtick 超宽截断、悬浮看全文）；取消路径
           // 的 err 是 context.Canceled，无信息量不拼
           const errTxt =
             d.err && (d.stopReason || 'error') === 'error'
               ? `：${String(d.err).replace(/\s+/g, ' ').slice(0, 300)}`
               : ''
-          const title =
-            `${reason}${errTxt} · ${d.iterations ?? 0} 轮${secs ? ` · ${fmtDur(secs)}` : ''}` +
-            ` · ${new Date().toTimeString().slice(0, 5)}`
+          const dur =
+            secs >= 3600
+              ? ` · ${Math.floor(secs / 3600)} 小时 ${Math.floor((secs % 3600) / 60)} 分钟`
+              : secs >= 60
+                ? ` · ${Math.floor(secs / 60)} 分 ${secs % 60} 秒`
+                : secs
+                  ? ` · ${secs} 秒`
+                  : ''
+          const title = `${reason}${errTxt} · ${d.iterations ?? 0} 轮${dur} · ${new Date().toTimeString().slice(0, 5)}`
           this.blocks.push({
             kind: 'endtick',
             uid: this.nuid(),
@@ -1311,10 +1371,6 @@ class AppStore {
     const b = bs[idx] as Extract<Block, { kind: 'assistant' }>
     if (isContent) b.text += delta
     else b.reasoning += delta
-  }
-
-  private lastStreamingAssistant(): Extract<Block, { kind: 'assistant' }> | null {
-    return this.lastStreaming(this.blocks)
   }
 
   /* insertBeforeLastUser 把块插到最后一个 user 块之前（status/reschange

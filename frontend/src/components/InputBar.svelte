@@ -1,34 +1,53 @@
 <script lang="ts">
   import { onMount } from 'svelte'
-  import { store } from '../lib/store.svelte'
+  import { store, type Attachment, type FileRef } from '../lib/store.svelte'
+  import { fileBaseName, isImagePath, isTextFilePath } from '../lib/textfile'
 
   let {
-    files = [],
+    attachments = [],
+    fileRefs = [],
     onRemove,
     onEditImage,
     onAddFiles,
     onClearFiles,
+    onRemoveFileRef,
+    onOpenFileRef,
+    onClearFileRefs,
   }: {
-    files?: File[]
+    attachments?: Attachment[]
+    fileRefs?: FileRef[]
     onRemove?: (i: number) => void
     onEditImage?: (i: number) => void
     onAddFiles?: (fs: File[]) => void
     onClearFiles?: () => void
+    onRemoveFileRef?: (i: number) => void
+    onOpenFileRef?: (path: string) => void
+    onClearFileRefs?: () => void
   } = $props()
 
   let text = $state('')
   let focused = $state(false)
   let el: HTMLTextAreaElement | undefined = $state()
 
-  const thumbs = $derived(
-    files.map((f) => ({
-      name: f.name,
-      isImage: f.type.startsWith('image/'),
-      url: f.type.startsWith('image/') ? URL.createObjectURL(f) : '',
-    })),
+  /* 附件缩略：真身路径走文件服务源（与聊天记录同源，带版本参数——
+  画板写回后强制刷新）；path 空 = 占位（拖入暂存中）或画板草稿（file） */
+  const thumbnails = $derived(
+    attachments.map((a) => {
+      const isImage = isImagePath(a.name)
+      const v = a.path ? (store.imgVer[a.path] ?? 0) : 0
+      return {
+        name: a.name,
+        path: a.path,
+        isImage,
+        isText: isTextFilePath(a.path || a.name),
+        url: isImage && a.path ? `/api/workspace/file?path=${encodeURIComponent(a.path)}${v ? `&v=${v}` : ''}` : '',
+        ready: !!a.path || !!a.file,
+        draft: !a.path && !!a.file,
+      }
+    }),
   )
 
-  /* 附件数量上限（与后端校验一致；任意类型，落盘暂存） */
+  /* 附件数量上限（与后端校验一致；任意类型，拖入即暂存） */
   const MAX_FILES = 8
 
   onMount(() => {
@@ -41,18 +60,27 @@
 
   async function send() {
     const t = text.trim()
-    if (!t && !files.length) return
+    if (!t && !attachments.length && !fileRefs.length) return
     if (store.archivingRootId === store.activeId) {
       store.lastStatus = '正在归档当前话题，完成后即可继续对话（可先切换分支）'
       return
     }
-    if (files.length > MAX_FILES) {
+    if (attachments.some((a) => !a.path && !a.file)) {
+      store.lastStatus = '附件仍在暂存中，稍候再发送'
+      return
+    }
+    if (attachments.length > MAX_FILES) {
       store.lastStatus = `附件最多 ${MAX_FILES} 个，多余的未发送`
     }
-    const sendFiles = files.slice(0, MAX_FILES)
+    const sendAttachments = attachments.slice(0, MAX_FILES)
+    const sendFileRefs = fileRefs.slice(0, MAX_FILES)
     text = ''
     onClearFiles?.()
-    await store.send(t, sendFiles)
+    onClearFileRefs?.()
+    /* 画板草稿（path 空有 file）由 store 在发送时 stash 持久化；fileRefs
+    统一进 <reference_file> 记录。attachments/fileRefs 必须在
+    onClear* 之前拷贝——props 解构是 live getter，清空后再取读到 [] */
+    await store.send(t, sendAttachments, sendFileRefs)
   }
 
   function onKey(e: KeyboardEvent) {
@@ -62,13 +90,15 @@
     }
   }
 
-  /* 粘贴图片：拦截剪贴板 image 项转附件（与拖拽同路） */
+  /* 粘贴文件：拦截剪贴板全部 file 项转附件（与拖拽同路，暂存回填）。
+     Windows 复制任意文件 Ctrl+V 走 CF_HDROP（kind='file'）——图片、
+     文本、pdf 一视同仁；纯文本粘贴（kind='string'）不受影响 */
   function onPaste(e: ClipboardEvent) {
     const items = [...(e.clipboardData?.items ?? [])]
-    const imgs = items.filter((i) => i.type.startsWith('image/')).map((i) => i.getAsFile()).filter(Boolean)
-    if (!imgs.length) return
+    const files = items.filter((i) => i.kind === 'file').map((i) => i.getAsFile()).filter(Boolean)
+    if (!files.length) return
     e.preventDefault()
-    onAddFiles?.(imgs as File[])
+    onAddFiles?.(files as File[])
   }
 
   function autoResize(e: Event) {
@@ -87,18 +117,27 @@
   {:else if store.lastStatus}
     <div class="status">{store.lastStatus}</div>
   {/if}
-  {#if files.length}
+  {#if attachments.length || fileRefs.length}
     <div class="attachments">
-      {#each thumbs as t, i (i)}
-        <div class="att">
+      {#each thumbnails as t, i (i)}
+        <div class="att" class:pending={!t.ready}>
           {#if t.isImage}
-            <button class="thumb" onclick={() => onEditImage?.(i)} title="打开魔法画板">
-              <img src={t.url} alt={t.name} />
+            <button class="thumb" disabled={!t.ready} onclick={() => onEditImage?.(i)}
+              title={t.draft ? '画板草稿（未保存）——点击继续编辑，发送时才保存' : t.ready ? '打开画板编辑（保存写回原文件）' : '暂存中…'}>
+              {#if t.url}<img src={t.url} alt={t.name} />{:else}<span class="draft-ico">🖌</span>{/if}
               <span class="edit-mark">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                   <path d="M17 3a2.85 2.85 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z" />
                 </svg>
               </span>
+            </button>
+          {:else if t.isText}
+            <button class="file-ico as-btn" disabled={!t.ready} onclick={() => t.path && store.openFileAt(t.path)}
+              title={t.ready ? '在资源页打开（编辑 · 标注 · 发给 AI）' : '暂存中…'}>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M14 3H7a1 1 0 0 0-1 1v16a1 1 0 0 0 1 1h10a1 1 0 0 0 1-1V7l-4-4z" />
+                <path d="M14 3v4h4" />
+              </svg>
             </button>
           {:else}
             <span class="file-ico">
@@ -108,13 +147,29 @@
               </svg>
             </span>
           {/if}
-          <span class="att-name">{t.name}</span>
+          <span class="att-name">{t.name}{t.draft ? ' · 草稿' : ''}</span>
           <button class="att-x" onclick={() => onRemove?.(i)} title="移除">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
               <path d="M6 6l12 12M18 6L6 18" />
             </svg>
           </button>
         </div>
+      {/each}
+      {#each fileRefs as r, i (i)}
+        <button class="ref" onclick={() => onOpenFileRef?.(r.path)}
+          title={`${r.path}（点击在文件页打开）`}>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" />
+            <path d="M14 3v5h5" />
+          </svg>
+          <span class="ref-name">{fileBaseName(r.path)}</span>
+          {#if r.items.length}<span class="ref-n">{r.items.length} 条标注</span>{/if}
+          <span class="att-x" onclick={(e) => { e.stopPropagation(); onRemoveFileRef?.(i) }} role="button" tabindex="-1" title="移除引用">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+              <path d="M6 6l12 12M18 6L6 18" />
+            </svg>
+          </span>
+        </button>
       {/each}
     </div>
   {/if}
@@ -131,7 +186,7 @@
       oninput={autoResize}
       disabled={!store.activeId}
     ></textarea>
-    <button class="board-btn" onclick={() => store.openBoard()} title="打开画板（画图/标注后发送）">
+    <button class="board-btn" onclick={() => store.openDraftImage()} title="画板草稿（画图/标注，添加到对话；发送时才保存）">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
         <path d="M12 19l7-7a4.95 4.95 0 1 0-7-7l-7 7v7h7z" />
         <path d="M16 8l1.5 1.5" />
@@ -144,14 +199,14 @@
           <rect x="7" y="7" width="10" height="10" rx="1.5" />
         </svg>
       </button>
-      <button class="send ghost" onclick={() => void send()} disabled={!text.trim() && !files.length} title="终止当前轮并发送新指令">
+      <button class="send ghost" onclick={() => void send()} disabled={!text.trim() && !attachments.length && !fileRefs.length} title="终止当前轮并发送新指令">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
           <path d="M12 19V5" />
           <path d="M5 12l7-5 5 5" />
         </svg>
       </button>
     {:else}
-      <button class="send" onclick={() => void send()} disabled={!text.trim() && !files.length} title="发送">
+      <button class="send" onclick={() => void send()} disabled={!text.trim() && !attachments.length && !fileRefs.length} title="发送">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
           <path d="M12 19V5" />
           <path d="M5 12l7-5 5 5" />
@@ -226,6 +281,77 @@
   .file-ico svg {
     width: 15px;
     height: 15px;
+  }
+  /* 文本附件的可点形态：点击进文件页编辑（与图片进画板对偶） */
+  .file-ico.as-btn {
+    border: none;
+    padding: 0;
+    cursor: pointer;
+    transition:
+      background var(--dur-fast) var(--ease-out),
+      color var(--dur-fast) var(--ease-out);
+  }
+  .file-ico.as-btn:hover:not(:disabled) {
+    background: var(--bg);
+    color: var(--fg);
+  }
+  .file-ico.as-btn:disabled {
+    cursor: default;
+    opacity: 0.6;
+  }
+  /* 暂存中的占位 chip（path 未回填） */
+  .att.pending {
+    opacity: 0.55;
+  }
+  .att.pending .att-name::after {
+    content: ' · 暂存中…';
+    color: var(--faint);
+  }
+  /* 画板草稿 chip 的占位图（无真身路径，内容在内存） */
+  .draft-ico {
+    display: grid;
+    place-items: center;
+    width: 32px;
+    height: 32px;
+    border-radius: 6px;
+    background: var(--bg-soft);
+    font-size: 15px;
+  }
+  /* 文件引用 chip（文件页「添加到对话」产物）：路径引用不复制内容 */
+  .ref {
+    position: relative;
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    border: 1px solid var(--accent-soft, var(--accent));
+    border-radius: 10px;
+    background: color-mix(in srgb, var(--accent, #2563eb) 5%, var(--bg));
+    color: var(--fg);
+    padding: 5px 26px 5px 8px;
+    max-width: 260px;
+    font-size: 11.5px;
+    cursor: pointer;
+    animation: rise var(--dur-fast) var(--ease-out) both;
+    transition: background var(--dur-fast) var(--ease-out);
+  }
+  .ref:hover {
+    background: color-mix(in srgb, var(--accent, #2563eb) 10%, var(--bg));
+  }
+  .ref svg {
+    width: 14px;
+    height: 14px;
+    flex: none;
+    color: var(--accent, #2563eb);
+  }
+  .ref-name {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .ref-n {
+    flex: none;
+    font-size: 10.5px;
+    color: var(--accent, #2563eb);
   }
   .att-name {
     font-size: 11.5px;

@@ -1,0 +1,26 @@
+# ezharness desktop 打包配置：NSIS 安装包 + 绿色版，内嵌 core exe
+appId: com.ezharness.desktop
+productName: ezharness
+directories:
+  output: ../release
+files:
+  - src/**
+  - package.json
+# core 与配置同目录（resources/）：exe 在哪，配置与数据就在哪
+extraResources:
+  - from: ../bin/ezharness-core.exe
+    to: ezharness-core.exe
+  - from: ../assets/icon.png
+    to: icon.png
+win:
+  target:
+    - nsis
+    - portable
+  icon: ../assets/icon.png
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  perMachine: false
+  artifactName: ezharness-v${version}-setup.exe
+portable:
+  artifactName: ezharness-v${version}.exe

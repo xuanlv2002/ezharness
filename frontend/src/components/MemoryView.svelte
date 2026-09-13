@@ -66,7 +66,7 @@
   async function switchLine(n: SessionNode) {
     if (!n.lineRoot) return
     try {
-      await store.resumeTopic(n.lineRoot)
+      await store.switchBranch(n.lineRoot)
       onNavigate?.('chat')
     } catch (e) {
       message = `切换分支失败：${(e as Error).message}`

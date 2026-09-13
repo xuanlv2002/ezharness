@@ -109,32 +109,54 @@ main 是唯一对话模型（Vision 开关决定图片进上下文还是落盘�
 
 ## 构建/运行陷阱
 
-- 构建走 wails3 Taskfile 体系（根 Taskfile.yml + build/ 下平台 Taskfile，
-  CLI beta.12）：`wails3 task build`（产物 **build/dist/**，图标/版本信息
-  自动嵌入 exe）、`wails3 package`（NSIS/.app 安装包，默认 user 作用域）、
-  `wails3 task run`。脚本在 **script/**：dev.bat（开发直跑：npm run build →
-  go build → 启动 exe）、release.bat（发布：wails3 task package 出
-  exe+installer）。无热重载/dev server——已彻底移除 dev 模式
-- 前端恒内嵌（embed.go，无 build tag 开关；frontend/dist 缺失则 go build
-  直接报错，dev.bat/task build 先跑 npm run build 保证产物在）。build:frontend
-  **无 generate:bindings 依赖**（前端手写 fetch 层不用 wails bindings），改回需慎重
-- 应用根 = **exe 所在目录**（config Root()，无环境变量覆盖）：ezharness.json
-  与 data/ 就地生成，安装版与自编译同规则。开发数据因此落在
-  **build/dist/**（dev.bat 产物运行处），不在项目根
-- 图标源头是 `build/appicon.png`（ezloop 光子轨道）；改动后
-  `wails3 task common:generate:icons` 重生成，下次 build 自动嵌入
-- `go run .` 会把 exe 放 go-build 临时目录，config 按 exe 位置找不到
-  ezharness.json → 回落默认端口 5260 + 空数据目录。**验证须 `go build -o xxx.exe .`
-  后在 ezharness/ 目录下运行**
+- **三层结构**：`frontend/`（Svelte 双入口：index.html 主应用 +
+  browser.html 浏览器窗口页）、`core/`（Go sidecar，module ezharness/core，
+  前端产物构建时拷入 core/web/dist 后 go:embed）、`desktop/`（Electron
+  壳：主进程 + preload + electron-builder 配置）。业务全在 core，desktop
+  只做壳与桌面资产（窗口/托盘/内嵌浏览器）
+- 构建：版本单源 `script/version.yaml`（release.bat 同步 frontend 页脚
+  ezharness-v<version> 与 desktop 打包版本，勿手改 package.json）；
+  `script/dev.bat` 是调试脚本——前端构建 → 拷 core/web/dist → go build
+  出 bin/ezharness-core.exe → desktop 里 npm run start 前台跑 Electron
+  （无打包）；`script/release.bat` 三段链全走 + electron-builder，产物
+  直出 `release/v<version>/` 安装包 + 绿色版（细节见 docs/build.md）
+- 应用根 = **core exe 所在目录**（config Root()，`--root` 参数可覆盖：
+  portable 绿色版由 desktop 注入 PORTABLE_EXECUTABLE_DIR 后传参，数据
+  跟随 exe）：
+  ezharness.json 与 data/ 就地生成。开发时 exe 在 bin/，数据落 bin/；
+  打包后 core 在 resources/，配置数据落在 resources/（安装版同规则）
+- Electron 壳经 `process.resourcesPath`（打包）/`bin/`（dev）找 core
+  exe；改路径逻辑（desktop/src/main/index.js 的 coreDir/repoRoot）要同步
+- `go run ./core` 会把 exe 放 go-build 临时目录，config 按 exe 位置找不到
+  ezharness.json → 回落默认端口 5260 + 空数据目录。**验证须
+  `go build -o bin/ezharness-core.exe ./core` 后在配置所在目录运行**
 - 进程 CWD = 数据目录（启动时 chdir），data 下文件用相对路径直接操作
-- ezloop 是本地 replace（`../ezloop`），能不动就不动
+- ezloop 是本地 replace（`../../ezloop`，core/go.mod），能不动就不动
 - `fs.FileSystem` 接口无删除能力：删目录用 `os.RemoveAll`（service 层有 os 先例）
-- 验证链：`go build ./... && go vet ./... && go test ./...` +
-  `cd frontend && npm run build`；起服务 `EZHARNESS_NO_WINDOW=1`（端口见
-  ezharness.json，当前 5262），测完删自编译 exe
+- 验证链：`cd core && go build ./... && go vet ./...` +
+  `cd frontend && npm run build`；desktop 主进程 JS 用
+  `node --check` 过一遍
+
+## 共享浏览器（desktop 资产，桥架构）
+
+- 真实浏览器 = Electron 主进程的 **WebContentsView**（每标签一个，
+  `partition: persist:ezbrowser` 登录态共享）；浏览器窗口加载 core 伺服的
+  /browser.html 只做 UI 框架（标签条/地址栏），内容区 rect 由 renderer
+  ResizeObserver 经 IPC 上报、主进程 setBounds 贴靠
+- AI 链路：core 的 browser_* 工具（定义/审批在 core，tools 层不感知实现）
+  → `/api/browser/bridge` WS（JSON-RPC 式）→ desktop 执行器直接操作
+  view.webContents（sendInputEvent/executeJavaScript/capturePage+CDP）。
+  桥未连接（web 端直连 core）时工具报"仅桌面端"
+- 窗口语义：AI start 自动弹出置前；用户关 X = **隐藏保留**（标签后台存活）；
+  主应用地球钮/ browser:// chip 经 IPC 唤起定位
+- 改 browser_* 工具签名时三处同步：core/internal/tools/browser.go（接口）、
+  core/internal/service/browser.go（桥转发 params）、
+  desktop/src/main/browser/index.js（executors）——桥协议字段名对齐
 
 ## 前端杂项
 
 - API 错误形态是 `400: {"error":"xx"}`，展示给用户前用 errText 提取 error 字段
-- 原生 `confirm()` 在 Wails WebView 里贴顶难看——确认弹窗用自制居中 modal
+- 原生 `confirm()` 在桌面壳 WebView 里贴顶难看——确认弹窗用自制居中 modal
   （参考 MemoryView 的 skill 删除确认）
+- desktop 能力经 preload `window.ez`（window.*/browser.*），web 端 undefined
+  ——所有调用点判空降级（快应用/外链/浏览器入口/chip）

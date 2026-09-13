@@ -14,23 +14,26 @@
 
   /* 右侧轮次导航：每轮用户输入一行，点击回溯、滚动跟随高亮（纯图片轮次也算） */
   const turns = $derived(
-    store.blocks.filter((b) => b.kind === 'user' && (b.text.trim() || b.images?.length)),
+    store.blocks.filter(
+      (b): b is Extract<Block, { kind: 'user' }> =>
+        b.kind === 'user' && (!!b.text.trim() || !!b.images?.length),
+    ),
   )
-  let activeUid = $state('')
+  let activeUid = $state(0)
 
   function updateActive() {
     if (!el) return
     const base = el.getBoundingClientRect().top
     const line = base + Math.min(el.clientHeight * 0.35, 280)
-    let cur = ''
+    let cur = 0
     for (const n of el.querySelectorAll<HTMLElement>('[data-uid]')) {
-      if (n.getBoundingClientRect().top <= line) cur = n.dataset.uid ?? ''
+      if (n.getBoundingClientRect().top <= line) cur = Number(n.dataset.uid) || 0
       else break
     }
     activeUid = cur
   }
 
-  function jumpTo(uid: string) {
+  function jumpTo(uid: number) {
     if (!el) return
     const node = el.querySelector<HTMLElement>(`[data-uid="${uid}"]`)
     if (!node) return
@@ -40,10 +43,11 @@
 
   /* 连续工具段分组：≥ TOOL_GROUP_MIN 折成一条摘要（审批卡等非 tool 块打断分组） */
   const TOOL_GROUP_MIN = 5
-  type Seg = { type: 'one'; b: Block } | { type: 'tools'; blocks: Block[] }
+  type ToolBlockB = Extract<Block, { kind: 'tool' }>
+  type Seg = { type: 'one'; b: Block } | { type: 'tools'; blocks: ToolBlockB[] }
   const segs = $derived.by(() => {
     const out: Seg[] = []
-    let cur: Block[] = []
+    let cur: ToolBlockB[] = []
     const flush = () => {
       if (cur.length) out.push({ type: 'tools', blocks: cur })
       cur = []
@@ -237,6 +241,7 @@
             text={ub.text}
             images={ub.images}
             files={ub.files}
+            fileRefs={ub.fileRefs}
             role="user"
             onFork={ub.owner && ub.msgIdx !== undefined ? () => void store.forkFrom(ub.owner!, ub.msgIdx!) : undefined}
           />
@@ -278,15 +283,16 @@
         <div class="imgload" class:reveal={store.batchIds.has(seg.b.uid)} title={seg.b.paths.join('\n')}>
           {#each seg.b.paths as p, i (p)}
             {#if seg.b.images[i]}
-              <img src={`data:${seg.b.images[i].mimeType};base64,${seg.b.images[i].data}`} alt={p} loading="lazy"
-                onclick={() => void store.editImage(`data:${seg.b.images[i].mimeType};base64,${seg.b.images[i].data}`, p.split(/[/\\]/).pop() || p)}
-                title="点击进画板编辑" />
+              {@const img = seg.b.images[i]}
+              <img src={`data:${img.mimeType};base64,${img.data}`} alt={p} loading="lazy"
+                onclick={() => void store.openBase64Draft(`data:${img.mimeType};base64,${img.data}`, p.split(/[/\\]/).pop() || p)}
+                title="转为画板草稿编辑" />
             {:else}
               <!-- 实时路径：工具结果只有路径，缩略图走工作目录文件服务 -->
               <img src={`/api/workspace/file?path=${encodeURIComponent(p)}`} alt={p} loading="lazy"
-                onclick={() => void store.editImage(`/api/workspace/file?path=${encodeURIComponent(p)}`, p.split(/[/\\]/).pop() || p)}
+                onclick={() => store.openFileAt(p)}
                 onerror={(e) => ((e.currentTarget as HTMLImageElement).style.display = 'none')}
-                title="点击进画板编辑" />
+                title="点击在画板编辑（保存写回）" />
             {/if}
           {/each}
           <span class="label">已加载上下文</span>
@@ -338,8 +344,10 @@
     flex: 1;
     overflow-y: auto;
     min-height: 0;
-    /* 滚动条槽位常驻：显隐不再挤压文本宽度；滚动不外传 */
-    scrollbar-gutter: stable;
+    /* 滚动条槽位常驻且双侧对称（both-edges）：文本宽度恒定，
+    且消息流中心与下方输入框（居中于全宽）对齐——单侧槽会让内容
+    整体左偏半个槽宽，输入框看起来左宽右窄 */
+    scrollbar-gutter: stable both-edges;
     overscroll-behavior: contain;
   }
   /* 轮次导航：默认仅一列刻度线垂直居中贴右缘，悬浮展开文字卡片。

@@ -1,18 +1,24 @@
 @echo off
-rem dev: npm run build -> go build (frontend embedded) -> run exe
-rem release: script\release.bat (exe + installer via wails3 task)
-setlocal
+rem dev: debug script
+rem chain: frontend build -> copy dist to core/web/dist -> go build (bin/) -> npm run start
+setlocal EnableExtensions
 cd /d "%~dp0.."
 
+echo [dev] building frontend...
 cd frontend
-call npm run build || goto :err
+call npm run build
+if errorlevel 1 exit /b 1
 cd ..
 
-go build -o build\dist\ezharness.exe . || goto :err
+powershell -NoProfile -Command "Remove-Item -Recurse -Force core/web/dist -ErrorAction SilentlyContinue; Copy-Item -Recurse frontend/dist core/web/dist"
 
-build\dist\ezharness.exe
-goto :eof
+echo [dev] building core...
+if not exist bin mkdir bin
+cd core
+go build -o ..\bin\ezharness-core.exe .
+if errorlevel 1 exit /b 1
+cd ..
 
-:err
-echo dev.bat failed
-exit /b 1
+echo [dev] starting desktop...
+cd desktop
+call npm run start

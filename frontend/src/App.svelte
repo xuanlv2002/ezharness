@@ -12,8 +12,7 @@
   import McpView from './components/McpView.svelte'
   import SecurityView from './components/SecurityView.svelte'
   import SettingsView from './components/SettingsView.svelte'
-  import Panel from './components/board/Panel.svelte'
-  import TerminalDrawer from './components/board/TerminalDrawer.svelte'
+  import WorkspaceDrawer from './components/board/WorkspaceDrawer.svelte'
 
   let view = $state<'chat' | 'models' | 'memory' | 'knowledge' | 'tools' | 'mcp' | 'security' | 'settings'>('chat')
   let expanded = $state(false)
@@ -64,19 +63,17 @@
         <SettingsView />
       {/if}
     </main>
-    <!-- 共享终端：推挤式右布局列（.app flex 行内，打开挤窄 main） -->
-    <TerminalDrawer />
+    <!-- 工作区抽屉（终端/文件/画板三工具页）：推挤式右布局列（.app flex
+    行内，打开挤窄 main；pane 常驻挂载保活） -->
+    <WorkspaceDrawer />
   </div>
 </div>
 
-<footer class="brand-foot">
-  <a href="https://github.com/xuanlv2002/ezharness" target="_blank" rel="noreferrer">ezharness v{pkg.version}</a>
+<footer class="brand-foot" class:away={store.termDrawerOpen}>
+  <a href="https://github.com/xuanlv2002/ezharness" target="_blank" rel="noreferrer">ezharness-{pkg.version}</a>
   <span>·</span>
   <a href="https://github.com/xuanlv2002/ezloop" target="_blank" rel="noreferrer">powered by ezloop</a>
 </footer>
-
-<!-- 魔法看板（画板/浏览器大 overlay）：fixed 定位，不参与 view 切换 -->
-<Panel />
 
 <style>
   .shell {
@@ -85,13 +82,19 @@
     height: 100%;
   }
   .app {
+    --sidebar-w: 64px; /* 工作区抽屉宽度联动基数（expanded 时覆写） */
     display: flex;
     flex: 1;
     min-height: 0;
   }
+  .app.expanded {
+    --sidebar-w: 176px;
+  }
   main {
     flex: 1;
-    min-width: 0;
+    /* 主列手机宽下限：抽屉展开时主列压到 480（与窗口 minWidth 840 =
+    480 + 64 侧栏 + 280 抽屉保底 + 余量 对齐）防内容挤碎 */
+    min-width: 480px;
     min-height: 0;
     display: flex;
     flex-direction: column;
@@ -112,6 +115,11 @@
   }
   .brand-foot:hover {
     opacity: 1;
+  }
+  /* 工作区抽屉打开时避让：右下角会与抽屉底部操作区重叠 */
+  .brand-foot.away {
+    opacity: 0;
+    pointer-events: none;
   }
   .brand-foot a {
     color: var(--faint);
