@@ -128,7 +128,6 @@ func (a *AgentService) Assemble(s *domain.Session, st domain.Settings) {
 		func() int { return s.CtxTokens() },
 		window,
 		func() []hooks.StatusMcp { return mcpStatusList(s.Fsys) },
-		termReportFn(a.Term),
 		disabledSkills,
 	)
 	traceHook := hooks.NewTrace(s.Fsys, s.Sess, func() string { return main.Name })
@@ -523,29 +522,6 @@ func mcpListLines(fsys osfs.OS) []string {
 		}
 	}
 	return out
-}
-
-/*
-	termReportFn 共享终端状态面（remind 变更段对比基线用：终端清单变更 +
-
-用户手动输入收割）；nil 服务返回 nil。终端全局共享，清单实时全量——各会话的
-ResSnapshot 基线独立对比（A 会话首轮见到 B 会话开的终端同样报"新增"，
-模型各自知悉全局终端水位）。
-*/
-func termReportFn(t *TerminalService) func() hooks.TermReport {
-	if t == nil {
-		return nil
-	}
-	return func() hooks.TermReport {
-		var rep hooks.TermReport
-		for _, info := range t.List() {
-			rep.Terms = append(rep.Terms, hooks.StatusTerm{ID: info.ID, Name: info.Name, Exited: info.Exited, Origin: info.Origin})
-		}
-		for _, l := range t.CollectUserActivity() {
-			rep.Lines = append(rep.Lines, hooks.UserAction{ID: l.ID, Line: l.Line})
-		}
-		return rep
-	}
 }
 
 /* mcpStatusList 返回 MCP 清单（remind 变更基线用，描述前 8 字）。 */

@@ -89,7 +89,7 @@ func TestFirstUserTitleSkipsSystemNotes(t *testing.T) {
 
 /* remind 收尾段：错误轮须落错误详情（换行压平、超长截断） */
 func TestRemindEndNoteErrorDetail(t *testing.T) {
-	h := NewRemind(memFS{}, NewStore(memFS{}, "t1"), func() int { return 0 }, 1000, nil, nil, nil)
+	h := NewRemind(memFS{}, NewStore(memFS{}, "t1"), func() int { return 0 }, 1000, nil, nil)
 	long := strings.Repeat("错", 400)
 	state := &types.LoopState{StopReason: types.StopError, LastError: fmt.Errorf("boom\nline2 %s", long)}
 	if err := h.OnEnd(context.Background(), state); err != nil {
@@ -138,20 +138,14 @@ func TestSysPromptSingleSystem(t *testing.T) {
 
 /* 三层加载的第 2 层（load_skill）已下沉 ezloop ext/hook/skilltool（测试随迁）。 */
 
-/* remind 变更段：首轮只建基线零消息；用户终端操作是事件型，首轮也报。 */
-
-/* remind 变更段：首轮只建基线零消息；用户终端操作是事件型，首轮也报。 */
+/* remind 变更段：首轮只建基线零变更消息。 */
 func TestRemindFirstRoundBaselineOnly(t *testing.T) {
 	ctx := context.Background()
 	fsys := memFS{}
 	_ = fsys.Write(ctx, "memory/skills/pdf/SKILL.md", []byte("---\nname: pdf---\n步骤"))
 	store := NewStore(fsys, "t1")
-	// termRep 报一条用户操作 + 空终端基线
 	h := NewRemind(fsys, store, func() int { return 0 }, 1000,
-		func() []StatusMcp { return nil },
-		func() TermReport {
-			return TermReport{Lines: []UserAction{{ID: "t2", Line: "go run ."}}}
-		}, nil)
+		func() []StatusMcp { return nil }, nil)
 	state := newTestState([]types.Message{{Role: types.RoleUser, Content: "q"}})
 	if err := h.OnStart(ctx, state); err != nil {
 		t.Fatal(err)
@@ -160,16 +154,13 @@ func TestRemindFirstRoundBaselineOnly(t *testing.T) {
 	for _, m := range state.Messages {
 		if strings.Contains(m.Content, "<"+ResChangeTag+">") {
 			resChange++
-			if !strings.Contains(m.Content, "用户在终端 t2 执行：go run .") {
-				t.Fatalf("user action missing: %q", m.Content)
-			}
 		}
 		if strings.Contains(m.Content, "<"+StatusTag+">") {
 			status++
 		}
 	}
-	if resChange != 1 {
-		t.Fatalf("first round: exactly 1 res_change (user action only), got %d", resChange)
+	if resChange != 0 {
+		t.Fatalf("first round: no res_change, got %d", resChange)
 	}
 	if status != 1 {
 		t.Fatalf("snapshot always present, got %d", status)
@@ -185,7 +176,7 @@ func TestRemindResChangeInsertedBeforeStatus(t *testing.T) {
 	fsys := memFS{}
 	store := NewStore(fsys, "t1")
 	mcpList := func() []StatusMcp { return nil }
-	h := NewRemind(fsys, store, func() int { return 0 }, 1000, mcpList, nil, nil)
+	h := NewRemind(fsys, store, func() int { return 0 }, 1000, mcpList, nil)
 	state1 := newTestState([]types.Message{{Role: types.RoleUser, Content: "q1"}})
 	if err := h.OnStart(ctx, state1); err != nil {
 		t.Fatal(err)
@@ -218,7 +209,7 @@ func TestRemindNoChangeNoMessage(t *testing.T) {
 	_ = fsys.Write(ctx, "memory/skills/pdf/SKILL.md", []byte("---\nname: pdf---\n步骤"))
 	store := NewStore(fsys, "t1")
 	h := NewRemind(fsys, store, func() int { return 0 }, 1000,
-		func() []StatusMcp { return nil }, nil, nil)
+		func() []StatusMcp { return nil }, nil)
 	s1 := newTestState([]types.Message{{Role: types.RoleUser, Content: "q1"}})
 	_ = h.OnStart(ctx, s1) // 建基线
 	s2 := newTestState([]types.Message{{Role: types.RoleUser, Content: "q2"}})
@@ -235,7 +226,7 @@ func TestRemindNoChangeNoMessage(t *testing.T) {
 /* OnEnd：fork 不记收尾但 LastOutputAt 仍更新。 */
 func TestRemindOnEndForkSkip(t *testing.T) {
 	store := NewStore(memFS{}, "t1")
-	h := NewRemind(memFS{}, store, func() int { return 0 }, 1000, nil, nil, nil)
+	h := NewRemind(memFS{}, store, func() int { return 0 }, 1000, nil, nil)
 	state := &types.LoopState{ForkID: "f1", Messages: []types.Message{}}
 	if err := h.OnEnd(context.Background(), state); err != nil {
 		t.Fatal(err)
@@ -245,49 +236,5 @@ func TestRemindOnEndForkSkip(t *testing.T) {
 	}
 	if store.LastOutputAt() == 0 {
 		t.Fatal("LastOutputAt must be recorded even for fork")
-	}
-}
-
-/* 终端变更 diff:新增(报来源)/退出/修改(名称·来源)/关闭。 */
-func TestDiffTerms(t *testing.T) {
-	oldS := []string{
-		"t1|build|false|用户",
-		"t2|logs|false|AI",
-		"t3|watch|true|AI",
-	}
-	newS := []string{
-		"t1|build-server|false|用户", // 名称变化 → 修改
-		"t2|logs|false|AI",         // 不变
-		"t4|deploy|false|AI",       // 新增
-	}
-	got := diffTerms(oldS, newS)
-	joined := strings.Join(got, ";")
-	for _, want := range []string{
-		"终端 t1 已修改（名称 \"build\"→\"build-server\"）",
-		"新增终端 t4(deploy)，AI 创建",
-	} {
-		if !strings.Contains(joined, want) {
-			t.Errorf("diffTerms 缺少 %q, got %q", want, joined)
-		}
-	}
-	// t3 消失 → 已关闭
-	if !strings.Contains(joined, "终端 t3(watch) 已关闭") {
-		t.Errorf("diffTerms 缺少 t3 已关闭, got %q", joined)
-	}
-	// t2 无任何变更记录
-	if strings.Contains(joined, "t2") {
-		t.Errorf("t2 无变化不应出现, got %q", joined)
-	}
-}
-
-/* 退出态翻转报"已退出"(修改的特例,专项文案)。 */
-func TestDiffTermsExited(t *testing.T) {
-	got := diffTerms([]string{"t1|build|false|AI"}, []string{"t1|build|true|AI"})
-	joined := strings.Join(got, ";")
-	if !strings.Contains(joined, "终端 t1(build) 已退出") {
-		t.Errorf("缺少退出记录, got %q", joined)
-	}
-	if strings.Contains(joined, "已修改") {
-		t.Errorf("纯退出不应报修改, got %q", joined)
 	}
 }

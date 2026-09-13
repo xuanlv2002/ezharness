@@ -3,9 +3,9 @@
 会话都能操作全部终端)。每个终端是一个 ConPTY + shell 进程,用户
 (WS 输入)与 AI(term_* 工具)共写同一终端。输出进环形缓冲(WS 重连
 hello 恢复),AI 读走游标式增量(term_send/term_read 共用读位点,读即
-消费)。用户手敲的命令行聚合记录供 agent_status(每会话的 ResSnapshot
-基线独立对比——A 会话首轮见到 B 会话开的终端同样报"新增",模型各
-自知悉全局终端水位)。AI 写入不记(避免自反馈)。
+消费)。终端清单供 agent_status 基线对比(每会话的 ResSnapshot 独立
+——A 会话首轮见到 B 会话开的终端同样报"新增",模型各自知悉全局
+终端水位)。
 */
 package service
 
@@ -35,12 +35,6 @@ type TermInfo struct {
 	LastCmd string `json:"lastCmd"` // 最近一次写入的命令(AI 或用户)
 }
 
-/* UserLine 是一条用户手动输入记录(agent_status 用)。 */
-type UserLine struct {
-	ID   string `json:"id"`
-	Line string `json:"line"`
-}
-
 /* TermFrame 是 service → WS 订阅者的广播帧(controller 负责编码)。 */
 type TermFrame struct {
 	Type     string     `json:"type"` // data | terminals
@@ -50,12 +44,9 @@ type TermFrame struct {
 }
 
 const (
-	termRingSize   = 256 * 1024 // 每终端输出环形缓冲
-	termReadBuf    = 4096
-	termSubsBuf    = 64  // 每订阅者帧队列,满丢帧(重连 hello 兜底)
-	termUserQueue  = 50  // 每分支用户命令行 pending 上限
-	termLineMax    = 256 // 行聚合缓冲上限
-	termCollectMax = 20  // 每轮收割条数上限
+	termRingSize = 256 * 1024 // 每终端输出环形缓冲
+	termReadBuf  = 4096
+	termSubsBuf  = 64 // 每订阅者帧队列,满丢帧(重连 hello 兜底)
 )
 
 /* ── 环形缓冲 ── */
@@ -141,10 +132,6 @@ type TermSession struct {
 	exited   bool
 	readMark int64 // agent 读位点(term_send/term_read 共用,读即消费)
 
-	/* 用户输入聚合(agent_status):按回车切行,滤控制字符 */
-	lineAgg  []byte
-	escState int // 输入转义序列过滤状态(0 正常 1 ESC后 2 CSI中 3 OSC中)
-
 	condCh chan struct{} // 静默等待(写泵 close 广播)
 }
 
@@ -152,13 +139,12 @@ type TermSession struct {
 
 /* TerminalService 管理全部终端(全局单例,随换代重建)。 */
 type TerminalService struct {
-	mu        sync.Mutex
-	seq       int
-	sessions  map[string]*TermSession
-	subs      map[chan TermFrame]struct{}
-	lastAi    string // AI 最近使用/创建的终端 id(无 id 参数时兜底)
-	userQueue []UserLine
-	workDir   string
+	mu       sync.Mutex
+	seq      int
+	sessions map[string]*TermSession
+	subs     map[chan TermFrame]struct{}
+	lastAi   string // AI 最近使用/创建的终端 id(无 id 参数时兜底)
+	workDir  string
 }
 
 /* NewTerminalService 构造(workDir 与 agent shell 同目录)。 */
@@ -551,7 +537,7 @@ func (s *TerminalService) remove(sess *TermSession) {
 }
 
 /*
-	UserInput 是用户手敲输入(WS 路径):写入并聚合命令行供 agent_status。
+	UserInput 是用户手敲输入(WS 路径):写入 PTY 即完成。
 
 按 id 精确查找(WS 帧必须带 id,不走 AI 最近终端兜底)。
 */
@@ -562,102 +548,8 @@ func (s *TerminalService) UserInput(id string, b []byte) error {
 	}
 	sess.mu.Lock()
 	sess.pty.Write(b) //nolint:errcheck
-	lines := s.aggregate(sess, b)
 	sess.mu.Unlock()
-	for _, line := range lines {
-		s.enqueueUserLine(sess.ID, line)
-	}
 	return nil
-}
-
-/*
-	aggregate 把输入字节聚合成命令行:可打印字符累积,回车切行,
-
-控制字符忽略(\x03 记 ^C,退格弹末字符),单行截 80 字。
-ESC 起始的转义序列整体跳过(方向键/聚焦上报等,否则 ESC 后的
-"[A""[I" 等可见字符会污染记录)。调用方需持 sess.mu。
-*/
-func (s *TerminalService) aggregate(sess *TermSession, b []byte) []string {
-	var lines []string
-	for _, c := range string(b) {
-		switch sess.escState {
-		case 1: // ESC 后:[ CSI / ] OSC / O SS3 / 其他单字符转义
-			switch c {
-			case '[':
-				sess.escState = 2
-			case ']':
-				sess.escState = 3
-			case 'O', 'P', 'N': // SS3 等:再吃一个 final 字符
-				sess.escState = 4
-			default:
-				sess.escState = 0
-			}
-			continue
-		case 4: // SS3 final:跳过本字符结束
-			sess.escState = 0
-			continue
-		case 2: // CSI 中:吃到 final byte(0x40-0x7E)结束
-			if c >= 0x40 && c <= 0x7e {
-				sess.escState = 0
-			}
-			continue
-		case 3: // OSC 中:BEL 或 ST 结束
-			if c == 0x07 || c == 0x1b {
-				sess.escState = 0
-			}
-			continue
-		}
-		switch {
-		case c == 0x1b:
-			sess.escState = 1
-		case c == '\r' || c == '\n':
-			line := strings.TrimSpace(string(sess.lineAgg))
-			sess.lineAgg = sess.lineAgg[:0]
-			if line != "" {
-				if r := []rune(line); len(r) > 80 {
-					line = string(r[:80]) + "…"
-				}
-				lines = append(lines, line)
-			}
-		case c == 0x03:
-			sess.lineAgg = append(sess.lineAgg[:0], "^C"...)
-		case c == 0x7f || c == 0x08:
-			if n := len(sess.lineAgg); n > 0 {
-				sess.lineAgg = sess.lineAgg[:n-1]
-			}
-		case c >= 0x20:
-			if len(sess.lineAgg) < termLineMax {
-				sess.lineAgg = append(sess.lineAgg, string(c)...)
-			}
-		}
-	}
-	return lines
-}
-
-/* CollectUserActivity 收割用户命令行(每轮 agent_status 调用,取走即清)。 */
-func (s *TerminalService) CollectUserActivity() []UserLine {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	out := s.userQueue
-	s.userQueue = nil
-	if len(out) > termCollectMax {
-		out = out[:termCollectMax]
-	}
-	return out
-}
-
-/*
-	enqueueUserLine 用户命令行入全局队列(带终端 id,
-
-status 渲染 "用户在终端 tN 执行:xxx")。
-*/
-func (s *TerminalService) enqueueUserLine(id string, line string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if len(s.userQueue) >= termUserQueue {
-		s.userQueue = s.userQueue[1:]
-	}
-	s.userQueue = append(s.userQueue, UserLine{ID: id, Line: line})
 }
 
 /* Resize 调整终端尺寸;参数越界/会话不存在时静默丢弃(前端 fit 后会再上报)。 */

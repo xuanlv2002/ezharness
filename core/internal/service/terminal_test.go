@@ -137,34 +137,3 @@ func TestReadMarkConsume(t *testing.T) {
 		t.Fatalf("无新输出时续读 = %q, want 空", got)
 	}
 }
-
-func TestAggregate(t *testing.T) {
-	s := &TerminalService{}
-	cases := []struct {
-		in   string
-		want []string
-	}{
-		{"echo hi\r\n", []string{"echo hi"}},
-		{"\x1b[I\x1b[Oecho hi\r", []string{"echo hi"}}, // 聚焦/失焦上报不污染
-		{"\x1b[A\x1b[Aping\r", []string{"ping"}},       // 方向上历史
-		{"\x1bOAls\r", []string{"ls"}},                 // SS3 方向键
-		{"ab\x7f\x7fcd\r", []string{"cd"}},             // 退格
-		{"stop\x03\r", []string{"^C"}},                 // ^C
-		{"中文 ok\r", []string{"中文 ok"}},                 // UTF-8
-		{"\x1b[Iec", []string{"ESC_CHUNK"}},            // 序列跨 chunk:先半截
-		{"ho hi\r", []string{"echo hi"}},               // 续上块收尾
-	}
-	var sess TermSession
-	for i, c := range cases {
-		if c.want != nil && c.want[0] == "ESC_CHUNK" {
-			s.aggregate(&sess, []byte(c.in))
-			continue
-		}
-		got := s.aggregate(&sess, []byte(c.in))
-		if strings.Join(got, "|") != strings.Join(c.want, "|") {
-			t.Errorf("case %d aggregate(%q) = %v, want %v", i, c.in, got, c.want)
-		}
-		s = &TerminalService{} // 每例独立会话
-		sess = TermSession{}
-	}
-}

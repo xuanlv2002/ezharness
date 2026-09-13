@@ -5,8 +5,8 @@ remind 是系统提醒 hook：统一负责"系统→模型"的全部单向旁路
   - 快照段（每轮 OnStart）：<agent_status> 水位/时间快照 + status.snapshot
     SSE 事件（前端右上角水位条）——system 每 session 固定，水位与时间
     是轮内唯一需要同步的运行时状态；
-  - 变更段（每轮 OnStart，reschange.go）：skill/mcp/终端 基线 diff +
-    用户终端操作收割，有变化才插一条 <res_change> 消息 + res.change
+  - 变更段（每轮 OnStart，reschange.go）：skill/mcp 基线 diff，
+    有变化才插一条 <res_change> 消息 + res.change
     事件（按需、零噪音）；基线持久化随 session（重启不重复报）；
   - 收尾段（每轮 OnEnd）：<end_reason> 轮次/时长/结束原因 + 记录
     LastOutputAt（下轮"距上次输出"用）。须排在 sessionstore 落盘前
@@ -65,20 +65,18 @@ type Remind struct {
 	ctxTokens func() int
 	ctxWindow int
 	mcpList   func() []StatusMcp
-	termRep   func() TermReport // 可空：无共享终端服务时不检测
-	disabled  func() []string   // 可空：禁用技能目录名（实时读设置快照）
+	disabled  func() []string // 可空：禁用技能目录名（实时读设置快照）
 }
 
 /*
 NewRemind 创建系统提醒 hook。ctxTokens 返回最近一次模型调用的 prompt
 tokens；ctxWindow 是主模型上下文窗口（<=0 由调用方兜底默认）；
-mcpList 返回启用的 server 清单（仅作变更基线）；termRep 可空；
-disabled 可空。
+mcpList 返回启用的 server 清单（仅作变更基线）；disabled 可空。
 */
 func NewRemind(fsys fs.FileSystem, store *Store, ctxTokens func() int, ctxWindow int,
-	mcpList func() []StatusMcp, termRep func() TermReport, disabled func() []string) *Remind {
+	mcpList func() []StatusMcp, disabled func() []string) *Remind {
 	return &Remind{fsys: fsys, store: store, ctxTokens: ctxTokens, ctxWindow: ctxWindow,
-		mcpList: mcpList, termRep: termRep, disabled: disabled}
+		mcpList: mcpList, disabled: disabled}
 }
 
 func (h *Remind) Name() string { return "remind" }

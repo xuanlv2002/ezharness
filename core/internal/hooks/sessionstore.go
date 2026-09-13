@@ -27,11 +27,10 @@ import (
 /* SessionsDir 是会话根目录（工作目录相对）。 */
 const SessionsDir = "sessions"
 
-/* ResSnapshot 是 agent_status 的变更对比快照（skill/mcp/终端清单基线）。 */
+/* ResSnapshot 是 agent_status 的变更对比快照（skill/mcp 基线）。 */
 type ResSnapshot struct {
 	Skills []string `json:"skills,omitempty"`
 	Mcps   []string `json:"mcps,omitempty"`
-	Terms  []string `json:"terms,omitempty"` // 终端基线（"id|名称|是否退出" 编码）
 }
 
 /* ForkOrigin 是 fork 线的展示元数据（时间线渲染"分叉自 X"，非结构依赖）。 */
