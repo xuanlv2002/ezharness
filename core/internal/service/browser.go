@@ -288,7 +288,7 @@ func (s *BrowserService) ScreenshotBrowser(tabID string, fullPage bool) (string,
 	if err := os.WriteFile(path, png, 0o644); err != nil {
 		return "", fmt.Errorf("写截图失败: %w", err)
 	}
-	head := fmt.Sprintf("[浏览器 #%s 截图已生成]", tabID)
+	head := fmt.Sprintf("[浏览器标签 %s 截图已生成]", tabID)
 	if !s.ModelSeesImages() {
 		return head + "\n已保存至 " + path + ";当前模型无多模态能力,如需识别请在设置·模型启用视觉或图片识别槽", nil
 	}

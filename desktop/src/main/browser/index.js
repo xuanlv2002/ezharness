@@ -48,11 +48,11 @@ function broadcastTabs() {
   getParentWindow()?.webContents.send('ez-browser:tabs', JSON.stringify(tabList()))
 }
 
-/* stateLine 工具回执的状态头行。 */
+/* stateLine 工具回执的状态头行（id 直接给标签 id，模型引用它）。 */
 function stateLine(id) {
   const t = tabs.get(id)
-  if (!t) return `[浏览器 #${id} 已不存在]`
-  return `[浏览器 #${id} "${t.name}"] 页面: ${t.title}${t.loading ? '(加载中)' : ''}`
+  if (!t) return `[浏览器标签 ${id} 已不存在]`
+  return `[浏览器标签 ${id} "${t.name}"] 页面: ${t.title}${t.loading ? '(加载中)' : ''}`
 }
 
 /* ── 视图管理 ── */
@@ -214,11 +214,21 @@ async function cdpScreenshot(wc, extraParams) {
   return data
 }
 
+/* tabOf 取目标标签（tabId 必填）；取不到报错附当前标签清单（模型自愈）。 */
+function tabOf(tabId) {
+  const tab = tabs.get(tabId)
+  if (!tab) {
+    const list = tabList().map((t) => `${t.id}(${t.name})`).join('、') || '无'
+    throw new Error(`浏览器标签不存在（当前已有标签：${list}）`)
+  }
+  return tab
+}
+
 /* executors 方法名 → {result, imageB64?}；抛错 = 工具失败。 */
 const executors = {
   async start({ desc, url, timeoutMs }) {
     const id = createTab(desc, 'AI', '')
-    const head = `[浏览器 #${id} "${desc}" 已创建,内嵌于工作区抽屉,用户实时共见可随时接管]`
+    const head = `[浏览器标签 ${id} "${desc}" 已创建,后续操作用 tabId=${id};内嵌于工作区抽屉,用户实时共见可随时接管]`
     if (!url) return { result: head }
     const tab = tabs.get(id)
     tab.view.webContents.loadURL(completeURL(url))
@@ -227,16 +237,14 @@ const executors = {
   },
 
   async navigate({ tabId, url, timeoutMs }) {
-    const tab = tabs.get(tabId)
-    if (!tab) throw new Error(`浏览器标签 ${tabId} 不存在(browser_list 可查)`)
+    const tab = tabOf(tabId)
     tab.view.webContents.loadURL(completeURL(url))
     const title = await waitLoad(tab.view.webContents, timeoutMs || 20000)
-    return { result: `${stateLine(tabId)}\n页面: ${title || '(无标题)'}` }
+    return { result: `${stateLine(tab.id)}\n页面: ${title || '(无标题)'}` }
   },
 
   async click({ tabId, selector, x, y }) {
-    const tab = tabs.get(tabId)
-    if (!tab) throw new Error(`浏览器标签 ${tabId} 不存在`)
+    const tab = tabOf(tabId)
     const wc = tab.view.webContents
     if (selector) {
       const point = await elementPoint(wc, selector)
@@ -246,12 +254,11 @@ const executors = {
       clickAt(wc, x || 0, y || 0)
     }
     await delay(300)
-    return { result: stateLine(tabId) }
+    return { result: stateLine(tab.id) }
   },
 
   async type({ tabId, selector, text, submit }) {
-    const tab = tabs.get(tabId)
-    if (!tab) throw new Error(`浏览器标签 ${tabId} 不存在`)
+    const tab = tabOf(tabId)
     const wc = tab.view.webContents
     if (selector) {
       const point = await elementPoint(wc, selector)
@@ -266,12 +273,11 @@ const executors = {
       sendKey(wc, 'Enter', [])
       await delay(500)
     }
-    return { result: stateLine(tabId) }
+    return { result: stateLine(tab.id) }
   },
 
   async key({ tabId, combo }) {
-    const tab = tabs.get(tabId)
-    if (!tab) throw new Error(`浏览器标签 ${tabId} 不存在`)
+    const tab = tabOf(tabId)
     const parts = String(combo || '').split('+').map((s) => s.trim()).filter(Boolean)
     const key = parts[parts.length - 1]
     const modifiers = parts.slice(0, -1).map((m) => {
@@ -284,12 +290,11 @@ const executors = {
     })
     sendKey(tab.view.webContents, key, modifiers)
     await delay(300)
-    return { result: stateLine(tabId) }
+    return { result: stateLine(tab.id) }
   },
 
   async scroll({ tabId, direction, amountPx }) {
-    const tab = tabs.get(tabId)
-    if (!tab) throw new Error(`浏览器标签 ${tabId} 不存在`)
+    const tab = tabOf(tabId)
     const amount = amountPx > 0 ? amountPx : 600
     const wc = tab.view.webContents
     const bounds = wc.getBounds() // 视口尺寸（挂主窗口后的 view bounds）
@@ -299,12 +304,11 @@ const executors = {
       deltaY: direction === 'up' ? -amount : amount,
     })
     await delay(200)
-    return { result: stateLine(tabId) }
+    return { result: stateLine(tab.id) }
   },
 
   async read({ tabId, mode, chars }) {
-    const tab = tabs.get(tabId)
-    if (!tab) throw new Error(`浏览器标签 ${tabId} 不存在`)
+    const tab = tabOf(tabId)
     const limit = chars > 0 ? chars : 4000
     const wc = tab.view.webContents
     let body
@@ -318,14 +322,13 @@ const executors = {
     }
     const text = String(body ?? '')
     const truncated = text.length > limit ? `${text.slice(0, limit)}\n…(过长已截断)` : text
-    return { result: `${stateLine(tabId)}\n${truncated}` }
+    return { result: `${stateLine(tab.id)}\n${truncated}` }
   },
 
   async screenshot({ tabId, fullPage }) {
-    const tab = tabs.get(tabId)
-    if (!tab) throw new Error(`浏览器标签 ${tabId} 不存在`)
+    const tab = tabOf(tabId)
     const imageB64 = await screenshot(tab.view.webContents, !!fullPage)
-    return { result: stateLine(tabId), imageB64 }
+    return { result: stateLine(tab.id), imageB64 }
   },
 
   async list() {
@@ -333,9 +336,9 @@ const executors = {
   },
 
   async close({ tabId }) {
-    if (!tabs.has(tabId)) return { result: `[浏览器 #${tabId} 已不存在]` }
+    if (!tabs.has(tabId)) return { result: `[浏览器标签 ${tabId} 已不存在]` }
     closeTab(tabId)
-    return { result: `[浏览器 #${tabId} 已关闭]` }
+    return { result: `[浏览器标签 ${tabId} 已关闭]` }
   },
 }
 
