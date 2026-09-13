@@ -68,6 +68,23 @@
   let message = $state('')
   let newList = $state<Record<string, string>>({})
 
+  /* 分组展示：文件 / 终端 / 浏览器 / MCP / 系统自带（未知工具归系统自带） */
+  const GROUPS: { key: string; label: string; desc: string }[] = [
+    { key: 'file', label: '文件工具', desc: '读写与编辑本机文件' },
+    { key: 'term', label: '终端工具', desc: '一次性命令与共享终端' },
+    { key: 'browser', label: '浏览器工具', desc: '共享浏览器操控' },
+    { key: 'mcp', label: 'MCP 工具', desc: '外部 MCP server 提供的工具' },
+    { key: 'system', label: '系统自带工具', desc: '分身 / 图片识别 / 快应用等内置能力' },
+  ]
+
+  function groupOf(tool: string): string {
+    if (/^(read|write|edit)_file$/.test(tool)) return 'file'
+    if (tool === 'terminal' || tool.startsWith('term_')) return 'term'
+    if (tool.startsWith('browser_')) return 'browser'
+    if (tool.startsWith('mcp')) return 'mcp'
+    return 'system'
+  }
+
   const hasList = (lv: Level) => lv === 'black' || lv === 'white'
 
   onMount(async () => {
@@ -143,70 +160,82 @@
       <p class="hint">加载中…</p>
     {:else if !rules.length}
       <p class="hint">策略为空（后端将按内置默认执行：未配置工具一律审批）。</p>
-    {/if}
-    <div class="list">
-      {#each rules as r (r.tool)}
-        <div class="rule-wrap">
-          <div class="rule">
-            <div class="info">
-              <span class="name">{r.tool}</span>
-              <span class="desc">{r.desc}</span>
+    {:else}
+      {#each GROUPS as g (g.key)}
+        {@const groupRules = rules.filter((r) => groupOf(r.tool) === g.key)}
+        {#if groupRules.length}
+          <div class="group">
+            <div class="group-head">
+              <h3>{g.label}</h3>
+              <span class="group-desc">{g.desc}</span>
             </div>
-            <div class="seg" role="radiogroup" aria-label={r.tool}>
-              {#each levels as lv (lv.key)}
-                <button
-                  class="seg-btn"
-                  class:active={r.level === lv.key}
-                  class:dim={r.noList && hasList(lv.key)}
-                  disabled={r.noList && hasList(lv.key)}
-                  onclick={() => setRule(r, lv.key)}
-                  title={lv.full}
-                >
-                  {lv.label}
-                </button>
+            <div class="list">
+              {#each groupRules as r (r.tool)}
+                <div class="rule-wrap">
+                  <div class="rule">
+                    <div class="info">
+                      <span class="name">{r.tool}</span>
+                      <span class="desc">{r.desc}</span>
+                    </div>
+                    <div class="seg" role="radiogroup" aria-label={r.tool}>
+                      {#each levels as lv (lv.key)}
+                        <button
+                          class="seg-btn"
+                          class:active={r.level === lv.key}
+                          class:dim={r.noList && hasList(lv.key)}
+                          disabled={r.noList && hasList(lv.key)}
+                          onclick={() => setRule(r, lv.key)}
+                          title={lv.full}
+                        >
+                          {lv.label}
+                        </button>
+                      {/each}
+                    </div>
+                  </div>
+                  {#if hasList(r.level)}
+                    <div class="list-edit">
+                      <p class="list-hint">
+                        {r.level === 'black' ? '黑名单' : '白名单'}（{listMeta[r.kind].label}）——{r.level === 'black'
+                          ? '命中才审批'
+                          : '命中即放行'}
+                      </p>
+                      <div class="chips">
+                        {#each r.list as entry (entry)}
+                          <span class="chip">
+                            {entry}
+                            <button class="chip-x" onclick={() => removeEntry(r, entry)} title="移除">
+                              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round">
+                                <path d="M6 6l12 12M18 6L6 18" />
+                              </svg>
+                            </button>
+                          </span>
+                        {/each}
+                        <span class="chip-add">
+                          <input
+                            type="text"
+                            placeholder={listMeta[r.kind].ph}
+                            bind:value={newList[r.tool]}
+                            onkeydown={(e) => {
+                              if (e.key === 'Enter') {
+                                e.preventDefault()
+                                addEntry(r)
+                              }
+                            }}
+                          />
+                          <button class="add-btn" onclick={() => addEntry(r)} disabled={!(newList[r.tool] || '').trim()}>
+                            添加
+                          </button>
+                        </span>
+                      </div>
+                    </div>
+                  {/if}
+                </div>
               {/each}
             </div>
           </div>
-          {#if hasList(r.level)}
-            <div class="list-edit">
-              <p class="list-hint">
-                {r.level === 'black' ? '黑名单' : '白名单'}（{listMeta[r.kind].label}）——{r.level === 'black'
-                  ? '命中才审批'
-                  : '命中即放行'}
-              </p>
-              <div class="chips">
-                {#each r.list as entry (entry)}
-                  <span class="chip">
-                    {entry}
-                    <button class="chip-x" onclick={() => removeEntry(r, entry)} title="移除">
-                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round">
-                        <path d="M6 6l12 12M18 6L6 18" />
-                      </svg>
-                    </button>
-                  </span>
-                {/each}
-                <span class="chip-add">
-                  <input
-                    type="text"
-                    placeholder={listMeta[r.kind].ph}
-                    bind:value={newList[r.tool]}
-                    onkeydown={(e) => {
-                      if (e.key === 'Enter') {
-                        e.preventDefault()
-                        addEntry(r)
-                      }
-                    }}
-                  />
-                  <button class="add-btn" onclick={() => addEntry(r)} disabled={!(newList[r.tool] || '').trim()}>
-                    添加
-                  </button>
-                </span>
-              </div>
-            </div>
-          {/if}
-        </div>
+        {/if}
       {/each}
-    </div>
+    {/if}
   </section>
 </div>
 
@@ -260,6 +289,27 @@
     font-size: 11.5px;
     color: var(--muted);
     margin-top: -2px;
+  }
+  .group {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-top: 12px;
+  }
+  .group-head {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    padding: 0 2px;
+  }
+  .group-head h3 {
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--fg);
+  }
+  .group-desc {
+    font-size: 11px;
+    color: var(--faint);
   }
   .list {
     display: flex;
