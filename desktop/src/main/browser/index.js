@@ -35,7 +35,7 @@ function completeURL(raw) {
 }
 
 /* 用户新建标签的默认起始页（AI 的 browser_tab open 不带 url 仍为空白） */
-const HOME_PAGE = 'https://www.google.com'
+const HOME_PAGE = 'https://cn.bing.com/'
 
 function tabList() {
   return [...tabs.entries()].map(([id, t]) => ({
