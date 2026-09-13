@@ -51,12 +51,9 @@ func DefaultToolRules() []ToolRule {
 		{Tool: "term_list", Level: LevelAuto},
 		{Tool: "term_read", Level: LevelAuto},
 		{Tool: "term_close", Level: LevelAuto},
-		/* 共享浏览器（魔法看板）：标签开关与导航默认审批（navigate 白名单可配
-		URL/域名前缀放行常去站点——browser_action 的 navigate 走本条规则，
-		其余页面操作走 browser_action）；读取/截图只读免审；browser_tab 的
-		list 恒免审（needsApprove） */
+		/* 共享浏览器（魔法看板）：标签开关默认审批；页面操作与读取免审；
+		browser_tab 的 list 只读恒免审（needsApprove） */
 		{Tool: "browser_tab", Level: LevelAsk},
-		{Tool: "browser_navigate", Level: LevelAsk},
 		{Tool: "browser_action", Level: LevelAuto},
 		{Tool: "browser_read", Level: LevelAuto},
 		{Tool: "task", Level: LevelAsk},

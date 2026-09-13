@@ -320,16 +320,6 @@ func (a *AgentService) needsApprove(c *types.ToolCall) bool {
 			return false
 		}
 	}
-	if name == "browser_action" {
-		// 导航独立管控（URL 名单可配常去站点），其余页面操作走 browser_action 规则
-		var a struct {
-			Action string `json:"action"`
-		}
-		_ = json.Unmarshal(c.Args, &a)
-		if a.Action == "navigate" {
-			name = "browser_navigate"
-		}
-	}
 	rules := a.Hub.ToolRulesSnapshot()
 	var rule *domain.ToolRule
 	for i := range rules {
@@ -346,18 +336,33 @@ func (a *AgentService) needsApprove(c *types.ToolCall) bool {
 		return false
 	case domain.LevelAsk:
 		return true
-	case domain.LevelWhite:
-		return !matchRuleList(rule.List, name, c.Args)
-	case domain.LevelBlack:
-		return matchRuleList(rule.List, name, c.Args)
+	case domain.LevelWhite, domain.LevelBlack:
+		// 名单档仅终端（命令）与 mcp（server.tool）有能力；其余工具视为需审批
+		if !listCapable(name) {
+			return true
+		}
+		hit := matchRuleList(rule.List, name, c.Args)
+		if rule.Level == domain.LevelWhite {
+			return !hit
+		}
+		return hit
 	}
 	return true
 }
 
-/*
-	matchRuleList 判定工具调用是否命中名单：bash 匹配命令（相等或词边界前缀）、
+/* listCapable 名单匹配能力面：终端系匹配命令、mcp 匹配 server.tool，其余工具无名单概念。 */
+func listCapable(tool string) bool {
+	switch tool {
+	case "terminal", "term_start", "term_send", "mcp.*":
+		return true
+	}
+	return false
+}
 
-文件工具匹配路径前缀、mcp 匹配 server 或 server.tool。
+/*
+	matchRuleList 判定工具调用是否命中名单：终端系匹配命令（相等或词
+
+边界前缀）、mcp 匹配 server 或 server.tool（点边界）。
 */
 func matchRuleList(list []string, ruleTool string, args json.RawMessage) bool {
 	key := ""
@@ -368,18 +373,6 @@ func matchRuleList(list []string, ruleTool string, args json.RawMessage) bool {
 		}
 		_ = json.Unmarshal(args, &a)
 		key = a.Command
-	case "read_file", "write_file", "edit_file":
-		var a struct {
-			Path string `json:"path"`
-		}
-		_ = json.Unmarshal(args, &a)
-		key = a.Path
-	case "browser_navigate":
-		var a struct {
-			URL string `json:"url"`
-		}
-		_ = json.Unmarshal(args, &a)
-		key = a.URL
 	case "mcp.*":
 		var a struct {
 			Server string `json:"server"`
@@ -403,12 +396,6 @@ func matchRuleList(list []string, ruleTool string, args json.RawMessage) bool {
 		}
 		if ruleTool == "mcp.*" && strings.HasPrefix(key, e+".") {
 			return true // server 前缀放行整站（点边界：time 不误命中 timeX）
-		}
-		if ruleTool == "browser_navigate" && strings.HasPrefix(key, strings.TrimSuffix(e, "/")+"/") {
-			return true // URL 前缀放行整站（斜杠边界：github.com 不误命中 github.com.evil.com）
-		}
-		if ruleTool != "terminal" && ruleTool != "term_start" && ruleTool != "term_send" && ruleTool != "mcp.*" && strings.HasPrefix(key, e) {
-			return true // 路径前缀
 		}
 	}
 	return false

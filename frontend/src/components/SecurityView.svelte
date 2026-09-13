@@ -4,55 +4,57 @@
 
   /*
   安全：对 agent 的操作管控（区别于应用设置——这里全是 agent 域）。
-  四档策略：每次审批 / 黑名单审批（名单外放行）/ 白名单免审（名单内放行）/ 全部免审。
-  策略数据由后端下发（settings.json 的 toolRules），保存即时生效（无需重建 agent）。
+  工具行与真实工具一一对应。名单概念只有两处：终端工具按命令前缀、
+  mcp 按 server.tool（这两类四档：审批/黑名单/白名单/免审）；其余工具
+  纯按工具名两档（每次审批 / 全部免审）。
+  策略数据由后端下发（toolRules.json），保存即时生效（无需重建 agent）。
   */
   type Level = ApproveLevel
-  const levels: { key: Level; label: string; full: string }[] = [
+  const simpleLevels: { key: Level; label: string; full: string }[] = [
+    { key: 'ask', label: '审批', full: '每次审批' },
+    { key: 'auto', label: '免审', full: '全部免审' },
+  ]
+  const listLevels: { key: Level; label: string; full: string }[] = [
     { key: 'ask', label: '审批', full: '每次审批' },
     { key: 'black', label: '黑名单', full: '黑名单审批：名单外的操作直接放行' },
     { key: 'white', label: '白名单', full: '白名单免审：仅名单内的操作放行' },
     { key: 'auto', label: '免审', full: '全部免审' },
   ]
-  type ListKind = 'command' | 'path' | 'tool' | 'url'
+  type ListKind = 'command' | 'mcpTool'
   const listMeta: Record<ListKind, { label: string; ph: string }> = {
     command: { label: '命令或前缀', ph: 'git status' },
-    path: { label: '路径或前缀', ph: 'C:\\Projects\\' },
-    tool: { label: 'server 或 server.tool', ph: 'github.create_issue' },
-    url: { label: 'URL 或域名前缀', ph: 'https://github.com' },
+    mcpTool: { label: 'server 或 server.tool', ph: 'github.create_issue' },
   }
 
   interface RuleRow {
     tool: string
     desc: string
     level: Level
-    kind: ListKind
+    kind?: ListKind // 有名单能力的工具才有（终端系 command / mcp 系 mcpTool）
     list: string[]
-    noList?: boolean // 不支持名单档（如 task：分身继承主 agent 策略）
   }
 
-  /* 展示元数据（说明/名单类型/约束）；档位与名单以后端下发为准
+  /* 展示元数据（说明/名单类型）；档位与名单以后端下发为准
   （后端会把内置默认与用户档合并，全部工具都会出现在清单里） */
-  const meta: Record<string, { desc: string; kind: ListKind; noList?: boolean }> = {
-    read_file: { desc: '读取任意文件', kind: 'path' },
-    write_file: { desc: '写入 / 创建文件', kind: 'path' },
-    edit_file: { desc: '精确替换文件内容', kind: 'path' },
+  const meta: Record<string, { desc: string; kind?: ListKind }> = {
+    read_file: { desc: '读取任意文件' },
+    write_file: { desc: '写入 / 创建文件' },
+    edit_file: { desc: '精确替换文件内容' },
     terminal: { desc: '执行命令（独立进程一次性）', kind: 'command' },
     term_start: { desc: '新建共享终端（可带首条命令）', kind: 'command' },
     term_send: { desc: '向共享终端发送命令 / 控制键', kind: 'command' },
-    term_read: { desc: '读取共享终端新输出', kind: 'tool' },
-    term_list: { desc: '列出共享终端', kind: 'tool' },
-    term_close: { desc: '关闭共享终端', kind: 'tool' },
-    browser_tab: { desc: '共享浏览器标签管理（open 新建 / close 关闭；list 只读恒免审）', kind: 'tool' },
-    browser_navigate: { desc: 'browser_action 的导航（白名单填 URL/域名前缀放行常去站点）', kind: 'url' },
-    browser_action: { desc: '页面操作（点击 / 输入 / 按键 / 滚动）', kind: 'tool' },
-    browser_read: { desc: '读页面正文 / 链接清单 / 截图（只读）', kind: 'tool' },
-    image_recognize: { desc: '图片识别（识别槽模型驱动，只读）', kind: 'tool' },
-    task: { desc: 'fork 分身执行子任务（分身继承主 agent 策略）', kind: 'tool', noList: true },
-    save_app: { desc: '保存快应用 html', kind: 'tool' },
+    term_read: { desc: '读取共享终端新输出' },
+    term_list: { desc: '列出共享终端' },
+    term_close: { desc: '关闭共享终端' },
+    browser_tab: { desc: '共享浏览器标签管理（open 新建 / close 关闭；list 只读恒免审）' },
+    browser_action: { desc: '页面操作（导航 / 点击 / 输入 / 按键 / 滚动）' },
+    browser_read: { desc: '读页面正文 / 链接清单 / 截图（只读）' },
+    image_recognize: { desc: '图片识别（识别槽模型驱动，只读）' },
+    task: { desc: 'fork 分身执行子任务（分身继承主 agent 策略）' },
+    save_app: { desc: '保存快应用 html' },
     'mcp.*': {
-      desc: 'MCP 工具调用，名单填 server 或 server.tool（如 time.getCurrentTime）；mcp_list/tool_list 恒免审',
-      kind: 'tool',
+      desc: 'MCP 工具调用（名单填 server 或 server.tool，如 time.getCurrentTime；发现类恒免审）',
+      kind: 'mcpTool',
     },
   }
 
@@ -89,8 +91,7 @@
         level: r.level,
         list: r.list ?? [],
         desc: meta[r.tool]?.desc ?? '',
-        kind: meta[r.tool]?.kind ?? 'tool',
-        noList: meta[r.tool]?.noList,
+        kind: meta[r.tool]?.kind,
       }))
     } catch {
       message = '策略加载失败（后端不可达）'
@@ -114,7 +115,7 @@
   }
 
   function setRule(r: RuleRow, lv: Level) {
-    if (r.noList && hasList(lv)) return
+    if (!r.kind && hasList(lv)) return
     r.level = lv
     void persist()
   }
@@ -144,8 +145,8 @@
       {/if}
     </div>
     <p class="hint">
-      四档：每次审批 → 黑名单审批（名单外放行）→ 白名单免审（名单内放行）→ 全部免审。
-      选黑/白名单时展开对应名单配置。变更自动保存。
+      大多数工具两档：每次审批 / 全部免审。终端工具可按命令前缀、MCP 可按
+      server.tool 配黑白名单（选黑/白名单时展开配置）。变更自动保存。
     </p>
     {#if message}
       <p class="msg">{message}</p>
@@ -172,12 +173,10 @@
                       <span class="desc">{r.desc}</span>
                     </div>
                     <div class="seg" role="radiogroup" aria-label={r.tool}>
-                      {#each levels as lv (lv.key)}
+                      {#each (r.kind ? listLevels : simpleLevels) as lv (lv.key)}
                         <button
                           class="seg-btn"
                           class:active={r.level === lv.key}
-                          class:dim={r.noList && hasList(lv.key)}
-                          disabled={r.noList && hasList(lv.key)}
                           onclick={() => setRule(r, lv.key)}
                           title={lv.full}
                         >
@@ -186,7 +185,7 @@
                       {/each}
                     </div>
                   </div>
-                  {#if hasList(r.level)}
+                  {#if r.kind && hasList(r.level)}
                     <div class="list-edit">
                       <p class="list-hint">
                         {r.level === 'black' ? '黑名单' : '白名单'}（{listMeta[r.kind].label}）——{r.level === 'black'
@@ -207,7 +206,7 @@
                         <span class="chip-add">
                           <input
                             type="text"
-                            placeholder={listMeta[r.kind].ph}
+                            placeholder={r.kind ? listMeta[r.kind].ph : ''}
                             bind:value={newList[r.tool]}
                             onkeydown={(e) => {
                               if (e.key === 'Enter') {
