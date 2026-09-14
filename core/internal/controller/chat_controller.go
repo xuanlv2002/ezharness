@@ -30,11 +30,10 @@ type ChatController struct {
 /*
 	SendMessage POST /api/sessions/:id/messages（:id=分支根 ID）。
 
-文本与引用至少其一；引用统一为工作目录内路径（一切皆资源：拖入暂存
-的 tmp 文件、画板编辑的图片、AI 生成的文件均可引用）——files 是整
-文件引用（附件 chips），refs 带标注片段（文件页「添加到对话」），均
-经 <reference_file> 记录告知模型。路径必须落在工作目录内且文件存在
-——工作目录本就是 AI 沙箱，引用无越权面。
+文本与引用至少其一；引用为绝对路径（一切皆资源：拖入暂存的 tmp
+文件、画板编辑的图片、AI 生成的文件均可引用）——files 是整文件引用
+（附件 chips），refs 带标注片段（文件页「添加到对话」），均经
+<reference_file> 记录告知模型。路径须有效且文件存在。
 */
 func (c *ChatController) SendMessage(g *gin.Context) {
 	var body struct {
@@ -65,16 +64,10 @@ func (c *ChatController) SendMessage(g *gin.Context) {
 		g.JSON(http.StatusBadRequest, gin.H{"error": "引用过多（单条最多 8 个）"})
 		return
 	}
-	workDir := service.ResolveWorkDir(c.Svc.Hub.SettingsSnapshot().WorkDir)
 	checkPath := func(name, p string) (string, bool) {
 		abs, err := filepath.Abs(filepath.FromSlash(p))
 		if err != nil || p == "" {
 			g.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("引用 %s 路径无效", name)})
-			return "", false
-		}
-		rel, err := filepath.Rel(workDir, abs)
-		if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-			g.JSON(http.StatusForbidden, gin.H{"error": fmt.Sprintf("引用 %s 不在工作目录内", name)})
 			return "", false
 		}
 		if info, err := os.Stat(abs); err != nil || info.IsDir() {

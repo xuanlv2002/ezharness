@@ -10,7 +10,10 @@
       "Bash(mv core-tmp/* core/)",
       "Bash(rmdir core-tmp *)",
       "Bash(git rm *)",
-      "Bash(powershell -NoProfile -Command '$t = [IO.File]::ReadAllText\\(\"script\\\\release.bat\"\\); $t = $t -replace \"`r`n\", \"`n\" -replace \"`n\", \"`r`n\"; [IO.File]::WriteAllText\\(\"script\\\\release.bat\", $t\\)')"
+      "Bash(powershell -NoProfile -Command '$t = [IO.File]::ReadAllText\\(\"script\\\\release.bat\"\\); $t = $t -replace \"`r`n\", \"`n\" -replace \"`n\", \"`r`n\"; [IO.File]::WriteAllText\\(\"script\\\\release.bat\", $t\\)')",
+      "Bash(node --check \"C:\\\\Users\\\\guy\\\\Desktop\\\\ai\\\\ezharness\\\\desktop\\\\src\\\\main\\\\browser\\\\index.js\")",
+      "Bash(node --check \"C:\\\\Users\\\\guy\\\\Desktop\\\\ai\\\\ezharness\\\\desktop\\\\src\\\\main\\\\index.js\")",
+      "Bash(npm run *)"
     ]
   }
 }

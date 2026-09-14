@@ -13,7 +13,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"strings"
 
 	"github.com/gin-gonic/gin"
 
@@ -27,20 +26,13 @@ type WorkspaceController struct {
 }
 
 /*
-File GET /api/workspace/file?path=<绝对路径>：输出工作目录内的文件
-（inline 预览）。仅放行工作目录内路径——防路径穿越读取数据文件
-（models.json/sessions/ 等在数据目录，不在工作目录内）。
+File GET /api/workspace/file?path=<绝对路径>：按绝对路径输出文件
+（inline 预览）。不做路径白名单——本机文件都可读。
 */
 func (c *WorkspaceController) File(g *gin.Context) {
-	workDir := service.ResolveWorkDir(c.Hub.SettingsSnapshot().WorkDir)
 	abs, err := filepath.Abs(filepath.FromSlash(g.Query("path")))
 	if err != nil {
 		g.JSON(http.StatusBadRequest, gin.H{"error": "invalid path"})
-		return
-	}
-	rel, err := filepath.Rel(workDir, abs)
-	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		g.JSON(http.StatusForbidden, gin.H{"error": "path outside workspace"})
 		return
 	}
 	f, err := os.Open(abs)
@@ -81,9 +73,8 @@ func (c *WorkspaceController) File(g *gin.Context) {
 const maxSaveContent = 2 << 20
 
 /*
-Save POST /api/workspace/save {path, content}：写工作目录内文本文件
-（supper_url file:// 编辑器的保存通道）。沙箱与 File 逐项对齐——
-沙箱外路径 403，防借端点改写数据目录/系统文件。后端不校验后缀
+Save POST /api/workspace/save {path, content}：按绝对路径写文本文件
+（supper_url file:// 编辑器的保存通道）。后端不校验后缀
 （门禁在前端 chip 入口），大小上限 2MB。
 */
 func (c *WorkspaceController) Save(g *gin.Context) {
@@ -99,15 +90,9 @@ func (c *WorkspaceController) Save(g *gin.Context) {
 		g.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": "content too large"})
 		return
 	}
-	workDir := service.ResolveWorkDir(c.Hub.SettingsSnapshot().WorkDir)
 	abs, err := filepath.Abs(filepath.FromSlash(req.Path))
 	if err != nil {
 		g.JSON(http.StatusBadRequest, gin.H{"error": "invalid path"})
-		return
-	}
-	rel, err := filepath.Rel(workDir, abs)
-	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		g.JSON(http.StatusForbidden, gin.H{"error": "path outside workspace"})
 		return
 	}
 	if info, err := os.Stat(abs); err == nil && info.IsDir() {
@@ -161,8 +146,8 @@ func (c *WorkspaceController) Stash(g *gin.Context) {
 
 /*
 SaveBin POST /api/workspace/save-bin（multipart：path + file）：二进制
-写回工作目录内已有文件（画板编辑图片的原地保存通道——一切皆资源，
-编辑即写回真身）。沙箱与 Save 一致，大小上限 20MB。
+写回已有文件（画板编辑图片的原地保存通道——一切皆资源，编辑即写回
+真身）。大小上限 20MB。
 */
 func (c *WorkspaceController) SaveBin(g *gin.Context) {
 	path := g.PostForm("path")
@@ -179,15 +164,9 @@ func (c *WorkspaceController) SaveBin(g *gin.Context) {
 		g.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": "文件过大（不超过 20MB）"})
 		return
 	}
-	workDir := service.ResolveWorkDir(c.Hub.SettingsSnapshot().WorkDir)
 	abs, err := filepath.Abs(filepath.FromSlash(path))
 	if err != nil {
 		g.JSON(http.StatusBadRequest, gin.H{"error": "invalid path"})
-		return
-	}
-	rel, err := filepath.Rel(workDir, abs)
-	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		g.JSON(http.StatusForbidden, gin.H{"error": "path outside workspace"})
 		return
 	}
 	if info, err := os.Stat(abs); err != nil || info.IsDir() {

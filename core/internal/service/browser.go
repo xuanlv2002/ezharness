@@ -117,9 +117,11 @@ func (s *BrowserService) pumpBridge(conn *websocket.Conn) {
 
 /*
 call 转发一次工具调用并等回执。桥未连接立即报错;超时由调用方语义决定
-(导航类用 timeoutMs,其余 30s)。
+(导航类用 timeoutMs,其余 30s);ctx 取消立即返回(用户停止本轮时打断在途
+等待)。desktop 侧已在执行的操作不远程中断——回执迟到时 pumpBridge 查不到
+pending 直接丢弃,在途的 capturePage/CDP 自然跑完。
 */
-func (s *BrowserService) call(method string, params map[string]any, timeout time.Duration) (bridgeReply, error) {
+func (s *BrowserService) call(ctx context.Context, method string, params map[string]any, timeout time.Duration) (bridgeReply, error) {
 	s.mu.Lock()
 	if s.conn == nil {
 		s.mu.Unlock()
@@ -156,6 +158,11 @@ func (s *BrowserService) call(method string, params map[string]any, timeout time
 			return bridgeReply{}, fmt.Errorf("%s", reply.Error)
 		}
 		return reply, nil
+	case <-ctx.Done():
+		s.mu.Lock()
+		delete(s.pending, id)
+		s.mu.Unlock()
+		return bridgeReply{}, fmt.Errorf("浏览器操作已取消: %w", ctx.Err())
 	case <-time.After(timeout):
 		s.mu.Lock()
 		delete(s.pending, id)
@@ -177,8 +184,8 @@ func bridgeTimeout(timeoutMs, fallbackMs, maxMs int) time.Duration {
 /* ── AI 工具后端(BrowserIO 实现,签名与 tools 层契约一致) ── */
 
 /* StartBrowser 新建标签并可选导航,返回创建头行与页面标题。 */
-func (s *BrowserService) StartBrowser(desc, rawURL string, timeoutMs int) (string, error) {
-	reply, err := s.call("start", map[string]any{
+func (s *BrowserService) StartBrowser(ctx context.Context, desc, rawURL string, timeoutMs int) (string, error) {
+	reply, err := s.call(ctx, "start", map[string]any{
 		"desc": desc, "url": rawURL,
 		"timeoutMs": int(bridgeTimeout(timeoutMs, 20000, 600000).Milliseconds()),
 	}, bridgeTimeout(timeoutMs, 25000, 600000))
@@ -189,8 +196,8 @@ func (s *BrowserService) StartBrowser(desc, rawURL string, timeoutMs int) (strin
 }
 
 /* NavigateBrowser 跳转并等加载,返回新页面标题。 */
-func (s *BrowserService) NavigateBrowser(tabID, rawURL string, timeoutMs int) (string, error) {
-	reply, err := s.call("navigate", map[string]any{
+func (s *BrowserService) NavigateBrowser(ctx context.Context, tabID, rawURL string, timeoutMs int) (string, error) {
+	reply, err := s.call(ctx, "navigate", map[string]any{
 		"tabId": tabID, "url": rawURL,
 		"timeoutMs": int(bridgeTimeout(timeoutMs, 20000, 120000).Milliseconds()),
 	}, bridgeTimeout(timeoutMs, 25000, 120000))
@@ -201,8 +208,8 @@ func (s *BrowserService) NavigateBrowser(tabID, rawURL string, timeoutMs int) (s
 }
 
 /* ClickBrowser 点击:selector 优先,否则按视口坐标(desktop 换算注入)。 */
-func (s *BrowserService) ClickBrowser(tabID, selector string, x, y int) (string, error) {
-	reply, err := s.call("click", map[string]any{
+func (s *BrowserService) ClickBrowser(ctx context.Context, tabID, selector string, x, y int) (string, error) {
+	reply, err := s.call(ctx, "click", map[string]any{
 		"tabId": tabID, "selector": selector, "x": x, "y": y,
 	}, 30*time.Second)
 	if err != nil {
@@ -212,8 +219,8 @@ func (s *BrowserService) ClickBrowser(tabID, selector string, x, y int) (string,
 }
 
 /* TypeBrowser 输入文本:selector 定位输入框(省略=当前焦点处),submit 回车提交。 */
-func (s *BrowserService) TypeBrowser(tabID, selector, text string, submit bool) (string, error) {
-	reply, err := s.call("type", map[string]any{
+func (s *BrowserService) TypeBrowser(ctx context.Context, tabID, selector, text string, submit bool) (string, error) {
+	reply, err := s.call(ctx, "type", map[string]any{
 		"tabId": tabID, "selector": selector, "text": text, "submit": submit,
 	}, 30*time.Second)
 	if err != nil {
@@ -223,8 +230,8 @@ func (s *BrowserService) TypeBrowser(tabID, selector, text string, submit bool) 
 }
 
 /* PressBrowserKey 按键/组合键("Enter"、"Control+A")。 */
-func (s *BrowserService) PressBrowserKey(tabID, combo string) (string, error) {
-	reply, err := s.call("key", map[string]any{"tabId": tabID, "combo": combo}, 30*time.Second)
+func (s *BrowserService) PressBrowserKey(ctx context.Context, tabID, combo string) (string, error) {
+	reply, err := s.call(ctx, "key", map[string]any{"tabId": tabID, "combo": combo}, 30*time.Second)
 	if err != nil {
 		return "", err
 	}
@@ -232,11 +239,11 @@ func (s *BrowserService) PressBrowserKey(tabID, combo string) (string, error) {
 }
 
 /* ScrollBrowser 页面滚动(direction=up|down,amountPx 默认 600)。 */
-func (s *BrowserService) ScrollBrowser(tabID, direction string, amountPx int) (string, error) {
+func (s *BrowserService) ScrollBrowser(ctx context.Context, tabID, direction string, amountPx int) (string, error) {
 	if amountPx <= 0 {
 		amountPx = 600
 	}
-	reply, err := s.call("scroll", map[string]any{
+	reply, err := s.call(ctx, "scroll", map[string]any{
 		"tabId": tabID, "direction": direction, "amountPx": amountPx,
 	}, 30*time.Second)
 	if err != nil {
@@ -246,14 +253,14 @@ func (s *BrowserService) ScrollBrowser(tabID, direction string, amountPx int) (s
 }
 
 /* ReadBrowser 读页面内容:mode=text 返回正文,mode=links 返回链接清单。 */
-func (s *BrowserService) ReadBrowser(tabID, mode string, chars int) (string, error) {
+func (s *BrowserService) ReadBrowser(ctx context.Context, tabID, mode string, chars int) (string, error) {
 	if chars <= 0 {
 		chars = 4000
 	}
 	if chars > 20000 {
 		chars = 20000
 	}
-	reply, err := s.call("read", map[string]any{
+	reply, err := s.call(ctx, "read", map[string]any{
 		"tabId": tabID, "mode": mode, "chars": chars,
 	}, 30*time.Second)
 	if err != nil {
@@ -264,11 +271,12 @@ func (s *BrowserService) ReadBrowser(tabID, mode string, chars int) (string, err
 
 /*
 ScreenshotBrowser 截图:desktop 回 PNG base64,core 落盘 workspace/
-browser/<tabID>.jpg(覆写)。主模型有视觉时返回 image_loaded 标记(由
-filetools 转持久化图片消息),无视觉返回路径文字引导。
+browser/<tabID>-<时间戳>.png(每张一个新文件——图片按路径进上下文与
+时间线,同名覆写会让历史截图全被最后一张顶掉)。主模型有视觉时返回
+image_loaded 标记(由 filetools 转持久化图片消息),无视觉返回路径文字引导。
 */
-func (s *BrowserService) ScreenshotBrowser(tabID string, fullPage bool) (string, error) {
-	reply, err := s.call("screenshot", map[string]any{
+func (s *BrowserService) ScreenshotBrowser(ctx context.Context, tabID string, fullPage bool) (string, error) {
+	reply, err := s.call(ctx, "screenshot", map[string]any{
 		"tabId": tabID, "fullPage": fullPage,
 	}, 30*time.Second)
 	if err != nil {
@@ -284,7 +292,7 @@ func (s *BrowserService) ScreenshotBrowser(tabID string, fullPage bool) (string,
 	if err := os.MkdirAll(s.shotDir, 0o755); err != nil {
 		return "", fmt.Errorf("创建截图目录失败: %w", err)
 	}
-	path := filepath.Join(s.shotDir, tabID+".png")
+	path := filepath.Join(s.shotDir, fmt.Sprintf("%s-%d.png", tabID, time.Now().UnixMilli()))
 	if err := os.WriteFile(path, png, 0o644); err != nil {
 		return "", fmt.Errorf("写截图失败: %w", err)
 	}
@@ -296,14 +304,14 @@ func (s *BrowserService) ScreenshotBrowser(tabID string, fullPage bool) (string,
 }
 
 /* CloseBrowserTab 关闭标签;幂等。 */
-func (s *BrowserService) CloseBrowserTab(tabID string) error {
-	_, err := s.call("close", map[string]any{"tabId": tabID}, 15*time.Second)
+func (s *BrowserService) CloseBrowserTab(ctx context.Context, tabID string) error {
+	_, err := s.call(ctx, "close", map[string]any{"tabId": tabID}, 15*time.Second)
 	return err
 }
 
 /* ListBrowserTabsJSON 标签清单 JSON 文本(browser_list 工具直接返回)。 */
-func (s *BrowserService) ListBrowserTabsJSON() string {
-	reply, err := s.call("list", nil, 15*time.Second)
+func (s *BrowserService) ListBrowserTabsJSON(ctx context.Context) string {
+	reply, err := s.call(ctx, "list", nil, 15*time.Second)
 	if err != nil {
 		return fmt.Sprintf(`{"error":%q}`, err.Error())
 	}

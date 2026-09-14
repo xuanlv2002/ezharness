@@ -15,13 +15,13 @@ import {
   type Status,
   type StatusPayload,
 } from './api'
+import { filePane } from './filePaneState'
 
-/* 输入框附件（一切皆资源）：path = 已有真身（引用，发送不复制）；
-   file = 画板草稿（发送时才 stash 持久化）；两者皆空 = 拖入暂存中占位 */
+/* 输入框附件（一切皆资源）：path = 真身路径（引用，发送不复制）；
+   空 = 拖入暂存中占位 */
 export interface Attachment {
   name: string
   path?: string
-  file?: File
 }
 export type { FileRef }
 
@@ -97,7 +97,7 @@ export type Block = { uid: number } & (
   | { kind: 'status'; text: string; data: StatusPayload | null }
   | { kind: 'reschange'; items: string[] }
   | { kind: 'endtick'; icon: string; title: string }
-  | { kind: 'imgload'; paths: string[]; images: ImagePayload[] }
+  | { kind: 'imgload'; paths: string[] }
 )
 
 export interface TotalUsage {
@@ -113,6 +113,24 @@ export type DrawerTool = 'term' | 'file' | 'browser'
 function baseName(p: string): string {
   const i = Math.max(p.lastIndexOf('/'), p.lastIndexOf('\\'))
   return i >= 0 ? p.slice(i + 1) : p
+}
+
+/* 空白画板底图（画板默认画布尺寸）——画笔钮新建草稿时先落盘用 */
+function blankBoardPng(): Promise<File> {
+  const c = document.createElement('canvas')
+  c.width = 960
+  c.height = 600
+  const ctx = c.getContext('2d')
+  if (ctx) {
+    ctx.fillStyle = '#fff'
+    ctx.fillRect(0, 0, c.width, c.height)
+  }
+  return new Promise((resolve, reject) => {
+    c.toBlob((b) => {
+      if (b) resolve(new File([b], '画板.png', { type: 'image/png' }))
+      else reject(new Error('空白画板生成失败'))
+    }, 'image/png')
+  })
 }
 
 /* 解析 <agent_status> 的 JSON 载荷；中文语义化文本返回 null */
@@ -180,14 +198,9 @@ class AppStore {
   /* 通知跳转主时间线锚点（ChatView effect 消费滚动后清空；tick 依赖供
   跨分支切换后块加载完成重试） */
   jumpMain = $state('')
-  /* 画板草稿（图片查看器的未保存新图）：draftOpen 是「打开/续编草稿」
-     请求（source = 续编底图，tag = 来源附件下标，seq 递增 = 画布重建），
-     ResourcePane 消费；草稿 tab 全局唯一，重进即以 chip 当前内容重建 */
-  draftOpen = $state<{ source: File | null; tag: string; seq: number } | null>(null)
-  private draftSeq = 0
-  /* 待回流附件（查看器「添加到对话」/拖入暂存 att.stashed）：ChatView
-     消费进输入框附件（tag 匹配且身份一致时原位替换，否则追加） */
-  pendingAttachments = $state<(Attachment & { tag?: string; source?: File | null })[] | null>(null)
+  /* 待回流附件（查看器「添加到对话」/拖入暂存）：ChatView 消费进输入框
+     附件（同路径替换去重，否则追加） */
+  pendingAttachments = $state<Attachment[] | null>(null)
   /* 文件页「添加到对话」的待回流引用（路径+标注片段，行号已算好）；
      ChatView 消费进输入框引用 chips（同 path 替换去重） */
   pendingFileRef = $state<FileRef | null>(null)
@@ -202,6 +215,8 @@ class AppStore {
   /* drawerTool 是抽屉内工具页（终端/文件/浏览器互斥显隐，多 pane 常驻
      保活）；fileFocus 是待打开的文件路径（file:// 入口，ResourcePane 消费后清空） */
   drawerTool = $state<DrawerTool>('term')
+  /* 已弹出为独立窗口的工具页：mini 图标/AI 拉开抽屉均改为聚焦窗口 */
+  popoutTools = $state<DrawerTool[]>([])
   fileFocus = $state('')
   private boardTag = ''
   /* 模型调用进行中（model_start→model_end），思考指示用 */
@@ -420,7 +435,7 @@ class AppStore {
             .split('\n')
             .map((l) => l.trim())
             .filter(Boolean)
-          out.push({ kind: 'imgload', uid: this.nuid(), paths, images: m.images || [] })
+          out.push({ kind: 'imgload', uid: this.nuid(), paths })
         } else if (m.content.includes('<end_reason>')) {
           const detail = endReasonText(m.content)
           if (detail) out.push({ kind: 'endtick', uid: this.nuid(), icon: endIcon(detail), title: detail })
@@ -518,14 +533,19 @@ class AppStore {
 
   /* ── 魔法看板（图片查看器的画布引擎，草稿入口） ── */
 
-  /* openDraftImage 打开画板草稿（画笔钮/草稿 chip 续编/旧 base64 图片）：
-     source = 续编底图（无则空白画布），tag = 来源附件下标（「添加到
-     对话」时据此替换原 chip）。seq 每次递增 = 画布重建（草稿 tab 唯一，
-     重进即以 chip 当前内容重建）。 */
-  openDraftImage(source: File | null = null, tag = '') {
-    this.draftOpen = { source, tag, seq: ++this.draftSeq }
-    this.drawerTool = 'file'
-    this.termDrawerOpen = true
+  /* openImageDraft 打开画板（输入框画笔钮 / 续编 chip / 消息内 base64 图片）：
+     先把画布落盘到工作目录 tmp 拿真身路径，再按普通图片资源打开——草稿
+     就是一张 tmp 图片（"磁盘是唯一真身"），跨窗口（拖出为独立窗口/弹回
+     抽屉）随之自然成立。source 无 = 空白画板底图。 */
+  async openImageDraft(source: File | null = null) {
+    try {
+      const file = source ?? (await blankBoardPng())
+      const [path] = await api.stash([file])
+      if (!path) throw new Error('未取到落盘路径')
+      this.openFileAt(path)
+    } catch (e) {
+      this.lastStatus = `画板打开失败：${(e as Error).message}`
+    }
   }
 
   /* bumpImg 图片写回后按路径递增缩略图版本（同 URL 的 img 立即换 src，
@@ -534,52 +554,71 @@ class AppStore {
     this.imgVer = { ...this.imgVer, [path]: (this.imgVer[path] ?? 0) + 1 }
   }
 
-  /* openBase64Draft 把无路径的内存图片（消息内 base64，无工作目录真身）转草稿：
-     dataURL → File → openDraftImage。 */
+  /* openBase64Draft 把无路径的内存图片（消息内 base64）落盘成真身再打开：
+     dataURL → File → openImageDraft。 */
   async openBase64Draft(src: string, name: string) {
     try {
       const r = await fetch(src)
       if (!r.ok) throw new Error('read fail')
       const blob = await r.blob()
-      this.openDraftImage(new File([blob], name || 'image.png', { type: blob.type || 'image/png' }))
+      await this.openImageDraft(new File([blob], name || 'image.png', { type: blob.type || 'image/png' }))
     } catch {
       this.lastStatus = '图片读取失败，未能打开画板'
     }
   }
 
   /* openDrawer 拉开抽屉到指定工具页（AI 工具实际执行时调用；
-     抽屉与聊天并存，不打断当前视图）。 */
+     抽屉与聊天并存，不打断当前视图）；工具已弹出则聚焦窗口。 */
   private openDrawer(tool: DrawerTool) {
+    if (this.popoutTools.includes(tool)) {
+      ;(window as any).ez?.popout?.open(tool)
+      return
+    }
     this.drawerTool = tool
     this.termDrawerOpen = true
   }
 
   /* openTermAt 拉开终端抽屉并定位到指定终端（supper_url term:// 点击；
-     首次打开时 WS hello 到达后由 TerminalTab 消费定位）。 */
+     首次打开时 WS hello 到达后由 TerminalTab 消费定位）。终端已弹出则
+     定位请求转发到窗口。 */
   openTermAt(id: string) {
+    if (this.popoutTools.includes('term')) {
+      ;(window as any).ez?.popout?.signal('term', 'term', id)
+      return
+    }
     this.termFocus = id
     this.drawerTool = 'term'
     this.termDrawerOpen = true
   }
 
-  /* openFileAt 拉开抽屉文件页并打开指定文件（supper_url file:// 点击）。 */
+  /* openFileAt 拉开抽屉文件页并打开指定文件（supper_url file:// 点击）。
+     资源页已弹出则打开请求转发到窗口。 */
   openFileAt(path: string) {
     if (!path) return
+    if (this.popoutTools.includes('file')) {
+      ;(window as any).ez?.popout?.signal('file', 'file', path)
+      return
+    }
     this.fileFocus = path
     this.drawerTool = 'file'
     this.termDrawerOpen = true
   }
 
   /* openBrowserAt 拉开浏览器抽屉页并定位到指定标签（supper_url browser://
-     点击）；浏览器是 desktop 资产，web 端提示降级。 */
+     点击）；浏览器是 desktop 资产，web 端提示降级。已弹出则聚焦窗口。 */
   openBrowserAt(id: string) {
     if (!id) return
-    const browserApi = (window as any).ez?.browser
-    if (browserApi) {
-      browserApi.focusTab(id)
+    const ez = (window as any).ez
+    if (!ez?.browser) {
+      this.lastStatus = '浏览器仅桌面端可用'
+      return
+    }
+    ez.browser.focusTab(id)
+    if (this.popoutTools.includes('browser')) ez.popout.open('browser')
+    else {
       this.drawerTool = 'browser'
       this.termDrawerOpen = true
-    } else this.lastStatus = '浏览器仅桌面端可用'
+    }
   }
 
   closeTermDrawer() {
@@ -598,13 +637,42 @@ class AppStore {
   }
 
   /* 工具入口 mini 钮的开关语义：开着且已是该工具页 → 收起；
-     否则切到该工具页并拉开 */
+     否则切到该工具页并拉开；已弹出为窗口 → 聚焦窗口 */
   toggleDrawerTool(t: DrawerTool) {
+    if (this.popoutTools.includes(t)) {
+      ;(window as any).ez?.popout?.open(t)
+      return
+    }
     if (this.termDrawerOpen && this.drawerTool === t) this.termDrawerOpen = false
     else {
       this.drawerTool = t
       this.termDrawerOpen = true
     }
+  }
+
+  /* ── 弹出窗口协同 ── */
+
+  /* syncPopoutTools 启动时向主进程同步已弹出的工具（页面重载后恢复认知） */
+  syncPopoutTools() {
+    const popoutApi = (window as any).ez?.popout
+    if (!popoutApi) return
+    void popoutApi.tools().then((list: DrawerTool[]) => {
+      this.popoutTools = list
+    })
+  }
+
+  /* toolPoppedOut 记录工具已弹出（mini 图标/AI 拉开抽屉改聚焦窗口） */
+  toolPoppedOut(tool: DrawerTool) {
+    if (!this.popoutTools.includes(tool)) this.popoutTools = [...this.popoutTools, tool]
+  }
+
+  /* popoutClosed 弹窗关闭 = 工具回流抽屉：重开抽屉到该工具页，
+     资源页带回窗口期间的最新状态 */
+  popoutClosed(view: string, stateJson: string | null) {
+    this.popoutTools = this.popoutTools.filter((t) => t !== view)
+    this.drawerTool = view as DrawerTool
+    this.termDrawerOpen = true
+    if (view === 'file' && stateJson) filePane.restore(stateJson)
   }
 
   /* loadForkDetail 懒加载存档详情（已结束分身的执行记录重建）；运行中的
@@ -625,11 +693,10 @@ class AppStore {
 
   /* 打断式发送：运行中再来指令 = 先终止当前轮（等引擎真正退出，含工具树杀），
      再执行新指令；等待超时则放弃并提示。附件/引用统一为工作目录路径
-    （<reference_file> 记录告知模型）；画板草稿（path 空有 file）此时才
-     stash 持久化——失败则原样保留输入框内容。 */
+    （<reference_file> 记录告知模型）——附件进框时已落盘 tmp，发送只传路径。 */
   async send(text: string, attachments: Attachment[] = [], fileRefs: FileRef[] = []) {
     if (!this.activeId || (!text.trim() && !attachments.length && !fileRefs.length)) return
-    if (attachments.some((a) => !a.path && !a.file)) {
+    if (attachments.some((a) => !a.path)) {
       this.lastStatus = '附件仍在暂存中，稍候再发送'
       return
     }
@@ -641,18 +708,7 @@ class AppStore {
         return
       }
     }
-    let final: FilePayload[] = attachments.map((a) => ({ name: a.name, path: a.path! }))
-    const drafts = attachments.filter((a) => !a.path && a.file)
-    if (drafts.length) {
-      try {
-        const paths = await api.stash(drafts.map((d) => d.file!))
-        const by = new Map(drafts.map((d, i) => [d, paths[i]]))
-        final = attachments.map((a) => (by.has(a) ? { name: a.name, path: by.get(a)! } : { name: a.name, path: a.path! }))
-      } catch (e) {
-        this.lastStatus = `画板草稿暂存失败：${(e as Error).message}`
-        return
-      }
-    }
+    const final: FilePayload[] = attachments.map((a) => ({ name: a.name, path: a.path! }))
     /* 引用与用户输入各成一块（与消息历史同构：reference_file 记录是独立
     user 消息）；pendingUserUid 记第一块 uid——replay.sync 截断时两块一起切 */
     const turnFiles = final.map((a) => ({ name: a.name, path: a.path }))
@@ -1098,7 +1154,7 @@ class AppStore {
         // <image_loaded> user 消息，两条路径渲染同一 imgload 块）
         const loadedPaths = [...String(d.content || '').matchAll(/<image_loaded path="([^"]*)"\s*\/>/g)].map((m) => m[1])
         if (loadedPaths.length) {
-          bs.push({ kind: 'imgload', uid: this.nuid(), paths: loadedPaths, images: [] })
+          bs.push({ kind: 'imgload', uid: this.nuid(), paths: loadedPaths })
         }
         if (!ev.forkId) this.lastTool = ''
         break

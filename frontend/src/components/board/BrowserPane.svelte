@@ -66,6 +66,8 @@
     const api = ezBrowser()
     if (!api) return // web 端降级提示（模板分支）
     api.onTabs((_payload: string) => syncTabs(_payload))
+    /* 视图被摘出窗口（弹窗关闭/拖拽取消）后回挂：重新上报一次 rect */
+    api.onRefreshRect?.(() => requestAnimationFrame(reportRect))
     syncTabs(await api.list())
     ro = new ResizeObserver(reportRect)
     if (content) ro.observe(content)
@@ -96,7 +98,9 @@
   })
 </script>
 
-<svelte:window onresize={reportRect} />
+<!-- onfocus：窗口被点回来时重报一次 rect 重新认领视图（宿主会被别的窗口让位时
+     抢走，光靠尺寸变化不会自发重报） -->
+<svelte:window onresize={reportRect} onfocus={reportRect} />
 
 <div class="browser-pane">
   {#if !ezBrowser()}

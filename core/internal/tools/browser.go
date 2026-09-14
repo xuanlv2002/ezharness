@@ -18,28 +18,29 @@ import (
 	"github.com/xuanlv2002/ezloop/types"
 )
 
-/* BrowserIO 是共享浏览器服务的能力面(service.BrowserService 实现)。 */
+/* BrowserIO 是共享浏览器服务的能力面(service.BrowserService 实现)。
+ctx 透传本轮上下文:用户停止时打断在途的桥调用等待。 */
 type BrowserIO interface {
 	/* StartBrowser 新建标签(描述必填)并可选导航 */
-	StartBrowser(desc, url string, timeoutMs int) (string, error)
+	StartBrowser(ctx context.Context, desc, url string, timeoutMs int) (string, error)
 	/* NavigateBrowser 跳转并等加载 */
-	NavigateBrowser(tabID, url string, timeoutMs int) (string, error)
+	NavigateBrowser(ctx context.Context, tabID, url string, timeoutMs int) (string, error)
 	/* ClickBrowser 点击(selector 优先,否则视口截图坐标) */
-	ClickBrowser(tabID, selector string, x, y int) (string, error)
+	ClickBrowser(ctx context.Context, tabID, selector string, x, y int) (string, error)
 	/* TypeBrowser 输入文本(selector 定位输入框,submit 回车提交) */
-	TypeBrowser(tabID, selector, text string, submit bool) (string, error)
+	TypeBrowser(ctx context.Context, tabID, selector, text string, submit bool) (string, error)
 	/* PressBrowserKey 按键/组合键("Enter"、"Control+A") */
-	PressBrowserKey(tabID, combo string) (string, error)
+	PressBrowserKey(ctx context.Context, tabID, combo string) (string, error)
 	/* ScrollBrowser 滚动(up|down) */
-	ScrollBrowser(tabID, direction string, amountPx int) (string, error)
+	ScrollBrowser(ctx context.Context, tabID, direction string, amountPx int) (string, error)
 	/* ReadBrowser 读正文/链接清单 */
-	ReadBrowser(tabID, mode string, chars int) (string, error)
+	ReadBrowser(ctx context.Context, tabID, mode string, chars int) (string, error)
 	/* ScreenshotBrowser 截图(落盘+image_loaded 标记) */
-	ScreenshotBrowser(tabID string, fullPage bool) (string, error)
+	ScreenshotBrowser(ctx context.Context, tabID string, fullPage bool) (string, error)
 	/* CloseBrowserTab 关闭标签 */
-	CloseBrowserTab(tabID string) error
+	CloseBrowserTab(ctx context.Context, tabID string) error
 	/* ListBrowserTabsJSON 标签清单(JSON 文本) */
-	ListBrowserTabsJSON() string
+	ListBrowserTabsJSON(ctx context.Context) string
 	/* ModelSeesImages 主模型是否多模态(截图返回形态裁决) */
 	ModelSeesImages() bool
 }
@@ -86,11 +87,11 @@ func SharedBrowser(b BrowserIO) []types.Tool {
 			func(ctx context.Context, in *browserTabArgs) (string, error) {
 				switch in.Action {
 				case "open":
-					return b.StartBrowser(in.Desc, in.URL, in.TimeoutMs)
+					return b.StartBrowser(ctx, in.Desc, in.URL, in.TimeoutMs)
 				case "list":
-					return b.ListBrowserTabsJSON(), nil
+					return b.ListBrowserTabsJSON(ctx), nil
 				case "close":
-					if err := b.CloseBrowserTab(in.TabID); err != nil {
+					if err := b.CloseBrowserTab(ctx, in.TabID); err != nil {
 						return "", err
 					}
 					return "closed " + in.TabID, nil
@@ -105,15 +106,15 @@ func SharedBrowser(b BrowserIO) []types.Tool {
 			func(ctx context.Context, in *browserActionArgs) (string, error) {
 				switch in.Action {
 				case "navigate":
-					return b.NavigateBrowser(in.TabID, in.URL, in.TimeoutMs)
+					return b.NavigateBrowser(ctx, in.TabID, in.URL, in.TimeoutMs)
 				case "click":
-					return b.ClickBrowser(in.TabID, in.Selector, in.X, in.Y)
+					return b.ClickBrowser(ctx, in.TabID, in.Selector, in.X, in.Y)
 				case "type":
-					return b.TypeBrowser(in.TabID, in.Selector, in.Text, in.Submit)
+					return b.TypeBrowser(ctx, in.TabID, in.Selector, in.Text, in.Submit)
 				case "key":
-					return b.PressBrowserKey(in.TabID, in.Combo)
+					return b.PressBrowserKey(ctx, in.TabID, in.Combo)
 				case "scroll":
-					return b.ScrollBrowser(in.TabID, in.Direction, in.AmountPx)
+					return b.ScrollBrowser(ctx, in.TabID, in.Direction, in.AmountPx)
 				}
 				return "", fmt.Errorf("未知 action %q(navigate/click/type/key/scroll)", in.Action)
 			}),
@@ -128,11 +129,11 @@ func SharedBrowser(b BrowserIO) []types.Tool {
 					if mode == "" {
 						mode = "text"
 					}
-					return b.ReadBrowser(in.TabID, mode, in.Chars)
+					return b.ReadBrowser(ctx, in.TabID, mode, in.Chars)
 				case "screenshot":
-					return b.ScreenshotBrowser(in.TabID, false)
+					return b.ScreenshotBrowser(ctx, in.TabID, false)
 				case "full_page":
-					return b.ScreenshotBrowser(in.TabID, true)
+					return b.ScreenshotBrowser(ctx, in.TabID, true)
 				}
 				return "", fmt.Errorf("未知 mode %q(text/links/screenshot/full_page)", in.Mode)
 			}),

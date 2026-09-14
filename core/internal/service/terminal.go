@@ -306,7 +306,7 @@ func (s *TerminalService) ListTermsJSON() string {
 并等输出静默返回(等价"新建+send"一步到位)。读位点取注入前的当前
 位置(欢迎横幅不计入 agent 可读增量)。
 */
-func (s *TerminalService) StartTerm(desc, command string, quietMs, timeoutMs int) (string, error) {
+func (s *TerminalService) StartTerm(ctx context.Context, desc, command string, quietMs, timeoutMs int) (string, error) {
 	quiet := clampInt(quietMs, 100, 5000, 800)
 	timeout := clampInt(timeoutMs, 1000, 60000, 30000)
 
@@ -335,7 +335,7 @@ func (s *TerminalService) StartTerm(desc, command string, quietMs, timeoutMs int
 	sess.mu.Unlock()
 	s.writeAI(sess, command, []byte(payload))
 
-	out, exited, timedOut := waitQuiet(context.Background(), sess, gen, quiet, timeout)
+	out, exited, timedOut := waitQuiet(ctx, sess, gen, quiet, timeout)
 	sess.mu.Lock()
 	sess.readMark = sess.ring.mark()
 	name := sess.Name

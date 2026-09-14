@@ -30,7 +30,7 @@
   let el: HTMLTextAreaElement | undefined = $state()
 
   /* 附件缩略：真身路径走文件服务源（与聊天记录同源，带版本参数——
-  画板写回后强制刷新）；path 空 = 占位（拖入暂存中）或画板草稿（file） */
+  画板写回后强制刷新）；path 空 = 拖入暂存中占位 */
   const thumbnails = $derived(
     attachments.map((a) => {
       const isImage = isImagePath(a.name)
@@ -41,8 +41,7 @@
         isImage,
         isText: isTextFilePath(a.path || a.name),
         url: isImage && a.path ? `/api/workspace/file?path=${encodeURIComponent(a.path)}${v ? `&v=${v}` : ''}` : '',
-        ready: !!a.path || !!a.file,
-        draft: !a.path && !!a.file,
+        ready: !!a.path,
       }
     }),
   )
@@ -65,7 +64,7 @@
       store.lastStatus = '正在归档当前话题，完成后即可继续对话（可先切换分支）'
       return
     }
-    if (attachments.some((a) => !a.path && !a.file)) {
+    if (attachments.some((a) => !a.path)) {
       store.lastStatus = '附件仍在暂存中，稍候再发送'
       return
     }
@@ -77,9 +76,9 @@
     text = ''
     onClearFiles?.()
     onClearFileRefs?.()
-    /* 画板草稿（path 空有 file）由 store 在发送时 stash 持久化；fileRefs
-    统一进 <reference_file> 记录。attachments/fileRefs 必须在
-    onClear* 之前拷贝——props 解构是 live getter，清空后再取读到 [] */
+    /* 附件进框时已落盘 tmp（只传路径引用）；fileRefs 统一进 <reference_file>
+    记录。attachments/fileRefs 必须在 onClear* 之前拷贝——props 解构是
+    live getter，清空后再取读到 [] */
     await store.send(t, sendAttachments, sendFileRefs)
   }
 
@@ -123,7 +122,7 @@
         <div class="att" class:pending={!t.ready}>
           {#if t.isImage}
             <button class="thumb" disabled={!t.ready} onclick={() => onEditImage?.(i)}
-              title={t.draft ? '画板草稿（未保存）——点击继续编辑，发送时才保存' : t.ready ? '打开画板编辑（保存写回原文件）' : '暂存中…'}>
+              title={t.ready ? '打开画板编辑（保存写回原文件）' : '暂存中…'}>
               {#if t.url}<img src={t.url} alt={t.name} />{:else}<span class="draft-ico">🖌</span>{/if}
               <span class="edit-mark">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -147,7 +146,7 @@
               </svg>
             </span>
           {/if}
-          <span class="att-name">{t.name}{t.draft ? ' · 草稿' : ''}</span>
+          <span class="att-name">{t.name}</span>
           <button class="att-x" onclick={() => onRemove?.(i)} title="移除">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
               <path d="M6 6l12 12M18 6L6 18" />
@@ -186,7 +185,7 @@
       oninput={autoResize}
       disabled={!store.activeId}
     ></textarea>
-    <button class="board-btn" onclick={() => store.openDraftImage()} title="画板草稿（画图/标注，添加到对话；发送时才保存）">
+    <button class="board-btn" onclick={() => void store.openImageDraft()} title="画板（画图/标注，添加到对话；落盘在工作目录 tmp）">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
         <path d="M12 19l7-7a4.95 4.95 0 1 0-7-7l-7 7v7h7z" />
         <path d="M16 8l1.5 1.5" />

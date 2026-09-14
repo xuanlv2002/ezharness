@@ -10,13 +10,14 @@ const path = require('path')
 const fs = require('fs')
 const http = require('http')
 const { spawn } = require('child_process')
-const { startBrowserModule } = require('./browser')
+const { startBrowserModule, detachViewsFromWindow } = require('./browser')
 
 let mainWindow = null
 let tray = null
 let coreProc = null
 let quitting = false
 let corePort = 5260
+let tearWindow = null // 拖拽脱离中的预览窗口（未落定，不在 popoutWindows）
 
 /* 页面基地址：开发模式（EZHARNESS_DEV_URL=vite dev server）走热更页面
    （其 /api 代理到 core），生产模式直接用 core 伺服的内嵌页面 */
@@ -212,6 +213,147 @@ function registerIpc() {
     })
     win.loadURL(`${pageBase()}${url}`)
   })
+  /* 抽屉工具弹出窗口：view → BrowserWindow。popoutState 是各工具最新
+     的 pane 状态快照（file 弹出时由弹窗持续上报），关窗回流给主窗口。 */
+  const popoutWindows = new Map()
+  const popoutState = new Map()
+  const POPOUT_VIEWS = ['term', 'file', 'browser']
+  const POPOUT_TITLES = { term: 'ezharness · 终端', file: 'ezharness · 资源', browser: 'ezharness · 浏览器' }
+
+  /* createPopoutWindow 建窗并加载单工具页面（extra 给拖拽预览加临时选项） */
+  function createPopoutWindow(view, extra = {}) {
+    const win = new BrowserWindow({
+      width: 1100,
+      height: 760,
+      title: POPOUT_TITLES[view],
+      autoHideMenuBar: true,
+      webPreferences: {
+        preload: path.join(__dirname, '../preload/index.js'),
+      },
+      ...extra,
+    })
+    win.loadURL(`${pageBase()}/?desktop=1&popout=${view}`)
+    return win
+  }
+
+  /* commitPopout 落定弹出窗口：入册 + 关窗回流抽屉（主窗口重开抽屉到
+     该工具页并带回最新状态） */
+  function commitPopout(view, win) {
+    popoutWindows.set(view, win)
+    win.on('closed', () => {
+      popoutWindows.delete(view)
+      const state = view === 'file' ? (popoutState.get(view) ?? null) : null
+      popoutState.delete(view)
+      if (mainWindow && !mainWindow.isDestroyed() && !quitting) {
+        mainWindow.webContents.send('ez:popout-closed', view, state)
+      }
+    })
+  }
+
+  /* 拖拽脱离（tear-off）：按住抽屉面板头部拖出 → 预览窗口跟着光标走。
+     松手窗外落位（入册，关窗回流抽屉）；松手抽屉内销毁预览（不入册、
+     不发回流），销毁前先摘浏览器视图（视图是窗口子视图，随窗口销毁会
+     连标签一起丢）。预览期窗口不聚焦、不抢鼠标捕获。 */
+  let tearView = ''
+  let tearOffset = { x: 0, y: 0 }
+  let tearLast = { x: 0, y: 0 }
+
+  function moveTear(x, y) {
+    tearLast = { x, y }
+    if (tearWindow && !tearWindow.isDestroyed()) {
+      tearWindow.setPosition(Math.round(x - tearOffset.x), Math.round(y - tearOffset.y))
+    }
+  }
+
+  function finishTear(commit) {
+    const win = tearWindow
+    const view = tearView
+    tearWindow = null
+    tearView = ''
+    if (!win || win.isDestroyed()) {
+      if (!view) return
+      if (!commit) {
+        popoutState.delete(view)
+        return
+      }
+      /* 极快拖拽：松手时预览窗口还没建起来，按最后位置补一个 */
+      const late = createPopoutWindow(view)
+      late.setPosition(Math.round(tearLast.x - tearOffset.x), Math.round(tearLast.y - tearOffset.y))
+      commitPopout(view, late)
+      return
+    }
+    if (!commit) {
+      detachViewsFromWindow(win)
+      popoutState.delete(view)
+      win.destroy()
+      return
+    }
+    win.setOpacity(1)
+    win.setFocusable(true)
+    win.setAlwaysOnTop(false)
+    win.setSkipTaskbar(false)
+    win.focus()
+    commitPopout(view, win)
+  }
+
+  ipcMain.on('ez:popout-tear-begin', (_e, view, stateJson, x, y, offsetX, offsetY) => {
+    if (!POPOUT_VIEWS.includes(view) || popoutWindows.has(view) || tearWindow) return
+    /* 资源页状态快照要在建窗前写入（弹窗启动时 take） */
+    if (view === 'file' && typeof stateJson === 'string') popoutState.set(view, stateJson)
+    tearView = view
+    tearOffset = { x: offsetX, y: offsetY }
+    const win = createPopoutWindow(view, {
+      show: false,
+      opacity: 0.9,
+      focusable: false,
+      alwaysOnTop: true,
+      skipTaskbar: true,
+    })
+    tearWindow = win
+    moveTear(x, y)
+    win.showInactive()
+    /* 预览窗口意外销毁时清引用（落定/取消路径已先行清空，不会误伤） */
+    win.on('closed', () => {
+      if (tearWindow === win) {
+        tearWindow = null
+        tearView = ''
+      }
+    })
+  })
+  ipcMain.on('ez:popout-tear-move', (_e, x, y) => moveTear(x, y))
+  ipcMain.on('ez:popout-tear-end', (_e, commit) => finishTear(!!commit))
+
+  ipcMain.handle('ez:popout', (_e, view, stateJson) => {
+    if (!POPOUT_VIEWS.includes(view)) return
+    /* 该工具正被拖拽脱离：直接落定预览窗口，不再另开一个 */
+    if (tearWindow && tearView === view) {
+      finishTear(true)
+      return
+    }
+    /* 已弹出：聚焦既有窗口（mini 图标/AI 拉开抽屉都走这里） */
+    const existing = popoutWindows.get(view)
+    if (existing && !existing.isDestroyed()) {
+      existing.show()
+      existing.focus()
+      return
+    }
+    if (view === 'file' && typeof stateJson === 'string') popoutState.set(view, stateJson)
+    commitPopout(view, createPopoutWindow(view))
+  })
+  ipcMain.handle('ez:popout-tools', () => [...popoutWindows.keys()])
+  /* 弹出窗口启动时取初始状态；之后每次变化上报覆盖（关窗取最新回流） */
+  ipcMain.handle('ez:popout-take-state', (_e, view) => popoutState.get(view) ?? null)
+  ipcMain.on('ez:popout-state', (_e, view, json) => {
+    if (typeof json === 'string') popoutState.set(view, json)
+  })
+  /* 主窗口 → 弹出窗口的外部定位转发（term:// / file:// 点击） */
+  ipcMain.on('ez:popout-signal', (_e, view, name, value) => {
+    const win = popoutWindows.get(view)
+    if (!win || win.isDestroyed()) return
+    win.show()
+    win.focus()
+    win.webContents.send('ez:popout-signal', name, value)
+  })
 }
 
 app.whenReady().then(async () => {
@@ -227,5 +369,10 @@ app.on('window-all-closed', () => {})
 
 app.on('before-quit', () => {
   quitting = true
+  if (tearWindow && !tearWindow.isDestroyed()) {
+    detachViewsFromWindow(tearWindow)
+    tearWindow.destroy()
+    tearWindow = null
+  }
   if (coreProc) coreProc.kill()
 })
