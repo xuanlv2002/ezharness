@@ -567,11 +567,20 @@ class AppStore {
     }
   }
 
+  /* yieldDrawer 工具页已弹出为独立窗口时把抽屉让出来：同一份内容只有一处
+     能上屏——抽屉与独立窗口同时显示同一工具，两边都会上报内容区 rect 去
+     抢那个唯一的视图，最后上报的赢、另一个白屏（改窗口大小/点 mini 图标
+     能让它再上报一次赢回来，现象就是"白一下又好了"）。 */
+  private yieldDrawer(tool: DrawerTool) {
+    if (this.drawerTool === tool) this.termDrawerOpen = false
+  }
+
   /* openDrawer 拉开抽屉到指定工具页（AI 工具实际执行时调用；
      抽屉与聊天并存，不打断当前视图）；工具已弹出则聚焦窗口。 */
   private openDrawer(tool: DrawerTool) {
     if (this.popoutTools.includes(tool)) {
       ;(window as any).ez?.popout?.open(tool)
+      this.yieldDrawer(tool)
       return
     }
     this.drawerTool = tool
@@ -584,6 +593,7 @@ class AppStore {
   openTermAt(id: string) {
     if (this.popoutTools.includes('term')) {
       ;(window as any).ez?.popout?.signal('term', 'term', id)
+      this.yieldDrawer('term')
       return
     }
     this.termFocus = id
@@ -597,6 +607,7 @@ class AppStore {
     if (!path) return
     if (this.popoutTools.includes('file')) {
       ;(window as any).ez?.popout?.signal('file', 'file', path)
+      this.yieldDrawer('file')
       return
     }
     this.fileFocus = path
@@ -614,8 +625,10 @@ class AppStore {
       return
     }
     ez.browser.focusTab(id)
-    if (this.popoutTools.includes('browser')) ez.popout.open('browser')
-    else {
+    if (this.popoutTools.includes('browser')) {
+      ez.popout.open('browser')
+      this.yieldDrawer('browser')
+    } else {
       this.drawerTool = 'browser'
       this.termDrawerOpen = true
     }
@@ -641,6 +654,7 @@ class AppStore {
   toggleDrawerTool(t: DrawerTool) {
     if (this.popoutTools.includes(t)) {
       ;(window as any).ez?.popout?.open(t)
+      this.yieldDrawer(t)
       return
     }
     if (this.termDrawerOpen && this.drawerTool === t) this.termDrawerOpen = false
@@ -661,9 +675,12 @@ class AppStore {
     })
   }
 
-  /* toolPoppedOut 记录工具已弹出（mini 图标/AI 拉开抽屉改聚焦窗口） */
+  /* toolPoppedOut 记录工具已弹出（mini 图标/AI 拉开抽屉改聚焦窗口），
+     并让抽屉退出该工具页——同一份内容只在一处上屏（两处同时显示同一工具
+     会互相抢那个唯一视图，表现是其中一个白屏并来回闪） */
   toolPoppedOut(tool: DrawerTool) {
     if (!this.popoutTools.includes(tool)) this.popoutTools = [...this.popoutTools, tool]
+    this.yieldDrawer(tool)
   }
 
   /* popoutClosed 弹窗关闭 = 工具回流抽屉：重开抽屉到该工具页，

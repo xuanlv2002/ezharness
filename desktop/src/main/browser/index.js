@@ -40,9 +40,13 @@ function completeURL(raw) {
 /* 用户新建标签的默认起始页（AI 的 browser_tab open 不带 url 仍为空白） */
 const HOME_PAGE = 'https://cn.bing.com/'
 
+/* tabList 标签清单（带 active 标记）：当前激活标签只有主进程知道（它决定
+   显示哪个视图），渲染层据此高亮标签条、定地址栏——不能让各窗口自己猜，
+   新建/关闭后两边最容易不一致（页面切了、地址栏没换）。 */
 function tabList() {
   return [...tabs.entries()].map(([id, t]) => ({
     id, name: t.name, origin: t.origin, url: t.url, title: t.title, loading: t.loading,
+    active: id === activeTab,
   }))
 }
 
@@ -79,6 +83,17 @@ function stateLine(id) {
 }
 
 /* ── 视图管理 ── */
+
+/* findOwner 由壳注入：浏览器页已弹出为独立窗口时返回那个窗口。
+   视图只有一个，抽屉与独立窗口同时上屏就会互相抢（两边都在报 rect，谁最后
+   报谁显示、另一个白屏并来回闪）——所以弹出期间视图固定归独立窗口。 */
+let findOwner = () => null
+
+/* ownerWindow 当前该由谁显示视图（无独立窗口 = nil，不限制）。 */
+function ownerWindow() {
+  const w = findOwner()
+  return w && !w.isDestroyed() ? w : null
+}
 
 /* paneWindows 挂着浏览器页（UI）的窗口：主窗口 + 各独立窗口。清单变化要广播
    给全部这些窗口，跨窗口摘视图时也要在它们之间找。入口 = BrowserPane 挂载时
@@ -117,11 +132,12 @@ function detachView(view, keep) {
 }
 
 /* syncHost 收敛「宿主窗口 ↔ 激活视图」这条不变量：只有激活标签的视图挂在
-   宿主上（bounds = contentRect），其余视图一律不在任何窗口上。
-   WebContentsView 是独立合成面：摘掉/销毁视图后宿主窗口不会自动重绘，
-   会留下一块白面——关掉当前标签时最明显（旧面摘了、新面贴上，但没谁触发
-   重绘；抽屉里因为抽屉宽度动画/逐帧上报碰巧会重绘，所以看起来"回到抽屉就
-   正常"）。所以结构一变就显式收口，并让宿主重绘一次。 */
+   宿主上（bounds = contentRect），其余视图一律不在任何窗口上。切标签/关标签/
+   换宿主都只走这一处，别在各处散着写。
+   注意**不要**在这里调 webContents.invalidate() 之类强制重绘：窗口自己的
+   整窗重绘会把子视图的合成面丢掉，页面要等自身下一帧才回来——表现就是
+   每次切/关标签当前页都像"刷新"了一下甚至变白。视图结构变了 Chromium 自己
+   会重排重绘，不需要我们推。 */
 function syncHost() {
   const active = tabs.get(activeTab)
   for (const tab of tabs.values()) {
@@ -132,14 +148,11 @@ function syncHost() {
     detachView(active.view, null)
     return
   }
-  const attached = hostWindow.contentView.children.includes(active.view)
-  if (!attached) {
+  if (!hostWindow.contentView.children.includes(active.view)) {
     detachView(active.view, hostWindow)
     hostWindow.contentView.addChildView(active.view)
   }
   active.view.setBounds({ ...contentRect })
-  /* 只在视图结构真的变了时重绘——rect 上报每帧都来，别每次都 invalidate */
-  if (!attached) hostWindow.webContents.invalidate()
 }
 
 /* detachViewsFromWindow 把窗口上的激活视图摘出来（webContents 存活），
@@ -213,10 +226,9 @@ function closeTab(id) {
     const nextID = [...tabs.keys()].pop()
     if (nextID) activeTab = nextID
   }
-  syncHost() // 先把接替的视图挂上并重绘，再销毁旧视图
+  syncHost() // 先把接替的视图挂好，再销毁旧视图
   broadcastTabs()
-  /* 视图已摘，销毁推到下一 tick：同一 tick 里"摘 + 销毁"容易留下一块
-     白面直到有别的东西触发重绘（syncHost 已兜底重绘，这是双保险） */
+  /* 视图已摘、接替的已挂上，销毁推到下一 tick：别和"挂新视图"挤在同一帧里 */
   setTimeout(() => {
     try {
       tab.view.webContents.close()
@@ -497,11 +509,23 @@ function registerIpc() {
       askRepane(sender)
       return
     }
+    /* 已弹出为独立窗口：视图归它，其它窗口的上报一律不认（否则两边互相抢，
+       表现就是一个窗口白屏 + 来回闪） */
+    const owner = ownerWindow()
+    if (owner && owner !== sender) {
+      if (hostWindow !== owner) {
+        hostWindow = owner
+        paneVisible = true
+        owner.webContents.send('ez-browser:refresh-rect')
+      }
+      return
+    }
     contentRect = rect
     paneVisible = true
     hostWindow = sender
     syncHost()
   })
+  /* BrowserPane 挂载时的清单拉取：同时登记"这个窗口有浏览器页"（广播对象） */
   /* BrowserPane 挂载时的清单拉取：同时登记"这个窗口有浏览器页"（广播对象） */
   ipcMain.handle('ez-browser:list', (e) => {
     notePane(BrowserWindow.fromWebContents(e.sender))
@@ -524,9 +548,10 @@ function registerIpc() {
 }
 
 /* startBrowserModule 壳装配入口。 */
-function startBrowserModule({ corePort: port, getParentWindow: parent }) {
+function startBrowserModule({ corePort: port, getParentWindow: parent, findBrowserOwner }) {
   corePort = port
   getParentWindow = parent
+  findOwner = findBrowserOwner || (() => null)
   registerIpc()
   connectBridge()
 }

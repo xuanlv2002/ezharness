@@ -13,7 +13,7 @@
 
   let { active = false }: { active?: boolean } = $props()
 
-  type TabInfo = { id: string; name: string; origin: string; url: string; title: string; loading: boolean }
+  type TabInfo = { id: string; name: string; origin: string; url: string; title: string; loading: boolean; active: boolean }
 
   /* desktop 壳能力（preload 注入；web 端 undefined） */
   function ezBrowser(): any | undefined {
@@ -39,13 +39,16 @@
     } catch {
       return
     }
-    if (!tabs.length) {
-      current = ''
-      return
-    }
-    if (!current || !tabs.some((t) => t.id === current)) {
-      current = tabs[tabs.length - 1].id // 新建标签自动切到（AI/用户刚开的）
-    }
+    /* 当前激活标签以主进程为准（它决定显示哪个视图）：跟着 active 走，
+       标签条高亮与地址栏才和页面一致。不做"本地猜"——新建/关闭后本地猜
+       会出现页面切了而地址栏没换。用户点标签条是反向（pickTab 上报），
+       下一帧的清单再确认回来。 */
+    const a = tabs.find((t) => t.active)
+    current = a ? a.id : ''
+    /* 清单每次变化都重报一次 rect：视图归属只认上报，窗口刚被显示/重排过
+       时重报一次即重新认领。隐藏的浏览器页量出的是零/极小矩形，会被主进程
+       的 <10 守卫挡掉，不会跟真正上屏的那个抢。 */
+    reportRect()
   }
 
   function submitAddress() {
@@ -92,10 +95,15 @@
     tick()
   })
 
-  $effect(() => {
-    /* 标签切换时内容区不变，但主进程需要重贴激活视图 */
-    if (current) ezBrowser()?.select?.(current)
-  })
+  /* 用户点标签条才算"切换意图"：只在这里告诉主进程。不做 $effect 跟随
+     current——激活标签以主进程为准，跟随会把主进程的状态再回写一遍，
+     两个窗口各自回写就变成互相打断的 select 风暴（日志里成对出现的
+     `select <- win#1 / win#2` 就是它）。 */
+  function pickTab(id: string) {
+    if (id === current) return
+    current = id
+    ezBrowser()?.select?.(id)
+  }
 </script>
 
 <!-- onfocus：窗口被点回来时重报一次 rect 重新认领视图（宿主会被别的窗口让位时
@@ -111,7 +119,7 @@
   {:else}
     <div class="strip">
       {#each tabs as t (t.id)}
-        <button class="strip-item" class:active={current === t.id} onclick={() => (current = t.id)} title="{t.name} · 来源 {t.origin || '?'} · {t.url}">
+        <button class="strip-item" class:active={current === t.id} onclick={() => pickTab(t.id)} title="{t.name} · 来源 {t.origin || '?'} · {t.url}">
           <span class="dot" class:loading={t.loading}></span>
           <span class="name">{t.title || t.name}</span>
           <span class="x" onclick={(e) => { e.stopPropagation(); ezBrowser().close(t.id) }} role="button" tabindex="-1" title="关闭">

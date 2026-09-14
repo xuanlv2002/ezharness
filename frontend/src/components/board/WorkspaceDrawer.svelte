@@ -33,24 +33,24 @@
     store.closeTermDrawer()
   }
 
-  /* 拖拽脱离：按住头部把手拖出抽屉 → 主进程建预览窗口跟着光标走；
-     松手在抽屉外落定为独立窗口（抽屉收起），松手回抽屉内销毁预览。
-     指针移出窗口、乃至预览窗口出现在光标下时，靠 Chromium 在按键期对
-     源窗口的隐式鼠标捕获（setPointerCapture 强化）继续收 pointermove/
-     pointerup 与屏幕坐标。内容迁移沿用既有机制：资源页带 tab 状态快照，
-     浏览器 view 随弹出窗口上报 rect 自动接管，终端靠 WS 重连续屏。 */
+  /* 拖拽脱离：按住头部把手拖出抽屉 → 拖拽期间只画一个跟随光标的幽灵卡片，
+     松手在抽屉外就在落点**新建一个普通窗口**（抽屉收起），松手回抽屉内取消。
+     窗口全程只有默认状态——不再做"预览态（透明/不可聚焦/置顶）→ 落定态"
+     的切换：那些临时窗口态在 Windows 上会让窗口合成面进入异常态，表现就是
+     内容区白屏（抽屉从不需要它们，所以抽屉从来没这个问题）。
+     指针移出窗口时靠 Chromium 在按键期对源窗口的隐式鼠标捕获
+     （setPointerCapture 强化）继续收 pointermove/pointerup 与屏幕坐标。 */
   const ENTER = 8 // 越出抽屉边缘多少像素算进入脱离
   const EXIT = 16 // 拖回抽屉内多少像素算撤销（滞回，防边缘抖动）
   const SLOP = 6 // 小于此位移不判定（防误触）
 
   let drawerEl: HTMLElement | undefined = $state()
   let dragging = $state(false)
+  let ghost = $state<{ x: number; y: number } | null>(null) // 脱离中的光标幽灵
   let drag: {
     pointerId: number
     originX: number
     originY: number
-    grabX: number
-    grabY: number
     startX: number
     startY: number
     rect: DOMRect
@@ -73,16 +73,13 @@
     if (!open || !drawerEl || drag) return
     const el = e.target as HTMLElement
     if (!el.closest('header') || el.closest('button, input, textarea, [contenteditable]')) return
-    const rect = drawerEl.getBoundingClientRect()
     drag = {
       pointerId: e.pointerId,
-      originX: e.screenX - e.clientX, // 窗口屏幕原点（拖拽期间只用 screenX/Y）
+      originX: e.screenX - e.clientX, // 窗口屏幕原点（判定用 screenX/Y）
       originY: e.screenY - e.clientY,
-      grabX: e.clientX - rect.left, // 抓取点在面板内的偏移（预览窗口对位用）
-      grabY: e.clientY - rect.top,
       startX: e.screenX,
       startY: e.screenY,
-      rect,
+      rect: drawerEl.getBoundingClientRect(),
       tearing: false,
     }
     dragging = true
@@ -92,40 +89,43 @@
 
   function moveDrag(e: PointerEvent) {
     if (!drag || e.pointerId !== drag.pointerId) return
-    const ez = (window as any).ez
-    if (!ez?.popout?.tearBegin) return
     if (!drag.tearing) {
       if (Math.hypot(e.screenX - drag.startX, e.screenY - drag.startY) < SLOP) return
       if (insideDrawer(e.screenX, e.screenY, ENTER)) return
       drag.tearing = true
-      ez.popout.tearBegin(tool, tool === 'file' ? filePane.serialize() : null, e.screenX, e.screenY, drag.grabX, drag.grabY)
     }
     if (insideDrawer(e.screenX, e.screenY, -EXIT)) {
-      // 拖回抽屉内：撤销预览，留在抽屉
-      drag.tearing = false
-      ez.popout.tearEnd(false)
+      drag.tearing = false // 拖回抽屉内：撤销脱离
+      ghost = null
       return
     }
-    ez.popout.tearMove(e.screenX, e.screenY)
+    ghost = { x: e.clientX, y: e.clientY }
   }
 
   /* commit=false 用于 pointercancel / lostpointercapture 兜底 */
   function endDrag(e: PointerEvent, commit: boolean) {
     if (!drag || e.pointerId !== drag.pointerId) return
-    const tearing = drag.tearing
+    const { tearing } = drag
     drag = null
     dragging = false
-    if (!tearing) return
+    ghost = null
+    if (!tearing || !commit) return
     const ez = (window as any).ez
-    ez?.popout?.tearEnd(commit)
-    if (commit) {
-      store.toolPoppedOut(tool)
-      store.closeTermDrawer()
-    }
+    if (!ez?.popout) return
+    /* 落点即新窗口位置；资源页带 tab 状态快照，浏览器 view 随上报自动接管，
+       终端靠 WS 重连续屏 */
+    ez.popout.open(tool, tool === 'file' ? filePane.serialize() : null, e.screenX, e.screenY)
+    store.toolPoppedOut(tool)
+    store.closeTermDrawer()
   }
 </script>
 
 <svelte:window onkeydown={onKey} />
+
+{#if ghost}
+  <!-- 脱离中的幽灵卡片（纯 DOM：拖拽期间不开窗口） -->
+  <div class="ghost" style="left:{ghost.x}px;top:{ghost.y}px">{title[0]}</div>
+{/if}
 
 <aside
   class="drawer"
@@ -217,6 +217,21 @@
   .grip svg {
     width: 11px;
     height: 11px;
+  }
+  /* 脱离中的光标幽灵：跟着指针的幽灵卡片（拖拽期不开窗口） */
+  .ghost {
+    position: fixed;
+    z-index: 60;
+    transform: translate(-50%, -50%);
+    pointer-events: none;
+    padding: 6px 14px;
+    border: 1px solid var(--accent-soft, var(--accent));
+    border-radius: 10px;
+    background: color-mix(in srgb, var(--bg) 80%, transparent);
+    color: var(--accent, #2563eb);
+    font-size: 12px;
+    font-weight: 600;
+    box-shadow: 0 6px 20px rgb(0 0 0 / 18%);
   }
   h3 {
     font-size: 13px;

@@ -21,13 +21,9 @@ contextBridge.exposeInMainWorld('ez', {
   },
   /* 抽屉工具弹出窗口（view: term/file/browser） */
   popout: {
-    /* 弹出（已弹出则聚焦）；state 是资源页初始状态快照 */
-    open: (view, state) => ipcRenderer.invoke('ez:popout', view, state),
-    /* 拖拽脱离：把手拖出抽屉 → 预览窗口跟着光标走；commit=false 销毁预览 */
-    tearBegin: (view, state, x, y, offsetX, offsetY) =>
-      ipcRenderer.send('ez:popout-tear-begin', view, state, x, y, offsetX, offsetY),
-    tearMove: (x, y) => ipcRenderer.send('ez:popout-tear-move', x, y),
-    tearEnd: (commit) => ipcRenderer.send('ez:popout-tear-end', commit),
+    /* 弹出（已弹出则聚焦）；state 是资源页初始状态快照；
+       x/y 是屏幕坐标落点（拖拽脱离用，不给就默认居中） */
+    open: (view, state, x, y) => ipcRenderer.invoke('ez:popout', view, state, x, y),
     /* 当前已弹出的工具列表（主窗口启动时同步） */
     tools: () => ipcRenderer.invoke('ez:popout-tools'),
     /* 弹出窗口取初始状态 / 持续上报最新状态（关窗回流快照） */
