@@ -102,6 +102,17 @@
     ghost = { x: e.clientX, y: e.clientY }
   }
 
+  /* popOut 弹出为独立窗口（按钮点击与拖拽脱离同一条路）：给落点就按落点摆
+     （拖拽），不给就默认居中（按钮）。资源页带 tab 状态快照，浏览器 view
+     随上报自动接管，终端靠 WS 重连续屏。 */
+  function popOut(x?: number, y?: number) {
+    const ez = (window as any).ez
+    if (!ez?.popout) return
+    ez.popout.open(tool, tool === 'file' ? filePane.serialize() : null, x, y)
+    store.toolPoppedOut(tool)
+    store.closeTermDrawer()
+  }
+
   /* commit=false 用于 pointercancel / lostpointercapture 兜底 */
   function endDrag(e: PointerEvent, commit: boolean) {
     if (!drag || e.pointerId !== drag.pointerId) return
@@ -110,13 +121,7 @@
     dragging = false
     ghost = null
     if (!tearing || !commit) return
-    const ez = (window as any).ez
-    if (!ez?.popout) return
-    /* 落点即新窗口位置；资源页带 tab 状态快照，浏览器 view 随上报自动接管，
-       终端靠 WS 重连续屏 */
-    ez.popout.open(tool, tool === 'file' ? filePane.serialize() : null, e.screenX, e.screenY)
-    store.toolPoppedOut(tool)
-    store.closeTermDrawer()
+    popOut(e.screenX, e.screenY)
   }
 </script>
 
@@ -151,9 +156,11 @@
       </span>
       <h3>{title[0]}</h3>
       <span class="hint">{title[1]}</span>
-      <button class="close" onclick={() => store.closeTermDrawer()} title="收起">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
-          <path d="M6 6l12 12M18 6L6 18" />
+      <button class="pop" onclick={() => popOut()} title="弹出为独立窗口（也可按住头部拖出）">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M15 4h5v5" />
+          <path d="M20 4l-8 8" />
+          <path d="M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5" />
         </svg>
       </button>
     </header>
@@ -245,7 +252,7 @@
     overflow: hidden;
     text-overflow: ellipsis;
   }
-  .close {
+  .pop {
     display: grid;
     place-items: center;
     width: 26px;
@@ -255,14 +262,15 @@
     color: var(--muted);
     border-radius: 8px;
     cursor: pointer;
+    flex: none;
   }
-  .close:hover {
+  .pop:hover {
     background: var(--line);
     color: var(--fg);
   }
-  .close svg {
-    width: 13px;
-    height: 13px;
+  .pop svg {
+    width: 14px;
+    height: 14px;
   }
   .body {
     flex: 1;

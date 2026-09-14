@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte'
   import { store, type Attachment, type FileRef } from '../lib/store.svelte'
-  import { fileBaseName, isImagePath, isTextFilePath } from '../lib/textfile'
+  import { fileBaseName, isImagePath } from '../lib/textfile'
 
   let {
     attachments = [],
@@ -39,7 +39,6 @@
         name: a.name,
         path: a.path,
         isImage,
-        isText: isTextFilePath(a.path || a.name),
         url: isImage && a.path ? `/api/workspace/file?path=${encodeURIComponent(a.path)}${v ? `&v=${v}` : ''}` : '',
         ready: !!a.path,
       }
@@ -130,21 +129,14 @@
                 </svg>
               </span>
             </button>
-          {:else if t.isText}
+          {:else}
             <button class="file-ico as-btn" disabled={!t.ready} onclick={() => t.path && store.openFileAt(t.path)}
-              title={t.ready ? '在资源页打开（编辑 · 标注 · 发给 AI）' : '暂存中…'}>
+              title={t.ready ? '在资源页打开（查看 · 编辑 · 发给 AI）' : '暂存中…'}>
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
                 <path d="M14 3H7a1 1 0 0 0-1 1v16a1 1 0 0 0 1 1h10a1 1 0 0 0 1-1V7l-4-4z" />
                 <path d="M14 3v4h4" />
               </svg>
             </button>
-          {:else}
-            <span class="file-ico">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M14 3H7a1 1 0 0 0-1 1v16a1 1 0 0 0 1 1h10a1 1 0 0 0 1-1V7l-4-4z" />
-                <path d="M14 3v4h4" />
-              </svg>
-            </span>
           {/if}
           <span class="att-name">{t.name}</span>
           <button class="att-x" onclick={() => onRemove?.(i)} title="移除">
