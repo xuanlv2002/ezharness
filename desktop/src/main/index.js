@@ -17,6 +17,7 @@ let tray = null
 let coreProc = null
 let quitting = false
 let corePort = 5260
+let findBrowserPopout = () => null // registerIpc 注入：当前浏览器页的独立窗口（无则 null）
 
 /* 页面基地址：开发模式（EZHARNESS_DEV_URL=vite dev server）走热更页面
    （其 /api 代理到 core），生产模式直接用 core 伺服的内嵌页面 */
@@ -212,6 +213,84 @@ function registerIpc() {
     })
     win.loadURL(`${pageBase()}${url}`)
   })
+  /* 抽屉工具弹出窗口：view → BrowserWindow。popoutState 是各工具最新
+     的 pane 状态快照（file 弹出时由弹窗持续上报），关窗回流给主窗口。 */
+  const popoutWindows = new Map()
+  const popoutState = new Map()
+  const POPOUT_VIEWS = ['term', 'file', 'browser']
+  const POPOUT_TITLES = { term: 'ezharness · 终端', file: 'ezharness · 资源', browser: 'ezharness · 浏览器' }
+
+  /* createPopoutWindow 建窗并加载单工具页面；x/y 给了就按落点摆。
+     一律用普通窗口状态（不碰 opacity/focusable/alwaysOnTop/showInactive）：
+     这些状态在 Windows 上会让窗口的合成面进入异常态，表现为内容区白屏——
+     抽屉从不需要它们，所以抽屉从来没这个问题。 */
+  function createPopoutWindow(view, x, y) {
+    const at = Number.isFinite(x) && Number.isFinite(y) ? { x: Math.round(x), y: Math.round(y) } : {}
+    const win = new BrowserWindow({
+      width: 1100,
+      height: 760,
+      title: POPOUT_TITLES[view],
+      autoHideMenuBar: true,
+      webPreferences: {
+        preload: path.join(__dirname, '../preload/index.js'),
+      },
+      ...at,
+    })
+    win.loadURL(`${pageBase()}/?desktop=1&popout=${view}`)
+    return win
+  }
+
+  /* commitPopout 落定弹出窗口：入册 + 关窗回流抽屉（主窗口重开抽屉到
+     该工具页并带回最新状态） */
+  function commitPopout(view, win) {
+    popoutWindows.set(view, win)
+    win.on('closed', () => {
+      popoutWindows.delete(view)
+      const state = view === 'file' ? (popoutState.get(view) ?? null) : null
+      popoutState.delete(view)
+      if (mainWindow && !mainWindow.isDestroyed() && !quitting) {
+        mainWindow.webContents.send('ez:popout-closed', view, state)
+      }
+    })
+  }
+
+  /* 拖拽脱离（tear-off）：拖拽期间不开任何窗口（渲染层只画一个跟随光标的
+     幽灵卡片），松手在落点时**新建一个普通窗口**——窗口状态全程只有默认值，
+     不存在"预览态 → 落定态"的切换。 */
+  ipcMain.handle('ez:popout', (_e, view, stateJson, x, y) => {
+    if (!POPOUT_VIEWS.includes(view)) return
+    /* 已弹出：聚焦既有窗口（mini 图标/AI 拉开抽屉都走这里）。
+       顺带请它重报一次 rect：视图归属只认上报，窗口若被重新显示过，
+       重报即重新认领并按当前结构重绘（用户手点 mini 图标能恢复的正是这件事）。 */
+    const existing = popoutWindows.get(view)
+    if (existing && !existing.isDestroyed()) {
+      existing.show()
+      existing.focus()
+      existing.webContents.send('ez-browser:refresh-rect')
+      return
+    }
+    if (view === 'file' && typeof stateJson === 'string') popoutState.set(view, stateJson)
+    commitPopout(view, createPopoutWindow(view, x, y))
+  })
+  ipcMain.handle('ez:popout-tools', () => [...popoutWindows.keys()])
+  /* 浏览器页的独立窗口（浏览器视图全程归它，见 browser 模块 findOwner） */
+  findBrowserPopout = () => {
+    const w = popoutWindows.get('browser')
+    return w && !w.isDestroyed() ? w : null
+  }
+  /* 弹出窗口启动时取初始状态；之后每次变化上报覆盖（关窗取最新回流） */
+  ipcMain.handle('ez:popout-take-state', (_e, view) => popoutState.get(view) ?? null)
+  ipcMain.on('ez:popout-state', (_e, view, json) => {
+    if (typeof json === 'string') popoutState.set(view, json)
+  })
+  /* 主窗口 → 弹出窗口的外部定位转发（term:// / file:// 点击） */
+  ipcMain.on('ez:popout-signal', (_e, view, name, value) => {
+    const win = popoutWindows.get(view)
+    if (!win || win.isDestroyed()) return
+    win.show()
+    win.focus()
+    win.webContents.send('ez:popout-signal', name, value)
+  })
 }
 
 app.whenReady().then(async () => {
@@ -219,7 +298,7 @@ app.whenReady().then(async () => {
   createMainWindow()
   createTray()
   registerIpc()
-  startBrowserModule({ corePort, getParentWindow: () => mainWindow })
+  startBrowserModule({ corePort, getParentWindow: () => mainWindow, findBrowserOwner: () => findBrowserPopout() })
 })
 
 /* 托盘常驻：全部窗口关闭不退出（退出只走托盘菜单/关闭确认） */

@@ -281,19 +281,11 @@
         </div>
       {:else if seg.b.kind === 'imgload'}
         <div class="imgload" class:reveal={store.batchIds.has(seg.b.uid)} title={seg.b.paths.join('\n')}>
-          {#each seg.b.paths as p, i (p)}
-            {#if seg.b.images[i]}
-              {@const img = seg.b.images[i]}
-              <img src={`data:${img.mimeType};base64,${img.data}`} alt={p} loading="lazy"
-                onclick={() => void store.openBase64Draft(`data:${img.mimeType};base64,${img.data}`, p.split(/[/\\]/).pop() || p)}
-                title="转为画板草稿编辑" />
-            {:else}
-              <!-- 实时路径：工具结果只有路径，缩略图走工作目录文件服务 -->
-              <img src={`/api/workspace/file?path=${encodeURIComponent(p)}`} alt={p} loading="lazy"
-                onclick={() => store.openFileAt(p)}
-                onerror={(e) => ((e.currentTarget as HTMLImageElement).style.display = 'none')}
-                title="点击在画板编辑（保存写回）" />
-            {/if}
+          {#each seg.b.paths as p (p)}
+            <img src={`/api/workspace/file?path=${encodeURIComponent(p)}`} alt={p} loading="lazy"
+              onclick={() => store.openFileAt(p)}
+              onerror={(e) => ((e.currentTarget as HTMLImageElement).style.display = 'none')}
+              title="点击打开文件（可编辑保存写回）" />
           {/each}
           <span class="label">已加载上下文</span>
         </div>

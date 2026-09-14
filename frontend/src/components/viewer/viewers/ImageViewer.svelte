@@ -1,13 +1,12 @@
 <script lang="ts">
   /*
-  图片查看器（画板）：MagicBoard 的资源化包装。有 path = 编辑真身
-  （一切皆资源：保存 Ctrl+S 直接写回原路径，缩略图版本 bump 即刻刷新
-  ——历史 chips 同步更新，引用同一资源处处显示最新；「添加到对话」
-  只引用路径不写盘，想改盘点保存）；无 path = 画板草稿（「添加到
-  对话」成内存 chip，发送时才 stash 持久化，tag 匹配替换原 chip）。
+  图片查看器（画板）：MagicBoard 的资源化包装，一切皆资源——每张图都有
+  真身路径（画笔钮草稿也是 tmp 下的一张图片）。画布改动防抖自动写回原
+  路径（Ctrl+S 立即写回），缩略图版本 bump 即刻刷新（历史 chips 同步
+  更新，引用同一资源处处显示最新）；「添加到对话」先写回再回流路径 chip。
   */
 
-  import { onMount } from 'svelte'
+  import { onDestroy, onMount } from 'svelte'
   import { api } from '../../../lib/api'
   import { fileBaseName } from '../../../lib/textfile'
   import { store } from '../../../lib/store.svelte'
@@ -24,10 +23,7 @@
   let savedAt = $state('')
 
   onMount(async () => {
-    if (!tab.path) {
-      srcFile = tab.draftSource ?? null
-      return
-    }
+    if (!tab.path) return
     loading = true
     try {
       const r = await fetch('/api/workspace/file?path=' + encodeURIComponent(tab.path), { cache: 'no-store' })
@@ -41,21 +37,54 @@
     }
   })
 
-  /* 保存写回真身（Ctrl+S）：合成当前画布覆盖原路径 */
-  async function save() {
-    if (!tab.path || !board || saving) return
+  /* 写回真身（合成图覆盖原路径）：保存钮与「添加到对话」共用 */
+  async function writeBack(f: File): Promise<boolean> {
+    if (!tab.path || saving) return false
     saving = true
     try {
-      const f = await board.exportFile()
       await api.saveBin(tab.path, f)
       store.bumpImg(tab.path)
       savedAt = new Date().toTimeString().slice(0, 5)
+      dirty = false
+      return true
     } catch (e) {
       store.lastStatus = `图片保存失败：${(e as Error).message}`
+      return false
     } finally {
       saving = false
     }
   }
+
+  /* 保存写回真身（Ctrl+S） */
+  async function save() {
+    if (!tab.path || !board) return
+    await writeBack(await board.exportFile())
+  }
+
+  /* 改动自动写回（防抖）：磁盘始终是最新真身——拖出为独立窗口、关窗回流、
+     切换 tab 都不会丢未经手保存的笔画，也不需要跨窗口的额外状态交接 */
+  let saveTimer: ReturnType<typeof setTimeout> | undefined
+  let dirty = false // 有改动未写回（卸载时补写、以及避免用旧画布覆盖别人写的新图）
+  function scheduleSave() {
+    dirty = true
+    clearTimeout(saveTimer)
+    saveTimer = setTimeout(() => {
+      saveTimer = undefined
+      if (saving) return scheduleSave() // 上一次写回未回来：稍后重试，别丢这次改动
+      void save()
+    }, 400)
+  }
+
+  onDestroy(() => {
+    clearTimeout(saveTimer)
+    /* 关 tab / 卸载时把还在防抖窗口里的改动补写回。只在脏时写：跨窗口
+       回流会重挂本组件，干净画布写回会覆盖另一个窗口刚写的新图 */
+    if (!dirty) return
+    const b = board
+    const path = tab.path
+    if (!b || !path || saving) return
+    void b.exportFile().then((f) => api.saveBin(path, f)).catch(() => {})
+  })
 
   function onKey(e: KeyboardEvent) {
     if (!active) return
@@ -65,14 +94,12 @@
     }
   }
 
-  /* 添加到对话：真身 = 路径引用 chip（不写盘）；草稿 = 内存 chip
-  （发送时才 stash），tag/source 供 ChatView 原位替换 */
-  function addToChat(f: File) {
-    if (tab.path) {
-      store.pendingAttachments = [{ name: fileBaseName(tab.path), path: tab.path }]
-    } else {
-      store.pendingAttachments = [{ name: f.name, file: f, tag: tab.draftTag ?? '', source: tab.draftSource ?? null }]
-    }
+  /* 添加到对话：先把当前画布写回真身（onDone 给的就是最新合成图），
+     再回流路径 chip——不写盘会让 AI 读到旧图 */
+  async function addToChat(f: File) {
+    if (!tab.path) return
+    if (!(await writeBack(f))) return
+    store.pendingAttachments = [{ name: fileBaseName(tab.path), path: tab.path }]
   }
 </script>
 
@@ -85,7 +112,7 @@
     <div class="veil">加载中…</div>
   {:else}
     <div class="canvas-host">
-      <MagicBoard bind:this={board} {active} source={srcFile} doneLabel="添加到对话" onDone={(f) => addToChat(f)} />
+      <MagicBoard bind:this={board} {active} source={srcFile} doneLabel="添加到对话" onDone={(f) => void addToChat(f)} onChange={scheduleSave} />
     </div>
   {/if}
   {#if tab.path}
@@ -100,7 +127,7 @@
         </svg>
       </button>
       <span class="stat">
-        {#if saving}<i>保存中…</i>{:else if savedAt}<i>已写回 {savedAt}</i>{:else}<i>编辑后保存写回原文件 · 添加到对话不写盘</i>{/if}
+        {#if saving}<i>保存中…</i>{:else if savedAt}<i>已写回 {savedAt}</i>{:else}<i>改动自动写回原文件 · Ctrl+S 立即写回</i>{/if}
       </span>
     </div>
   {/if}

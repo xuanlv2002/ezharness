@@ -14,10 +14,11 @@ import (
 	"github.com/xuanlv2002/ezloop/types"
 )
 
-/* TermIO 是共享终端服务的能力面(service.TerminalService 实现)。 */
+/* TermIO 是共享终端服务的能力面(service.TerminalService 实现)。
+ctx 透传本轮上下文:用户停止时打断在途的等静默等待。 */
 type TermIO interface {
 	/* StartTerm 新建终端(描述必填),可选立即运行命令并等静默返回输出 */
-	StartTerm(desc, command string, quietMs, timeoutMs int) (string, error)
+	StartTerm(ctx context.Context, desc, command string, quietMs, timeoutMs int) (string, error)
 	/* Send 发送命令并等输出静默,返回本次新增输出(游标推进) */
 	Send(ctx context.Context, id, cmd string, quietMs, timeoutMs int) (string, error)
 	/* ReadTerm 游标式读取新输出(读即消费) */
@@ -62,7 +63,7 @@ func SharedTerm(t TermIO) []types.Tool {
 				"desc 是终端描述,用于 term_list 与看板展示。需要长驻程序、交互式程序、想让用户看到过程时用本工具;"+
 				"一次性无状态命令优先用 terminal 工具(更快)。",
 			func(ctx context.Context, in *startArgs) (string, error) {
-				return t.StartTerm(in.Desc, in.Command, in.QuietMs, in.TimeoutMs)
+				return t.StartTerm(ctx, in.Desc, in.Command, in.QuietMs, in.TimeoutMs)
 			}),
 		types.NewTool("term_send",
 			"向终端发送命令并等待输出静默后返回本次新增输出。与用户看板是同一会话:输出对用户实时可见,cd/环境变量跨命令有效。"+

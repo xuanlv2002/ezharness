@@ -2,6 +2,7 @@
   import { onMount } from 'svelte'
   import pkg from '../package.json'
   import { store } from './lib/store.svelte'
+  import { filePane } from './lib/filePaneState'
   import Sidebar from './components/Sidebar.svelte'
   import TitleBar from './components/TitleBar.svelte'
   import ChatView from './components/ChatView.svelte'
@@ -13,11 +14,42 @@
   import SecurityView from './components/SecurityView.svelte'
   import SettingsView from './components/SettingsView.svelte'
   import WorkspaceDrawer from './components/board/WorkspaceDrawer.svelte'
+  import TerminalTab from './components/board/TerminalTab.svelte'
+  import ResourcePane from './components/viewer/ResourcePane.svelte'
+  import BrowserPane from './components/board/BrowserPane.svelte'
 
   let view = $state<'chat' | 'models' | 'memory' | 'knowledge' | 'tools' | 'mcp' | 'security' | 'settings'>('chat')
   let expanded = $state(false)
 
+  /* 弹出窗口（ez:popout 创建）：只渲染单个工具 pane 的轻布局，无会话/
+     SSE（三个 pane 均不依赖 bootstrap），系统标题栏负责宽高/全屏 */
+  const popoutView = new URLSearchParams(location.search).get('popout')
+  const ez = (window as any).ez
+
+  /* 资源页弹出侧：状态变化防抖上报主进程（关窗回流取最新快照） */
+  let pushTimer: ReturnType<typeof setTimeout> | undefined
+  function pushFileState(json: string) {
+    clearTimeout(pushTimer)
+    pushTimer = setTimeout(() => ez?.popout?.push('file', json), 300)
+  }
+
   onMount(() => {
+    if (popoutView) {
+      /* 弹出窗口：装载初始状态 + 接收主窗口转发的外部定位请求 */
+      if (popoutView === 'file') {
+        void ez?.popout?.take('file').then((json: string | null) => {
+          if (json) filePane.restore(json)
+        })
+      }
+      ez?.popout?.onSignal((name: string, value: string) => {
+        if (name === 'file') store.fileFocus = value
+        else if (name === 'term') store.termFocus = value
+      })
+      return
+    }
+    /* 主窗口：弹窗关窗回流（重开抽屉带回状态）+ 弹出清单同步 */
+    ez?.popout?.onClosed((view: string, stateJson: string | null) => store.popoutClosed(view, stateJson))
+    void store.syncPopoutTools()
     void store.bootstrap().catch((e) => {
       console.error('bootstrap 失败', e)
       store.lastStatus = `启动失败：${(e as Error).message}`
@@ -36,10 +68,21 @@
 
   // 进入对话页即刷新：MCP/记忆等页面改动开关或 skill 后，右上角状态卡实时反映
   $effect(() => {
-    if (view === 'chat') void store.refreshStatus()
+    if (!popoutView && view === 'chat') void store.refreshStatus()
   })
 </script>
 
+{#if popoutView}
+  <div class="popout-pane">
+    {#if popoutView === 'term'}
+      <TerminalTab active={true} />
+    {:else if popoutView === 'file'}
+      <ResourcePane active={true} push={pushFileState} />
+    {:else if popoutView === 'browser'}
+      <BrowserPane active={true} />
+    {/if}
+  </div>
+{:else}
 <div class="shell">
   <TitleBar />
   <div class="app" class:expanded>
@@ -74,8 +117,17 @@
   <span>·</span>
   <a href="https://github.com/xuanlv2002/ezloop" target="_blank" rel="noreferrer">powered by ezloop</a>
 </footer>
+{/if}
 
 <style>
+  /* 弹出窗口的单工具布局：撑满（padding 对齐抽屉 body） */
+  .popout-pane {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    min-height: 0;
+    padding: 10px 12px 12px 16px;
+  }
   .shell {
     display: flex;
     flex-direction: column;

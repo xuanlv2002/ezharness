@@ -357,7 +357,7 @@ export const api = {
      开窗由调用方执行：desktop 壳 IPC 子窗口 / web 新标签页 */
   openApp: (name: string) => post<{ ok: boolean; path: string; title: string }>('/api/apps/open', { name }),
 
-  /* 工作目录文本文件保存（file:// 编辑器）；沙箱同 /api/workspace/file */
+  /* 文本文件保存（file:// 编辑器）；按绝对路径写，与 /api/workspace/file 同源 */
   saveFile: (path: string, content: string) =>
     post<{ ok: boolean }>('/api/workspace/save', { path, content }),
 

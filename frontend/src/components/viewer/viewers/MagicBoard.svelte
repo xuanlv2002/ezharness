@@ -16,11 +16,13 @@
     active = false,
     doneLabel = '添加到聊天',
     onDone,
+    onChange,
   }: {
     source?: File | null
     active?: boolean
     doneLabel?: string
     onDone?: (f: File) => void
+    onChange?: () => void
   } = $props()
 
   /* ── 常量与类型 ── */
@@ -383,6 +385,7 @@
       panning = null
       return
     }
+    const changed = drawing || !!grab
     if (drawing) {
       const el = elements[elements.length - 1]
       if (el) drawEl(bctx(), el) // 笔画定稿进静态层
@@ -393,6 +396,7 @@
     }
     drawing = false
     grab = null
+    if (changed) onChange?.() // 平移只是视图变化，不算内容改动
   }
 
   function translate(el: El, dx: number, dy: number) {
@@ -433,6 +437,7 @@
       elements = [...elements, { id: nextId++, kind: 'text', color, size, x: t.x, y: t.y, text: v }]
     }
     refresh()
+    onChange?.()
   }
 
   function textInputStyle() {
@@ -465,6 +470,7 @@
     elements = []
     selected = null
     refresh()
+    onChange?.()
   }
 
   function delSelected() {
@@ -473,6 +479,7 @@
     elements = elements.filter((e) => e.id !== selected)
     selected = null
     refresh()
+    onChange?.()
   }
 
   /* ── 导出与生命周期 ── */

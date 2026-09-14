@@ -25,11 +25,11 @@ export function kindOf(path: string): ResourceKind {
 
 /* ResTab 是资源查看器 tab 的数据单元：文本系（text/markdown/html 原文）
 沿用「单编辑器 + tab 状态数据化」——编辑内容/磁盘状态都存这里，
-单实例重绑；图片 tab 是 per-tab 实例（画布状态不可数据化）。 */
+单实例重绑；图片 tab 是 per-tab 实例（画布状态不可数据化，编辑即写回真身）。 */
 export interface ResTab {
-  key: string // normFileKey(path) 或 'draft'（画板草稿全局唯一）
+  key: string // normFileKey(path)
   kind: ResourceKind
-  path?: string // 草稿无真身路径
+  path?: string
   name: string
   /* 文本系字段（image/pdf/fallback 不用） */
   content: string
@@ -39,10 +39,9 @@ export interface ResTab {
   warn: string
   savedAt: string
   lastMod: string
-  /* 画板草稿字段（仅 kind=image 且无 path） */
-  draftSource?: File | null // 续编底图
-  draftTag?: string // 来源附件下标（添加到对话时替换原 chip）
-  draftSeq?: number // 递增 = 画布重建
+  /* 跨窗口回流后递增：图片 tab 据此重挂（画布状态在内存里，不重挂就
+     读不到另一个窗口写回的新图） */
+  rev?: number
 }
 
 export const MAX_BYTES = 2 << 20 // 与后端 maxSaveContent 一致

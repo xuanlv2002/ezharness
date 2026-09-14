@@ -1,7 +1,9 @@
 <script lang="ts">
+  import { onMount } from 'svelte'
   import { api } from '../../lib/api'
   import { fileBaseName, normFileKey } from '../../lib/textfile'
   import { store } from '../../lib/store.svelte'
+  import { filePane } from '../../lib/filePaneState'
   import { kindOf, MAX_BYTES, type ResTab } from './registry'
   import KindIcon from './KindIcon.svelte'
   import TextViewer from './viewers/TextViewer.svelte'
@@ -14,14 +16,16 @@
   /*
   工作区抽屉·资源查看器（file:// 的消费端，通用框架）：多 tab 按扩展名
   路由到各资源专属 viewer（registry 单一来源，新资源=新组件+此处挂载）。
-  磁盘是唯一真身——一切皆资源：文本系（text/md/html 原文）单编辑器+
-  tab 状态数据化（单实例重绑）；图片 tab per-tab 实例保活（画板画布
-  状态不可数据化）。状态条统一：保存/Ctrl+S、添加到对话（纯文件引用
-  chip，经 <reference_file> 告知模型）。磁盘变更：激活时每 2s HEAD
-  轮询 Last-Modified（AI 改盘后），干净 tab 自动重载，dirty tab 只提示。
+  磁盘是唯一真身——一切皆资源（画笔钮草稿也是 tmp 下的一张图片）：
+  文本系（text/md/html 原文）单编辑器+tab 状态数据化（单实例重绑）；
+  图片 tab per-tab 实例保活（画布状态不可数据化，改动防抖自动写回）。
+  状态条统一：保存/Ctrl+S、添加到对话（纯文件引用 chip，经
+  <reference_file> 告知模型）。磁盘变更：激活时每 2s HEAD 轮询
+  Last-Modified（AI 改盘后），干净 tab 自动重载，dirty tab 只提示。
   */
 
-  let { active = false }: { active?: boolean } = $props()
+  /* push 仅弹出窗口传入：状态变化即上报主进程（关窗回流取最新快照） */
+  let { active = false, push }: { active?: boolean; push?: (json: string) => void } = $props()
 
   let tabs = $state<ResTab[]>([])
   let current = $state('')
@@ -42,28 +46,42 @@
     }
   }
 
+  /* 跨窗口快照：tab 状态（含当前选中）整体搬运——草稿也是一张 tmp 图片，
+     与普通资源走同一条路 */
+  function serializeTabs(): string {
+    return JSON.stringify({ tabs, current })
+  }
+
+  function restoreTabs(json: string) {
+    try {
+      const data = JSON.parse(json) as { tabs?: Partial<ResTab>[]; current?: string }
+      const prev = new Map(tabs.map((t) => [t.key, t]))
+      /* rev 递增：图片 tab 重挂按盘重读——另一个窗口写回的新图只落在
+         磁盘上，本窗口的内存画布是旧的 */
+      tabs = (data.tabs ?? []).map((t) => blankTab({ ...t, loading: false, rev: (prev.get(t.key ?? '')?.rev ?? 0) + 1 }))
+      if (!tabs.some((t) => t.key === current)) current = data.current || tabs[0]?.key || ''
+    } catch {
+      /* 快照损坏：保持现状 */
+    }
+  }
+
+  /* 本窗口唯一的 ResourcePane 实例向状态胶囊注册实现（弹出方序列化 /
+     弹出窗口与回流方恢复） */
+  onMount(() => {
+    filePane.serialize = serializeTabs
+    filePane.restore = restoreTabs
+  })
+
+  $effect(() => {
+    if (push) push(serializeTabs())
+  })
+
   /* 外部定位请求（supper_url file:// 点击 / 资源入口）：文件按需即开 */
   $effect(() => {
     const want = store.fileFocus
     if (!want) return
     store.fileFocus = ''
     void openTab(want)
-  })
-
-  /* 画板草稿（画笔钮/草稿 chip 续编）：草稿 tab 全局唯一，重进即以
-  chip 当前内容重建（draftSeq 驱动 {#key}） */
-  $effect(() => {
-    const d = store.draftOpen
-    if (!d) return
-    store.draftOpen = null
-    const node = blankTab({
-      key: 'draft', kind: 'image', name: '画板草稿',
-      draftSource: d.source, draftTag: d.tag, draftSeq: d.seq,
-    })
-    const i = tabs.findIndex((t) => t.key === 'draft')
-    if (i >= 0) tabs[i] = node
-    else tabs = [...tabs, node]
-    current = 'draft'
   })
 
   /* 磁盘变更轮询：仅资源页激活且当前 tab 是文本系时进行 */
@@ -91,7 +109,7 @@
       try {
         const r = await fetch('/api/workspace/file?path=' + encodeURIComponent(cur.path!), { cache: 'no-store' })
         if (!r.ok) {
-          cur.err = `文件读取失败（${r.status}）——仅支持工作目录内的文件`
+          cur.err = `文件读取失败（${r.status}）`
           return
         }
         const clen = Number(r.headers.get('content-length') || 0)
@@ -248,10 +266,11 @@
         <p class="hint">对话中出现 <code>文件名</code> 入口时点击即可打开 · 画笔钮可新建图片草稿</p>
       </div>
     {/if}
-    <!-- 图片 tab：per-tab 实例保活（画板画布状态不可数据化） -->
+    <!-- 图片 tab：per-tab 实例保活（画板画布状态不可数据化）；
+         rev 变化 = 跨窗口回流，重挂按盘重读 -->
     {#each imageTabs as t (t.key)}
       <div class="img-slot" class:hidden={current !== t.key}>
-        {#key t.draftSeq ?? 0}
+        {#key t.rev ?? 0}
           <ImageViewer tab={t} active={active && current === t.key} />
         {/key}
       </div>

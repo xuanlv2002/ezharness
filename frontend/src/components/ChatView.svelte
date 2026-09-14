@@ -80,22 +80,18 @@
     attachments = []
   }
 
-  /* 待回流附件（查看器「添加到对话」/拖入暂存）：草稿带 tag 时
-  原位替换来源 chip（身份一致校验：file 引用相等），否则追加。本页
-  未挂载时积压在 store，回对话页后首跑消费，跨页不丢。 */
+  /* 待回流附件（查看器「添加到对话」/拖入暂存）：同路径替换已有 chip
+  （再次添加同一张图不会堆叠），否则追加。本页未挂载时积压在 store，
+  回对话页后首跑消费，跨页不丢。 */
   $effect(() => {
     const list = store.pendingAttachments
     if (!list?.length) return
     store.pendingAttachments = null
     let next = [...attachments]
     for (const p of list) {
-      const i = /^\d+$/.test(p.tag ?? '') ? Number(p.tag) : -1
-      const src = p.source
-      if (i >= 0 && src && next[i]?.file === src) {
-        next[i] = { name: p.name, path: p.path, file: p.file }
-      } else {
-        next = [...next, { name: p.name, path: p.path, file: p.file }]
-      }
+      const i = p.path ? next.findIndex((a) => a.path === p.path) : -1
+      if (i >= 0) next[i] = p
+      else next = [...next, p]
     }
     attachments = next
   })
@@ -153,7 +149,6 @@
       onEditImage={(i) => {
         const a = attachments[i]
         if (a?.path) store.openFileAt(a.path)
-        else if (a?.file) store.openDraftImage(a.file, String(i))
       }}
       onAddFiles={(fs) => void addFiles(fs)}
       onClearFiles={clearAttachments}
@@ -175,8 +170,9 @@
       onDismiss={(id) => store.dismissNotice(id)}
     />
     <div class="entries">
-      <!-- 工具入口：每类资源一个独立 mini 钮（开着且为该工具页时高亮） -->
-      <button class="entry" class:active={store.termDrawerOpen && store.drawerTool === 'term'}
+      <!-- 工具入口：每类资源一个独立 mini 钮（开着且为该工具页、或已弹出
+           为独立窗口时高亮；已弹出时点击 = 聚焦窗口） -->
+      <button class="entry" class:active={(store.termDrawerOpen && store.drawerTool === 'term') || store.popoutTools.includes('term')}
         onclick={() => store.toggleDrawerTool('term')} title="共享终端（用户与 AI 共写）">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
           <path d="M5 8l4 4-4 4" />
@@ -185,7 +181,7 @@
       </button>
       {#if (window as any).ez?.browser}
         <!-- 共享浏览器：desktop 资产，抽屉页（AI start 自动展开）；web 端不显示 -->
-        <button class="entry" class:active={store.termDrawerOpen && store.drawerTool === 'browser'}
+        <button class="entry" class:active={(store.termDrawerOpen && store.drawerTool === 'browser') || store.popoutTools.includes('browser')}
           onclick={() => store.toggleDrawerTool('browser')} title="共享浏览器（AI 操控 · 实时共见）">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
             <circle cx="12" cy="12" r="9" />
@@ -193,7 +189,7 @@
           </svg>
         </button>
       {/if}
-      <button class="entry" class:active={store.termDrawerOpen && store.drawerTool === 'file'}
+      <button class="entry" class:active={(store.termDrawerOpen && store.drawerTool === 'file') || store.popoutTools.includes('file')}
         onclick={() => store.toggleDrawerTool('file')} title="资源（查看 · 编辑 · 发给 AI——文本/图片/网页等）">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
           <path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" />
