@@ -87,7 +87,7 @@ flowchart TB
         G["gin server<br/>静态页面 · /api/* · SSE · WS"]
         A["agent 引擎<br/>ezloop · browser_*/term_* 工具面"]
     end
-    FE["frontend/ · Svelte 双入口<br/>主应用 + 浏览器窗口页"]
+    FE["frontend/ · Svelte 单入口 SPA<br/>主窗与抽屉弹窗同一份页面（query 分流）"]
     DESKTOP -- "spawn + health" --> CORE
     W -- "loadURL(core 伺服页面)" --> G
     BR["🌐 浏览器(web 端)"] --> G
@@ -115,7 +115,7 @@ flowchart TB
 
 ## 深入设计
 
-### 树状会话（[docs/sessions.md](docs/sessions.md)）
+### 树状会话（[docs/md/session.md](docs/md/session.md)）
 
 会话数据组织成一颗树：**节点是 session（一次换代内的完整对话库），线是用户视角的「会话」**。树对用户只露两个操作——
 
@@ -131,7 +131,7 @@ flowchart LR
 - **线间并发**：切线不取消后台分支的运行轮，切回时重建现场
 - trim 是模型侧上下文整理（就地折叠不换库），archive 是用户侧会话树管理（换代封存）
 
-### 上下文工程（[docs/context.md](docs/context.md)）
+### 上下文工程（[docs/md/context.md](docs/md/context.md)）
 
 一条线同一时刻只有一个活跃上下文（system + 消息库视图）：
 
@@ -147,11 +147,11 @@ flowchart LR
 - **决策链路**：四档审批策略（ask/black/white/auto，人机与内部工具恒免审），DecisionCard 嵌时间线，断线可重放
 - **全局通知栏**：汇总所有分支（含后台分支与分身）的未决请求——agent 需要人时一定能找到人；内联直接决策
 - **共享终端**：人机共用同一个真实 shell（ConPTY 全局池），`readMark` 单游标读即消费；用户手敲的命令进 agent_status——agent 每轮知道你在终端干了什么
-- **共享浏览器**：desktop 内嵌真实 Chromium（每标签独立视图），AI 经桥控制、用户原生接管同一页面；`browser_start` 自动弹出共见
+- **共享浏览器**：desktop 内嵌真实 Chromium（每标签独立视图），AI 经桥控制、用户原生接管同一页面；`browser_tab`（action=open）自动展开抽屉页共见
 
 ## 开发
 
-前置依赖：[Go](https://go.dev/dl/)、[Node.js](https://nodejs.org/)（含 npm），以及本地 [ezloop](https://github.com/xuanlv2002/ezloop) 仓库（`core/go.mod` replace 指向 `../../ezloop`）。electron 下载已配 npmmirror 镜像（`desktop/.npmrc`），无需手动设置。
+前置依赖：[Go](https://go.dev/dl/)、[Node.js](https://nodejs.org/)（含 npm）。要改 [ezloop](https://github.com/xuanlv2002/ezloop) 本身时（发布版从模块代理拉取，够用则不必克隆），`core/go.mod` 用 `replace` 指向本地 ezloop 仓库。electron 下载已配 npmmirror 镜像（`desktop/.npmrc`），无需手动设置。
 
 版本单源 `script/version.yaml`（release.bat 同步页脚与打包版本）。脚本（[script/](script/)）从任意目录调用均可：
 
@@ -166,7 +166,7 @@ script\release.bat       # 发布打包 -> release\v<版本>\ 安装包 + 绿色
 ## 文档
 
 - **[docs/index.html](docs/index.html)** — 项目主页（设计理念 · 树状会话 · 上下文工程 · 人机交互 · 架构与构建）
-- [docs/md/](docs/md/) — 深读底稿：architecture / session / runtime / frontend / hooks
+- [docs/md/](docs/md/) — 深读底稿：architecture / context / session / runtime / frontend / hooks
 - [docs/interaction.md](docs/interaction.md) — 以人为核心的人机交互设计
 - [docs/build.md](docs/build.md) — 构建方案
 - [AGENTS.md](AGENTS.md) — 开发备忘与踩坑清单

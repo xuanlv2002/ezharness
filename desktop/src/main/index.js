@@ -62,7 +62,11 @@ function startCore() {
   if (process.env.PORTABLE_EXECUTABLE_DIR) {
     args.push('--root', process.env.PORTABLE_EXECUTABLE_DIR)
   }
-  coreProc = spawn(exe, args, { cwd: configDir(), stdio: 'inherit' })
+  /* windowsHide：让 core 拿到一个隐藏控制台（非 Windows 忽略）——它 spawn 的
+     控制台程序（terminal 的 cmd.exe、taskkill、MCP server）继承该控制台，否则
+     Windows 会给每个子进程新开一个可见控制台，黑框一闪。stdio 仍走 inherit，
+     dev 下 core 日志照常出现在启动它的控制台里 */
+  coreProc = spawn(exe, args, { cwd: configDir(), stdio: 'inherit', windowsHide: true })
   coreProc.on('exit', () => {
     if (!quitting) {
       console.error('core 进程退出，桌面壳随之退出')

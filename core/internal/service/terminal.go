@@ -19,6 +19,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -325,15 +326,11 @@ func (s *TerminalService) StartTerm(ctx context.Context, desc, command string, q
 		return fmt.Sprintf("[终端 #%s %q 已创建(分支绑定,用户可在看板查看接管)]\n后续用 term_send(termId=%s) 发送命令", info.ID, info.Name, info.ID), nil
 	}
 
-	payload := command
-	if !isRawControl(command) {
-		payload += "\r"
-	}
 	sess.mu.Lock()
 	sess.lastOut = time.Now()
 	gen := sess.ring.mark()
 	sess.mu.Unlock()
-	s.writeAI(sess, command, []byte(payload))
+	s.writeAI(sess, command, termPayload(command))
 
 	out, exited, timedOut := waitQuiet(ctx, sess, gen, quiet, timeout)
 	sess.mu.Lock()
@@ -349,6 +346,46 @@ func (s *TerminalService) StartTerm(ctx context.Context, desc, command string, q
 		note = fmt.Sprintf("[等待超时(>%ds),命令可能仍在运行,可用 term_read(termId=%s) 续读]", timeout/1000, info.ID)
 	}
 	return renderTermOutput(head, out, note), nil
+}
+
+/*
+	termPayload 把待写入 PTY 的文本转成字节：先还原 \uXXXX 转义，纯控制
+
+输入不补回车。模型按工具说明写 \u0003 表示 Ctrl+C——那是六个字符的文本
+转义，不还原就会被 shell 当成命令执行（报"不是内部或外部命令"），中断
+长任务失效。
+*/
+func termPayload(cmd string) []byte {
+	payload := decodeEscapes(cmd)
+	if !isRawControl(payload) {
+		payload += "\r"
+	}
+	return []byte(payload)
+}
+
+/*
+decodeEscapes 只还原 \u + 4 位十六进制这一种转义（大小写不限）。
+
+其余反斜杠一律原样保留：Windows 路径与 UNC（\\server\share）不能被改写。
+*/
+func decodeEscapes(s string) string {
+	if !strings.Contains(s, `\u`) {
+		return s
+	}
+	var b strings.Builder
+	b.Grow(len(s))
+	for i := 0; i < len(s); {
+		if s[i] == '\\' && i+6 <= len(s) && s[i+1] == 'u' {
+			if v, err := strconv.ParseUint(s[i+2:i+6], 16, 32); err == nil {
+				b.WriteRune(rune(v))
+				i += 6
+				continue
+			}
+		}
+		b.WriteByte(s[i])
+		i++
+	}
+	return b.String()
 }
 
 /*
@@ -401,11 +438,6 @@ func (s *TerminalService) Send(ctx context.Context, id, cmd string, quietMs, tim
 	if err != nil {
 		return "", err
 	}
-	payload := cmd
-	if !isRawControl(cmd) {
-		payload += "\r"
-	}
-
 	sess.mu.Lock()
 	sess.lastOut = time.Now() // 静默计时从写入后起算(命令回显/结果未出时不误判)
 	gen := sess.ring.mark()
@@ -413,7 +445,7 @@ func (s *TerminalService) Send(ctx context.Context, id, cmd string, quietMs, tim
 		gen = sess.readMark
 	}
 	sess.mu.Unlock()
-	s.writeAI(sess, cmd, []byte(payload))
+	s.writeAI(sess, cmd, termPayload(cmd))
 
 	out, exited, timedOut := waitQuiet(ctx, sess, gen, quiet, timeout)
 	sess.mu.Lock()

@@ -4,6 +4,8 @@ rem chain: frontend build -> copy dist to core/web/dist -> go build (bin/) -> el
 rem output:
 rem   release\v<version>\ezharness-v<version>-setup.exe   NSIS installer
 rem   release\v<version>\ezharness-v<version>.exe         portable exe
+rem NOTE: keep this file PURE ASCII -- cmd parses .bat in the OEM codepage, so a UTF-8
+rem comment is decoded into bytes that can swallow the line end and run as a command
 setlocal EnableExtensions
 cd /d "%~dp0.."
 
@@ -26,8 +28,11 @@ powershell -NoProfile -Command "Remove-Item -Recurse -Force core/web/dist -Error
 echo [release] building core...
 if not exist bin mkdir bin
 cd core
-rem -H windowsgui: core 以 GUI 子系统编译，桌面壳（无控制台）spawn 它时不会弹出空终端窗口
-go build -ldflags "-H windowsgui" -o ..\bin\ezharness-core.exe .
+rem build core as a console-subsystem app: do NOT add -H windowsgui. A GUI-subsystem core
+rem has no console, so each console child it spawns (terminal's cmd.exe, taskkill, MCP
+rem server) gets its own visible console window and flashes a black box. The desktop shell
+rem instead spawns core with windowsHide, so core holds one hidden console that children inherit
+go build -o ..\bin\ezharness-core.exe .
 if errorlevel 1 exit /b 1
 cd ..
 

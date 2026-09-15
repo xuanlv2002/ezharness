@@ -36,9 +36,9 @@ ezharness 基于 ezloop 开发。**核心原则：所有内容封装到 hook 和
 上下文里的消息分两类（完整清单见 runtime 文档）：
 
 - **每轮固定**：用户输入、`<agent_status>`（水位/时间快照）、`<end_reason>`（轮末收尾）——固定节奏的系统同步
-- **按需插入**：`<res_change>`（有资源变更才有）、`<upload_file>`（有附件才有）、`<image_loaded>`（读图才有）、`<context_trim>`（整理时才有）——事件驱动，无事件零消息
+- **按需插入**：`<res_change>`（有资源变更才有）、`<reference_file>`（有引用才有）、`<image_loaded>`（读图才有）、`<context_trim>`（整理时才有）——事件驱动，无事件零消息
 
-**按需原则**：新能力告知模型一律走按需消息（有事实才说话），不往固定消息里塞行。标签风格统一：`<tag>\n- 内容行\n</tag>`（res_change / upload_file / image_loaded 同款），前端按标签识别、实时与历史两条渲染路径同格式。
+**按需原则**：新能力告知模型一律走按需消息（有事实才说话），不往固定消息里塞行。标签风格统一（`<tag>` 包裹结构化内容，行式清单用 `- ` 前缀）：res_change / reference_file / image_loaded / context_trim 同款，前端按标签识别、实时与历史两条渲染路径同格式。
 
 ## 四、系统提醒的归位：remind hook（已实施）
 
@@ -62,7 +62,7 @@ remind hook（per-session；internal/hooks/remind.go + reschange.go）
 
 | 归属 | hook | 依据 |
 |---|---|---|
-| ezharness（宿主域） | remind（基线 ResSnapshot 在 Store）、trim（水位/折叠档案）、sessionstore、uploadfile、guard、trace、sysprompt | 需要 session 状态（基线/历史/水位/SysPrompt） |
+| ezharness（宿主域） | remind（基线 ResSnapshot 在 Store）、trim（水位/折叠档案）、sessionstore、reference_file、guard、trace、sysprompt | 需要 session 状态（基线/历史/水位/SysPrompt） |
 | ezloop（可复用组件） | filetools（工具+图片链）、skilltool、mcp、approve、askuser、task、offload、contextfix | 纯领域工具，参数化注入即用 |
 
 skilltool 已下沉（`ext/hook/skilltool`，技能目录布局知识随迁 `skill.DirOf`）；skill/mcp hook 不做状态变更检测——一旦检测就耦合宿主基线，丧失可下沉性（这正是变更检测归 remind 的原因）。
