@@ -38,7 +38,7 @@ type startArgs struct {
 
 type sendArgs struct {
 	TermID    string `json:"termId,omitempty" desc:"目标终端 id(term_list 查看),省略=最近使用的终端"`
-	Command   string `json:"command" desc:"要发送的命令或原始键入(\\u0003=Ctrl+C;纯控制输入不会自动补回车)"`
+	Command   string `json:"command" desc:"要发送的命令或原始键入(\u0003=Ctrl+C 中断当前命令;纯控制输入不会自动补回车)"`
 	QuietMs   int    `json:"quietMs,omitempty" desc:"输出静默多少毫秒后认为命令完成,默认 800"`
 	TimeoutMs int    `json:"timeoutMs,omitempty" desc:"总等待上限毫秒,默认 30000,超时返回已得输出并提示续读"`
 }

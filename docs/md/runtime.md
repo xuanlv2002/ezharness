@@ -20,7 +20,7 @@ sequenceDiagram
 
     E->>E: AppendMessage(input)  ← 用户输入入史
     E->>HK: startHooks[].OnStart（按序）
-    Note over HK: sys(system) → contextfix(修理) → filetools(注册工具)<br/>→ skilltool → remind(变更段 res_change? + 快照段 agent_status)<br/>→ uploadfile(路径告知?) → approver/asker/task/mcp(注册)<br/>→ offload/guard/trim/trace/sessionstore(就位)
+    Note over HK: sys(system) → trace(观测层，须在所有会 Skip 短路的 hook 之前)<br/>→ contextfix(修理) → filetools(注册工具) → skilltool<br/>→ remind(变更段 res_change? + 快照段 agent_status) → reference_file(路径告知?)<br/>→ approver/asker/task/mcp(注册) → offload/guard/trim/sessionstore(就位)
 
     loop 迭代（≤MaxIterations）
         E->>P: 模型调用
@@ -77,19 +77,19 @@ flowchart LR
 | # | hook | 来源 | hook 点 | 职责 |
 |---|---|---|---|---|
 | 1 | **sysprompt** | ezharness | OnStart（必须首位） | system 唯一来源：base（人格/workspace/memory/skills/mcp）+ identity + compact summary；session 创建组装一次，快照恢复不重组 |
-| 2 | **contextfix** | ezloop | OnStart | 修理残缺历史（孤儿 tool_call 等协议不完整序列） |
-| 3 | **filetools** | ezloop | OnStart + **OnLoop** | 注册 read/write/edit/terminal + 系统环境段；OnLoop 把 read_file 图片标记转换为持久化 user 图片消息 + 发 `filetools.image_loaded` 事件（见第五节） |
-| 4 | **skilltool** | ezloop | OnStart + OnToolStart | 注册 `load_skill`；拦截执行：渲染 SKILL.md 全文 + 目录树（免 offload） |
-| 5 | **remind** | ezharness | OnStart + OnEnd | 系统提醒三段：变更段（`<res_change>` 按需 + `res.change` 事件）+ 快照段（`<agent_status>` 每轮 + `status.snapshot` 事件）；OnEnd 收尾 `<end_reason>` + LastOutputAt（变更检测细节在 reschange.go） |
-| 6 | **uploadfile** | ezharness | OnStart | 带附件轮次在输入前插 `<upload_file>` 路径告知 |
-| 7 | **approve** | ezloop | OnStart + OnToolStart | 人机审批：规则匹配挂起等决策（SSE approve.request）；拒绝即 Skip |
-| 8 | **askuser** | ezloop | OnStart + OnToolStart | `ask_user`：模型向用户提问，阻塞等回答 |
-| 9 | **task** | ezloop | OnStart + OnToolStart | `task`：fork 分身子循环（独立 LoopState，事件带 forkId），answer 汇回 |
-| 10 | **mcp** | ezloop（ezharness 包装） | OnStart + OnLoop + OnEnd | 注册 `mcp_router`；OnLoop/OnEnd 配置热加载（mcp.json 变更即时生效） |
-| 11 | **offload** | ezloop | OnToolEnd | >4096 字节工具结果卸载 `.ezloop/offload/`；豁免 ask_user/task/load_skill；read_file 是 ReplayTool |
-| 12 | **guard** | ezharness | OnToolEnd | 窗口余量兜底：offload 豁免名单的大结果放不下时强制卸载（须在 offload 后） |
-| 13 | **trim** | ezharness | OnLoop + OnToolStart | 上下文整理：水位自动（窗口 × TrimPercent%）+ 模型主动 `trim_context`（登记 pending 轮末执行）；就地截断 + `<context_trim>` marker |
-| 14 | **trace** | ezharness | OnModel*/OnTool*/OnEnd | otel 风格调用链（trace.jsonl），fork 前缀标记 |
+| 2 | **trace** | ezharness | OnStart/OnModel*/OnTool*/OnEnd | otel 风格调用链（trace.jsonl：turn/model/tool/fork/compact span）。**toolStart 必须最前**——`approve`/`askuser`/`task`/`skilltool` 在 OnToolStart 里返回 Skip 会短路后续 hook，观测层排在它们之后则那些调用没有 span |
+| 3 | **contextfix** | ezloop | OnStart | 修理残缺历史（孤儿 tool_call 等协议不完整序列） |
+| 4 | **filetools** | ezloop | OnStart + **OnLoop** | 注册 read/write/edit/terminal + 系统环境段；OnLoop 把 read_file 图片标记转换为持久化 user 图片消息 + 发 `filetools.image_loaded` 事件（见第五节） |
+| 5 | **skilltool** | ezloop | OnStart + OnToolStart | 注册 `load_skill`；拦截执行：渲染 SKILL.md 全文 + 目录树（免 offload） |
+| 6 | **remind** | ezharness | OnStart + OnEnd | 系统提醒三段：变更段（`<res_change>` 按需 + `res.change` 事件）+ 快照段（`<agent_status>` 每轮 + `status.snapshot` 事件）；OnEnd 收尾 `<end_reason>` + LastOutputAt（变更检测细节在 reschange.go） |
+| 7 | **reference_file** | ezharness | OnStart | 带引用轮次在输入前插 `<reference_file>`（附件=整文件引用只给路径；文件页标注=路径+片段行号+备注），无引用零消息 |
+| 8 | **approve** | ezloop | OnStart + OnToolStart | 人机审批：规则匹配挂起等决策（SSE approve.request）；拒绝即 Skip |
+| 9 | **askuser** | ezloop | OnStart + OnToolStart | `ask_user`：模型向用户提问，阻塞等回答 |
+| 10 | **task** | ezloop | OnStart + OnToolStart | `task`：fork 分身子循环（独立 LoopState，事件带 forkId），answer 汇回 |
+| 11 | **mcp** | ezloop（ezharness 包装） | OnStart + OnLoop + OnEnd | 注册 `mcp_router`；OnLoop/OnEnd 配置热加载（mcp.json 变更即时生效） |
+| 12 | **offload** | ezloop | OnToolEnd | >4096 字节工具结果卸载 `.ezloop/offload/`；豁免 ask_user/task/load_skill；read_file 是 ReplayTool |
+| 13 | **guard** | ezharness | OnToolEnd | 窗口余量兜底：offload 豁免名单的大结果放不下时强制卸载（须在 offload 后） |
+| 14 | **trim** | ezharness | OnLoop + OnToolStart | 上下文整理：水位自动（窗口 × TrimPercent%）+ 模型主动 `trim_context`（登记 pending 轮末执行）；就地截断 + `<context_trim>` marker |
 | 15 | **sessionstore** | ezharness（`s.Sess`） | OnStart + OnEnd（最后） | 持久化：OnEnd 把 MergeFull(历史)/基线/用量落 session.json（内存与磁盘同源，见 session.md） |
 
 已实现未装配：`hooks/recall.go`（recall_topic 话题回顾）。分界判据（哪些留 ezharness、哪些下沉 ezloop）见 hooks.md。
@@ -129,7 +129,7 @@ warp 实例 per-Run 独立（fork 复刻 warp 链，分身输入同样可见）�
 | **用户真实输入** | 引擎 | 每轮末尾 | 文本（附件不在消息里） |
 | `<agent_status>` | remind 快照段 | 每轮、输入前 | 当前时间 / 上下文水位（超 70% 附建议 trim）/ 距上次输出 |
 | `<res_change>` | remind 变更段 | **有变更才插**、agent_status 前 | 资源基线 diff + 用户终端操作（每行一条） |
-| `<upload_file>` | uploadfile | **有附件才插**、输入前 | 附件绝对路径列表 |
+| `<reference_file>` | reference_file | **有引用才插**、输入前 | 本轮引用清单：`refs[].path`（整文件）或 `refs[].items[]`（片段行号+备注）；文件本体不进上下文 |
 | `<image_loaded>` | filetools OnLoop | **读图才插**、工具批末 | 图片路径列表；消息 Images 带 base64（持久化） |
 | assistant | 模型 | 迭代 | 正文 / tool_use（ToolCalls） |
 | tool | 引擎 | 工具执行后 | 工具结果 string（含 read_file 的 `<image_loaded path=…/>` 机器标记，保留不改写） |
@@ -143,7 +143,7 @@ warp 实例 per-Run 独立（fork 复刻 warp 链，分身输入同样可见）�
 [近几轮 …]
 <res_change>…</res_change>        ← 有变更才有
 <agent_status>…</agent_status>
-<upload_file>…</upload_file>      ← 有附件才有
+<reference_file>…</reference_file>  ← 有引用才有
 看下我发的截图                      ← 用户输入
 assistant: [tool_use read_file]
 tool:      <image_loaded path="…"/>
@@ -154,4 +154,4 @@ assistant: 这张图是…
 
 ## 相关文档
 
-architecture.md（分层与数据目录）· session.md（会话与树）· frontend.md（前端事件与渲染）· hooks.md（封装原则与分界判据）
+architecture.md（分层与数据目录）· context.md（完整上下文的逐条标注）· session.md（会话与树）· frontend.md（前端事件与渲染）· hooks.md（封装原则与分界判据）

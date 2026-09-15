@@ -90,13 +90,13 @@ hook 是 ezloop 引擎的横向扩展点（接口见 ezloop `hook/hook.go`：`On
 注册顺序即执行顺序，且顺序有语义：
 
 - `OnStart` 按序跑，各 hook 往 `Messages[0]` 追加自己的说明段 → **`sysprompt` 必须首位**（system 消息的创建者）
-- `OnToolStart` 按序跑，**首个返回 Skip 的会短路后续 toolStart hook** → `approve` 排在 `task`/`offload`/`trim` 之前，拒绝的调用到不了它们
+- `OnToolStart` 按序跑，**首个返回 Skip 的会短路后续 toolStart hook** → `trace` 必须排在这些会 Skip 的 hook（`approve`/`askuser`/`task`/`skilltool`）之前，否则被短路的调用留不下 span；`approve` 又排在 `task`/`offload`/`trim` 之前，拒绝的调用到不了它们
 - `guard` 必须在 `offload` 之后（要看已被 offload 改写过的结果）
 - `remind` 在 `sessionstore` 之前（`<end_reason>` 要进落盘快照）
 - `sessionstore` 最后（落盘）
 
 当前链序：
-`sysprompt → contextfix → filetools → skilltool → remind → reference_file → approve → askuser → task → mcp → offload → guard → trim → trace → sessionstore`
+`sysprompt → trace → contextfix → filetools → skilltool → remind → reference_file → approve → askuser → task → mcp → offload → guard → trim → sessionstore`
 
 ### 2.2 宿主 hook（`core/internal/hooks/`）
 
@@ -120,6 +120,8 @@ hook 是 ezloop 引擎的横向扩展点（接口见 ezloop `hook/hook.go`：`On
 禁用名单等实时配置以**闭包**注入（`disabledSkills`、`mainVision` 等），因为 `hooks` 被 `domain`/`service` 依赖，不能反向 import。
 
 ### 2.3 上下文都是哪来的
+
+**一份逐条标注的完整上下文（system 十段各自的来源 + 每轮标签的生成者与插入条件）见 `docs/md/context.md`**——改文案、标签或插入位置前先对那一份。
 
 **system 段** — `agent_service.go` 的 `buildSystemBase`（约 431 行）。段序：人格 → `SystemExtra`（设置页）→ `<workspace>`（目录架构/权限、`<@toolArg>` 与 `<$supper_url>` 语法、终端与浏览器工具指南）→ `<memory>`（含 `harness.md` 全文，`hooks.EnsureHarnessMd`）→ `<skills>`（`skill.LoadDir`，按 `DisabledSkills` 过滤）→ `<mcp>`。
 每 session **只组装一次**：存 `Session.sysP`（`domain/session.go` 的 `SetSysP`/`SysPromptRef`）并落进 `session.json` 快照（`sessionstore.go`）；改了记忆/skill/MCP 要下个 session 才进 system，期间由 `<res_change>` 告知模型。归档换代时热换。

@@ -183,6 +183,7 @@ func (a *AgentService) Assemble(s *domain.Session, st domain.Settings) {
 		core.WithTools(agentTools...),
 		core.WithHooks(
 			sys, // startHooks 首位：system base 唯一来源；后续 hook 在其 OnStart 里追加 tool-guide 说明段
+			traceHook, // toolStart 首位：task/ask_user/load_skill 等 OnToolStart 内干活的 hook 返回 Skip 会短路后续 hook，观测层必须排在它们前面才有 span
 			contextfix.New(),
 			filetools.New(s.Fsys, filetools.WithWorkDir(ResolveWorkDir(st.WorkDir)), filetools.WithImageHandler(readImage)),
 			skilltool.New(s.Fsys, hooks.SkillsDir, disabledSkills),
@@ -194,9 +195,8 @@ func (a *AgentService) Assemble(s *domain.Session, st domain.Settings) {
 			NewMcpHook(s.Fsys),
 			offload.New(s.Fsys, offload.WithSkip(askuser.ToolName, task.ToolName, skilltool.ToolName), offload.WithReplayTool("read_file")), // load_skill 返回的指令集是后续行动依据,卸载再回读纯浪费
 			hooks.NewGuard(s.Fsys, window), // 窗口余量兜底：offload 豁免名单（read_file 等）的大结果放不下时卸载，须在 offload 之后
-			trimHook,                       // OnLoop 回边水位整理（就地截断，立即生效），OnToolStart 拦模型主动整理
-			traceHook,
-			s.Sess, // 最后落盘
+			trimHook, // OnLoop 回边水位整理（就地截断，立即生效），OnToolStart 拦模型主动整理
+			s.Sess,   // 最后落盘
 		),
 		core.WithLoopParams(core.LoopParams{MaxIterations: maxIters}),
 		core.WithStreaming(true),

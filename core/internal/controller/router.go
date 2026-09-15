@@ -65,6 +65,7 @@ func NewRouter(c Controllers, dist fs.FS) *gin.Engine {
 
 		api.GET("/topics", c.Topics.List)
 		api.GET("/topics/:id", c.Topics.Get)
+		api.GET("/topics/:id/trace", c.Topics.Trace) // 回顾页调用链视图（otel span 列表）
 		api.DELETE("/topics/:id", c.Topics.Delete)
 
 		api.POST("/branches/new", c.Topics.NewBranch)

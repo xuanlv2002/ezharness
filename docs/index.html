@@ -419,7 +419,7 @@
   <!-- ═══════════════ 01 系统整体架构 ═══════════════ -->
   <section id="ch-arch">
     <h2><span class="no">第一章</span>系统整体架构</h2>
-    <p class="sub">ezharness = 基于 <b>ezloop 引擎</b>的桌面 agent harness。启动即对本机全权（文件不限目录 + 原生 shell）。三层结构：<b>desktop</b>（Electron 壳：窗口 / 托盘 / 内嵌浏览器）拉起 <b>core</b>（Go sidecar，gin 三层 MVC + 内嵌前端）伺服 <b>frontend</b>（端无关页面，双入口）；core 也可直接运行——浏览器访问同一份页面（浏览器控制等桌面专属能力自动降级）。</p>
+    <p class="sub">ezharness = 基于 <b>ezloop 引擎</b>的桌面 agent harness。启动即对本机全权（文件不限目录 + 原生 shell）。三层结构：<b>desktop</b>（Electron 壳：窗口 / 托盘 / 内嵌浏览器）拉起 <b>core</b>（Go sidecar，gin 三层 MVC + 内嵌前端）伺服 <b>frontend</b>（端无关页面，单入口 SPA）；core 也可直接运行——浏览器访问同一份页面（浏览器控制等桌面专属能力自动降级）。</p>
 
     <h3 id="arch-repos">1.1 双仓库：引擎 × 宿主</h3>
     <table>
@@ -430,7 +430,7 @@
       </tr>
       <tr>
         <td><b>ezharness</b><br>本仓库</td>
-        <td><b>宿主应用</b>：装配（选 hook、传参数）+ 产品域（会话树 / 设置 / 终端 / 快应用 / 前端）+ 自有 hooks（remind / trim / sessionstore / sysprompt / uploadfile / guard / trace）</td>
+        <td><b>宿主应用</b>：装配（选 hook、传参数）+ 产品域（会话树 / 设置 / 终端 / 快应用 / 前端）+ 自有 hooks（remind / trim / sessionstore / sysprompt / reference_file / guard / trace）</td>
       </tr>
     </table>
     <div class="tip">
@@ -453,7 +453,7 @@ flowchart TB
         C["controller 表现层&lt;br/&gt;10 组 gin handler"]:::layer
         S["service 用例层&lt;br/&gt;Chat / Session / Topic / Settings / Terminal / Agent…"]:::layer
         D["domain · Session 聚合 + Hub&lt;br/&gt;零 HTTP 依赖"]:::layer
-        H["internal/hooks（宿主侧）&lt;br/&gt;sysprompt · remind · trim · sessionstore&lt;br/&gt;uploadfile · guard · trace"]:::layer
+        H["internal/hooks（宿主侧）&lt;br/&gt;sysprompt · remind · trim · sessionstore&lt;br/&gt;reference_file · guard · trace"]:::layer
         TL["internal/tools&lt;br/&gt;save_app · term_* · image_recognize"]:::layer
         WP["internal/warp&lt;br/&gt;modeldump · visionguard · toolarg"]:::layer
     end
@@ -503,12 +503,12 @@ flowchart TB
         A["agent 引擎&lt;br/&gt;ezloop core · 随会话装配"]:::engine2
     end
 
-    UI["🖥 前端页面 · Svelte 双入口&lt;br/&gt;index.html 主应用 + browser.html 浏览器窗口页"]:::ui
+    UI["🖥 前端页面 · Svelte 单入口 SPA&lt;br/&gt;主窗 / 抽屉弹窗 / 浏览器抽屉同一份页面"]:::ui
     BR["🌐 浏览器（web 端形态）"]:::misc
 
     DESK -. "spawn + health 轮询&lt;br/&gt;退出随壳 kill" .-> COREP
     MW -- "loadURL 同源页面" --> G
-    BW -- "loadURL /browser.html&lt;br/&gt;（标签条/地址栏 UI 框架）" --> G
+    BW -- "承载 SPA 的浏览器抽屉/弹窗&lt;br/&gt;（标签条/地址栏 UI，?popout=browser）" --> G
     BW -. "browser_* 工具&lt;br/&gt;WS 桥 /api/browser/bridge" .-> G
     BR --> G
     G --> A
@@ -600,7 +600,7 @@ script\dev.bat             <span class="c"># 调试：前端构建 + core 编译
 script\release.bat         <span class="c"># 发布打包：三段链 + NSIS → release\v&lt;version&gt;\ 安装包 + 绿色版</span></pre>
     </div>
     <ul>
-      <li>构建链：前端 vite build（双入口）→ 拷 <code class="inline">frontend/dist → core/web/dist</code> → <code class="inline">go build</code> 出 <code class="inline">bin\ezharness-core.exe</code> → electron-builder（extraResources 内嵌 core，产物直出 <code class="inline">release\v&lt;version&gt;\</code>）；dev.bat 只走前两段后直接跑壳，release.bat 走完整链打包</li>
+      <li>构建链：前端 vite build（单入口 SPA）→ 拷 <code class="inline">frontend/dist → core/web/dist</code> → <code class="inline">go build</code> 出 <code class="inline">bin\ezharness-core.exe</code> → electron-builder（extraResources 内嵌 core，产物直出 <code class="inline">release\v&lt;version&gt;\</code>）；dev.bat 只走前两段后直接跑壳，release.bat 走完整链打包</li>
       <li>验证链：<code class="inline">cd core &amp;&amp; go build ./... &amp;&amp; go vet ./...</code> + <code class="inline">cd frontend &amp;&amp; npm run build</code>；desktop 主进程 JS 用 <code class="inline">node --check</code> 过一遍</li>
       <li><code class="inline">go run ./core</code> 会把 exe 放临时目录导致 config 找不到应用根——验证须 <code class="inline">go build -o xxx.exe ./core</code> 后在配置所在目录运行</li>
     </ul>
@@ -786,7 +786,7 @@ sequenceDiagram
 
     E-&gt;&gt;E: AppendMessage(input)  ← 用户输入入史
     E-&gt;&gt;HK: startHooks[].OnStart（按序）
-    Note over HK: sys(system) → contextfix(修理) → filetools(注册工具)&lt;br/&gt;→ skilltool → remind(变更段 res_change? + 快照段 agent_status)&lt;br/&gt;→ uploadfile(路径告知?) → approver/asker/task/mcp(注册)&lt;br/&gt;→ offload/guard/trim/trace/sessionstore(就位)
+    Note over HK: sys(system) → trace(观测层，须在会 Skip 短路的 hook 之前)&lt;br/&gt;→ contextfix(修理) → filetools(注册工具) → skilltool&lt;br/&gt;→ remind(变更段 res_change? + 快照段 agent_status) → reference_file(路径告知?)&lt;br/&gt;→ approver/asker/task/mcp(注册) → offload/guard/trim/sessionstore(就位)
 
     loop 迭代（≤MaxIterations）
         E-&gt;&gt;P: 模型调用
@@ -816,7 +816,7 @@ sequenceDiagram
     <table>
       <tr><th style="width:230px">时刻</th><th>引擎动作</th></tr>
       <tr><td><b>Run 开始</b></td><td>构造 LoopState → 应用 RunOption（WithHistory 把 modelView 放进来；WithUploadFiles 写 Metadata）→ 发 <code>loop_start</code> 事件</td></tr>
-      <tr><td><b>① input 先入史</b></td><td>用户输入 <code>AppendMessage(user)</code> ——<b>先于 startHooks</b>。因此 startHooks 运行时末条必为本轮 input，remind / uploadfile 都靠"插在末条 user 之前"定位轮首</td></tr>
+      <tr><td><b>① input 先入史</b></td><td>用户输入 <code>AppendMessage(user)</code> ——<b>先于 startHooks</b>。因此 startHooks 运行时末条必为本轮 input，remind / reference_file 都靠"插在末条 user 之前"定位轮首</td></tr>
       <tr><td><b>② startHooks 后跑</b></td><td>15 个 hook 的 OnStart 按装配序执行：system 注入（sysprompt，ezharness 不用引擎的 systemPrompt 字段）、历史修理、工具注册、轮首消息插入都发生在「system, [history], input」已就位的序列上</td></tr>
       <tr><td><b>③ assistant 入史</b></td><td>每次模型响应完成（含 ToolCalls）→ assistant 消息入史 → 发 <code>model_end</code></td></tr>
       <tr><td><b>④ tool 消息批末入史</b></td><td><b>不是即时入史</b>：同批全部调用执行完后，严格按调用顺序统一写入（Skip 短路的调用也占位）。补全规则：未执行的补 <code>"not executed: &lt;name&gt;"</code>；hook Skip 无文案时引擎默认 <code>"skipped by tool-start hook: &lt;name&gt;"</code></td></tr>
@@ -896,19 +896,19 @@ sequenceDiagram
     <table>
       <tr><th>#</th><th>hook</th><th>来源</th><th>hook 点</th><th>职责一句话</th></tr>
       <tr><td>1</td><td><b>sysprompt</b></td><td><span class="badge ezh">ezharness</span></td><td>OnStart（必须首位）</td><td>system 唯一来源：base + identity + summary</td></tr>
-      <tr><td>2</td><td><b>contextfix</b></td><td><span class="badge ezl">ezloop</span></td><td>OnStart</td><td>修理残缺历史（孤儿 tool_call / tool 结果）</td></tr>
-      <tr><td>3</td><td><b>filetools</b></td><td><span class="badge ezl">ezloop</span></td><td>OnStart + OnLoop</td><td>注册 read/write/edit/terminal + OS 环境段；OnLoop 图片标记→图片消息</td></tr>
-      <tr><td>4</td><td><b>skilltool</b></td><td><span class="badge ezl">ezloop</span></td><td>OnStart + OnToolStart</td><td>注册 load_skill；拦截渲染 SKILL.md 全文 + 目录树</td></tr>
-      <tr><td>5</td><td><b>remind</b></td><td><span class="badge ezh">ezharness</span></td><td>OnStart + OnEnd</td><td>系统提醒三段：变更段 / 快照段 / 收尾段（见 3.5 详解）</td></tr>
-      <tr><td>6</td><td><b>uploadfile</b></td><td><span class="badge ezh">ezharness</span></td><td>OnStart</td><td>带附件轮次插 &lt;upload_file&gt; 路径告知</td></tr>
-      <tr><td>7</td><td><b>approve</b></td><td><span class="badge ezl">ezloop</span></td><td>OnStart + OnToolStart</td><td>人机审批：规则匹配挂起等决策，拒绝即 Skip</td></tr>
-      <tr><td>8</td><td><b>askuser</b></td><td><span class="badge ezl">ezloop</span></td><td>OnStart + OnToolStart</td><td>ask_user：模型向用户提问，阻塞等回答</td></tr>
-      <tr><td>9</td><td><b>task</b></td><td><span class="badge ezl">ezloop</span></td><td>OnStart + OnToolStart</td><td>task：fork 分身子循环，answer 汇回</td></tr>
-      <tr><td>10</td><td><b>mcp</b></td><td><span class="badge ezl">ezloop</span> 包装</td><td>OnStart + OnLoop + OnEnd</td><td>注册 mcp_router；配置热加载</td></tr>
-      <tr><td>11</td><td><b>offload</b></td><td><span class="badge ezl">ezloop</span></td><td>OnToolEnd</td><td>&gt;4096 字节工具结果卸载 .ezloop/offload/</td></tr>
-      <tr><td>12</td><td><b>guard</b></td><td><span class="badge ezh">ezharness</span></td><td>OnToolEnd</td><td>窗口余量兜底：豁免名单的大结果放不下时强制卸载</td></tr>
-      <tr><td>13</td><td><b>trim</b></td><td><span class="badge ezh">ezharness</span></td><td>OnLoop + OnToolStart</td><td>上下文整理：水位自动 + trim_context 主动</td></tr>
-      <tr><td>14</td><td><b>trace</b></td><td><span class="badge ezh">ezharness</span></td><td>OnModel* / OnTool* / OnEnd</td><td>otel 风格调用链（trace.jsonl）</td></tr>
+      <tr><td>2</td><td><b>trace</b></td><td><span class="badge ezh">ezharness</span></td><td>OnModel* / OnTool* / OnEnd</td><td>otel 风格调用链（trace.jsonl）；toolStart 队列必须最前，否则被 Skip 短路的调用无 span</td></tr>
+      <tr><td>3</td><td><b>contextfix</b></td><td><span class="badge ezl">ezloop</span></td><td>OnStart</td><td>修理残缺历史（孤儿 tool_call / tool 结果）</td></tr>
+      <tr><td>4</td><td><b>filetools</b></td><td><span class="badge ezl">ezloop</span></td><td>OnStart + OnLoop</td><td>注册 read/write/edit/terminal + OS 环境段；OnLoop 图片标记→图片消息</td></tr>
+      <tr><td>5</td><td><b>skilltool</b></td><td><span class="badge ezl">ezloop</span></td><td>OnStart + OnToolStart</td><td>注册 load_skill；拦截渲染 SKILL.md 全文 + 目录树</td></tr>
+      <tr><td>6</td><td><b>remind</b></td><td><span class="badge ezh">ezharness</span></td><td>OnStart + OnEnd</td><td>系统提醒三段：变更段 / 快照段 / 收尾段（见 3.5 详解）</td></tr>
+      <tr><td>7</td><td><b>reference_file</b></td><td><span class="badge ezh">ezharness</span></td><td>OnStart</td><td>带引用轮次插 &lt;reference_file&gt;（附件=路径；标注=路径+片段行号+备注），无引用零消息</td></tr>
+      <tr><td>8</td><td><b>approve</b></td><td><span class="badge ezl">ezloop</span></td><td>OnStart + OnToolStart</td><td>人机审批：规则匹配挂起等决策，拒绝即 Skip</td></tr>
+      <tr><td>9</td><td><b>askuser</b></td><td><span class="badge ezl">ezloop</span></td><td>OnStart + OnToolStart</td><td>ask_user：模型向用户提问，阻塞等回答</td></tr>
+      <tr><td>10</td><td><b>task</b></td><td><span class="badge ezl">ezloop</span></td><td>OnStart + OnToolStart</td><td>task：fork 分身子循环，answer 汇回</td></tr>
+      <tr><td>11</td><td><b>mcp</b></td><td><span class="badge ezl">ezloop</span> 包装</td><td>OnStart + OnLoop + OnEnd</td><td>注册 mcp_router；配置热加载</td></tr>
+      <tr><td>12</td><td><b>offload</b></td><td><span class="badge ezl">ezloop</span></td><td>OnToolEnd</td><td>&gt;4096 字节工具结果卸载 .ezloop/offload/</td></tr>
+      <tr><td>13</td><td><b>guard</b></td><td><span class="badge ezh">ezharness</span></td><td>OnToolEnd</td><td>窗口余量兜底：豁免名单的大结果放不下时强制卸载</td></tr>
+      <tr><td>14</td><td><b>trim</b></td><td><span class="badge ezh">ezharness</span></td><td>OnLoop + OnToolStart</td><td>上下文整理：水位自动 + trim_context 主动</td></tr>
       <tr><td>15</td><td><b>sessionstore</b></td><td><span class="badge ezh">ezharness</span></td><td>OnStart + OnEnd（最后）</td><td>持久化：MergeFull 落 session.json</td></tr>
     </table>
     <p class="sub">ezloop 引擎的 7 个扩展点：<code class="inline">OnStart</code>（Run 组装期一次）· <code class="inline">OnModelStart / OnModelEnd</code>（每次模型调用前后）· <code class="inline">OnToolStart</code>（可短路：Proceed / Skip(result) / Abort）· <code class="inline">OnToolEnd</code>（结果入史前可改写）· <code class="inline">OnLoop</code>（迭代回边）· <code class="inline">OnEnd</code>（defer 语义）。并发契约：除 OnToolStart / OnToolEnd 在同轮多工具调用间并发外，其余 hook 点引擎串行；<code class="inline">LoopState.Metadata</code> 是 Run 内跨 hook 共享通道。</p>
@@ -923,7 +923,14 @@ sequenceDiagram
     </div>
 
     <div class="ext">
-      <h3>2 · contextfix <span class="badge hook">hook</span> <span class="badge ezl">ezloop</span></h3>
+      <h3>2 · trace <span class="badge hook">hook</span> <span class="badge ezh">ezharness</span></h3>
+      <div class="meta-row"><span><b>hook 点：</b>OnStart / OnModelStart / OnModelEnd / OnToolStart / OnToolEnd / OnEnd</span><span><b>触发：</b>全程观测</span></div>
+      <p><b>位置有语义：必须在 toolStart 队列最前</b>——approve / askuser / task / skilltool 在 OnToolStart 里返回 Skip 会短路后续 hook，观测层排在它们之后，这些调用（含 task 分身）就留不下 span。</p>
+      <p><b>动作：</b>otel 风格 span 调用链（turn / model / tool / fork / compact），全量重写 <code class="inline">sessions/&lt;id&gt;/trace.jsonl</code>（fork 子循环的 span 落 <code class="inline">forks/&lt;fid&gt;/trace.jsonl</code>）；读取时合并两份并把 fork 根挂到发起它的 <code class="inline">tool.task</code> span 下（跨文件没有可对上的字段，按开始时间序号配对）。<b>不碰消息、不碰 lastOutputAt</b>——纯观测，前端「调用链」页画瀑布图。</p>
+    </div>
+
+    <div class="ext">
+      <h3>3 · contextfix <span class="badge hook">hook</span> <span class="badge ezl">ezloop</span></h3>
       <div class="meta-row"><span><b>hook 点：</b>OnStart</span><span><b>触发：</b>每轮，input 入史之后</span></div>
       <p><b>动作：</b>双向修理 state.Messages，保证发给 API 的序列协议完整（残缺会被 API 直接拒绝）：</p>
       <ul>
@@ -937,7 +944,7 @@ sequenceDiagram
     </div>
 
     <div class="ext">
-      <h3>3 · filetools <span class="badge hook">hook</span> <span class="badge ezl">ezloop</span></h3>
+      <h3>4 · filetools <span class="badge hook">hook</span> <span class="badge ezl">ezloop</span></h3>
       <div class="meta-row"><span><b>hook 点：</b>OnStart + OnLoop</span><span><b>触发：</b>轮首注册 / 每次迭代回边</span></div>
       <p><b>OnStart：</b>注册 read_file / write_file / edit_file / terminal 四工具（ezharness 经 <code class="inline">WithImageHandler</code> 注入图片分支裁决）+ system 追加「# 系统环境」段（GOOS + shell 语法提示）。</p>
       <h4>read_file 遇到图片（魔数判定 jpeg/png/gif/webp）</h4>
@@ -963,7 +970,7 @@ D:/…/tmp/att-1694-b.png
     </div>
 
     <div class="ext">
-      <h3>4 · skilltool <span class="badge hook">hook</span> <span class="badge ezl">ezloop</span></h3>
+      <h3>5 · skilltool <span class="badge hook">hook</span> <span class="badge ezl">ezloop</span></h3>
       <div class="meta-row"><span><b>hook 点：</b>OnStart + OnToolStart</span><span><b>触发：</b>轮首注册 / 模型调用 load_skill 时</span></div>
       <p><b>OnStart：</b>注册 load_skill 壳工具 + system 追加 tool-guide（"接任务先扫技能清单，命中就加载后按其指引执行"）。技能身份用<b>目录名</b>（skill.DirOf），frontmatter name 仅作显示。</p>
       <p><b>OnToolStart 拦截执行</b>（壳工具 Invoke 不可达）：实时列技能（按 disabled 名单过滤），命中 → Skip 返回渲染结果（免 offload 豁免——指令集是后续行动依据，卸载再回读纯浪费）；未命中 → <code class="inline">skill "X" 不存在。可用技能：a, b, c</code></p>
@@ -982,7 +989,7 @@ release-publish/
     </div>
 
     <div class="ext">
-      <h3>5 · remind <span class="badge hook">hook</span> <span class="badge ezh">ezharness</span></h3>
+      <h3>6 · remind <span class="badge hook">hook</span> <span class="badge ezh">ezharness</span></h3>
       <div class="meta-row"><span><b>hook 点：</b>OnStart + OnEnd</span><span><b>触发：</b>轮首（变更段? + 快照段）/ 轮末（收尾段）</span></div>
       <p>系统→模型的<b>全部单向旁路提醒</b>归这一个 hook，内部分三段独立成模块。变更检测留在此处的分界判据见 1.1。</p>
 
@@ -1036,21 +1043,19 @@ release-publish/
     </div>
 
     <div class="ext">
-      <h3>6 · uploadfile <span class="badge hook">hook</span> <span class="badge ezh">ezharness</span></h3>
-      <div class="meta-row"><span><b>hook 点：</b>OnStart</span><span><b>触发：</b>仅带附件的轮次（无附件零开销）</span></div>
-      <p><b>动作：</b>ChatService 先把附件落盘 <code class="inline">workspace/tmp/att-&lt;ts&gt;-&lt;序号&gt;-&lt;净化名&gt;</code>（base64 不入上下文），路径经 <code class="inline">WithUploadFiles</code> 写入 LoopState.Metadata；hook 在本轮 input 前插路径告知（agent_status / upload_file 之后、input 之前）：模型按需 read_file 读取——图片会经 filetools OnLoop 转为图片消息直接进上下文。</p>
+      <h3>7 · reference_file <span class="badge hook">hook</span> <span class="badge ezh">ezharness</span></h3>
+      <div class="meta-row"><span><b>hook 点：</b>OnStart</span><span><b>触发：</b>仅带引用的轮次（无引用零开销）</span></div>
+      <p><b>动作：</b>引用统一为路径：附件先落盘 <code class="inline">workspace/tmp/att-&lt;ts&gt;-&lt;序号&gt;-&lt;净化名&gt;</code>（base64 不入上下文），文件页标注带 <code class="inline">sel/note/from/to</code>；路径经 <code class="inline">WithRefFiles</code> 写入 LoopState.Metadata，hook 在本轮 input 前插一条记录（agent_status 之后、input 之前），<b>标签体是纯 JSON 载荷</b>（前端 <code class="inline">JSON.parse</code> 重建 chips）。一切皆资源：文件本体不进上下文，模型按需 read_file 读真身——图片仍会经 filetools OnLoop 转成图片消息直接进上下文。</p>
       <div class="msg-stack">
-        <div class="msg"><div class="who inject">user · 注入</div><pre><span class="hl">&lt;upload_file&gt;</span>
-用户本轮上传了以下文件（已保存到本地，可用 read_file 读取）：
-- D:/…/workspace/tmp/att-1694165400-1-报错截图.png
-- D:/…/workspace/tmp/att-1694165400-2-错误日志.txt
-<span class="hl">&lt;/upload_file&gt;</span></pre></div>
+        <div class="msg"><div class="who inject">user · 注入</div><pre><span class="hl">&lt;reference_file&gt;</span>
+{"hint":"用户本轮引用了以下本地文件，可用 read_file 读取","refs":[{"path":"D:/…/workspace/tmp/att-1694165400-1-报错截图.png"},{"path":"D:/…/src/main.ts","items":[{"sel":"timeout: 300","note":"这里太短了","from":118,"to":131}]}]}
+<span class="hl">&lt;/reference_file&gt;</span></pre></div>
         <div class="msg"><div class="who user">user</div><pre>看下这两个文件，帮我定位问题</pre></div>
       </div>
     </div>
 
     <div class="ext">
-      <h3>7 · approve <span class="badge hook">hook</span> <span class="badge ezl">ezloop</span></h3>
+      <h3>8 · approve <span class="badge hook">hook</span> <span class="badge ezl">ezloop</span></h3>
       <div class="meta-row"><span><b>hook 点：</b>OnStart + OnToolStart</span><span><b>触发：</b>轮首 tool-guide / 每个需审批的工具调用</span></div>
       <p><b>判定（ezharness 闭包注入 needsApprove）：</b>ask_user / load_skill / trim_context 恒免审；mcp_router 的 mcp_list / tool_list 只读免审，tool_call 按 server.server.tool 名单走四档（ask / black / white / auto）；未知工具默认审批。运行时读设置快照，改策略即时生效。</p>
       <p><b>拦截流程：</b>发 <code class="inline">approve.request</code> 事件（data = ToolCall，前端时间线出决策卡）→ goroutine 阻塞在 channel 上等决策（引擎无感知）→ 批准 Proceed / 拒绝 Skip。</p>
@@ -1061,7 +1066,7 @@ release-publish/
     </div>
 
     <div class="ext">
-      <h3>8 · askuser <span class="badge hook">hook</span> <span class="badge ezl">ezloop</span></h3>
+      <h3>9 · askuser <span class="badge hook">hook</span> <span class="badge ezl">ezloop</span></h3>
       <div class="meta-row"><span><b>hook 点：</b>OnStart + OnToolStart</span><span><b>触发：</b>轮首注册 / 模型调用 ask_user 时</span></div>
       <p><b>拦截流程：</b>发 <code class="inline">askuser.request</code> 事件（Args.question / Args.options，前端出提问卡可点选）→ 阻塞等 <code class="inline">Answer{CallID, Input}</code> → 用户的回答<b>原样</b>作为工具结果入史（Skip 通道）：</p>
       <div class="msg-stack">
@@ -1070,7 +1075,7 @@ release-publish/
       </div>
     </div>
     <div class="ext">
-      <h3>9 · task <span class="badge hook">hook</span> <span class="badge ezl">ezloop</span></h3>
+      <h3>10 · task <span class="badge hook">hook</span> <span class="badge ezl">ezloop</span></h3>
       <div class="meta-row"><span><b>hook 点：</b>OnStart + OnToolStart</span><span><b>触发：</b>轮首注册 / 模型调用 task 时</span></div>
       <p><b>拦截流程：</b>单层检查（子循环内再调 task → <code>task: nested fork is not allowed (single level)</code>；空描述 → <code>task: empty task description</code>）→ <code class="inline">agent.Fork</code> 开分身子循环：<b>独立 LoopState</b>（ForkID 如 <code>task-1</code>）、seed = 截至本轮 assistant 之前且剔除触发指令那条 user 的快照、工具集剔除 task 自身、startHooks 不重跑（见 3.2 fork 差异）。</p>
       <p>子循环 input 加自包含前缀（分身看不到本轮对话之外的语境）：</p>
@@ -1084,13 +1089,13 @@ release-publish/
     </div>
 
     <div class="ext">
-      <h3>10 · mcp <span class="badge hook">hook</span> <span class="badge ezl">ezloop（ezharness 包装）</span></h3>
+      <h3>11 · mcp <span class="badge hook">hook</span> <span class="badge ezl">ezloop（ezharness 包装）</span></h3>
       <div class="meta-row"><span><b>hook 点：</b>OnStart + OnLoop + OnEnd</span><span><b>触发：</b>轮首注册 / 每次回边热加载 / 轮末关连接</span></div>
       <p><b>动作：</b>注册唯一工具 <code class="inline">mcp_router</code>（三 action：mcp_list 列 server · tool_list 列某 server 工具+schema（ACL 过滤）· tool_call 调用；错误统一 JSON <code class="inline">{"error":…,"hint":…}</code>）。OnLoop <code class="inline">cfg.Reload</code> 热加载 mcp.json 变更（即时生效）；OnEnd 关闭连接。审批语义见 hook 7。</p>
     </div>
 
     <div class="ext">
-      <h3>11 · offload <span class="badge hook">hook</span> <span class="badge ezl">ezloop</span></h3>
+      <h3>12 · offload <span class="badge hook">hook</span> <span class="badge ezl">ezloop</span></h3>
       <div class="meta-row"><span><b>hook 点：</b>OnToolEnd</span><span><b>触发：</b>每个工具结果入史前</span></div>
       <p><b>动作：</b>结果超 4096 字节 → 全文写 <code class="inline">.ezloop/offload/&lt;工具名&gt;-&lt;sha256 前 6&gt;.txt</code> → 结果改写为「头部 512 字节 + 卸载说明」。豁免名单：ask_user / task / load_skill（人机与指令结果）；read_file 是 ReplayTool（说明文案不同）。写入失败降级透传原文。</p>
       <div class="msg-stack">
@@ -1100,7 +1105,7 @@ release-publish/
     </div>
 
     <div class="ext">
-      <h3>12 · guard <span class="badge hook">hook</span> <span class="badge ezh">ezharness</span></h3>
+      <h3>13 · guard <span class="badge hook">hook</span> <span class="badge ezh">ezharness</span></h3>
       <div class="meta-row"><span><b>hook 点：</b>OnToolEnd（装配在 offload 之后）</span><span><b>触发：</b>每个工具结果（offload 改写后的最终 Content）</span></div>
       <p><b>动作：</b>窗口余量<b>动态</b>兜底——估算「当前历史 tokens（provider 精确值 + 末次响应后追加消息按 1.2 字符/token 补估）+ 本次结果」，放不下则卸载同目录。专堵 offload 豁免漏网（如 read_file 读单行超长文件）。写入失败时<b>硬截断丢弃尾部</b>——此处不能像 offload 降级透传，透传即撑爆上下文，保会话优先于保内容。</p>
       <div class="msg-stack">
@@ -1110,7 +1115,7 @@ release-publish/
     </div>
 
     <div class="ext">
-      <h3>13 · trim <span class="badge hook">hook</span> <span class="badge ezh">ezharness</span></h3>
+      <h3>14 · trim <span class="badge hook">hook</span> <span class="badge ezh">ezharness</span></h3>
       <div class="meta-row"><span><b>hook 点：</b>OnStart + OnToolStart + OnLoop</span><span><b>触发：</b>两条路径，统一在 OnLoop 串行区执行</span></div>
       <p><b>路径一（水位自动）：</b>每次迭代回边检查 PromptTokens &gt; 窗口 × TrimPercent%（默认 75，0 禁用），先发 <code class="inline">session.trimming</code> 事件（"上下文水位 156000 / 200000 tokens（78%），达到阈值，正在整理…"）。</p>
       <p><b>路径二（模型主动）：</b>模型调 <code class="inline">trim_context</code> → OnToolStart 只登记 pending（并发回调区不写 state），Skip 安抚模型继续任务：</p>
@@ -1130,11 +1135,6 @@ release-publish/
       <p class="sub"><b>kept 属性是视图起点回溯的依据</b>：ViewStart（marker 的 kept 回溯 + clamp 到上一 marker）是 modelView / MergeFull / 落盘三处共用的同一套判断——"marker 前档案从未进过本轮视图的必须保留，跨轮覆盖不丢档"（见 2.6）。</p>
     </div>
 
-    <div class="ext">
-      <h3>14 · trace <span class="badge hook">hook</span> <span class="badge ezh">ezharness</span></h3>
-      <div class="meta-row"><span><b>hook 点：</b>OnModelStart / OnModelEnd / OnToolStart / OnToolEnd / OnEnd</span><span><b>触发：</b>全程观测</span></div>
-      <p><b>动作：</b>otel 风格 span 调用链（model / tool / trim 桶，fork 前缀标记），全量重写 <code class="inline">trace.jsonl</code>。<b>不碰消息、不碰 lastOutputAt</b>——纯观测，与消息流无交互。</p>
-    </div>
 
     <div class="ext">
       <h3>15 · sessionstore <span class="badge hook">hook</span> <span class="badge ezh">ezharness</span></h3>
@@ -1149,8 +1149,8 @@ release-publish/
       <tr><td><code>system</code></td><td>sysprompt + 各 hook 追加</td><td>每轮首位（重注入）</td><td>恒有</td></tr>
       <tr><td><code>&lt;context_trim&gt;</code></td><td>trim</td><td>整理时尾插</td><td>水位达阈 / 模型主动</td></tr>
       <tr><td><code>&lt;res_change&gt;</code></td><td>remind 变更段</td><td>轮首、agent_status 前</td><td><b>有变更才插</b></td></tr>
-      <tr><td><code>&lt;agent_status&gt;</code></td><td>remind 快照段</td><td>轮首、upload_file 前</td><td>每轮</td></tr>
-      <tr><td><code>&lt;upload_file&gt;</code></td><td>uploadfile</td><td>本轮 input 前</td><td><b>有附件才插</b></td></tr>
+      <tr><td><code>&lt;agent_status&gt;</code></td><td>remind 快照段</td><td>轮首、reference_file 前</td><td>每轮</td></tr>
+      <tr><td><code>&lt;reference_file&gt;</code></td><td>reference_file</td><td>本轮 input 前</td><td><b>有引用才插</b>（纯 JSON 载荷）</td></tr>
       <tr><td><b>用户真实输入</b></td><td>引擎</td><td>轮首入史（startHooks 前）</td><td>每轮</td></tr>
       <tr><td><code>&lt;image_loaded&gt;</code> 包裹</td><td>filetools OnLoop</td><td>工具批末、最后一条 tool 后</td><td><b>读图才插</b>（Images 带 base64）</td></tr>
       <tr><td>assistant</td><td>模型</td><td>每次响应完成</td><td>迭代内</td></tr>
@@ -1177,7 +1177,7 @@ release-publish/
     <div class="msg-stack">
       <div class="msg"><div class="who system">system</div><pre>（……）</pre></div>
       <div class="msg"><div class="who user">user × N</div><pre>（历史……）</pre></div>
-      <div class="msg"><div class="who inject">user · 注入</div><pre>&lt;upload_file&gt;\n用户本轮上传了以下文件（已保存到本地，可用 read_file 读取）：\n- …/tmp/att-1694165400-1-报错截图.png\n- …/tmp/att-1694165400-2-界面异常.png\n- …/tmp/att-1694165400-3-错误日志.txt\n&lt;/upload_file&gt;</pre></div>
+      <div class="msg"><div class="who inject">user · 注入</div><pre>&lt;reference_file&gt;\n{"hint":"用户本轮引用了以下本地文件，可用 read_file 读取","refs":[\n  {"path":"…/tmp/att-1694165400-1-报错截图.png"},\n  {"path":"…/tmp/att-1694165400-2-界面异常.png"},\n  {"path":"…/tmp/att-1694165400-3-错误日志.txt"}]}\n&lt;/reference_file&gt;</pre></div>
       <div class="msg"><div class="who inject">user · 注入</div><pre>&lt;agent_status&gt;…&lt;/agent_status&gt;</pre></div>
       <div class="msg"><div class="who user">user</div><pre>看下这几个文件，帮我定位问题</pre></div>
       <div class="msg"><div class="who assistant">assistant</div><pre>[tool_use read_file ×3]  path: …/报错截图.png / …/界面异常.png / …/错误日志.txt</pre></div>
@@ -1242,7 +1242,7 @@ flowchart LR
       <tr><th>tag</th><th>生成者</th><th>模型可见</th><th>前端实时路径</th><th>前端历史路径</th></tr>
       <tr><td><code>&lt;agent_status&gt;</code></td><td>remind 快照段</td><td>✓</td><td>status.snapshot 事件</td><td>关键词「整理上下文」识别进时间线</td></tr>
       <tr><td><code>&lt;res_change&gt;</code></td><td>remind 变更段</td><td>✓</td><td>res.change 事件</td><td>标签 + <code>- </code> 行（变更卡）</td></tr>
-      <tr><td><code>&lt;upload_file&gt;</code></td><td>uploadfile</td><td>✓</td><td>send 响应回填</td><td>挂下一个真实 user 块（附件 chips）</td></tr>
+      <tr><td><code>&lt;reference_file&gt;</code></td><td>reference_file</td><td>✓</td><td>发送时本地 push user 块</td><td>解析 JSON 载荷 → files/fileRefs chips</td></tr>
       <tr><td><code>&lt;image_loaded&gt;</code> 包裹</td><td>filetools OnLoop</td><td>✓（Images base64）</td><td>filetools.image_loaded 事件</td><td>标签体 + m.images</td></tr>
       <tr><td><code>&lt;image_loaded path=…/&gt;</code> 自闭合</td><td>read_file 工具结果</td><td>✓（保留不改写）</td><td>工具卡结果原文</td><td>同左（不解析）</td></tr>
       <tr><td><code>&lt;end_reason&gt;</code></td><td>remind 收尾段</td><td>✓</td><td>turn_end 合成 endtick</td><td>正则提取字段</td></tr>
@@ -1326,7 +1326,7 @@ flowchart LR
     style DESK fill:#0a101d,stroke:#33496e,stroke-dasharray:6 4
 </pre>
     </div>
-    <div class="diagram-cap">真实浏览器 = Electron 主进程的 WebContentsView（每标签一个，partition persist:ezbrowser 登录态共享）；浏览器窗口只加载 core 伺服的 /browser.html 做 UI 框架（标签条 / 地址栏），内容区由主进程 setBounds 贴靠。</div>
+    <div class="diagram-cap">真实浏览器 = Electron 主进程的 WebContentsView（每标签一个，partition persist:ezbrowser 登录态共享）；浏览器抽屉只画 UI 框架（标签条 / 地址栏，同一份 SPA 的 ?popout=browser 形态），内容区不挂 DOM——由渲染层上报 rect、主进程 setBounds 贴靠。</div>
     <ul>
       <li><b>AI 开始操作 → 浏览器窗口自动弹出置前</b>（共见）；<b>用户关窗 = 隐藏保留</b>（标签后台存活，AI 可能正在用）</li>
       <li>核心链路：AI 调 <code class="inline">browser_start / navigate / click / type / read / screenshot</code> 等 → core 经 WS 桥转发 → 壳执行器直接操作对应标签的 webContents → 回执（截图 base64 回传落盘，多模态可读）</li>

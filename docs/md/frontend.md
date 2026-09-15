@@ -1,6 +1,6 @@
 # 前端：事件定义与渲染
 
-Svelte 5（runes）+ Vite，手写 fetch 层（无 wails bindings），全局单例 `store.svelte.ts`。时间线渲染是**双路径同构**：实时 SSE 事件归约（apply）与历史重载解析（buildBlocks）产出同一套 Block，渲染组件不区分来源。
+Svelte 5（runes）+ Vite，**单入口 SPA**（多窗口/多形态靠 query 分流，不是多入口）+ **手写 fetch 层**（无框架 bindings），全局单例 `store.svelte.ts`。时间线渲染是**双路径同构**：实时 SSE 事件归约（apply）与历史重载解析（buildBlocks）产出同一套 Block，渲染组件不区分来源。
 
 ```mermaid
 flowchart LR
@@ -56,7 +56,7 @@ flowchart LR
 |---|---|
 | user 含 `<agent_status>`（旧 JSON / 新中文文本） | `status` 块——仅含关键词"整理上下文"才入时间线，普通轮次只进右上角 |
 | user 含 `<res_change>` | `reschange` 块（matchAll `/^- (.+)$/gm` 取条目） |
-| user 含 `<upload_file>` | 路径暂存，挂到**下一个真实 user 块**的 files（附件 chips） |
+| user 含 `<reference_file>` | 解析载荷 → `user` 块 chips（`items` 空 = 整文件引用走 files，非空 = 带标注引用走 fileRefs；片段全文不还原，点 chip 回资源页读真身） |
 | user 含 `<image_loaded>`（包裹标签） | `imgload` 块（paths + images base64） |
 | user 含 `<end_reason>` | `endtick` 块（正则提取字段拼一行） |
 | user 含 `<context_trim` | `note` 块（整理分割线） |
@@ -87,7 +87,7 @@ flowchart LR
 |---|---|---|---|---|
 | `<agent_status>` | remind 快照段 | ✓（user 消息） | status.snapshot 事件 | 关键词"整理上下文" |
 | `<res_change>` | remind 变更段 | ✓ | res.change 事件 | 标签 + `- ` 行 |
-| `<upload_file>` | uploadfile hook | ✓ | send 响应回填 files 路径 | 标签 + `- ` 行 → 挂下个 user 块 |
+| `<reference_file>` | reference_file hook（宿主侧） | ✓ | 发送时本地 push user 块（`store.send` 用附件/引用状态，与历史同构：引用独立成块） | 解析标签体 JSON → files/fileRefs chips |
 | `<image_loaded>` 包裹标签 | filetools OnLoop | ✓（user 消息，Images 带 base64） | filetools.image_loaded 事件 | 标签体内路径行 + m.images |
 | `<image_loaded path="…"/>` 自闭合 | read_file 工具结果 | ✓（tool 消息，保留不改写） | 工具卡结果文本 | 同左（不解析） |
 | `<end_reason>` | remind 收尾段 | ✓ | turn_end 合成 endtick | 正则提取 |
@@ -96,14 +96,14 @@ flowchart LR
 | ↳ 内容 `https://…` | 同上（外链） | ✓ | chip 点击经系统浏览器打开（复用外链拦截） | 同左 |
 | ↳ 内容 `term://<终端id>` | 同上（终端入口） | ✓ | chip 点击 openTermAt：拉开终端抽屉并定位（TerminalTab 消费 store.termFocus） | 同左 |
 | ↳ 内容 `app://<快应用名>` | 同上（快应用入口） | ✓ | chip 点击 POST /api/apps/open 开子窗 | 同左 |
-| ↳ 内容 `file://<绝对路径>` | 同上（文本文件入口） | ✓ | chip 点击 openFileAt（文本白名单门禁 textfile.ts）：拉开抽屉文件页加载编辑（FilePane 消费 store.fileFocus；保存 POST /api/workspace/save） | 同左 |
+| ↳ 内容 `file://<绝对路径>` | 同上（文本文件入口） | ✓ | chip 点击 openFileAt（文本白名单门禁 textfile.ts）：拉开抽屉资源页打开该文件（ResourcePane 消费 store.fileFocus，按扩展名走 viewer/registry；文本保存 POST /api/workspace/save） | 同左 |
 | `<@toolArg>路径</@toolArg>` | 模型工具参数 | ✓（入史参数保持原文） | 工具卡显示原文 | 同左（展开只发生在执行侧） |
 
 **改任一 tag 格式的连带清单**见 AGENTS.md 对应小节；行前缀 `- ` 与关键词"整理上下文"是硬契约。
 
 ## 五、其余前端机制速查
 
-- **外链拦截**（main.ts 捕获阶段）：消息内 `http(s)` 外链桌面模式经 `/api/window/open-url` 系统浏览器打开（WebView 内导航会顶掉 SPA）；同源链接不拦
+- **外链拦截**（main.ts 捕获阶段）：消息内 `http(s)` 外链在桌面形态经 IPC `ez:open-url` 交系统浏览器打开（窗口内导航会顶掉 SPA）；同源链接不拦
 - **附件预览**：图片缩略图/文件查看走 `GET /api/workspace/file?path=<绝对路径>`（限工作目录内，防穿越）
 - **SSE 单连接**：window 级 `__ezSSE`，切换分支重订阅（含该分支回放帧重放）
 - **共享终端**：`/api/terminal/ws` 单 WS 多路复用，term.ts 独立于 store（xterm 实例管理）

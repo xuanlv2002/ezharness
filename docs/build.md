@@ -7,7 +7,7 @@
 
 | 层 | 目录 | 构建 | 产物 |
 |----|------|------|------|
-| 前端页面 | `frontend/` | vite build（双入口 index.html + browser.html） | `frontend/dist/` |
+| 前端页面 | `frontend/` | vite build（单入口 `index.html`；多窗口/多形态由 `?desktop=1`、`&popout=term\|file\|browser` 分流） | `frontend/dist/` |
 | 内核 sidecar | `core/` | go build（前端产物拷入 `core/web/dist` 后 go:embed） | `bin/ezharness-core.exe` |
 | 桌面壳 | `desktop/` | electron-builder（extraResources 内嵌 core exe） | `release/v<version>/` 安装包 + 绿色版 |
 
@@ -22,7 +22,7 @@ dev.bat 走完 1-2 后在 `desktop/` 里 `npm run start` 前台启动 Electron �
 ## 版本单源：script/version.yaml
 
 ```yaml
-version: 0.1.2
+version: 0.1.4   # 实际值以 script/version.yaml 为准
 ```
 
 release.bat 读取后同步两处（PowerShell 正则替换，勿手改 package.json 版本）：

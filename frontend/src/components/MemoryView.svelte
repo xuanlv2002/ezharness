@@ -1,6 +1,13 @@
 <script lang="ts">
   import { onMount } from 'svelte'
-  import { api, type HistoryMessage, type MemoryConfig, type MemorySkillEntry, type SessionNode } from '../lib/api'
+  import {
+    api,
+    type HistoryMessage,
+    type MemoryConfig,
+    type MemorySkillEntry,
+    type SessionNode,
+    type TraceSpan,
+  } from '../lib/api'
   import { store } from '../lib/store.svelte'
 
   /*
@@ -15,11 +22,18 @@
   let tree = $state<SessionNode[] | null>(null)
   let message = $state('')
 
-  /* 回顾侧边抽屉：目标节点 + 只读内容（消息 + 压缩摘要） */
+  /* 回顾侧边抽屉：目标节点 + 双页签——「消息」= 只读全文 + 压缩摘要，
+     「调用链」= 该会话 trace.jsonl 的 otel span（瀑布图 + 汇总） */
   let reviewNode = $state<SessionNode | null>(null)
+  let reviewTab = $state<'msgs' | 'trace'>('msgs')
   let reviewMsgs = $state<HistoryMessage[]>([])
   let reviewSummary = $state('')
+  let reviewSpans = $state<TraceSpan[]>([])
   let reviewLoading = $state(false)
+  let pickedSpan = $state<TraceSpan | null>(null)
+  /* 瀑布图上的分身调用链默认折起：fork 内部的模型/工具调用属于细节，
+     默认只留一行标识，需要时再展开 */
+  let openForks = $state<Set<string>>(new Set())
 
   async function loadTree() {
     try {
@@ -41,14 +55,22 @@
     await loadTree()
   })
 
-  /* 回顾：侧边抽屉只读全文；压缩新叶几乎无消息，摘要段给上下文 */
+  /* 回顾：侧边抽屉只读全文；压缩新叶几乎无消息，摘要段给上下文。
+     调用链独立取（无 trace.jsonl 的旧会话返回空，不拖垮消息回顾） */
   async function reviewTopic(n: SessionNode) {
     reviewNode = n
+    reviewTab = 'msgs'
+    pickedSpan = null
+    openForks = new Set()
     reviewLoading = true
     try {
-      const d = await api.getTopic(n.id)
+      const [d, tr] = await Promise.all([
+        api.getTopic(n.id),
+        api.getTopicTrace(n.id).catch(() => [] as TraceSpan[]),
+      ])
       reviewMsgs = d.messages || []
       reviewSummary = (d.summary || '').replace(/<\/?compact-summary>/g, '').trim()
+      reviewSpans = tr
     } catch (e) {
       message = `回顾失败：${(e as Error).message}`
     } finally {
@@ -60,6 +82,203 @@
     reviewNode = null
     reviewMsgs = []
     reviewSummary = ''
+    reviewSpans = []
+    pickedSpan = null
+    openForks = new Set()
+  }
+
+  /* ── 调用链视图：按轮分块的瀑布图与汇总 ── */
+
+  /* 一轮 = 一个根 span + 其子 span；子 span 相对本块起点定位 */
+  type TraceKid = { sp: TraceSpan; left: number; width: number }
+  type TraceBlock = {
+    root: TraceSpan
+    start: number
+    dur: number
+    kids: TraceKid[]
+    /* 挂在本块某一子 span 行下的 fork 块（分身自带局部时间轴，不并进父条） */
+    nested: TraceBlock[]
+    anchor: string // 挂在哪个子 span 行下
+  }
+
+  /* 空档压缩后最多占块宽的比例（与条的最小宽度同量级，够看出是空转即可） */
+  const GAP_WIDTH = 0.005
+
+  /*
+  块内时间轴：没有被任何子 span 覆盖的空档（审批等待之后的空转、轮内的
+  长停顿）压成细缝，其余段保持线性——直接用墙钟比例时，一段长空转会
+  把真正干活的 span 全挤成左边的点。映射单调，故跨空档的条仍与相邻条
+  对齐。
+  */
+  function traceAxis(start: number, end: number, kids: TraceSpan[]): (t: number) => number {
+    const cap = Math.max((end - start) * GAP_WIDTH, 1)
+    const cuts = new Set<number>([start, end])
+    for (const k of kids) {
+      for (const t of [k.start, k.end ?? k.start]) {
+        if (t > start && t < end) cuts.add(t)
+      }
+    }
+    const at = [...cuts].sort((a, b) => a - b)
+    const segs: { from: number; to: number; weight: number }[] = []
+    let total = 0
+    for (let i = 0; i + 1 < at.length; i++) {
+      const from = at[i]
+      const to = at[i + 1]
+      const gap = !kids.some((k) => k.start < to && (k.end ?? k.start) > from)
+      const weight = gap ? Math.min(to - from, cap) : to - from
+      segs.push({ from, to, weight })
+      total += weight
+    }
+    if (total <= 0) return () => 0
+    return (t: number) => {
+      let acc = 0
+      for (const s of segs) {
+        if (t >= s.to) {
+          acc += s.weight
+          continue
+        }
+        return t <= s.from ? acc : acc + (s.weight * (t - s.from)) / (s.to - s.from)
+      }
+      return total
+    }
+  }
+
+  /*
+  轮次分块：根 span（无 parentId）为一块，子 span 相对本块起点定位——轮与
+  轮之间有大段空闲，用整条 trace 的墙钟做轴会把每轮压成一条线。fork 根
+  也算一块：分身有自己的局部时间轴，缩进挂在发起它的 task 行下。未闭合
+  且无子节点的根没有任何内容可看，跳过。
+  */
+  const traceBlocks = $derived.by(() => {
+    const spans = reviewSpans
+    if (!spans.length) return { tops: [] as TraceBlock[], all: [] as TraceBlock[] }
+    const kids = new Map<string, TraceSpan[]>()
+    for (const s of spans) {
+      if (s.parentId) kids.set(s.parentId, [...(kids.get(s.parentId) || []), s])
+    }
+    const all: TraceBlock[] = []
+    for (const root of spans.filter((s) => !s.parentId || s.kind === 'fork').sort((a, b) => a.start - b.start)) {
+      const children = (kids.get(root.spanId) || []).sort((a, b) => a.start - b.start)
+      if (!root.end && children.length === 0) continue
+      const end = root.end ?? Math.max(...children.map((c) => c.end ?? c.start))
+      const axis = traceAxis(root.start, end, children)
+      const axisTotal = axis(end) || 1
+      all.push({
+        root,
+        start: root.start,
+        dur: Math.max(end - root.start, 1),
+        kids: children.map((sp) => {
+          const left = (axis(sp.start) / axisTotal) * 100
+          return {
+            sp,
+            left,
+            width: Math.max((axis(sp.end ?? sp.start) / axisTotal) * 100 - left, 0.6),
+          }
+        }),
+        nested: [],
+        anchor: '',
+      })
+    }
+    // fork 认领：parentId 指向发起它的 task 工具 span（后端按序号配对写入）
+    const tops: TraceBlock[] = []
+    for (const b of all) {
+      const host = b.root.parentId
+        ? all.find((x) => x.kids.some((k) => k.sp.spanId === b.root.parentId))
+        : undefined
+      if (!host) {
+        tops.push(b)
+        continue
+      }
+      host.nested.push(b)
+      b.anchor = b.root.parentId!
+    }
+    return { tops, all }
+  })
+
+  /*
+  汇总：耗时取各块时长之和（不含块间空闲），token 取 model span 的 attrs。
+  轮次只数主循环 turn，子代理（fork 根）单独计——两者都算进耗时与调用数
+  （fork 块缩进挂在 task 行下，统计仍遍历全部块）。
+  */
+  const traceSummary = $derived.by(() => {
+    let work = 0
+    let turns = 0
+    let agents = 0
+    let models = 0
+    let prompt = 0
+    let completion = 0
+    let cached = 0
+    const tools: TraceSpan[] = []
+    for (const t of traceBlocks.all) {
+      work += t.dur
+      if (t.root.kind === 'fork') agents++
+      else turns++
+      for (const k of t.kids) {
+        if (k.sp.kind === 'model') {
+          models++
+          prompt += numAttr(k.sp.attrs?.promptTokens)
+          completion += numAttr(k.sp.attrs?.completionTokens)
+          cached += numAttr(k.sp.attrs?.cachedTokens)
+        } else if (k.sp.kind === 'tool') {
+          tools.push(k.sp)
+        }
+      }
+    }
+    const slow = [...tools].sort((a, b) => (b.durMs || 0) - (a.durMs || 0)).slice(0, 5)
+    return { turns, agents, work, models, tools: tools.length, prompt, completion, cached, slow }
+  })
+
+  function numAttr(v: unknown): number {
+    return typeof v === 'number' ? v : 0
+  }
+
+  /* tool 行按 callID 回查发起它的工具名（tool_calls 在前面的 assistant 消息里）：
+     结果的 content 看不出是哪个工具的，必须靠调用 ID 认领 */
+  const toolNames = $derived.by(() => {
+    const m = new Map<string, string>()
+    for (const msg of reviewMsgs) {
+      for (const c of msg.tool_calls || []) {
+        if (c.ID) m.set(c.ID, c.Name)
+      }
+    }
+    return m
+  })
+
+  function toggleFork(id: string) {
+    const next = new Set(openForks)
+    if (next.has(id)) next.delete(id)
+    else next.add(id)
+    openForks = next
+  }
+
+  /* span 显示名：tool.browser_tab → browser_tab，model 带迭代号便于对轮 */
+  function spanLabel(s: TraceSpan): string {
+    if (s.kind === 'tool') return s.name.replace(/^tool\./, '')
+    if (s.kind === 'model') return s.iteration ? `model #${s.iteration}` : 'model'
+    return s.name
+  }
+
+  /* 轮标题用触发它的输入（子代理用 task），比裸 "turn" 好认；⑂ 标出子代理 */
+  function turnLabel(s: TraceSpan): string {
+    const raw = s.attrs?.input ?? s.attrs?.task
+    const text = typeof raw === 'string' ? raw.replace(/\s+/g, ' ').trim() : ''
+    const label = !text ? s.name : text.length > 30 ? text.slice(0, 30) + '…' : text
+    return s.kind === 'fork' ? `⑂ ${label}` : label
+  }
+
+  function fmtDur(ms: number | undefined): string {
+    if (!ms) return '—'
+    return ms < 1000 ? `${ms}ms` : `${(ms / 1000).toFixed(2)}s`
+  }
+
+  function fmtClock(ms: number): string {
+    const d = new Date(ms)
+    return [d.getHours(), d.getMinutes(), d.getSeconds()].map((n) => String(n).padStart(2, '0')).join(':')
+  }
+
+  /* attrs 值渲染：结构化值走 JSON，字符串原样（Go 侧已截断） */
+  function attrVal(v: unknown): string {
+    return typeof v === 'string' ? v : JSON.stringify(v, null, 2)
   }
 
   /* 切到分支：该节点所属线的当前叶恢复为活动会话并跳对话页 */
@@ -389,10 +608,10 @@
   </section>
 </div>
 
-<!-- 回顾侧边抽屉：完整消息 + 压缩摘要 -->
+<!-- 回顾侧边抽屉：消息全文 / 调用链双页签 -->
 {#if reviewNode}
   <div class="drawer-mask" onclick={closeReview}></div>
-  <aside class="drawer">
+  <aside class="drawer" class:wide={reviewTab === 'trace'}>
     <header>
       <div class="dtitle">
         <span class="name">{reviewNode.title || '未命名会话'}</span>
@@ -402,27 +621,172 @@
       </div>
       <button class="dclose" onclick={closeReview} title="关闭">✕</button>
     </header>
-    {#if reviewSummary}
-      <div class="dsum">
-        <div class="dsum-tag">⇪ 压缩摘要（本会话开始前的上下文）</div>
-        <div class="dsum-text">{reviewSummary}</div>
-      </div>
-    {/if}
-    <div class="dmsgs">
-      {#if reviewLoading}
-        <div class="rv">加载中…</div>
-      {:else}
-        {#each reviewMsgs as m, j (j)}
-          <div class="rv" class:me={m.role === 'user'}>
-            <span class="rrole">{m.role === 'assistant' ? 'agent' : m.role === 'tool' ? 'tool' : m.role}</span>
-            <span class="rtext">{m.content || (m.tool_calls ? JSON.stringify(m.tool_calls) : '')}</span>
-          </div>
-        {/each}
-        {#if reviewMsgs.length === 0 && !reviewSummary}
-          <div class="rv">（无消息）</div>
-        {/if}
+    <div class="dtabs">
+      <button class="dtab" class:on={reviewTab === 'msgs'} onclick={() => (reviewTab = 'msgs')}>消息</button>
+      <button class="dtab" class:on={reviewTab === 'trace'} onclick={() => (reviewTab = 'trace')}>调用链</button>
+      {#if reviewTab === 'trace' && reviewSpans.length > 0}
+        <span class="dtab-hint">{reviewSpans.length} spans</span>
       {/if}
     </div>
+
+    {#if reviewTab === 'msgs'}
+      {#if reviewSummary}
+        <div class="dsum">
+          <div class="dsum-tag">⇪ 压缩摘要（本会话开始前的上下文）</div>
+          <div class="dsum-text">{reviewSummary}</div>
+        </div>
+      {/if}
+      <div class="dmsgs">
+        {#if reviewLoading}
+          <div class="rv">加载中…</div>
+        {:else}
+          {#each reviewMsgs as m, j (j)}
+            <div class="rv" class:me={m.role === 'user'}>
+              <span class="rrole">{m.role === 'assistant' ? 'agent' : m.role === 'tool' ? 'tool' : m.role}</span>
+              <span class="rtext">{#if m.role === 'tool' && m.tool_call_id}<span class="rcall" title={m.tool_call_id}>{toolNames.get(m.tool_call_id) || '未知工具'} <em>{m.tool_call_id}</em></span>{/if}{m.content || (m.tool_calls ? JSON.stringify(m.tool_calls) : '')}</span>
+            </div>
+          {/each}
+          {#if reviewMsgs.length === 0 && !reviewSummary}
+            <div class="rv">（无消息）</div>
+          {/if}
+        {/if}
+      </div>
+    {:else}
+      <div class="dmsgs">
+        {#if reviewLoading}
+          <div class="rv">加载中…</div>
+        {:else if traceBlocks.all.length === 0}
+          <div class="rv">（该会话无调用链记录）</div>
+        {:else}
+          <!-- 汇总：轮次/轮内耗时合计/调用数与 token 累计，慢工具 TopN -->
+          <div class="tsum">
+            <div class="tscell"><span class="tsk">轮次</span><span class="tsv">{traceSummary.turns}</span></div>
+            {#if traceSummary.agents > 0}
+              <div class="tscell"><span class="tsk">子代理</span><span class="tsv">{traceSummary.agents}</span></div>
+            {/if}
+            <div class="tscell"><span class="tsk">耗时合计</span><span class="tsv">{fmtDur(traceSummary.work)}</span></div>
+            <div class="tscell"><span class="tsk">模型</span><span class="tsv">{traceSummary.models}</span></div>
+            <div class="tscell"><span class="tsk">工具</span><span class="tsv">{traceSummary.tools}</span></div>
+            <div class="tscell wide">
+              <span class="tsk">token</span>
+              <span class="tsv">
+                {traceSummary.prompt.toLocaleString()} → {traceSummary.completion.toLocaleString()}
+                {#if traceSummary.cached > 0}<span class="tsm">（缓存 {traceSummary.cached.toLocaleString()}）</span>{/if}
+              </span>
+            </div>
+          </div>
+          {#if traceSummary.slow.length > 0}
+            <div class="tslow">
+              <div class="dsum-tag">慢工具</div>
+              {#each traceSummary.slow as s (s.spanId)}
+                <button
+                  type="button"
+                  class="tslrow"
+                  class:picked={pickedSpan?.spanId === s.spanId}
+                  onclick={() => (pickedSpan = s)}>
+                  <span class="tslnm">{spanLabel(s)}</span>
+                  <span class="tslms">{fmtDur(s.durMs)}</span>
+                </button>
+              {/each}
+            </div>
+          {/if}
+
+          <!-- 瀑布图：一轮一块，块内时间轴以该轮为原点（空档压成细缝）；
+               fork 块缩进挂在发起它的 task 行下，条宽用分身自己的时间轴 -->
+          <div class="twrap">
+            {#each traceBlocks.tops as t (t.root.spanId)}
+              <div class="tgroup">
+                <button
+                  type="button"
+                  class="tspan root"
+                  class:picked={pickedSpan?.spanId === t.root.spanId}
+                  onclick={() => (pickedSpan = t.root)}>
+                  <span class="tname" title={String(t.root.attrs?.input ?? t.root.attrs?.task ?? '')}>
+                    <span class="tclock">{fmtClock(t.start)}</span>{turnLabel(t.root)}
+                  </span>
+                  <span class="ttrack"><i class={`k-${t.root.kind}`} style="left:0;width:100%"></i></span>
+                  <span class="tms">{fmtDur(t.dur)}</span>
+                </button>
+                {#each t.kids as k (k.sp.spanId)}
+                  <button
+                    type="button"
+                    class="tspan d1"
+                    class:picked={pickedSpan?.spanId === k.sp.spanId}
+                    onclick={() => (pickedSpan = k.sp)}>
+                    <span class="tname">{spanLabel(k.sp)}</span>
+                    <span class="ttrack">
+                      <i class={`k-${k.sp.kind}`} style={`left:${k.left}%;width:${k.width}%`}></i>
+                    </span>
+                    <span class="tms">{fmtDur(k.sp.durMs)}</span>
+                  </button>
+                  {#each t.nested.filter((n) => n.anchor === k.sp.spanId) as f (f.root.spanId)}
+                    <div class="fgroup">
+                      <div class="tspan d2" class:picked={pickedSpan?.spanId === f.root.spanId}>
+                        <span class="tname">
+                          <button
+                            type="button"
+                            class="tw"
+                            title={openForks.has(f.root.spanId) ? '折起分身调用链' : '展开分身调用链'}
+                            onclick={() => toggleFork(f.root.spanId)}>
+                            <span class="farrow" class:open={openForks.has(f.root.spanId)}>
+                              {openForks.has(f.root.spanId) ? '▾' : '▸'}
+                            </span>
+                          </button>
+                          <button
+                            type="button"
+                            class="flabel"
+                            title={String(f.root.attrs?.task ?? '')}
+                            onclick={() => (pickedSpan = f.root)}>
+                            {turnLabel(f.root)}</button>
+                        </span>
+                        <span class="thint">子代理 · {f.kids.length} 次调用 · 局部时间轴</span>
+                        <span class="tms">{fmtDur(f.dur)}</span>
+                      </div>
+                      {#if openForks.has(f.root.spanId)}
+                        {#each f.kids as fk (fk.sp.spanId)}
+                          <button
+                            type="button"
+                            class="tspan d3"
+                            class:picked={pickedSpan?.spanId === fk.sp.spanId}
+                            onclick={() => (pickedSpan = fk.sp)}>
+                            <span class="tname">{spanLabel(fk.sp)}</span>
+                            <span class="ttrack">
+                              <i class={`k-${fk.sp.kind}`} style={`left:${fk.left}%;width:${fk.width}%`}></i>
+                            </span>
+                            <span class="tms">{fmtDur(fk.sp.durMs)}</span>
+                          </button>
+                        {/each}
+                      {/if}
+                    </div>
+                  {/each}
+                {/each}
+              </div>
+            {/each}
+          </div>
+        {/if}
+      </div>
+      <!-- span 详情停靠抽屉底部：从瀑布图或慢工具点选后始终可见 -->
+      {#if pickedSpan && reviewTab === 'trace'}
+        <div class="tdet">
+          <div class="tdet-head">
+            <span class="tdet-name">{pickedSpan.name}</span>
+            <span class="tdet-kind">{pickedSpan.kind}</span>
+            {#if pickedSpan.iteration}<span class="tdet-kind">iter {pickedSpan.iteration}</span>{/if}
+            <span class="tdet-dur">{fmtDur(pickedSpan.durMs)}</span>
+            <button class="tdet-x" onclick={() => (pickedSpan = null)} title="关闭详情">✕</button>
+          </div>
+          {#each Object.entries(pickedSpan.attrs || {}) as [k, v] (k)}
+            <div class="tattr">
+              <span class="tak">{k}</span>
+              <span class="tav">{attrVal(v)}</span>
+            </div>
+          {/each}
+          {#if !pickedSpan.attrs || Object.keys(pickedSpan.attrs).length === 0}
+            <div class="tattr"><span class="tav">（无 attrs）</span></div>
+          {/if}
+        </div>
+      {/if}
+    {/if}
   </aside>
 {/if}
 
@@ -1050,6 +1414,43 @@
     color: var(--fg);
     border-color: var(--line-strong);
   }
+  /* 调用链页签需要横向铺开瀑布图的时间轴 */
+  .drawer.wide {
+    width: min(880px, 94vw);
+  }
+  .dtabs {
+    flex: none;
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    padding: 0 16px;
+    border-bottom: 1px solid var(--line);
+  }
+  .dtab {
+    border: none;
+    background: transparent;
+    font: inherit;
+    font-size: 12px;
+    color: var(--faint);
+    padding: 8px 10px;
+    margin-bottom: -1px;
+    cursor: pointer;
+    border-bottom: 2px solid transparent;
+    transition: color var(--dur-fast) var(--ease-out);
+  }
+  .dtab:hover {
+    color: var(--fg);
+  }
+  .dtab.on {
+    color: var(--accent);
+    border-bottom-color: var(--accent);
+  }
+  .dtab-hint {
+    margin-left: auto;
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--faint);
+  }
   .dsum {
     flex: none;
     margin: 12px 16px 0;
@@ -1083,6 +1484,298 @@
     flex-direction: column;
     gap: 10px;
   }
+
+  /* ── 调用链视图：汇总卡片 ── */
+  .tsum {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px 14px;
+    padding: 10px 12px;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    background: var(--bg-soft);
+  }
+  .tscell {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    flex: 1 1 62px;
+    min-width: 62px;
+  }
+  .tscell.wide {
+    flex: 1 1 100%;
+  }
+  .tsk {
+    font-size: 10px;
+    color: var(--faint);
+  }
+  .tsv {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--fg);
+  }
+  .tsm {
+    font-size: 10px;
+    font-weight: 400;
+    color: var(--faint);
+  }
+  .tslow {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    padding: 8px 12px;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+  }
+  .tslrow {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    padding: 1px 4px;
+    border: none;
+    border-radius: 5px;
+    background: transparent;
+    color: inherit;
+    font: inherit;
+    font-size: 11.5px;
+    text-align: left;
+    cursor: pointer;
+  }
+  .tslrow:hover {
+    background: var(--bg-soft);
+  }
+  .tslrow.picked {
+    background: var(--accent-soft);
+  }
+  .tslnm {
+    font-family: var(--font-mono);
+    color: var(--muted);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .tslms {
+    margin-left: auto;
+    font-family: var(--font-mono);
+    color: var(--faint);
+  }
+
+  /* ── 调用链视图：瀑布图（名称轴 / 时间轴 / 耗时轴 三列）── */
+  .twrap {
+    display: flex;
+    flex-direction: column;
+    padding: 8px 10px;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+  }
+  /* 一轮一块：块间留白分隔，块内子 span 才可读 */
+  .tgroup + .tgroup {
+    margin-top: 8px;
+    padding-top: 8px;
+    border-top: 1px dashed var(--line);
+  }
+  .tspan {
+    display: grid;
+    grid-template-columns: 150px 1fr 54px;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    padding: 2px;
+    border: none;
+    border-radius: 6px;
+    background: transparent;
+    color: inherit;
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+  }
+  .tspan:hover {
+    background: var(--bg-soft);
+  }
+  .tspan.picked {
+    background: var(--accent-soft);
+  }
+  .tname {
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    color: var(--muted);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  /* 缩进层级：子 span 一层，fork 块两层，分身的子 span 三层（根不缩进） */
+  .tspan.d1 .tname {
+    padding-left: 14px;
+  }
+  /* 分身块：整组带底色（与主循环的行区分），默认折起只留一行；块头是分组
+     标题，条留给分身的子 span 各自画（局部时间轴） */
+  .fgroup {
+    margin: 2px 0 2px 8px;
+    border-radius: 8px;
+    background: rgba(124, 58, 237, 0.07);
+  }
+  /* 组内不透明底色会盖掉组底色，悬停改用同色系叠加 */
+  .fgroup .tspan:hover {
+    background: rgba(124, 58, 237, 0.1);
+  }
+  .fgroup .tw {
+    width: 14px;
+    height: 14px;
+  }
+  .tspan.d2 .tname {
+    display: flex;
+    align-items: center;
+    padding-left: 20px;
+    color: var(--fg);
+    font-weight: 600;
+  }
+  .tspan.d3 .tname {
+    padding-left: 34px;
+  }
+  .flabel {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    padding: 0;
+    border: none;
+    background: transparent;
+    color: inherit;
+    font: inherit;
+    text-align: left;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    cursor: pointer;
+  }
+  .thint {
+    font-size: 10px;
+    color: var(--faint);
+  }
+  .tspan.root .tname {
+    color: var(--fg);
+    font-weight: 600;
+  }
+  .tclock {
+    margin-right: 6px;
+    font-weight: 400;
+    color: var(--faint);
+  }
+  .ttrack {
+    position: relative;
+    height: 12px;
+    border-radius: 3px;
+    background: var(--bg-soft);
+  }
+  .tspan:hover .ttrack,
+  .tspan.picked .ttrack {
+    background: var(--line);
+  }
+  .ttrack i {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    min-width: 2px;
+    border-radius: 3px;
+  }
+  .k-turn {
+    background: #2563eb;
+  }
+  .k-fork {
+    background: #7c3aed;
+  }
+  .k-model {
+    background: #0891b2;
+  }
+  .k-tool {
+    background: #16a34a;
+  }
+  .k-compact {
+    background: #a3a3a3;
+  }
+  .tms {
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    color: var(--faint);
+    text-align: right;
+  }
+
+  /* ── 调用链视图：span 详情（停靠抽屉底部，attrs 原文）── */
+  .tdet {
+    flex: none;
+    max-height: 42%;
+    overflow-y: auto;
+    border-top: 1px solid var(--line-strong);
+  }
+  .tdet-head {
+    position: sticky;
+    top: 0;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 16px;
+    background: var(--bg-soft);
+    border-bottom: 1px solid var(--line);
+  }
+  .tdet-name {
+    font-family: var(--font-mono);
+    font-size: 11.5px;
+    font-weight: 600;
+    color: var(--fg);
+  }
+  .tdet-kind {
+    font-size: 10px;
+    color: var(--accent);
+    background: var(--accent-soft);
+    border-radius: 5px;
+    padding: 1px 6px;
+  }
+  .tdet-dur {
+    margin-left: auto;
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    color: var(--faint);
+  }
+  .tdet-x {
+    border: none;
+    background: transparent;
+    color: var(--faint);
+    font-size: 11px;
+    padding: 2px 5px;
+    border-radius: 5px;
+    cursor: pointer;
+  }
+  .tdet-x:hover {
+    color: var(--fg);
+    background: var(--line);
+  }
+  .tattr {
+    display: flex;
+    gap: 10px;
+    padding: 6px 16px;
+    border-bottom: 1px solid var(--line);
+  }
+  .tattr:last-child {
+    border-bottom: none;
+  }
+  .tak {
+    flex: none;
+    width: 96px;
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    color: var(--accent);
+    padding-top: 1px;
+  }
+  .tav {
+    flex: 1;
+    min-width: 0;
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    line-height: 1.5;
+    color: var(--muted);
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
   .rv {
     display: flex;
     gap: 10px;
@@ -1104,5 +1797,21 @@
   .rtext {
     white-space: pre-wrap;
     word-break: break-word;
+  }
+  /* tool 结果行首的认领标签：工具名 + 调用 ID（ID 长，缩小靠后置） */
+  .rcall {
+    display: inline-block;
+    margin-right: 6px;
+    padding: 0 6px;
+    border-radius: 6px;
+    background: var(--bg-soft);
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    color: var(--fg);
+  }
+  .rcall em {
+    font-style: normal;
+    font-size: 9.5px;
+    color: var(--faint);
   }
 </style>
