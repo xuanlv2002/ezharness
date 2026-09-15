@@ -35,6 +35,11 @@ func (c *TopicController) Get(g *gin.Context) {
 	g.JSON(http.StatusOK, d)
 }
 
+/* Trace GET /api/topics/:id/trace（回顾页调用链视图：该会话的 otel span 列表）。 */
+func (c *TopicController) Trace(g *gin.Context) {
+	g.JSON(http.StatusOK, c.Svc.Trace(g.Request.Context(), g.Param("id")))
+}
+
 /* Delete DELETE /api/topics/:id（删整条线，运行中拒绝）。 */
 func (c *TopicController) Delete(g *gin.Context) {
 	if err := c.Svc.Delete(g.Request.Context(), g.Param("id")); err != nil {

@@ -118,6 +118,20 @@ func (t *TopicService) Get(ctx context.Context, id string) (TopicDetail, error) 
 }
 
 /*
+Trace 读取分支的调用链 span（与 Get 同一叶解析：索引命中取 LeafID，
+否则 id 自身；无 trace.jsonl 返回空切片）。
+*/
+func (t *TopicService) Trace(ctx context.Context, id string) []hooks.Span {
+	if entry, ok := t.Hub.Topics.Get(id); ok && entry.LeafID != "" {
+		id = entry.LeafID
+	}
+	if spans := hooks.LoadTrace(ctx, t.Hub.Fsys, id); spans != nil {
+		return spans
+	}
+	return []hooks.Span{} // 契约是数组：无 trace.jsonl 也要给空数组而非 null
+}
+
+/*
 NewBranch 开新线：新 session（SeedKind=new，挂空根）注册并切为活动分支。
 索引延迟到首次发言（Send 时落），避免空线粉尘。
 */

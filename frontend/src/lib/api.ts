@@ -268,6 +268,21 @@ export interface SessionNode {
   isActiveLine: boolean
 }
 
+/* 调用链 span（GET /api/topics/:id/trace = trace.jsonl 原文） */
+export interface TraceSpan {
+  traceId: string
+  spanId: string
+  parentId?: string
+  name: string
+  kind: 'turn' | 'model' | 'tool' | 'fork' | 'compact' | string
+  start: number
+  end?: number
+  durMs?: number
+  iteration?: number
+  forkId?: string
+  attrs?: Record<string, unknown>
+}
+
 export type ApproveLevel = 'ask' | 'black' | 'white' | 'auto'
 export interface ToolRule {
   tool: string
@@ -409,6 +424,9 @@ export const api = {
     fetch(`/api/topics/${id}`).then(
       json<{ entry: TopicEntry; messages: HistoryMessage[]; summary?: string }>,
     ),
+
+  /* 回顾调用链：该会话的 otel span 列表（无 trace.jsonl 返回空数组） */
+  getTopicTrace: (id: string) => fetch(`/api/topics/${id}/trace`).then(json<TraceSpan[]>),
 
   /* 分支三操作：开新线 / 从源会话第 anchor 条消息（含）复制前缀分叉 / 切换分支 */
   newBranch: () => post<{ id: string }>('/api/branches/new'),
