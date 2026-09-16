@@ -115,7 +115,7 @@ hook 是 ezloop 引擎的横向扩展点（接口见 ezloop `hook/hook.go`：`On
 | `topics.go` `Topics` | — | `topics.json` 分支线索引管理（非 hook） |
 | `memory.go` `Memory`、`recall.go` `Recall` | — | **已定义但未接线**（无 `NewMemory`/`NewRecall` 调用点）。长期记忆实际由 `buildSystemBase` 的 `<memory>` 段注入；`recall_topic` 未注册 |
 
-同时接入的 ezloop hook：`approve`（人审）、`askuser`（`ask_user` 工具）、`contextfix`（修补孤立 tool 消息对）、`filetools`（read_file/write_file/edit_file/terminal）、`skilltool`（`load_skill`）、`task`（分身）、`offload`（大结果卸载，`WithSkip(ask_user, task, load_skill)` + `WithReplayTool("read_file")`）、`mcp`（`service/mcp.go` 的 `NewMcpHook` 包装，带热重载闭包）。
+同时接入的 ezloop hook：`approve`（人审）、`askuser`（`ask_user` 工具）、`contextfix`（修补孤立 tool 消息对）、`filetools`（read_file/write_file/edit_file/terminal）、`skilltool`（`load_skill`）、`task`（分身）、`offload`（大结果卸载，`WithSkip(ask_user, task, load_skill)` + `WithReplayTool("read_file")`）、`mcp`（`service/mcp.go` 的 `NewMcpHook` 注入系统级 router——全局单例连接池，全部 session 与页面/API/快应用 `POST /api/mcp/call` 冷启动直调共用；hook OnEnd 不关连接，生命周期归 `app.mcpRouter`）。
 
 禁用名单等实时配置以**闭包**注入（`disabledSkills`、`mainVision` 等），因为 `hooks` 被 `domain`/`service` 依赖，不能反向 import。
 

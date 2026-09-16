@@ -82,7 +82,15 @@ func (a *app) buildRouter() *gin.Engine {
 		a.browser = service.NewBrowserService(service.ResolveWorkDir(hub.SettingsSnapshot().WorkDir))
 	}
 
-	agents := &service.AgentService{Hub: hub, Term: termSvc, Browser: a.browser}
+	// 系统级 MCP router(全局唯一):agent 的 mcp hook 与页面/API 调用共用
+	// 同一连接池,跨代复用;换代可能切数据目录,按当代 mcp.json 重载列表
+	if a.mcpRouter == nil {
+		a.mcpRouter = service.NewMcpRouter(hub.Fsys)
+	} else {
+		service.SyncMcpServers(a.mcpRouter, hub.Fsys)
+	}
+
+	agents := &service.AgentService{Hub: hub, Term: termSvc, Browser: a.browser, McpRouter: a.mcpRouter}
 	agents.Assemble(hub.Active, hub.SettingsSnapshot())
 
 	appSvc := &service.AppService{
@@ -98,7 +106,7 @@ func (a *app) buildRouter() *gin.Engine {
 			Memory:   &service.MemoryService{Hub: hub},
 		},
 		Topics:    &controller.TopicController{Svc: &service.TopicService{Hub: hub, Agents: agents}},
-		Mcp:       &controller.McpController{Svc: service.NewMcpService(hub.Fsys)},
+		Mcp:       &controller.McpController{Svc: service.NewMcpService(hub.Fsys, a.mcpRouter)},
 		Apps:      &controller.AppsController{Svc: &service.AppsService{Fsys: hub.Fsys}},
 		App:       &controller.AppController{Svc: appSvc},
 		Terminal:  &controller.TerminalController{Svc: termSvc},
