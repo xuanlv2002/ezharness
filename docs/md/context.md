@@ -23,7 +23,7 @@ runtime.md 讲流程（什么时候发生），本文讲**成品长什么样**�
 
 三个要点：
 
-- **1–5 只组装一次**：base 存 `Session.sysP` 并落 `session.json` 快照（`sessionstore`），重启从快照还原、不重组。所以**改了记忆/skill/MCP，下个 session 才进 system**；期间由轮首 `<res_change>` 告知模型（这正是 remind 变更段存在的理由之一）。
+- **1–5 只组装一次**：base 存 `Session.sysP` 并落 `session.json` 快照（`sessionstore`），重启从快照还原、不重组。所以**改了记忆/skill/MCP，下个 session 才进 system**；期间由轮首 `<resource_change>` 告知模型（这正是 remind 变更段存在的理由之一）。
 - **1–7 合成 system，8–9 追加在它末尾**：整条 system 每轮由 `sysprompt.OnStart` 重写（`base + identity + summary`），追加段随各自 hook 的 `OnStart` 每轮重新拼上。
 - **fork 不吃这一套**：startHooks 不重跑，分身 seed 已含完整 system（`core/fork.go`）。
 
@@ -45,7 +45,6 @@ runtime.md 讲流程（什么时候发生），本文讲**成品长什么样**�
 # 输出占位：回复中给用户可点击的入口用 <$supper_url>类型://标识</$supper_url> 包裹——https:// / term:// / browser:// / app:// / file://
 # 共享终端（term_start/term_send 等）：魔法看板里的多终端，用户与你实时共见同一屏幕，全局共享…
 # 共享浏览器（browser_tab/browser_action/browser_read）：真实 Chromium，内嵌于桌面端工作区抽屉…
-# 用户手动在终端里的操作会出现在轮首 <res_change> 资源变更提示里，留意并在需要时接续。
 </workspace>                                                              ← ②
 <memory>
 # 长期记忆（下列均为完整绝对路径，直接使用，不要自行拼接）
@@ -54,11 +53,11 @@ runtime.md 讲流程（什么时候发生），本文讲**成品长什么样**�
 （harness.md 全文）
 </memory>                                                                ← ③
 <skills>
-（本清单由系统运行时生成，不在任何文件里；技能正文在 …/memory/skills/<名>/SKILL.md…）
+（可用技能清单，以此为准，不要读取 memory/skills 目录来发现技能；技能正文在 …/memory/skills/<名>/SKILL.md…）
 - 周报生成: 把本周 git 变更整理成周报
 </skills>                                                                ← ④
 <mcp>
-（经 mcp_router 工具调用，先用 mcp_list/tool_list 发现服务与工具）
+（可用 MCP 服务清单，以此为准，不要读取 mcp.json 来发现服务；经 mcp_router 工具调用，先用 tool_list 拉取某服务的工具清单再 tool_call…）
 - playwright: 浏览器自动化
 </mcp>                                                                   ← ⑤
 <session>
@@ -101,11 +100,13 @@ trim_context：把早期对话就地折叠为摘要，上下文立即变小（�
 [assistant]（历史……）
 
 [user]
-<res_change>
+<resource_change>
 （系统检测到的本轮资源变更，非用户发言，无需回应，无需回溯处理）
-- 新增技能：周报生成
-- 终端 t2：git status
-</res_change>                                                            ← ⑪ 有资源变更才插
+- 新增技能 周报生成
+变更后完整清单（技能与 MCP 服务以此为准，不要读取 memory/skills 目录或 mcp.json 来发现技能与服务）：
+available_skill: 周报生成 - 把本周 git 变更整理成周报
+available_mcp: playwright - 浏览器自动化
+</resource_change>                                                       ← ⑪ 有资源变更才插（available_ 清单行给模型，变更卡不展示）
 [user]
 <agent_status>
 当前时间：2026-09-15 23:49
@@ -145,7 +146,7 @@ trim_context：把早期对话就地折叠为摘要，上下文立即变小（�
 ```
         上一轮末  <end_reason>        每轮都有，OnEnd 尾插
    ┌── 轮首（startHooks，全部插在本轮 input 之前，按 hook 序）
-   │    <res_change>       仅当 skill/mcp/终端基线有变更
+   │    <resource_change>  仅当 skill/mcp 基线有变更（附变更后 available 完整清单）
    │    <agent_status>     每轮都有（水位/时间/距上次输出）
    │    <reference_file>   仅当本轮带附件或文件引用
    ├── 本轮 input           引擎 AppendMessage（先入史，上面三条插到它前面）
@@ -164,7 +165,7 @@ trim_context：把早期对话就地折叠为摘要，上下文立即变小（�
 
 | 标注 | 消息 | 生成者 | 插入点 | 条件 | 前端（实时 / 历史） |
 |---|---|---|---|---|---|
-| ⑪ | `<res_change>` | `hooks/remind.go` `OnStart`（变更段，diff 在 `reschange.go`） | 轮首，input 前 | skill/mcp/终端基线有变更 | `res.change` 事件 / 标签 + `- ` 行 |
+| ⑪ | `<resource_change>` | `hooks/remind.go` `OnStart`（变更段，diff 在 `reschange.go`） | 轮首，input 前 | skill/mcp 基线有变更 | `resource.change` 事件 / 标签 + `- ` 行（available_ 行只给模型） |
 | ⑫ | `<agent_status>` | 同上（快照段，`renderStatus`） | 轮首，input 前 | 每轮 | `status.snapshot` 事件（右上角水位条）/ 含关键词「整理上下文」才入时间线 |
 | ⑬ | `<reference_file>` | `hooks/reference_file.go` `OnStart` | 轮首，input 前 | 有附件或文件引用 | 发送时本地 push user 块 / 解析 JSON 载荷出 files·fileRefs chips |
 | ⑭ | 用户输入 | 引擎 | 每轮 | — | 发送时本地 push / 按角色渲染 |

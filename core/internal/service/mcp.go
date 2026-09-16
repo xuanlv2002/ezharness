@@ -1,5 +1,5 @@
 /*
-mcp.json 装配与配置用例：ezharness 用文件描述 MCP server（http/stdio），
+mcp.json 装配与配置用例：ezharness 用文件描述 MCP server（http/sse/stdio），
 经 Reload 钩子热加载——文件改动下一轮迭代即生效。Enabled=false 的
 服务器不装配。
 
@@ -27,10 +27,12 @@ type McpFile struct {
 type McpServerFile struct {
 	Name        string            `json:"name"`
 	Description string            `json:"description,omitempty"` // 用途说明，mcp_list 时带给模型
-	Type        string            `json:"type"`                  // "http" | "stdio"
-	URL         string            `json:"url"`
-	Headers     map[string]string `json:"headers"`
-	Args        []string          `json:"args"`
+	Type        string            `json:"type"`                  // "http" | "sse" | "stdio"
+	URL         string            `json:"url"`                   // http 与 sse 的服务地址
+	Headers     map[string]string `json:"headers"`               // http 与 sse 的附加请求头
+	Command     string            `json:"command"`               // stdio 要执行的命令（如 python3、npx）
+	Args        []string          `json:"args"`                  // stdio 传给命令的参数
+	Env         map[string]string `json:"env"`                   // stdio 附加环境变量（继承父进程环境之上合并）
 	Allow       []string          `json:"allow"`
 	Enabled     *bool             `json:"enabled,omitempty"`
 }
@@ -46,12 +48,15 @@ Allow 必须回传：前端全量保存，丢字段会清掉 mcp.json 里的白�
 type McpServerView struct {
 	Name        string            `json:"name"`
 	Description string            `json:"description"`
-	Transport   string            `json:"transport"` // http | stdio
-	Endpoint    string            `json:"endpoint"`  // http url 或启动命令
+	Transport   string            `json:"transport"` // http | sse | stdio
+	Endpoint    string            `json:"endpoint"`  // http/sse url 或启动命令行
+	Command     string            `json:"command"`
+	Args        []string          `json:"args,omitempty"`
+	Env         map[string]string `json:"env,omitempty"`
+	Headers     map[string]string `json:"headers"`
 	Enabled     bool              `json:"enabled"`
 	Connected   bool              `json:"connected"` // 页面手动会话已建立
 	Tools       int               `json:"tools"`
-	Headers     map[string]string `json:"headers"`
 	Allow       []string          `json:"allow,omitempty"`
 }
 
@@ -100,10 +105,13 @@ func (s *McpService) List() []McpServerView {
 			Description: srv.Description,
 			Transport:   srv.Type,
 			Endpoint:    endpointOf(srv),
+			Command:     srv.Command,
+			Args:        srv.Args,
+			Env:         srv.Env,
+			Headers:     nonNilHeaders(srv.Headers),
 			Enabled:     srv.IsEnabled(),
 			Connected:   connected,
 			Tools:       len(s.toolDefs[srv.Name]),
-			Headers:     nonNilHeaders(srv.Headers),
 			Allow:       srv.Allow,
 		})
 	}
@@ -135,14 +143,14 @@ func (s *McpService) Connect(ctx context.Context, name string) ([]McpToolView, e
 	}
 	c, err := sc.Factory(sc)
 	if err != nil {
-		return nil, errMcp(name + ": connect: " + err.Error())
+		return nil, errMcp(name + ": " + err.Error())
 	}
 	defs, err := c.ListTools(ctx)
 	if err != nil {
 		if cl, closer := c.(mcp.Closer); closer {
 			_ = cl.Close()
 		}
-		return nil, errMcp(name + ": list_tools: " + err.Error())
+		return nil, errMcp(name + ": list tools: " + err.Error())
 	}
 	s.clients[name] = c
 	s.toolDefs[name] = defs
@@ -190,11 +198,17 @@ func (s *McpService) Update(f McpFile) error {
 		if srv.Name == "" {
 			return errMcp("server name required")
 		}
-		if srv.Type != "http" && srv.Type != "stdio" {
-			return errMcp("type must be http or stdio")
-		}
-		if srv.Type == "http" && srv.URL == "" {
-			return errMcp("http server requires url")
+		switch srv.Type {
+		case "http", "sse":
+			if srv.URL == "" {
+				return errMcp(srv.Type + " server requires url")
+			}
+		case "stdio":
+			if srv.Command == "" {
+				return errMcp("stdio server requires command")
+			}
+		default:
+			return errMcp("type must be http, sse or stdio")
 		}
 	}
 	data, err := json.MarshalIndent(f, "", "  ")
@@ -244,7 +258,7 @@ func findServer(fsys fs.FileSystem, name string) *McpServerFile {
 
 func endpointOf(srv McpServerFile) string {
 	if srv.Type == "stdio" {
-		return srv.Name + " " + joinArgs(srv.Args)
+		return srv.Command + " " + joinArgs(srv.Args)
 	}
 	return srv.URL
 }
@@ -253,7 +267,7 @@ type mcpErr string
 
 func (e mcpErr) Error() string { return string(e) }
 
-func errMcp(msg string) error { return mcpErr("mcp.json: " + msg) }
+func errMcp(msg string) error { return mcpErr(msg) }
 
 func joinArgs(args []string) string { return strings.Join(args, " ") }
 
@@ -323,8 +337,13 @@ func buildServerConfig(s McpServerFile) (mcp.ServerConfig, bool) {
 	switch s.Type {
 	case "http":
 		sc.Factory = mcp.StreamableHTTP(s.URL, s.Headers)
+	case "sse":
+		sc.Factory = mcp.SSE(s.URL, s.Headers)
 	case "stdio":
-		sc.Factory = mcp.Stdio(s.Name, s.Args...)
+		if s.Command == "" {
+			return sc, false
+		}
+		sc.Factory = mcp.Stdio(s.Command, s.Env, s.Args...)
 	default:
 		return sc, false
 	}

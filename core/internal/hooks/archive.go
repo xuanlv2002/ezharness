@@ -130,7 +130,7 @@ func TitleFromMsg(m types.Message) string {
 
 /*
 FirstUserTitle 从消息里取首条真实 user 文本作话题标题（跳过 agent_status
-状态栏、res_change 资源变更、end_reason 轮次收尾与 context_trim 整理
+状态栏、resource_change 资源变更、end_reason 轮次收尾与 context_trim 整理
 marker——它们是 role=user 的注入消息）。
 */
 func FirstUserTitle(msgs []types.Message) string {

@@ -715,7 +715,7 @@ flowchart LR
         <li>源是"未产生新消息的 fork"时沿 fork 边上溯到实际内容源（空叉链折叠）</li>
         <li>新 session <b>体内携带 [0, anchor] 完整副本</b>（快照隔离；system / 水位承源）→ topics.Add(Kind:"fork") → LoadBranch + SetActive</li>
         <li>fork 线标题 = 锚点消息内容（TitleFromMsg）；有自己的首条新增 user 后显式切换</li>
-        <li>命名规则：new 线 = 首条真实 user（FirstUserTitle 跳过 agent_status / res_change / end_reason / trim marker 等系统注入，40 字截断）；世代名 = 本代首条 user，命名后固定</li>
+        <li>命名规则：new 线 = 首条真实 user（FirstUserTitle 跳过 agent_status / resource_change / end_reason / trim marker 等系统注入，40 字截断）；世代名 = 本代首条 user，命名后固定</li>
       </ul>
     </div>
 
@@ -786,7 +786,7 @@ sequenceDiagram
 
     E-&gt;&gt;E: AppendMessage(input)  ← 用户输入入史
     E-&gt;&gt;HK: startHooks[].OnStart（按序）
-    Note over HK: sys(system) → trace(观测层，须在会 Skip 短路的 hook 之前)&lt;br/&gt;→ contextfix(修理) → filetools(注册工具) → skilltool&lt;br/&gt;→ remind(变更段 res_change? + 快照段 agent_status) → reference_file(路径告知?)&lt;br/&gt;→ approver/asker/task/mcp(注册) → offload/guard/trim/sessionstore(就位)
+    Note over HK: sys(system) → trace(观测层，须在会 Skip 短路的 hook 之前)&lt;br/&gt;→ contextfix(修理) → filetools(注册工具) → skilltool&lt;br/&gt;→ remind(变更段 resource_change? + 快照段 agent_status) → reference_file(路径告知?)&lt;br/&gt;→ approver/asker/task/mcp(注册) → offload/guard/trim/sessionstore(就位)
 
     loop 迭代（≤MaxIterations）
         E-&gt;&gt;P: 模型调用
@@ -855,7 +855,6 @@ sequenceDiagram
 # 参数语法糖：工具参数的字符串值里写 &lt;@toolArg&gt;绝对路径&lt;/@toolArg&gt;，执行时会自动展开为该文件内容……
 # 输出占位：回复中给用户可点击的入口用 &lt;$supper_url&gt;类型://标识&lt;/$supper_url&gt; 包裹——https:// 外部链接、term://终端id（长驻程序收尾时交付终端入口）、app://快应用名……
 # 共享终端（term_start/term_send 等）：魔法看板里的多终端，用户与你实时共见同一屏幕……
-# 用户手动在终端里的操作会出现在轮首 &lt;res_change&gt; 资源变更提示里，留意并在需要时接续。
 <span class="t">&lt;/workspace&gt;</span>
 
 <span class="t">&lt;memory&gt;</span>
@@ -994,27 +993,25 @@ release-publish/
       <p>系统→模型的<b>全部单向旁路提醒</b>归这一个 hook，内部分三段独立成模块。变更检测留在此处的分界判据见 1.1。</p>
 
       <h4>变更段（OnStart，有变化才插——零噪音）</h4>
-      <p>对比 session 资源基线 <code class="inline">ResSnapshot{Skills, Mcps, Terms}</code>（持久化随 session，重启不重复报）+ 收割用户终端操作队列（收割即清，漏报即丢）。<b>首轮只建基线不 diff</b>（新建/迁移不算变更）；用户终端操作不走基线、首轮也报。条目为中文完整短语（模型与前端变更卡同源）：</p>
+      <p>对比 session 资源基线 <code class="inline">ResSnapshot{Skills, Mcps}</code>（持久化随 session，重启不重复报）。<b>首轮只建基线不 diff</b>（新建/迁移不算变更）。条目为中文完整短语（模型与前端变更卡同源）：</p>
       <table>
         <tr><th>操作</th><th>条目文案</th></tr>
         <tr><td>启用新技能</td><td><code>新增技能 release-publish</code></td></tr>
         <tr><td>禁用/删除技能</td><td><code>移除技能 release-publish</code></td></tr>
         <tr><td>mcp.json 加 server</td><td><code>新增MCP 服务 time</code></td></tr>
-        <tr><td>用户手开终端</td><td><code>新增终端 t-3(编译 node)，用户手动创建</code></td></tr>
-        <tr><td>AI 开的终端</td><td><code>新增终端 t-4(抓包)，AI 创建</code></td></tr>
-        <tr><td>进程退出</td><td><code>终端 t-3(编译 node) 已退出</code></td></tr>
-        <tr><td>改名/改来源</td><td><code>终端 t-4 已修改（名称 "抓包"→"日志"，来源 "用户"→"AI"）</code></td></tr>
-        <tr><td>终端被关闭</td><td><code>终端 t-4(日志) 已关闭</code></td></tr>
-        <tr><td>用户手敲命令</td><td><code>用户在终端 t-3 执行：npm run build</code></td></tr>
+        <tr><td>mcp.json 删 server</td><td><code>移除MCP 服务 time</code></td></tr>
       </table>
-      <p><b>有变化才</b>插一条 user 消息（位于 agent_status 前、本轮 input 前）+ 发 <code class="inline">res.change</code> 事件：</p>
+      <p><b>有变化才</b>插一条 user 消息（位于 agent_status 前、本轮 input 前）+ 发 <code class="inline">resource.change</code> 事件：</p>
       <div class="msg-stack">
-        <div class="msg"><div class="who inject">user · 注入</div><pre><span class="hl">&lt;res_change&gt;</span>
+        <div class="msg"><div class="who inject">user · 注入</div><pre><span class="hl">&lt;resource_change&gt;</span>
 （系统检测到的本轮资源变更，非用户发言，无需回应，无需回溯处理）
 - 新增技能 release-publish
-- 用户在终端 t-3 执行：npm run build
-<span class="hl">&lt;/res_change&gt;</span></pre></div>
+变更后完整清单（技能与 MCP 服务以此为准，不要读取 memory/skills 目录或 mcp.json 来发现技能与服务）：
+available_skill: release-publish - 把当前分支发布为 release
+available_mcp: context7 - 查询库文档
+<span class="hl">&lt;/resource_change&gt;</span></pre></div>
       </div>
+      <p class="dim">available_ 清单行是给模型的即时资源发现（前端变更卡不展示，只渲染 <code class="inline">- </code> 变更条目行）。</p>
 
       <h4>快照段（OnStart，每轮一条）</h4>
       <p>水位/时间快照，插在本轮 input 前（无变更段时它就是轮首第一条）+ 发 <code class="inline">status.snapshot</code> 事件（前端右上角水位条）：</p>
@@ -1148,7 +1145,7 @@ release-publish/
       <tr><th>消息</th><th>生成者</th><th>插入时机</th><th>条件</th></tr>
       <tr><td><code>system</code></td><td>sysprompt + 各 hook 追加</td><td>每轮首位（重注入）</td><td>恒有</td></tr>
       <tr><td><code>&lt;context_trim&gt;</code></td><td>trim</td><td>整理时尾插</td><td>水位达阈 / 模型主动</td></tr>
-      <tr><td><code>&lt;res_change&gt;</code></td><td>remind 变更段</td><td>轮首、agent_status 前</td><td><b>有变更才插</b></td></tr>
+      <tr><td><code>&lt;resource_change&gt;</code></td><td>remind 变更段</td><td>轮首、agent_status 前</td><td><b>有变更才插</b>（附 available 清单）</td></tr>
       <tr><td><code>&lt;agent_status&gt;</code></td><td>remind 快照段</td><td>轮首、reference_file 前</td><td>每轮</td></tr>
       <tr><td><code>&lt;reference_file&gt;</code></td><td>reference_file</td><td>本轮 input 前</td><td><b>有引用才插</b>（纯 JSON 载荷）</td></tr>
       <tr><td><b>用户真实输入</b></td><td>引擎</td><td>轮首入史（startHooks 前）</td><td>每轮</td></tr>
@@ -1189,10 +1186,10 @@ release-publish/
       <div class="msg"><div class="who inject">user · 注入</div><pre>&lt;end_reason&gt;…运行轮次：2…结束原因：正常结束…&lt;/end_reason&gt;</pre></div>
     </div>
 
-    <h4>场景 C · 技能启停 + 用户终端操作后的下一轮</h4>
-    <p class="sub">上一轮结束后：用户在设置里启用了技能 release-publish，又在终端 t-3 手动跑了 <code class="inline">npm run build</code>，然后让模型发版。变更段只在<b>下一个拥有它的轮次</b>出现一次，再下轮消失（基线已推进）。</p>
+    <h4>场景 C · 技能启停后的下一轮</h4>
+    <p class="sub">上一轮结束后：用户在设置里启用了技能 release-publish，然后让模型发版。变更段只在<b>下一个拥有它的轮次</b>出现一次，再下轮消失（基线已推进）。</p>
     <div class="msg-stack">
-      <div class="msg"><div class="who inject">user · 注入</div><pre><span class="hl">&lt;res_change&gt;</span>\n（系统检测到的本轮资源变更，非用户发言，无需回应，无需回溯处理）\n- 新增技能 release-publish\n- 用户在终端 t-3 执行：npm run build\n<span class="hl">&lt;/res_change&gt;</span></pre></div>
+      <div class="msg"><div class="who inject">user · 注入</div><pre><span class="hl">&lt;resource_change&gt;</span>\n（系统检测到的本轮资源变更，非用户发言，无需回应，无需回溯处理）\n- 新增技能 release-publish\n变更后完整清单（技能与 MCP 服务以此为准，不要读取 memory/skills 目录或 mcp.json 来发现技能与服务）：\navailable_skill: release-publish - 把当前分支发布为 release\n<span class="hl">&lt;/resource_change&gt;</span></pre></div>
       <div class="msg"><div class="who inject">user · 注入</div><pre>&lt;agent_status&gt;…&lt;/agent_status&gt;</pre></div>
       <div class="msg"><div class="who user">user</div><pre>构建刚跑完，帮我按流程发个版本</pre></div>
       <div class="msg"><div class="who assistant">assistant</div><pre>好，先加载发布技能 [tool_use load_skill]  name: "release-publish"</pre></div>
@@ -1241,7 +1238,7 @@ flowchart LR
     <table>
       <tr><th>tag</th><th>生成者</th><th>模型可见</th><th>前端实时路径</th><th>前端历史路径</th></tr>
       <tr><td><code>&lt;agent_status&gt;</code></td><td>remind 快照段</td><td>✓</td><td>status.snapshot 事件</td><td>关键词「整理上下文」识别进时间线</td></tr>
-      <tr><td><code>&lt;res_change&gt;</code></td><td>remind 变更段</td><td>✓</td><td>res.change 事件</td><td>标签 + <code>- </code> 行（变更卡）</td></tr>
+      <tr><td><code>&lt;resource_change&gt;</code></td><td>remind 变更段</td><td>✓</td><td>resource.change 事件</td><td>标签 + <code>- </code> 行（变更卡；available_ 行只给模型）</td></tr>
       <tr><td><code>&lt;reference_file&gt;</code></td><td>reference_file</td><td>✓</td><td>发送时本地 push user 块</td><td>解析 JSON 载荷 → files/fileRefs chips</td></tr>
       <tr><td><code>&lt;image_loaded&gt;</code> 包裹</td><td>filetools OnLoop</td><td>✓（Images base64）</td><td>filetools.image_loaded 事件</td><td>标签体 + m.images</td></tr>
       <tr><td><code>&lt;image_loaded path=…/&gt;</code> 自闭合</td><td>read_file 工具结果</td><td>✓（保留不改写）</td><td>工具卡结果原文</td><td>同左（不解析）</td></tr>
@@ -1291,14 +1288,13 @@ flowchart LR
     AG["🤖 agent&lt;br/&gt;term_send / term_read"]:::side --> PT
     US["👤 用户&lt;br/&gt;xterm 直接敲"]:::side --> PT
     PT -- "readMark 单游标&lt;br/&gt;读即消费" --> AG
-    US -- "手动输入聚合进&lt;br/&gt;res_change 变更段" --> AG
 
     classDef core fill:#072331,stroke:#00add8,color:#9be5f7
     classDef side fill:#0b1322,stroke:#33496e,color:#c4cede
     style TERM fill:#0a101d,stroke:#33496e,stroke-dasharray:6 4
 </pre>
     </div>
-    <div class="diagram-cap">不是 agent 私有的副本：agent 的工作目录与终端一致，用户随时接管、演示、纠错；用户敲的命令 agent 每轮都看得见（res_change「用户在终端执行：…」）。</div>
+    <div class="diagram-cap">不是 agent 私有的副本：agent 的工作目录与终端一致，用户随时接管、演示、纠错；输出进同一环形缓冲，双方读的是同一条流。</div>
     <ul>
       <li>单条 WebSocket 多路复用全部终端（帧带 id 路由，断线指数退避重连，环形缓冲恢复快照）</li>
       <li>终端<b>全局共享</b>（个人助手语义）；各会话的终端基线独立——A 会话首轮见到 B 会话开的终端报"新增"是<b>设计</b>（各会话模型知悉全局水位）</li>

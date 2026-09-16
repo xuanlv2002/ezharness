@@ -45,8 +45,8 @@ const HOME_PAGE = 'https://cn.bing.com/'
    新建/关闭后两边最容易不一致（页面切了、地址栏没换）。 */
 function tabList() {
   return [...tabs.entries()].map(([id, t]) => ({
-    id, name: t.name, origin: t.origin, url: t.url, title: t.title, loading: t.loading,
-    active: id === activeTab,
+    id, name: t.name, desc: t.desc || '', origin: t.origin, url: t.url, title: t.title,
+    loading: t.loading, active: id === activeTab,
   }))
 }
 
@@ -75,11 +75,16 @@ function broadcastTabs() {
   }, 60)
 }
 
-/* stateLine 工具回执的状态头行（id 直接给标签 id，模型引用它）。 */
-function stateLine(id) {
+/* tabState 工具回执的标签状态对象（list 与各操作同构；id 即标签 id，
+   模型引用它）。空值给括号语言说明（title 未设、desc 未填），
+   模型不会把空串误读成"字段丢了"。 */
+function tabState(id) {
   const t = tabs.get(id)
-  if (!t) return `[浏览器标签 ${id} 已不存在]`
-  return `[浏览器标签 ${id} "${t.name}"] 页面: ${t.title}${t.loading ? '(加载中)' : ''}`
+  if (!t) return { id, note: '标签已不存在' }
+  return {
+    id, name: t.name, ...(t.desc ? { desc: t.desc } : {}), origin: t.origin,
+    url: t.url, title: t.title || '(无标题)', loading: !!t.loading,
+  }
 }
 
 /* ── 视图管理 ── */
@@ -179,8 +184,9 @@ function selectTab(id) {
   broadcastTabs()
 }
 
-/* createTab 新建标签（origin:"用户"|"AI"）；startURL 空则 about:blank。 */
-function createTab(name, origin, startURL) {
+/* createTab 新建标签（origin:"用户"|"AI"；name 简短标识，desc 用途描述）；
+   startURL 空则 about:blank。 */
+function createTab(name, desc, origin, startURL) {
   seq += 1
   const id = `b${seq}`
   const url = completeURL(startURL)
@@ -189,13 +195,13 @@ function createTab(name, origin, startURL) {
       session: session.fromPartition('persist:ezbrowser'),
     },
   })
-  const tab = { view, name: name || id, origin, url, title: '', loading: !!startURL }
+  const tab = { view, name: name || id, desc: desc || '', origin, url, title: '', loading: !!startURL }
   tabs.set(id, tab)
 
   const wc = view.webContents
   wc.setWindowOpenHandler(({ url: target }) => {
     /* target=_blank 就地开新标签（同浏览习惯），不弹独立窗口 */
-    createTab(hostOf(target) || '新标签', '用户', target)
+    createTab(hostOf(target) || '新标签', '', '用户', target)
     return { action: 'deny' }
   })
   wc.on('did-start-loading', () => { tab.loading = true; broadcastTabs() })
@@ -334,23 +340,28 @@ function tabOf(tabId) {
   return tab
 }
 
-/* executors 方法名 → {result, imageB64?}；抛错 = 工具失败。 */
+/* executors 方法名 → {result, imageB64?}；抛错 = 工具失败。
+   result 统一为标签状态 JSON（read 的正文放 output，close 为 {id,closed}）。 */
 const executors = {
-  async start({ desc, url, timeoutMs }) {
-    const id = createTab(desc, 'AI', '')
-    const head = `[浏览器标签 ${id} "${desc}" 已创建,后续操作用 tabId=${id};内嵌于工作区抽屉,用户实时共见可随时接管]`
-    if (!url) return { result: head }
+  async start({ name, desc, url, timeoutMs }) {
+    const id = createTab(name, desc, 'AI', '')
+    const note = '已创建,后续操作用返回的 id;内嵌于工作区抽屉,用户实时共见可随时接管'
+    if (!url) return { result: JSON.stringify({ ...tabState(id), note }) }
     const tab = tabs.get(id)
     tab.view.webContents.loadURL(completeURL(url))
     const title = await waitLoad(tab.view.webContents, timeoutMs || 20000)
-    return { result: `${head}\n页面: ${title || '(无标题)'}` }
+    const state = tabState(id)
+    if (title) state.title = title
+    return { result: JSON.stringify({ ...state, note: `${note};页面已加载` }) }
   },
 
   async navigate({ tabId, url, timeoutMs }) {
     const tab = tabOf(tabId)
     tab.view.webContents.loadURL(completeURL(url))
     const title = await waitLoad(tab.view.webContents, timeoutMs || 20000)
-    return { result: `${stateLine(tab.id)}\n页面: ${title || '(无标题)'}` }
+    const state = tabState(tab.id)
+    if (title) state.title = title
+    return { result: JSON.stringify(state) }
   },
 
   async click({ tabId, selector, x, y }) {
@@ -364,7 +375,7 @@ const executors = {
       clickAt(wc, x || 0, y || 0)
     }
     await delay(300)
-    return { result: stateLine(tab.id) }
+    return { result: JSON.stringify(tabState(tab.id)) }
   },
 
   async type({ tabId, selector, text, submit }) {
@@ -383,7 +394,7 @@ const executors = {
       sendKey(wc, 'Enter', [])
       await delay(500)
     }
-    return { result: stateLine(tab.id) }
+    return { result: JSON.stringify(tabState(tab.id)) }
   },
 
   async key({ tabId, combo }) {
@@ -400,7 +411,7 @@ const executors = {
     })
     sendKey(tab.view.webContents, key, modifiers)
     await delay(300)
-    return { result: stateLine(tab.id) }
+    return { result: JSON.stringify(tabState(tab.id)) }
   },
 
   async scroll({ tabId, direction, amountPx }) {
@@ -414,7 +425,7 @@ const executors = {
       deltaY: direction === 'up' ? -amount : amount,
     })
     await delay(200)
-    return { result: stateLine(tab.id) }
+    return { result: JSON.stringify(tabState(tab.id)) }
   },
 
   async read({ tabId, mode, chars }) {
@@ -431,14 +442,22 @@ const executors = {
       body = await wc.executeJavaScript(`document.body ? document.body.innerText : '(空页面)'`, true)
     }
     const text = String(body ?? '')
-    const truncated = text.length > limit ? `${text.slice(0, limit)}\n…(过长已截断)` : text
-    return { result: `${stateLine(tab.id)}\n${truncated}` }
+    const truncated = text.length > limit
+    return {
+      result: JSON.stringify({
+        ...tabState(tab.id),
+        output: truncated
+          ? `${text.slice(0, limit)}\n…(过长已截断)`
+          : text || (mode === 'links' ? '(无链接)' : '(空页面)'),
+        note: truncated ? '过长已截断' : undefined,
+      }),
+    }
   },
 
   async screenshot({ tabId, fullPage }) {
     const tab = tabOf(tabId)
     const imageB64 = await screenshot(tab.view.webContents, !!fullPage)
-    return { result: stateLine(tab.id), imageB64 }
+    return { result: JSON.stringify(tabState(tab.id)), imageB64 }
   },
 
   async list() {
@@ -446,9 +465,9 @@ const executors = {
   },
 
   async close({ tabId }) {
-    if (!tabs.has(tabId)) return { result: `[浏览器标签 ${tabId} 已不存在]` }
+    if (!tabs.has(tabId)) return { result: JSON.stringify({ id: tabId, closed: true, note: '标签已不存在(幂等)' }) }
     closeTab(tabId)
-    return { result: `[浏览器标签 ${tabId} 已关闭]` }
+    return { result: JSON.stringify({ id: tabId, closed: true }) }
   },
 }
 
@@ -532,7 +551,7 @@ function registerIpc() {
     return JSON.stringify(tabList())
   })
   ipcMain.on('ez-browser:create', (_e, url) => {
-    createTab(hostOf(url || '') || '新标签', '用户', url || HOME_PAGE)
+    createTab(hostOf(url || '') || '新标签', '', '用户', url || HOME_PAGE)
   })
   ipcMain.on('ez-browser:navigate', (_e, tabId, url) => {
     const tab = tabs.get(tabId)

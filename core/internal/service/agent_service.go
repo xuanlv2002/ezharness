@@ -187,7 +187,7 @@ func (a *AgentService) Assemble(s *domain.Session, st domain.Settings) {
 			contextfix.New(),
 			filetools.New(s.Fsys, filetools.WithWorkDir(ResolveWorkDir(st.WorkDir)), filetools.WithImageHandler(readImage)),
 			skilltool.New(s.Fsys, hooks.SkillsDir, disabledSkills),
-			remindHook,         // 系统提醒：变更段插 <res_change>? + 快照段插 agent_status；OnEnd 收尾 <end_reason>
+			remindHook,         // 系统提醒：变更段插 <resource_change>? + 快照段插 agent_status；OnEnd 收尾 <end_reason>
 			hooks.NewRefFile(), // 有引用轮次在输入前插 <reference_file> 结构化告知（附件+文件页标注统一，模型按需 read_file）
 			approver,
 			asker,
@@ -426,7 +426,7 @@ buildSystemBase 组装 session 的 system 基础段：人格 + SystemExtra +
 标签化注入块（<memory> 长期记忆结构+索引 / <skills> 技能列表 /
 <mcp> MCP 列表）。只在 session 创建时调用一次（同 session 不变）；
 skill 全文与记忆细节不注入（模型按需用文件工具读取），列表变更要等
-下个 session 才进 system，期间由 remind 变更段的 <res_change> 告知模型。
+下个 session 才进 system，期间由 remind 变更段的 <resource_change> 告知模型。
 */
 func buildSystemBase(ctx context.Context, st domain.Settings, fsys osfs.OS) string {
 	var b strings.Builder
@@ -447,7 +447,7 @@ func buildSystemBase(ctx context.Context, st domain.Settings, fsys osfs.OS) stri
 		"# " + p("memory/longterm") + "    长期记忆，可写：harness.md 是索引（已注入上下文），主题文件按需新建，沉淀用户偏好与重要事实\n" +
 		"# " + p("memory/skills") + "      技能库，可写：每技能一个子目录（SKILL.md 指令 + scripts/ 脚本），新建后下个 session 进清单\n" +
 		"# " + p("apps") + "               快应用目录，由 save_app 工具写入，一般不手动改\n" +
-		"# " + p("mcp.json") + "           MCP 服务配置，可写：新增/修改 server 后经 mcp_router 调用（资源变更会出现在轮首 <res_change> 提示）\n" +
+		"# " + p("mcp.json") + "           MCP 服务配置，可写：新增/修改 server 后经 mcp_router 调用（服务清单见 <mcp> 块与轮首 <resource_change>，不要读此文件来发现服务）\n" +
 		"# " + p("sessions") + "           历史会话存档，只读：上下文与回忆来源（compact 摘要引用其路径），改写会破坏会话链\n" +
 		"# " + p(".ezloop/offload") + "    大工具结果的卸载区，按需读取，不手动管理\n" +
 		"# " + p("settings.json") + " / " + p("models.json") + " / " + p("stats.json") + " / " + p("topics.json") + "：应用配置与索引，由设置页和应用自身管理，不要直接改写\n" +
@@ -461,7 +461,7 @@ func buildSystemBase(ctx context.Context, st domain.Settings, fsys osfs.OS) stri
 		"app://快应用名（save_app 生成后在回复中引用，用户点击即开）、" +
 		"file://工作目录内文本文件的绝对路径（write_file/read_file 等操作过的代码与文档，交付入口供用户点击查看编辑）；\n" +
 		"# 共享终端（term_start/term_send 等）：魔法看板里的多终端，用户与你实时共见同一屏幕，全局共享（所有会话可用同一批终端）；" +
-		"term_list 查看全部（含用户手开的），term_start 新建（带描述，可附带首条命令）；\n" +
+		"term_list 查看全部（含用户手开的），term_start 新建（带名称与描述，可附带首条命令，返回含 id/name/desc 的 JSON）；\n" +
 		"# term_send 发命令并等输出静默返回（也用于应答交互/发 \\u0003 中断），term_read 游标式续读（只返回新增），term_close 关闭；\n" +
 		"# 需要交互式应答/状态保留/长驻程序/想让用户看到过程时用 term_* 系列，一次性无状态命令仍用 terminal；\n" +
 		"# 共享浏览器（browser_tab/browser_action/browser_read）：真实 Chromium，内嵌于桌面端工作区抽屉（browser_tab open 自动展开抽屉页，用户实时共见、可直接接管操作）；" +
@@ -469,7 +469,6 @@ func buildSystemBase(ctx context.Context, st domain.Settings, fsys osfs.OS) stri
 		"browser_action 操作页面（action=navigate 跳转 / click 点击 / type 输入 / key 按键 / scroll 滚动；优先 CSS 选择器，定位不了先截图按视口坐标），" +
 		"browser_read 读页面（mode=text 正文 / links 链接清单 / screenshot 视口截图 / full_page 整页截图，多模态直接看图定位）；" +
 		"检索、查资料、操作网页用浏览器，与 terminal（本机命令）互补；\n" +
-		"# 用户手动在终端里的操作会出现在轮首 <res_change> 资源变更提示里，留意并在需要时接续。\n" +
 		"</workspace>")
 	memRoot := filepath.ToSlash(filepath.Join(dataDir, "memory"))
 	b.WriteString("\n\n<memory>\n" +
@@ -492,16 +491,21 @@ func buildSystemBase(ctx context.Context, st domain.Settings, fsys osfs.OS) stri
 		skills = kept
 	}
 	if len(skills) > 0 {
-		b.WriteString("\n\n<skills>\n（本清单由系统运行时生成，不在任何文件里；技能正文在 " +
-			memRoot + "/skills/<名>/SKILL.md，可用文件工具编辑，改动下个 session 生效；" +
-			"使用前先调用 load_skill 获取完整指令与脚本路径）")
+		b.WriteString("\n\n<skills>\n（可用技能清单，以此为准，不要读取 memory/skills 目录来发现技能；" +
+			"技能正文在 " + memRoot + "/skills/<名>/SKILL.md，可用文件工具编辑，改动下个 session 生效，" +
+			"轮内变更见 <resource_change>；使用前先调用 load_skill 获取完整指令与脚本路径）")
 		for _, sk := range skills {
-			fmt.Fprintf(&b, "\n- %s: %s", sk.Name, sk.Description)
+			desc := sk.Description
+			if desc == "" {
+				desc = "（无描述）"
+			}
+			fmt.Fprintf(&b, "\n- %s: %s", sk.Name, desc)
 		}
 		b.WriteString("\n</skills>")
 	}
 	if lines := mcpListLines(fsys); len(lines) > 0 {
-		b.WriteString("\n\n<mcp>\n（经 mcp_router 工具调用，先用 mcp_list/tool_list 发现服务与工具）")
+		b.WriteString("\n\n<mcp>\n（可用 MCP 服务清单，以此为准，不要读取 mcp.json 来发现服务；" +
+			"经 mcp_router 工具调用，先用 tool_list 拉取某服务的工具清单再 tool_call，轮内变更见 <resource_change>）")
 		for _, l := range lines {
 			b.WriteString("\n" + l)
 		}
@@ -519,13 +523,17 @@ func mcpListLines(fsys osfs.OS) []string {
 	var out []string
 	for _, srv := range f.Servers {
 		if srv.IsEnabled() {
-			out = append(out, "- "+srv.Name+": "+srv.Description)
+			desc := srv.Description
+			if desc == "" {
+				desc = "（无描述）"
+			}
+			out = append(out, "- "+srv.Name+": "+desc)
 		}
 	}
 	return out
 }
 
-/* mcpStatusList 返回 MCP 清单（remind 变更基线用，描述前 8 字）。 */
+/* mcpStatusList 返回 MCP 清单（remind 变更基线与 available 清单用）。 */
 func mcpStatusList(fsys osfs.OS) []hooks.StatusMcp {
 	f := loadMcpFileOrNil(fsys)
 	if f == nil {
@@ -536,11 +544,7 @@ func mcpStatusList(fsys osfs.OS) []hooks.StatusMcp {
 		if !srv.IsEnabled() {
 			continue
 		}
-		desc := []rune(srv.Description)
-		if len(desc) > 8 {
-			desc = desc[:8]
-		}
-		out = append(out, hooks.StatusMcp{Name: srv.Name, Desc: string(desc)})
+		out = append(out, hooks.StatusMcp{Name: srv.Name, Desc: srv.Description})
 	}
 	return out
 }

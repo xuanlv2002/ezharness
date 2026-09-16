@@ -70,11 +70,11 @@ func newTestState(msgs []types.Message) *types.LoopState {
 	return &types.LoopState{Messages: msgs, Tools: types.NewToolRegistry(), Metadata: map[string]any{}}
 }
 
-/* 标题推导须跳过系统记录（agent_status/res_change/end_reason 都是 role=user 的注入消息） */
+/* 标题推导须跳过系统记录（agent_status/resource_change/end_reason 都是 role=user 的注入消息） */
 func TestFirstUserTitleSkipsSystemNotes(t *testing.T) {
 	msgs := []types.Message{
 		{Role: types.RoleUser, Content: "<agent_status>\n水位 50%\n</agent_status>"},
-		{Role: types.RoleUser, Content: "<res_change>\n- 新增技能 x\n</res_change>"},
+		{Role: types.RoleUser, Content: "<resource_change>\n- 新增技能 x\n</resource_change>"},
 		{Role: types.RoleUser, Content: "<end_reason>\n（系统自动记录的轮次收尾信息，非用户发言，无需回应）\n</end_reason>"},
 		{Role: types.RoleAssistant, Content: "答"},
 		{Role: types.RoleUser, Content: "  真正的用户问题  "},
@@ -160,7 +160,7 @@ func TestRemindFirstRoundBaselineOnly(t *testing.T) {
 		}
 	}
 	if resChange != 0 {
-		t.Fatalf("first round: no res_change, got %d", resChange)
+		t.Fatalf("first round: no resource_change, got %d", resChange)
 	}
 	if status != 1 {
 		t.Fatalf("snapshot always present, got %d", status)
@@ -170,19 +170,20 @@ func TestRemindFirstRoundBaselineOnly(t *testing.T) {
 	}
 }
 
-/* remind 变更段：二轮检测到技能新增 → 恰一条 res_change 在 agent_status 前。 */
+/* remind 变更段：二轮检测到技能新增 → 恰一条 resource_change 在 agent_status 前，附 available 清单。 */
 func TestRemindResChangeInsertedBeforeStatus(t *testing.T) {
 	ctx := context.Background()
 	fsys := memFS{}
 	store := NewStore(fsys, "t1")
-	mcpList := func() []StatusMcp { return nil }
+	mcpList := func() []StatusMcp { return []StatusMcp{{Name: "ctx7", Desc: "查库文档"}} }
 	h := NewRemind(fsys, store, func() int { return 0 }, 1000, mcpList, nil)
 	state1 := newTestState([]types.Message{{Role: types.RoleUser, Content: "q1"}})
 	if err := h.OnStart(ctx, state1); err != nil {
 		t.Fatal(err)
 	} // 首轮建基线
 
-	_ = fsys.Write(ctx, "memory/skills/pdf/SKILL.md", []byte("---\nname: pdf---\n步骤"))
+	_ = fsys.Write(ctx, "memory/skills/pdf/SKILL.md",
+		[]byte("---\nname: pdf\ndescription: PDF 处理\n---\n步骤"))
 	state2 := newTestState([]types.Message{
 		{Role: types.RoleUser, Content: "q1"},
 		{Role: types.RoleUser, Content: "q2"},
@@ -190,19 +191,29 @@ func TestRemindResChangeInsertedBeforeStatus(t *testing.T) {
 	if err := h.OnStart(ctx, state2); err != nil {
 		t.Fatal(err)
 	}
-	// 序列应为 [q1, res_change, agent_status, q2]
+	// 序列应为 [q1, resource_change, agent_status, q2]
 	if len(state2.Messages) != 4 {
 		t.Fatalf("messages = %d, want 4: %+v", len(state2.Messages), state2.Messages)
 	}
-	if !strings.Contains(state2.Messages[1].Content, "新增技能 pdf") {
-		t.Fatalf("res_change missing: %q", state2.Messages[1].Content)
+	change := state2.Messages[1].Content
+	if !strings.Contains(change, "新增技能 pdf") {
+		t.Fatalf("resource_change missing: %q", change)
+	}
+	if !strings.Contains(change, "available_skill: pdf - PDF 处理") {
+		t.Fatalf("available_skill line missing: %q", change)
+	}
+	if !strings.Contains(change, "available_mcp: ctx7 - 查库文档") {
+		t.Fatalf("available_mcp line missing: %q", change)
+	}
+	if !strings.Contains(change, "<"+ResChangeTag+">") || strings.Contains(change, "<res_change>") {
+		t.Fatalf("tag must be %s: %q", ResChangeTag, change)
 	}
 	if !strings.Contains(state2.Messages[2].Content, "<"+StatusTag+">") {
-		t.Fatalf("snapshot not after res_change: %q", state2.Messages[2].Content)
+		t.Fatalf("snapshot not after resource_change: %q", state2.Messages[2].Content)
 	}
 }
 
-/* 无变更轮次零 res_change（不浮夸）。 */
+/* 无变更轮次零 resource_change（不浮夸）。 */
 func TestRemindNoChangeNoMessage(t *testing.T) {
 	ctx := context.Background()
 	fsys := memFS{}

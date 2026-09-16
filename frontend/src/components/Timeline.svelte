@@ -63,7 +63,7 @@
     return out
   })
 
-  /* 空状态判定：note/status/reschange/endtick/imgload 是系统自动记录
+  /* 空状态判定：note/status/resourcechange/endtick/imgload 是系统自动记录
      （压缩翻页后的新会话仅含一条 <end_reason> 收尾），不算对话内容——
      只剩系统记录时仍展示欢迎页 */
   const empty = $derived(
@@ -71,7 +71,7 @@
       (b) =>
         b.kind !== 'note' &&
         b.kind !== 'status' &&
-        b.kind !== 'reschange' &&
+        b.kind !== 'resourcechange' &&
         b.kind !== 'endtick' &&
         b.kind !== 'imgload',
     ),
@@ -269,7 +269,7 @@
         <div class:reveal={store.batchIds.has(seg.b.uid)}>
           <StatusTagCard data={seg.b.data} raw={seg.b.text} />
         </div>
-      {:else if seg.b.kind === 'reschange'}
+      {:else if seg.b.kind === 'resourcechange'}
         <div class:reveal={store.batchIds.has(seg.b.uid)}>
           <ResChangeCard items={seg.b.items} />
         </div>

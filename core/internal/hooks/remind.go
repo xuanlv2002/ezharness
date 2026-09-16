@@ -6,8 +6,9 @@ remind 是系统提醒 hook：统一负责"系统→模型"的全部单向旁路
     SSE 事件（前端右上角水位条）——system 每 session 固定，水位与时间
     是轮内唯一需要同步的运行时状态；
   - 变更段（每轮 OnStart，reschange.go）：skill/mcp 基线 diff，
-    有变化才插一条 <res_change> 消息 + res.change
-    事件（按需、零噪音）；基线持久化随 session（重启不重复报）；
+    有变化才插一条 <resource_change> 消息（附变更后完整清单）+
+    resource.change 事件（按需、零噪音）；基线持久化随 session
+    （重启不重复报）；
   - 收尾段（每轮 OnEnd）：<end_reason> 轮次/时长/结束原因 + 记录
     LastOutputAt（下轮"距上次输出"用）。须排在 sessionstore 落盘前
     ——快照与内存同源。
@@ -38,10 +39,10 @@ const StatusTag = "agent_status"
 const EventStatus = event.EventType("status.snapshot")
 
 /* ResChangeTag 是资源变更记录的包裹标签（前端按它识别渲染变更卡）。 */
-const ResChangeTag = "res_change"
+const ResChangeTag = "resource_change"
 
 /* EventResChange 是资源变更事件（Data 为 []string 变更条目）。 */
-const EventResChange = event.EventType("res.change")
+const EventResChange = event.EventType("resource.change")
 
 /* EndReasonTag 是轮终止记录的包裹标签。 */
 const EndReasonTag = "end_reason"
@@ -83,8 +84,9 @@ func (h *Remind) Name() string { return "remind" }
 
 /* OnStart 轮首两段：变更段（有变化才说话）在前、快照段照旧每轮一条。 */
 func (h *Remind) OnStart(ctx context.Context, state *types.LoopState) error {
-	if items := h.buildChanges(ctx); len(items) > 0 {
-		h.insertBeforeLastUser(state, types.Message{Role: types.RoleUser, Content: renderResChange(items)})
+	if items, skills, mcps := h.buildChanges(ctx); len(items) > 0 {
+		h.insertBeforeLastUser(state, types.Message{Role: types.RoleUser,
+			Content: renderResChange(items, skills, mcps)})
 		state.EmitEvent(EventResChange, items)
 	}
 	data := h.buildSnapshot()
@@ -146,16 +148,44 @@ func renderStatus(d StatusData) string {
 	return b.String()
 }
 
-/* renderResChange 渲染资源变更记录（条目行前缀 "- " 是前端解析契约）。 */
-func renderResChange(items []string) string {
+/*
+renderResChange 渲染资源变更记录：变更条目行前缀 "- " 是前端解析契约；
+随后附变更后完整清单（available_ 行不带前缀，前端变更卡自然忽略，
+模型据此即时可知全部资源，不必读目录与配置文件发现）。desc 压平换行
+防伪造条目行。
+*/
+func renderResChange(items []string, skills, mcps []StatusMcp) string {
 	var b strings.Builder
 	b.WriteString("<" + ResChangeTag + ">")
 	b.WriteString("\n（系统检测到的本轮资源变更，非用户发言，无需回应，无需回溯处理）")
 	for _, it := range items {
 		b.WriteString("\n- " + it)
 	}
+	b.WriteString("\n变更后完整清单（技能与 MCP 服务以此为准，不要读取 memory/skills 目录或 mcp.json 来发现技能与服务）：")
+	if len(skills) > 0 {
+		for _, s := range skills {
+			b.WriteString("\navailable_skill: " + s.Name + " - " + descOrNone(s.Desc))
+		}
+	} else {
+		b.WriteString("\navailable_skill: （当前无可用技能）")
+	}
+	if len(mcps) > 0 {
+		for _, m := range mcps {
+			b.WriteString("\navailable_mcp: " + m.Name + " - " + descOrNone(m.Desc))
+		}
+	} else {
+		b.WriteString("\navailable_mcp: （当前无可用 MCP 服务）")
+	}
 	b.WriteString("\n</" + ResChangeTag + ">")
 	return b.String()
+}
+
+/* descOrNone 空描述给括号说明，避免清单行以 " - " 空尾巴收尾。 */
+func descOrNone(desc string) string {
+	if d := oneLine(desc, 200); d != "" {
+		return d
+	}
+	return "（无描述）"
 }
 
 /*

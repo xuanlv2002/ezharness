@@ -20,7 +20,7 @@ sequenceDiagram
 
     E->>E: AppendMessage(input)  ← 用户输入入史
     E->>HK: startHooks[].OnStart（按序）
-    Note over HK: sys(system) → trace(观测层，须在所有会 Skip 短路的 hook 之前)<br/>→ contextfix(修理) → filetools(注册工具) → skilltool<br/>→ remind(变更段 res_change? + 快照段 agent_status) → reference_file(路径告知?)<br/>→ approver/asker/task/mcp(注册) → offload/guard/trim/sessionstore(就位)
+    Note over HK: sys(system) → trace(观测层，须在所有会 Skip 短路的 hook 之前)<br/>→ contextfix(修理) → filetools(注册工具) → skilltool<br/>→ remind(变更段 resource_change? + 快照段 agent_status) → reference_file(路径告知?)<br/>→ approver/asker/task/mcp(注册) → offload/guard/trim/sessionstore(就位)
 
     loop 迭代（≤MaxIterations）
         E->>P: 模型调用
@@ -81,7 +81,7 @@ flowchart LR
 | 3 | **contextfix** | ezloop | OnStart | 修理残缺历史（孤儿 tool_call 等协议不完整序列） |
 | 4 | **filetools** | ezloop | OnStart + **OnLoop** | 注册 read/write/edit/terminal + 系统环境段；OnLoop 把 read_file 图片标记转换为持久化 user 图片消息 + 发 `filetools.image_loaded` 事件（见第五节） |
 | 5 | **skilltool** | ezloop | OnStart + OnToolStart | 注册 `load_skill`；拦截执行：渲染 SKILL.md 全文 + 目录树（免 offload） |
-| 6 | **remind** | ezharness | OnStart + OnEnd | 系统提醒三段：变更段（`<res_change>` 按需 + `res.change` 事件）+ 快照段（`<agent_status>` 每轮 + `status.snapshot` 事件）；OnEnd 收尾 `<end_reason>` + LastOutputAt（变更检测细节在 reschange.go） |
+| 6 | **remind** | ezharness | OnStart + OnEnd | 系统提醒三段：变更段（`<resource_change>` 按需、附 available 清单 + `resource.change` 事件）+ 快照段（`<agent_status>` 每轮 + `status.snapshot` 事件）；OnEnd 收尾 `<end_reason>` + LastOutputAt（变更检测细节在 reschange.go） |
 | 7 | **reference_file** | ezharness | OnStart | 带引用轮次在输入前插 `<reference_file>`（附件=整文件引用只给路径；文件页标注=路径+片段行号+备注），无引用零消息 |
 | 8 | **approve** | ezloop | OnStart + OnToolStart | 人机审批：规则匹配挂起等决策（SSE approve.request）；拒绝即 Skip |
 | 9 | **askuser** | ezloop | OnStart + OnToolStart | `ask_user`：模型向用户提问，阻塞等回答 |
@@ -128,7 +128,7 @@ warp 实例 per-Run 独立（fork 复刻 warp 链，分身输入同样可见）�
 | system | sysprompt + 各 hook 追加 | 每 session 固定 | 人格 + `<workspace>` 目录架构 + `<memory>` 索引 + `<skills>`/`<mcp>` 清单 + identity + compact summary + tool-guide/系统环境段 |
 | **用户真实输入** | 引擎 | 每轮末尾 | 文本（附件不在消息里） |
 | `<agent_status>` | remind 快照段 | 每轮、输入前 | 当前时间 / 上下文水位（超 70% 附建议 trim）/ 距上次输出 |
-| `<res_change>` | remind 变更段 | **有变更才插**、agent_status 前 | 资源基线 diff + 用户终端操作（每行一条） |
+| `<resource_change>` | remind 变更段 | **有变更才插**、agent_status 前 | 资源基线 diff 条目（`- ` 行）+ 变更后 available_skill/available_mcp 完整清单（`available_` 行，给模型即时发现资源） |
 | `<reference_file>` | reference_file | **有引用才插**、输入前 | 本轮引用清单：`refs[].path`（整文件）或 `refs[].items[]`（片段行号+备注）；文件本体不进上下文 |
 | `<image_loaded>` | filetools OnLoop | **读图才插**、工具批末 | 图片路径列表；消息 Images 带 base64（持久化） |
 | assistant | 模型 | 迭代 | 正文 / tool_use（ToolCalls） |
@@ -141,7 +141,7 @@ warp 实例 per-Run 独立（fork 复刻 warp 链，分身输入同样可见）�
 ```
 <context_trim kept="4">摘要…</context_trim>
 [近几轮 …]
-<res_change>…</res_change>        ← 有变更才有
+<resource_change>…</resource_change>  ← 有变更才有
 <agent_status>…</agent_status>
 <reference_file>…</reference_file>  ← 有引用才有
 看下我发的截图                      ← 用户输入

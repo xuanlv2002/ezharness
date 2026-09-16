@@ -103,8 +103,8 @@ hook 是 ezloop 引擎的横向扩展点（接口见 ezloop `hook/hook.go`：`On
 | 文件 | 接口方法 | 职责 |
 |---|---|---|
 | `sysprompt.go` `SysPrompt` | `OnStart` | system 消息唯一来源；渲染 = base + 身份块 + 摘要块 |
-| `remind.go` `Remind` | `OnStart` `OnEnd` | 轮首注入 `<agent_status>` 快照（时间/水位/距上次输出），有资源变更时另插 `<res_change>`；轮末注入 `<end_reason>` |
-| `reschange.go` | （`Remind` 的内部实现） | skill/MCP/终端基线 diff → 变更条目 |
+| `remind.go` `Remind` | `OnStart` `OnEnd` | 轮首注入 `<agent_status>` 快照（时间/水位/距上次输出），有资源变更时另插 `<resource_change>`（含变更后 available 清单）；轮末注入 `<end_reason>` |
+| `reschange.go` | （`Remind` 的内部实现） | skill/MCP 基线 diff → 变更条目 + 完整清单 |
 | `reference_file.go` `RefFileHook` | `OnStart` | 本轮有附件/文件引用时，在用户输入前插 `<reference_file>` 结构化消息 |
 | `trim.go` `Trim` | `OnStart` `OnLoop` `OnToolStart` | 注册 `trim_context` 工具；回边水位整理：就地折叠早期消息 + 插 `<context_trim>` 标记（同一 session 内） |
 | `guard.go` `Guard` | `OnToolEnd` | 窗口余量兜底：offload 豁免名单（read_file 等）的大结果放不下时也卸载 |
@@ -124,7 +124,7 @@ hook 是 ezloop 引擎的横向扩展点（接口见 ezloop `hook/hook.go`：`On
 **一份逐条标注的完整上下文（system 十段各自的来源 + 每轮标签的生成者与插入条件）见 `docs/md/context.md`**——改文案、标签或插入位置前先对那一份。
 
 **system 段** — `agent_service.go` 的 `buildSystemBase`（约 431 行）。段序：人格 → `SystemExtra`（设置页）→ `<workspace>`（目录架构/权限、`<@toolArg>` 与 `<$supper_url>` 语法、终端与浏览器工具指南）→ `<memory>`（含 `harness.md` 全文，`hooks.EnsureHarnessMd`）→ `<skills>`（`skill.LoadDir`，按 `DisabledSkills` 过滤）→ `<mcp>`。
-每 session **只组装一次**：存 `Session.sysP`（`domain/session.go` 的 `SetSysP`/`SysPromptRef`）并落进 `session.json` 快照（`sessionstore.go`）；改了记忆/skill/MCP 要下个 session 才进 system，期间由 `<res_change>` 告知模型。归档换代时热换。
+每 session **只组装一次**：存 `Session.sysP`（`domain/session.go` 的 `SetSysP`/`SysPromptRef`）并落进 `session.json` 快照（`sessionstore.go`）；改了记忆/skill/MCP 要下个 session 才进 system，期间由 `<resource_change>` 告知模型。归档换代时热换。
 
 **历史** — `Session.history`（`domain/session.go`），落盘 `sessions/<id>/session.json`。`StartRun` 把 `modelViewLocked(history)` 交给引擎；ModelView 从**最后一个 `<context_trim>` 标记**起（折叠掉的旧档只留在存档里）。`FinishRun`：本轮有折叠 → `hooks.MergeFull(history, state)`，否则整轮替换。`Store.OnEnd` 对磁盘快照做同样的合并。
 **trim** = 同一 session 内就地折叠（`hooks/trim.go`）；**compact/归档** = 换代新 session + 摘要（`hooks/archive.go`）——这两件事的边界别混。
@@ -134,7 +134,7 @@ hook 是 ezloop 引擎的横向扩展点（接口见 ezloop `hook/hook.go`：`On
 | 标签 | 生成处 | 落盘 | 前端消费 |
 |---|---|---|---|
 | `<agent_status>` | `hooks/remind.go` `renderStatus` | 是 | `store.svelte.ts` `parseStatus` / `buildBlocks` |
-| `<res_change>` | `hooks/reschange.go` + `remind.go` `renderResChange` | 是 | `buildBlocks` + `apply('res.change')` + `ResChangeCard.svelte` |
+| `<resource_change>` | `hooks/reschange.go` + `remind.go` `renderResChange` | 是 | `buildBlocks` + `apply('resource.change')` + `ResChangeCard.svelte`（available_ 清单行不展示） |
 | `<reference_file>` | `hooks/reference_file.go` | 是 | `buildBlocks` |
 | `<end_reason>` | `hooks/remind.go` `OnEnd` | 是 | `buildBlocks` / `endReasonText` |
 | `<context_trim>` | `hooks/trim.go` `doTrim` | 是 | `buildBlocks` / `trimText` |
@@ -142,13 +142,13 @@ hook 是 ezloop 引擎的横向扩展点（接口见 ezloop `hook/hook.go`：`On
 | `<$supper_url>` | 模型自己在回复里写（约定在 `<workspace>` 段） | 是 | `MessageItem.svelte`（渲染可点 chip，回跳抽屉/终端/浏览器/快应用） |
 | `<@toolArg>` | 模型写，执行时由工具 warp 展开（见第三节） | 原文保留 | 无 |
 
-实时侧对应 SSE 事件（`domain/event.go` 的 `MapEvent` → 前端 `store.apply`）：部分事件在 `session.go` 的 `replayable` 名单里被排除（如 `turn_end`、`res.change`、`status.snapshot`），断线重连靠历史重建，不靠回放。
+实时侧对应 SSE 事件（`domain/event.go` 的 `MapEvent` → 前端 `store.apply`）：部分事件在 `session.go` 的 `replayable` 名单里被排除（如 `turn_end`、`resource.change`、`status.snapshot`），断线重连靠历史重建，不靠回放。
 
 ### 2.4 常见改动落点
 
 - **加/删/换一个 hook** → `agent_service.go` 的 `Assemble`，`core.WithHooks(...)` 列表；注意上面 2.1 的顺序规则
 - **改 system 文案与块结构** → `buildSystemBase`（`agent_service.go`）。已在跑的 session 不会回填（system 固定），只对新 session 生效
-- **改提醒（`<agent_status>` / `<res_change>` / `<end_reason>`）文案** → `hooks/remind.go` + `hooks/reschange.go`；同时检查前端解析：`store.svelte.ts` 的 `buildBlocks` 按关键词判定（如 `整理上下文`），`StatusTagCard.svelte` 按文案解析，改文案必须同步，否则记录被吞或全量铺开
+- **改提醒（`<agent_status>` / `<resource_change>` / `<end_reason>`）文案** → `hooks/remind.go` + `hooks/reschange.go`；同时检查前端解析：`store.svelte.ts` 的 `buildBlocks` 按关键词判定（如 `整理上下文`；变更条目按 `- ` 行前缀、available 清单按 `available_` 前缀区分），`StatusTagCard.svelte` 按文案解析，改文案必须同步，否则记录被吞或全量铺开
 - **改 trim / 归档语义** → `hooks/trim.go`（同 session 折叠）与 `hooks/archive.go`（换代），两者共用 `hooks/summarize.go`；折叠边界由 `hooks.ViewStart` / `MergeFull` 定义
 - **加一个新标记标签** → 生成处 + 落盘（决定前端刷新后能否重建）+ `buildBlocks` 分支 + 消费组件，四处配套
 

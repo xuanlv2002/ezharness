@@ -62,7 +62,7 @@ export interface ForkSummary {
 
 /* agent_status 状态栏载荷（后端 hooks.StatusData 的 JSON 形状，SSE snapshot 用；
    注入消息历史的正文是中文语义化文本，历史重建走关键词识别；
-   资源变更不在快照里——走 res.change 事件 + <res_change> 消息单一来源） */
+   资源变更不在快照里——走 resource.change 事件 + <resource_change> 消息单一来源） */
 export interface StatusPayload {
   now: string
   sinceLastOutputMin: number
@@ -81,8 +81,11 @@ export interface AppEntry {
 export interface McpServerView {
   name: string
   description: string
-  transport: 'http' | 'stdio' | string
+  transport: 'http' | 'sse' | 'stdio' | string
   endpoint: string
+  command: string
+  args?: string[]
+  env?: Record<string, string>
   enabled: boolean
   connected: boolean
   tools: number
@@ -103,7 +106,9 @@ export interface McpFile {
     type: string
     url?: string
     headers?: Record<string, string>
+    command?: string
     args?: string[]
+    env?: Record<string, string>
     allow?: string[]
     enabled?: boolean
   }[]

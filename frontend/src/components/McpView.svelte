@@ -3,15 +3,17 @@
   import { api, type McpServerView, type McpToolView } from '../lib/api'
 
   /* MCP = 外部工具服务器（mcp.json 热加载）。页面侧可手动建立 MCP 会话
-  （与 agent 的连接相互独立）：点连接查看工具清单、填参试调用。 */
+  （与 agent 的连接相互独立）：点连接查看工具清单、填参试调用。
+  传输三档：http（Streamable HTTP）/ sse（旧协议 SSE）/ stdio（子进程）。 */
   let servers = $state<McpServerView[]>([])
   let loaded = $state(false)
   let saving = $state(false)
   let message = $state('')
   let adding = $state(false)
-  let draft = $state({ name: '', desc: '', type: 'http', url: '', pairs: [] as HeaderPair[] })
+  let draft = $state(emptyDraft())
   let editing = $state(false)
-  let editDraft = $state({ desc: '', url: '', pairs: [] as HeaderPair[] })
+  let editDraft = $state(emptyEditDraft())
+  let delTarget = $state<McpServerView | null>(null)
 
   /* 连接态：工具清单缓存 + 当前展开的调用表单（"server/tool"）。 */
   let connectedTools = $state<Record<string, McpToolView[]>>({})
@@ -35,6 +37,34 @@
     value: string
   }
 
+  interface Draft {
+    name: string
+    desc: string
+    type: 'http' | 'sse' | 'stdio'
+    url: string
+    pairs: HeaderPair[]
+    command: string
+    argsText: string
+    envPairs: HeaderPair[]
+  }
+
+  function emptyDraft(): Draft {
+    return { name: '', desc: '', type: 'http', url: '', pairs: [], command: '', argsText: '', envPairs: [] }
+  }
+
+  interface EditDraft {
+    desc: string
+    url: string
+    pairs: HeaderPair[]
+    command: string
+    argsText: string
+    envPairs: HeaderPair[]
+  }
+
+  function emptyEditDraft(): EditDraft {
+    return { desc: '', url: '', pairs: [], command: '', argsText: '', envPairs: [] }
+  }
+
   onMount(async () => {
     try {
       const { servers: ss } = await api.getMcp()
@@ -45,60 +75,99 @@
     loaded = true
   })
 
-  /* persist 自动保存（启停/添加/删除即时提交，下一轮热加载生效；
-  后端会顺带关闭已删除/禁用 server 的页面会话）。 */
-  async function persist() {
+  /* persist 自动保存（启停/添加/删除即时提交，下一轮热加载生效；后端会顺带
+  关闭已删除/禁用 server 的页面会话）。串行化：payload 在排队前取当下快照、
+  请求链式排队——删除后立刻添加时并发全量覆盖会把新 server 冲掉（后到旧
+  载荷胜出），排队后天然"最新快照最后落盘"。 */
+  let persistChain: Promise<void> = Promise.resolve()
+  function persist() {
     saving = true
     message = ''
-    try {
-      await api.saveMcp({
-        servers: servers.map((s) => ({
-          name: s.name,
-          ...(s.description ? { description: s.description } : {}),
-          type: s.transport,
-          ...(s.transport === 'http' ? { url: s.endpoint, headers: s.headers } : {}),
-          ...(s.allow?.length ? { allow: s.allow } : {}), // 透传白名单，防全量保存清掉
-          enabled: s.enabled,
-        })),
-      })
-      message = '已保存，下一轮生效'
-    } catch (e) {
-      message = `保存失败：${(e as Error).message}`
-    } finally {
-      saving = false
+    const payload = {
+      servers: servers.map((s) => ({
+        name: s.name,
+        ...(s.description ? { description: s.description } : {}),
+        type: s.transport,
+        ...(s.transport === 'stdio'
+          ? {
+              command: s.command,
+              args: s.args ?? [],
+              ...(Object.keys(s.env ?? {}).length ? { env: s.env } : {}),
+            }
+          : {
+              url: s.endpoint,
+              ...(Object.keys(s.headers ?? {}).length ? { headers: s.headers } : {}),
+            }),
+        ...(s.allow?.length ? { allow: s.allow } : {}), // 透传白名单，防全量保存清掉
+        enabled: s.enabled,
+      })),
     }
+    persistChain = persistChain
+      .then(() => api.saveMcp(payload))
+      .then(() => {
+        message = '已保存，下一轮生效'
+      })
+      .catch((e) => {
+        message = `保存失败：${(e as Error).message}`
+      })
+      .finally(() => {
+        saving = false
+      })
   }
 
   function toggle(s: McpServerView) {
     s.enabled = !s.enabled
-    void persist()
+    persist()
   }
 
-  async function addServer() {
-    if (!draft.name.trim()) return
-    if (draft.type === 'http' && !draft.url.trim()) return
+  function draftValid(): boolean {
+    if (!draft.name.trim()) return false
+    if (draft.type === 'stdio') return !!draft.command.trim()
+    return !!draft.url.trim()
+  }
+
+  function addServer() {
+    if (!draftValid()) return
+    const isStdio = draft.type === 'stdio'
+    const args = argsOf(draft.argsText)
+    const command = draft.command.trim()
     servers = [
       ...servers,
       {
         name: draft.name.trim(),
         description: draft.desc.trim(),
         transport: draft.type,
-        endpoint: draft.type === 'http' ? draft.url.trim() : draft.name.trim(),
+        endpoint: isStdio ? commandLine(command, args) : draft.url.trim(),
+        command: isStdio ? command : '',
+        args: isStdio ? args : [],
+        env: isStdio ? pairsToRecord(draft.envPairs) : {},
         enabled: true,
         connected: false,
         tools: 0,
-        headers: draft.type === 'http' ? pairsToRecord(draft.pairs) : {},
+        headers: isStdio ? {} : pairsToRecord(draft.pairs),
       },
     ]
-    draft = { name: '', desc: '', type: 'http', url: '', pairs: [] }
+    draft = emptyDraft()
     adding = false
-    void persist()
+    persist()
   }
 
   function pairsToRecord(pairs: HeaderPair[]): Record<string, string> {
     const out: Record<string, string> = {}
     for (const p of pairs) if (p.key.trim()) out[p.key.trim()] = p.value
     return out
+  }
+
+  /* argsOf 参数文本按行拆分（每行一个，路径含空格不被拆坏）。 */
+  function argsOf(text: string): string[] {
+    return text
+      .split('\n')
+      .map((l) => l.trim())
+      .filter(Boolean)
+  }
+
+  function commandLine(command: string, args: string[]): string {
+    return args.length ? `${command} ${args.join(' ')}` : command
   }
 
   function startEdit() {
@@ -111,28 +180,52 @@
     editing = true
     editDraft = {
       desc: s.description ?? '',
-      url: s.endpoint,
+      url: s.transport === 'stdio' ? '' : s.endpoint,
       pairs: Object.entries(s.headers ?? {}).map(([key, value]) => ({ key, value })),
+      command: s.command ?? '',
+      argsText: (s.args ?? []).join('\n'),
+      envPairs: Object.entries(s.env ?? {}).map(([key, value]) => ({ key, value })),
     }
+  }
+
+  function editValid(): boolean {
+    const s = selected
+    if (!s) return false
+    if (s.transport === 'stdio') return !!editDraft.command.trim()
+    return !!editDraft.url.trim()
   }
 
   function saveEdit() {
     const s = selected
-    if (!s || !editDraft.url.trim()) return
+    if (!s || !editValid()) return
     s.description = editDraft.desc.trim()
-    s.endpoint = editDraft.url.trim()
-    s.headers = pairsToRecord(editDraft.pairs)
+    if (s.transport === 'stdio') {
+      s.command = editDraft.command.trim()
+      s.args = argsOf(editDraft.argsText)
+      s.env = pairsToRecord(editDraft.envPairs)
+      s.endpoint = commandLine(s.command, s.args)
+    } else {
+      s.endpoint = editDraft.url.trim()
+      s.headers = pairsToRecord(editDraft.pairs)
+    }
     editing = false
-    void persist()
+    persist()
   }
 
+  /* 删除走自制居中确认框（原生 confirm 在 WebView 里贴顶，样式突兀）。 */
   function removeServer(s: McpServerView) {
-    if (!confirm(`删除 MCP server「${s.name}」？`)) return
+    delTarget = s
+  }
+
+  function doRemove() {
+    const s = delTarget
+    if (!s) return
     servers = servers.filter((x) => x.name !== s.name)
     delete connectedTools[s.name]
     if (openTool.startsWith(s.name + '/')) openTool = ''
     if (selected === s) selected = null
-    void persist()
+    delTarget = null
+    persist()
   }
 
   /* connect 建立（或复用）页面会话，成功即展开工具清单。 */
@@ -264,9 +357,7 @@
       >
         {connecting === selected.name ? '连接中…' : connectedTools[selected.name]?.length ? '断开会话' : '建立会话'}
       </button>
-      {#if selected.transport === 'http'}
-        <button class="op" onclick={startEdit}>{editing ? '收起编辑' : '编辑'}</button>
-      {/if}
+      <button class="op" onclick={startEdit}>{editing ? '收起编辑' : '编辑'}</button>
       <button class="op danger" onclick={() => removeServer(sel)}>删除</button>
       <span class="op-label">
         启用
@@ -281,21 +372,38 @@
     {#if editing}
       <div class="edit-form">
         <input type="text" placeholder="描述（agent 经 mcp_list 发现用）" bind:value={editDraft.desc} />
-        <input type="text" placeholder="https://example.com/mcp" bind:value={editDraft.url} />
-        {#each editDraft.pairs as p, j}
-          <div class="hdr-row">
-            <input type="text" placeholder="Header（如 Authorization）" bind:value={p.key} />
-            <input type="text" placeholder="Value（如 Bearer xxx）" bind:value={p.value} />
-            <button class="hdr-x" onclick={() => (editDraft.pairs = editDraft.pairs.filter((_, k) => k !== j))} title="移除">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round">
-                <path d="M6 6l12 12M18 6L6 18" />
-              </svg>
-            </button>
-          </div>
-        {/each}
-        <button class="hdr-add" onclick={() => (editDraft.pairs = [...editDraft.pairs, { key: '', value: '' }])}>+ 请求头</button>
+        {#if selected.transport === 'stdio'}
+          <input type="text" placeholder="命令（如 python3、npx、uvx）" bind:value={editDraft.command} />
+          <textarea spellcheck="false" rows="3" placeholder="参数，每行一个（如 path/to/server.py）" bind:value={editDraft.argsText}></textarea>
+          {#each editDraft.envPairs as p, j}
+            <div class="hdr-row">
+              <input type="text" placeholder="环境变量名（如 UV_PYTHON）" bind:value={p.key} />
+              <input type="text" placeholder="值（如 3.12）" bind:value={p.value} />
+              <button class="hdr-x" onclick={() => (editDraft.envPairs = editDraft.envPairs.filter((_, k) => k !== j))} title="移除">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round">
+                  <path d="M6 6l12 12M18 6L6 18" />
+                </svg>
+              </button>
+            </div>
+          {/each}
+          <button class="hdr-add" onclick={() => (editDraft.envPairs = [...editDraft.envPairs, { key: '', value: '' }])}>+ 环境变量</button>
+        {:else}
+          <input type="text" placeholder="https://example.com/mcp" bind:value={editDraft.url} />
+          {#each editDraft.pairs as p, j}
+            <div class="hdr-row">
+              <input type="text" placeholder="Header（如 Authorization）" bind:value={p.key} />
+              <input type="text" placeholder="Value（如 Bearer xxx）" bind:value={p.value} />
+              <button class="hdr-x" onclick={() => (editDraft.pairs = editDraft.pairs.filter((_, k) => k !== j))} title="移除">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round">
+                  <path d="M6 6l12 12M18 6L6 18" />
+                </svg>
+              </button>
+            </div>
+          {/each}
+          <button class="hdr-add" onclick={() => (editDraft.pairs = [...editDraft.pairs, { key: '', value: '' }])}>+ 请求头</button>
+        {/if}
         <div class="add-actions">
-          <button class="add-ok" disabled={!editDraft.url.trim()} onclick={saveEdit}>保存</button>
+          <button class="add-ok" disabled={!editValid()} onclick={saveEdit}>保存</button>
           <button class="add-no" onclick={() => (editing = false)}>取消</button>
         </div>
       </div>
@@ -381,7 +489,7 @@
           <div class="foot">
             <span class="tools">
               {s.connected ? `${s.tools} 个工具` : '点击查看'}
-              {#if s.transport === 'http' && Object.keys(s.headers ?? {}).length > 0}
+              {#if (s.transport === 'http' || s.transport === 'sse') && Object.keys(s.headers ?? {}).length > 0}
                 <i>· {Object.keys(s.headers).length} 个请求头</i>
               {/if}
             </span>
@@ -435,9 +543,25 @@
       <input type="text" placeholder="描述（agent 经 mcp_list 发现用，如 GitHub 仓库搜索）" bind:value={draft.desc} />
       <select bind:value={draft.type}>
         <option value="http">http</option>
+        <option value="sse">sse</option>
         <option value="stdio">stdio</option>
       </select>
-      {#if draft.type === 'http'}
+      {#if draft.type === 'stdio'}
+        <input type="text" placeholder="命令（如 python3、npx、uvx）" bind:value={draft.command} />
+        <textarea spellcheck="false" rows="3" placeholder="参数，每行一个（如 path/to/server.py）" bind:value={draft.argsText}></textarea>
+        {#each draft.envPairs as p, j}
+          <div class="hdr-row">
+            <input type="text" placeholder="环境变量名（如 UV_PYTHON）" bind:value={p.key} />
+            <input type="text" placeholder="值（如 3.12）" bind:value={p.value} />
+            <button class="hdr-x" onclick={() => (draft.envPairs = draft.envPairs.filter((_, k) => k !== j))} title="移除">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round">
+                <path d="M6 6l12 12M18 6L6 18" />
+              </svg>
+            </button>
+          </div>
+        {/each}
+        <button class="hdr-add" onclick={() => (draft.envPairs = [...draft.envPairs, { key: '', value: '' }])}>+ 环境变量</button>
+      {:else}
         <input type="text" placeholder="https://example.com/mcp" bind:value={draft.url} />
         {#each draft.pairs as p, j}
           <div class="hdr-row">
@@ -453,7 +577,7 @@
         <button class="hdr-add" onclick={() => (draft.pairs = [...draft.pairs, { key: '', value: '' }])}>+ 请求头</button>
       {/if}
       <div class="add-actions">
-        <button class="add-ok" disabled={!draft.name.trim() || (draft.type === 'http' && !draft.url.trim())} onclick={addServer}>添加</button>
+        <button class="add-ok" disabled={!draftValid()} onclick={addServer}>添加</button>
         <button class="add-no" onclick={() => (adding = false)}>取消</button>
       </div>
     </div>
@@ -461,6 +585,19 @@
     <button class="add" onclick={() => (adding = true)}>+ 添加服务器</button>
   {/if}
 </div>
+{/if}
+
+<!-- 删除 server 确认弹窗（居中，样式同 MemoryView 删除技能） -->
+{#if delTarget}
+  <div class="drawer-mask" onclick={() => (delTarget = null)}></div>
+  <div class="modal confirm">
+    <h3>删除 MCP server</h3>
+    <p class="modal-hint">确定删除「{delTarget.name}」？配置将从 mcp.json 移除，已建立的页面会话会一并关闭。</p>
+    <footer>
+      <button class="btn" onclick={() => (delTarget = null)}>取消</button>
+      <button class="btn danger" onclick={doRemove}>删除</button>
+    </footer>
+  </div>
 {/if}
 
 <style>
@@ -910,6 +1047,22 @@
     border-top: 1px dashed var(--line);
     padding-top: 12px;
   }
+  .edit-form textarea {
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 8px 10px;
+    font-family: var(--font-mono);
+    font-size: 11.5px;
+    line-height: 1.6;
+    outline: none;
+    background: var(--bg);
+    color: var(--fg);
+    resize: vertical;
+    min-width: 0;
+  }
+  .edit-form textarea:focus {
+    border-color: var(--line-strong);
+  }
   .edit-form input {
     border: 1px solid var(--line);
     border-radius: 8px;
@@ -965,5 +1118,65 @@
   }
   .card.ghost h2 {
     color: var(--muted);
+  }
+
+  /* ── 删除确认弹窗（居中，同 MemoryView 删除技能） ── */
+  .drawer-mask {
+    position: fixed;
+    inset: 0;
+    z-index: 58;
+    background: rgb(0 0 0 / 18%);
+  }
+  .modal {
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    z-index: 59;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    width: min(340px, 92vw);
+    background: var(--bg);
+    border: 1px solid var(--line-strong);
+    border-radius: 14px;
+    box-shadow: 0 12px 40px rgb(0 0 0 / 18%);
+    padding: 18px 20px;
+  }
+  .modal h3 {
+    font-size: 14px;
+    font-weight: 700;
+    color: var(--fg);
+    margin: 0;
+  }
+  .modal-hint {
+    font-size: 11px;
+    line-height: 1.6;
+    color: var(--faint);
+    margin: 0;
+  }
+  .modal footer {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+  }
+  .btn {
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: transparent;
+    color: var(--muted);
+    font: inherit;
+    font-size: 12px;
+    padding: 7px 16px;
+    cursor: pointer;
+  }
+  .btn:hover {
+    border-color: var(--line-strong);
+    color: var(--fg);
+  }
+  .btn.danger {
+    background: #c0392b;
+    border-color: #c0392b;
+    color: #fff;
   }
 </style>

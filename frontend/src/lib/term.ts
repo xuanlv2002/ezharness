@@ -8,6 +8,7 @@ hello/terminals 帧同步会话清单(含 AI 新建的),data 帧分发输出字�
 export type TermInfo = {
   id: string
   name: string
+  desc?: string
   origin: string
   exited: boolean
   lastCmd: string
@@ -112,11 +113,11 @@ class TerminalManager {
     this.send({ type: 'resize', id, cols, rows })
   }
 
-  async create(name?: string): Promise<TermInfo> {
+  async create(name?: string, desc?: string): Promise<TermInfo> {
     const r = await fetch('/api/terminal/create', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name }),
+      body: JSON.stringify({ name, desc }),
     })
     if (!r.ok) throw new Error(`新建终端失败: ${r.status}`)
     return r.json()

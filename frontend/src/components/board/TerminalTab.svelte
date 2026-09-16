@@ -215,7 +215,7 @@
 <div class="term-tab">
   <div class="strip">
     {#each sessions as s (s.id)}
-      <button class="strip-item" class:active={current === s.id} onclick={() => switchTo(s.id)} title="{s.name} · 来源 {s.origin || '?'}{s.lastCmd ? ` · 最近命令 ${s.lastCmd}` : ''}">
+      <button class="strip-item" class:active={current === s.id} onclick={() => switchTo(s.id)} title="{s.name}{s.desc ? ` · ${s.desc}` : ''} · 来源 {s.origin || '?'}{s.lastCmd ? ` · 最近命令 ${s.lastCmd}` : ''}">
         <span class="dot" class:exited={s.exited}></span>
         <span class="name">{s.name}</span>
         <span class="x" onclick={(e) => closeOne(e, s.id)} role="button" tabindex="-1" title="关闭">

@@ -183,10 +183,10 @@ func bridgeTimeout(timeoutMs, fallbackMs, maxMs int) time.Duration {
 
 /* ── AI 工具后端(BrowserIO 实现,签名与 tools 层契约一致) ── */
 
-/* StartBrowser 新建标签并可选导航,返回创建头行与页面标题。 */
-func (s *BrowserService) StartBrowser(ctx context.Context, desc, rawURL string, timeoutMs int) (string, error) {
+/* StartBrowser 新建标签(name 必填,desc 可选)并可选导航,返回标签状态 JSON。 */
+func (s *BrowserService) StartBrowser(ctx context.Context, name, desc, rawURL string, timeoutMs int) (string, error) {
 	reply, err := s.call(ctx, "start", map[string]any{
-		"desc": desc, "url": rawURL,
+		"name": name, "desc": desc, "url": rawURL,
 		"timeoutMs": int(bridgeTimeout(timeoutMs, 20000, 600000).Milliseconds()),
 	}, bridgeTimeout(timeoutMs, 25000, 600000))
 	if err != nil {
@@ -303,10 +303,13 @@ func (s *BrowserService) ScreenshotBrowser(ctx context.Context, tabID string, fu
 	return head + "\n" + `<image_loaded path="` + path + `"/>`, nil
 }
 
-/* CloseBrowserTab 关闭标签;幂等。 */
-func (s *BrowserService) CloseBrowserTab(ctx context.Context, tabID string) error {
-	_, err := s.call(ctx, "close", map[string]any{"tabId": tabID}, 15*time.Second)
-	return err
+/* CloseBrowserTab 关闭标签;幂等,返回 desktop 回执的 closed JSON。 */
+func (s *BrowserService) CloseBrowserTab(ctx context.Context, tabID string) (string, error) {
+	reply, err := s.call(ctx, "close", map[string]any{"tabId": tabID}, 15*time.Second)
+	if err != nil {
+		return "", err
+	}
+	return reply.Result, nil
 }
 
 /* ListBrowserTabsJSON 标签清单 JSON 文本(browser_list 工具直接返回)。 */

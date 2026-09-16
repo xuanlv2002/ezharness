@@ -66,7 +66,7 @@ flowchart LR
 | `cur *runState` | 当前轮生命周期句柄 {ctx, cancel}；busy 语义 |
 | `archiving` | 归档进行中锁（摘要最长 2 分钟）：锁发消息/切分支/二次归档 |
 | `pending map[string]Event` | 未决人机请求（approve/askuser），SSE 断线重放 |
-| `turnFrames [][]byte` | 本轮聚合帧缓存（刷新/重连回放重建时间线；轮开始清空；`replayable` 排除高频增量与 status.snapshot/res.change/turn_end） |
+| `turnFrames [][]byte` | 本轮聚合帧缓存（刷新/重连回放重建时间线；轮开始清空；`replayable` 排除高频增量与 status.snapshot/resource.change/turn_end） |
 | `subs` | SSE 订阅者通道（慢消费者丢帧，turn_end 校正兜底） |
 | `snap *hooks.SessionSnap` | bootstrap 恢复的快照（Assemble 读取；nil = 新建） |
 | `sysP *hooks.SysPrompt` | system 来源（session 创建组装一次；resume/compact 热更 summary 段） |
@@ -125,7 +125,7 @@ BeginArchive 占锁 → summarizeMsgs(模型视图，含 marker 摘要链，链�
 
 ### 命名规则
 
-- **线标题**：new 线 = 首条真实 user（`FirstUserTitle`：跳过 agent_status/res_change/end_reason/trim marker 等系统注入，40 字截断）；fork 线 = 锚点消息内容
+- **线标题**：new 线 = 首条真实 user（`FirstUserTitle`：跳过 agent_status/resource_change/end_reason/trim marker 等系统注入，40 字截断）；fork 线 = 锚点消息内容
 - **世代名（snap.Title）**：本代首条 user，命名后固定
 - 新分支未发言显示"新对话"
 

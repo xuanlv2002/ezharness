@@ -19,10 +19,11 @@ import (
 )
 
 /* BrowserIO 是共享浏览器服务的能力面(service.BrowserService 实现)。
-ctx 透传本轮上下文:用户停止时打断在途的桥调用等待。 */
+ctx 透传本轮上下文:用户停止时打断在途的桥调用等待。
+操作返回统一为标签状态 JSON:id/name/desc/origin/url/title/loading/note(read 正文放 output)。 */
 type BrowserIO interface {
-	/* StartBrowser 新建标签(描述必填)并可选导航 */
-	StartBrowser(ctx context.Context, desc, url string, timeoutMs int) (string, error)
+	/* StartBrowser 新建标签(name 必填,desc 可选)并可选导航 */
+	StartBrowser(ctx context.Context, name, desc, url string, timeoutMs int) (string, error)
 	/* NavigateBrowser 跳转并等加载 */
 	NavigateBrowser(ctx context.Context, tabID, url string, timeoutMs int) (string, error)
 	/* ClickBrowser 点击(selector 优先,否则视口截图坐标) */
@@ -37,9 +38,9 @@ type BrowserIO interface {
 	ReadBrowser(ctx context.Context, tabID, mode string, chars int) (string, error)
 	/* ScreenshotBrowser 截图(落盘+image_loaded 标记) */
 	ScreenshotBrowser(ctx context.Context, tabID string, fullPage bool) (string, error)
-	/* CloseBrowserTab 关闭标签 */
-	CloseBrowserTab(ctx context.Context, tabID string) error
-	/* ListBrowserTabsJSON 标签清单(JSON 文本) */
+	/* CloseBrowserTab 关闭标签,返回 {"id":..,"closed":true} */
+	CloseBrowserTab(ctx context.Context, tabID string) (string, error)
+	/* ListBrowserTabsJSON 标签清单(JSON 数组,条目含 id/name/desc/origin/url/title/loading/active) */
 	ListBrowserTabsJSON(ctx context.Context) string
 	/* ModelSeesImages 主模型是否多模态(截图返回形态裁决) */
 	ModelSeesImages() bool
@@ -47,7 +48,8 @@ type BrowserIO interface {
 
 type browserTabArgs struct {
 	Action    string `json:"action" desc:"open=新建标签(可带首跳网址);list=列出全部标签;close=关闭标签"`
-	Desc      string `json:"desc,omitempty" desc:"open:标签描述/名称(如 查竞品、看文档),list 与看板中展示"`
+	Name      string `json:"name,omitempty" desc:"open:标签名称,简短标识(如 查竞品、看文档),list 与看板中展示"`
+	Desc      string `json:"desc,omitempty" desc:"open:标签描述,详细说明用途(可选)"`
 	URL       string `json:"url,omitempty" desc:"open:创建后立即打开的网址(可选)"`
 	TimeoutMs int    `json:"timeoutMs,omitempty" desc:"open:导航等待上限毫秒,默认 20000;首次使用会自动下载 Chromium,此时给 600000"`
 	TabID     string `json:"tabId,omitempty" desc:"close:要关闭的标签 id"`
@@ -82,19 +84,19 @@ func SharedBrowser(b BrowserIO) []types.Tool {
 	return []types.Tool{
 		types.NewTool("browser_tab",
 			"浏览器标签管理(真实 Chromium,画面镜像到工作区抽屉·浏览器页,用户实时共见可接管)。"+
-				"action=open 新建标签并可选导航——desc 是标签描述,url 可选,首次使用会自动下载 Chromium(约 150MB,timeoutMs 给 600000);"+
-				"action=list 列出全部标签(用户手动开的与 AI 新开的都在内,所有会话共享);action=close 关闭标签(用完及时关,释放资源)。",
+				"action=open 新建标签并可选导航——name 是简短名称、desc 是详细描述,url 可选,"+
+				"首次使用会自动下载 Chromium(约 150MB,timeoutMs 给 600000);"+
+				"action=list 列出全部标签(用户手动开的与 AI 新开的都在内,所有会话共享);"+
+				"action=close 关闭标签(用完及时关,释放资源)。"+
+				"返回 JSON:id/name/desc/origin/url/title/loading/note(close 为 {id,closed})。",
 			func(ctx context.Context, in *browserTabArgs) (string, error) {
 				switch in.Action {
 				case "open":
-					return b.StartBrowser(ctx, in.Desc, in.URL, in.TimeoutMs)
+					return b.StartBrowser(ctx, in.Name, in.Desc, in.URL, in.TimeoutMs)
 				case "list":
 					return b.ListBrowserTabsJSON(ctx), nil
 				case "close":
-					if err := b.CloseBrowserTab(ctx, in.TabID); err != nil {
-						return "", err
-					}
-					return "closed " + in.TabID, nil
+					return b.CloseBrowserTab(ctx, in.TabID)
 				}
 				return "", fmt.Errorf("未知 action %q(open/list/close)", in.Action)
 			}),
