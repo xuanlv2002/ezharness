@@ -165,7 +165,8 @@
   function hintNoMore() {
     noMore = true
     clearTimeout(noMoreTimer)
-    noMoreTimer = setTimeout(() => (noMore = false), 1200)
+    // 短促提示即收：连续滚动会不断重置计时，停留太久显得呆滞
+    noMoreTimer = setTimeout(() => (noMore = false), 550)
   }
 
   async function trigger() {
