@@ -421,6 +421,9 @@
     white-space: pre-wrap;
     margin-top: 6px;
     line-height: 1.6;
+    max-height: 40vh;
+    overflow-y: auto;
+    overscroll-behavior: contain;
   }
   /* 复制按钮行：右下角，弱化存在感 */
   .foot {

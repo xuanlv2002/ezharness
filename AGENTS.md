@@ -90,7 +90,7 @@ hook 是 ezloop 引擎的横向扩展点（接口见 ezloop `hook/hook.go`：`On
 注册顺序即执行顺序，且顺序有语义：
 
 - `OnStart` 按序跑，各 hook 往 `Messages[0]` 追加自己的说明段 → **`sysprompt` 必须首位**（system 消息的创建者）
-- `OnToolStart` 按序跑，**首个返回 Skip 的会短路后续 toolStart hook** → `trace` 必须排在这些会 Skip 的 hook（`approve`/`askuser`/`task`/`skilltool`）之前，否则被短路的调用留不下 span；`approve` 又排在 `task`/`offload`/`trim` 之前，拒绝的调用到不了它们
+- `OnToolStart` 按序跑，**首个返回 Skip 的会短路后续 toolStart hook** → `trace` 必须排在这些会 Skip 的 hook（`approve`/`askuser`/`task`）之前，否则被短路的调用留不下 span；`approve` 又排在 `task`/`offload`/`trim` 之前，拒绝的调用到不了它们。`skilltool` 的 load_skill 已是 Invoke 闭环工具（不走 OnToolStart 拦截）
 - `guard` 必须在 `offload` 之后（要看已被 offload 改写过的结果）
 - `remind` 在 `sessionstore` 之前（`<end_reason>` 要进落盘快照）
 - `sessionstore` 最后（落盘）
@@ -103,19 +103,19 @@ hook 是 ezloop 引擎的横向扩展点（接口见 ezloop `hook/hook.go`：`On
 | 文件 | 接口方法 | 职责 |
 |---|---|---|
 | `sysprompt.go` `SysPrompt` | `OnStart` | system 消息唯一来源；渲染 = base + 身份块 + 摘要块 |
-| `remind.go` `Remind` | `OnStart` `OnEnd` | 轮首注入 `<agent_status>` 快照（时间/水位/距上次输出），有资源变更时另插 `<res_change>`；轮末注入 `<end_reason>` |
-| `reschange.go` | （`Remind` 的内部实现） | skill/MCP/终端基线 diff → 变更条目 |
+| `remind.go` `Remind` | `OnStart` `OnEnd` | 轮首注入 `<agent_status>` 快照（时间/水位/距上次输出/运行中终端/浏览器标签——终端与浏览器是进程生命周期态，重启即失，不进 system 固定段，与 skill/mcp 类持久资源分界），有资源变更时另插 `<resource_change>`（含变更后 available 清单）；轮末注入 `<end_reason>` |
+| `reschange.go` | （`Remind` 的内部实现） | skill/MCP 基线 diff → 变更条目 + 完整清单 |
 | `reference_file.go` `RefFileHook` | `OnStart` | 本轮有附件/文件引用时，在用户输入前插 `<reference_file>` 结构化消息 |
-| `trim.go` `Trim` | `OnStart` `OnLoop` `OnToolStart` | 注册 `trim_context` 工具；回边水位整理：就地折叠早期消息 + 插 `<context_trim>` 标记（同一 session 内） |
+| `trim.go` `Trim` | `OnStart` `OnLoop` `OnToolStart` | 注册 `trim_context` 工具；回边水位整理：就地折叠早期消息为四节结构化摘要（已完成/正在做/待办/关键事实，`normalizeStructuredSummary` 兜底）+ 重写 `sessions/<id>/progress.md` + 插 `<context_trim>` 标记（同一 session 内，连续性导向） |
 | `guard.go` `Guard` | `OnToolEnd` | 窗口余量兜底：offload 豁免名单（read_file 等）的大结果放不下时也卸载 |
 | `sessionstore.go` `Store` | `OnStart` `OnEnd` | 轮末把历史与 system 快照写 `sessions/<id>/session.json` |
 | `trace.go` `Trace` | 全部 | 跨度记录 → `trace.jsonl` |
-| `archive.go` `ArchiveSession`（函数，非 hook） | — | 归档换代：总结 → 封旧 session → 开新代；由 `service/topic_service.go` 调用 |
+| `archive.go` `ArchiveSession`（函数，非 hook） | — | 归档换代（沉淀式，长期记忆导向）：先 `distill.go` 沉淀步（固定三记忆文件 user/projects/lessons 合并重写，失败静默）→ 精炼交接摘要 → 封旧 session → 开新代；由 `service/topic_service.go` 调用（手动 Compact 唯一生产路径） |
 | `summarize.go`（函数） | — | trim 与 archive 共用的总结器 |
 | `topics.go` `Topics` | — | `topics.json` 分支线索引管理（非 hook） |
 | `memory.go` `Memory`、`recall.go` `Recall` | — | **已定义但未接线**（无 `NewMemory`/`NewRecall` 调用点）。长期记忆实际由 `buildSystemBase` 的 `<memory>` 段注入；`recall_topic` 未注册 |
 
-同时接入的 ezloop hook：`approve`（人审）、`askuser`（`ask_user` 工具）、`contextfix`（修补孤立 tool 消息对）、`filetools`（read_file/write_file/edit_file/terminal）、`skilltool`（`load_skill`）、`task`（分身）、`offload`（大结果卸载，`WithSkip(ask_user, task, load_skill)` + `WithReplayTool("read_file")`）、`mcp`（`service/mcp.go` 的 `NewMcpHook` 包装，带热重载闭包）。
+同时接入的 ezloop hook：`approve`（人审）、`askuser`（`ask_user` 工具）、`contextfix`（修补孤立 tool 消息对）、`filetools`（read_file/write_file/edit_file/terminal）、`skilltool`（`load_skill`）、`task`（分身）、`offload`（大结果卸载，`WithSkip(ask_user, task, load_skill)` + `WithReplayTool("read_file")`）、`mcp`（`service/mcp.go` 的 `NewMcpHook` 注入系统级 router——全局单例连接池，全部 session 与页面/API/快应用 `POST /api/mcp/call` 冷启动直调共用；hook OnEnd 不关连接，生命周期归 `app.mcpRouter`）。
 
 禁用名单等实时配置以**闭包**注入（`disabledSkills`、`mainVision` 等），因为 `hooks` 被 `domain`/`service` 依赖，不能反向 import。
 
@@ -123,8 +123,8 @@ hook 是 ezloop 引擎的横向扩展点（接口见 ezloop `hook/hook.go`：`On
 
 **一份逐条标注的完整上下文（system 十段各自的来源 + 每轮标签的生成者与插入条件）见 `docs/md/context.md`**——改文案、标签或插入位置前先对那一份。
 
-**system 段** — `agent_service.go` 的 `buildSystemBase`（约 431 行）。段序：人格 → `SystemExtra`（设置页）→ `<workspace>`（目录架构/权限、`<@toolArg>` 与 `<$supper_url>` 语法、终端与浏览器工具指南）→ `<memory>`（含 `harness.md` 全文，`hooks.EnsureHarnessMd`）→ `<skills>`（`skill.LoadDir`，按 `DisabledSkills` 过滤）→ `<mcp>`。
-每 session **只组装一次**：存 `Session.sysP`（`domain/session.go` 的 `SetSysP`/`SysPromptRef`）并落进 `session.json` 快照（`sessionstore.go`）；改了记忆/skill/MCP 要下个 session 才进 system，期间由 `<res_change>` 告知模型。归档换代时热换。
+**system 段** — `agent_service.go` 的 `buildSystemBase`（约 460 行）。段序：人格（含总纲句）→ `SystemExtra`（设置页）→ `<workspace>`（三个可写位置 + 行为规则——路径只给写入目标，读取向全部规则化防诱导）→ `<memory>`（含 `harness.md` 全文，`hooks.EnsureHarnessMd`；固定主题文件 user/projects/lessons）→ `<skills>`（`skill.LoadDir`，按 `DisabledSkills` 过滤）→ `<mcp>` → `<action>`（行动准则：技能匹配/计划审批/工具选择/并行分身/交付与连续性）→ `<output>`（输出规范：`<$supper_url>` 正误示例、`<@toolArg>`、回复风格——弱模型抄示例）。
+每 session **只组装一次**：存 `Session.sysP`（`domain/session.go` 的 `SetSysP`/`SysPromptRef`）并落进 `session.json` 快照（`sessionstore.go`）；改了记忆/skill/MCP 要下个 session 才进 system，期间由 `<resource_change>` 告知模型。归档换代时热换。
 
 **历史** — `Session.history`（`domain/session.go`），落盘 `sessions/<id>/session.json`。`StartRun` 把 `modelViewLocked(history)` 交给引擎；ModelView 从**最后一个 `<context_trim>` 标记**起（折叠掉的旧档只留在存档里）。`FinishRun`：本轮有折叠 → `hooks.MergeFull(history, state)`，否则整轮替换。`Store.OnEnd` 对磁盘快照做同样的合并。
 **trim** = 同一 session 内就地折叠（`hooks/trim.go`）；**compact/归档** = 换代新 session + 摘要（`hooks/archive.go`）——这两件事的边界别混。
@@ -134,7 +134,7 @@ hook 是 ezloop 引擎的横向扩展点（接口见 ezloop `hook/hook.go`：`On
 | 标签 | 生成处 | 落盘 | 前端消费 |
 |---|---|---|---|
 | `<agent_status>` | `hooks/remind.go` `renderStatus` | 是 | `store.svelte.ts` `parseStatus` / `buildBlocks` |
-| `<res_change>` | `hooks/reschange.go` + `remind.go` `renderResChange` | 是 | `buildBlocks` + `apply('res.change')` + `ResChangeCard.svelte` |
+| `<resource_change>` | `hooks/reschange.go` + `remind.go` `renderResChange` | 是 | `buildBlocks` + `apply('resource.change')` + `ResChangeCard.svelte`（available_ 清单行不展示） |
 | `<reference_file>` | `hooks/reference_file.go` | 是 | `buildBlocks` |
 | `<end_reason>` | `hooks/remind.go` `OnEnd` | 是 | `buildBlocks` / `endReasonText` |
 | `<context_trim>` | `hooks/trim.go` `doTrim` | 是 | `buildBlocks` / `trimText` |
@@ -142,14 +142,14 @@ hook 是 ezloop 引擎的横向扩展点（接口见 ezloop `hook/hook.go`：`On
 | `<$supper_url>` | 模型自己在回复里写（约定在 `<workspace>` 段） | 是 | `MessageItem.svelte`（渲染可点 chip，回跳抽屉/终端/浏览器/快应用） |
 | `<@toolArg>` | 模型写，执行时由工具 warp 展开（见第三节） | 原文保留 | 无 |
 
-实时侧对应 SSE 事件（`domain/event.go` 的 `MapEvent` → 前端 `store.apply`）：部分事件在 `session.go` 的 `replayable` 名单里被排除（如 `turn_end`、`res.change`、`status.snapshot`），断线重连靠历史重建，不靠回放。
+实时侧对应 SSE 事件（`domain/event.go` 的 `MapEvent` → 前端 `store.apply`）：部分事件在 `session.go` 的 `replayable` 名单里被排除（如 `turn_end`、`resource.change`、`status.snapshot`），断线重连靠历史重建，不靠回放。
 
 ### 2.4 常见改动落点
 
 - **加/删/换一个 hook** → `agent_service.go` 的 `Assemble`，`core.WithHooks(...)` 列表；注意上面 2.1 的顺序规则
 - **改 system 文案与块结构** → `buildSystemBase`（`agent_service.go`）。已在跑的 session 不会回填（system 固定），只对新 session 生效
-- **改提醒（`<agent_status>` / `<res_change>` / `<end_reason>`）文案** → `hooks/remind.go` + `hooks/reschange.go`；同时检查前端解析：`store.svelte.ts` 的 `buildBlocks` 按关键词判定（如 `整理上下文`），`StatusTagCard.svelte` 按文案解析，改文案必须同步，否则记录被吞或全量铺开
-- **改 trim / 归档语义** → `hooks/trim.go`（同 session 折叠）与 `hooks/archive.go`（换代），两者共用 `hooks/summarize.go`；折叠边界由 `hooks.ViewStart` / `MergeFull` 定义
+- **改提醒（`<agent_status>` / `<resource_change>` / `<end_reason>`）文案** → `hooks/remind.go` + `hooks/reschange.go`；同时检查前端解析：`store.svelte.ts` 的 `buildBlocks` 按关键词判定（如 `整理上下文`；变更条目按 `- ` 行前缀、available 清单按 `available_` 前缀区分），`StatusTagCard.svelte` 按文案解析，改文案必须同步，否则记录被吞或全量铺开
+- **改 trim / 归档语义** → `hooks/trim.go`（同 session 折叠，四节结构化 + progress.md）与 `hooks/archive.go`（换代）+ `hooks/distill.go`（沉淀步，固定三记忆文件合并重写），共用 `hooks/summarize.go`（`normalizeStructuredSummary` 兜底格式）；折叠边界由 `hooks.ViewStart` / `MergeFull` 定义
 - **加一个新标记标签** → 生成处 + 落盘（决定前端刷新后能否重建）+ `buildBlocks` 分支 + 消费组件，四处配套
 
 ---
@@ -242,3 +242,17 @@ warp 是 ezloop 的**纵向**装饰器（与横向的 hook 并列），包住单
 - AI 侧文件工具（read_file/write_file/edit_file）和画板/文本保存走同一套绝对路径读写，没有目录白名单（`WorkspaceController` 只校验路径有效性与存在性）
 - 跨窗口（抽屉 → 独立窗口）搬运的是**路径快照**（`filePane.serialize`），不复制文件；回流后图片 tab 会重挂按盘重读
 - 浏览器截图每次一个文件名，会累积在 `workspace/browser/`（目前没有清理策略）
+
+## 五、踩坑记录
+
+### 5.1 损坏的工具参数会静默炸掉落盘与续聊（2026-09 事故）
+
+**现象**：超长思考后模型流式输出的 `write_file` 参数损坏（乱码/截断），随后①该轮 `session.json` 没落盘（切页面/重启直接丢上下文）；②之后每轮发送都立刻失败（openai 协议把非法 `Arguments` 原样字符串发给上游 → 400）。
+
+**根因链**：三个 provider 的流式累积收尾（anthropic/openai/openairesponses）都直接 `json.RawMessage(c.args)` 不校验；非法字节进了 `state.Messages` 的 `ToolCall.Args` 后：`sessionstore` 的 `json.MarshalIndent` 失败（只记 `Metadata`，静默丢轮）；openai 请求侧 `string(tc.Args)` 把垃圾重发上游。
+
+**防线（两层，改动时别拆）**：
+- ezloop `provutil.SafeArgs`：流式累积收尾统一清洗——非法 JSON 包成 `{"_corrupted_args":"<1024 预览>"}`，工具以缺参报错回传、模型自纠重发
+- ezharness `sessionstore.OnEnd`：marshal 失败时 `sanitizeMsgArgs` 就地清洗重试一次（顺带治好内存里的历史——下次请求不再带毒）
+
+**教训**：`json.RawMessage` 是"信任边界"字段——凡是**逐块拼接**出来再转 `RawMessage` 的地方（流式增量、外部拼接），必须过 `json.Valid`；落盘失败的错误只进 `Metadata` 等于静默，兜底路径要保证"状态即消息"不破。

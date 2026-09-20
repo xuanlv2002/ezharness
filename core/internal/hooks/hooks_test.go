@@ -2,6 +2,7 @@ package hooks
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
@@ -70,11 +71,11 @@ func newTestState(msgs []types.Message) *types.LoopState {
 	return &types.LoopState{Messages: msgs, Tools: types.NewToolRegistry(), Metadata: map[string]any{}}
 }
 
-/* 标题推导须跳过系统记录（agent_status/res_change/end_reason 都是 role=user 的注入消息） */
+/* 标题推导须跳过系统记录（agent_status/resource_change/end_reason 都是 role=user 的注入消息） */
 func TestFirstUserTitleSkipsSystemNotes(t *testing.T) {
 	msgs := []types.Message{
 		{Role: types.RoleUser, Content: "<agent_status>\n水位 50%\n</agent_status>"},
-		{Role: types.RoleUser, Content: "<res_change>\n- 新增技能 x\n</res_change>"},
+		{Role: types.RoleUser, Content: "<resource_change>\n- 新增技能 x\n</resource_change>"},
 		{Role: types.RoleUser, Content: "<end_reason>\n（系统自动记录的轮次收尾信息，非用户发言，无需回应）\n</end_reason>"},
 		{Role: types.RoleAssistant, Content: "答"},
 		{Role: types.RoleUser, Content: "  真正的用户问题  "},
@@ -89,7 +90,7 @@ func TestFirstUserTitleSkipsSystemNotes(t *testing.T) {
 
 /* remind 收尾段：错误轮须落错误详情（换行压平、超长截断） */
 func TestRemindEndNoteErrorDetail(t *testing.T) {
-	h := NewRemind(memFS{}, NewStore(memFS{}, "t1"), func() int { return 0 }, 1000, nil, nil)
+	h := NewRemind(memFS{}, NewStore(memFS{}, "t1"), func() int { return 0 }, 1000, nil, nil, nil, nil)
 	long := strings.Repeat("错", 400)
 	state := &types.LoopState{StopReason: types.StopError, LastError: fmt.Errorf("boom\nline2 %s", long)}
 	if err := h.OnEnd(context.Background(), state); err != nil {
@@ -145,7 +146,7 @@ func TestRemindFirstRoundBaselineOnly(t *testing.T) {
 	_ = fsys.Write(ctx, "memory/skills/pdf/SKILL.md", []byte("---\nname: pdf---\n步骤"))
 	store := NewStore(fsys, "t1")
 	h := NewRemind(fsys, store, func() int { return 0 }, 1000,
-		func() []StatusMcp { return nil }, nil)
+		func() []StatusMcp { return nil }, nil, nil, nil)
 	state := newTestState([]types.Message{{Role: types.RoleUser, Content: "q"}})
 	if err := h.OnStart(ctx, state); err != nil {
 		t.Fatal(err)
@@ -160,7 +161,7 @@ func TestRemindFirstRoundBaselineOnly(t *testing.T) {
 		}
 	}
 	if resChange != 0 {
-		t.Fatalf("first round: no res_change, got %d", resChange)
+		t.Fatalf("first round: no resource_change, got %d", resChange)
 	}
 	if status != 1 {
 		t.Fatalf("snapshot always present, got %d", status)
@@ -170,19 +171,20 @@ func TestRemindFirstRoundBaselineOnly(t *testing.T) {
 	}
 }
 
-/* remind 变更段：二轮检测到技能新增 → 恰一条 res_change 在 agent_status 前。 */
+/* remind 变更段：二轮检测到技能新增 → 恰一条 resource_change 在 agent_status 前，附 available 清单。 */
 func TestRemindResChangeInsertedBeforeStatus(t *testing.T) {
 	ctx := context.Background()
 	fsys := memFS{}
 	store := NewStore(fsys, "t1")
-	mcpList := func() []StatusMcp { return nil }
-	h := NewRemind(fsys, store, func() int { return 0 }, 1000, mcpList, nil)
+	mcpList := func() []StatusMcp { return []StatusMcp{{Name: "ctx7", Desc: "查库文档"}} }
+	h := NewRemind(fsys, store, func() int { return 0 }, 1000, mcpList, nil, nil, nil)
 	state1 := newTestState([]types.Message{{Role: types.RoleUser, Content: "q1"}})
 	if err := h.OnStart(ctx, state1); err != nil {
 		t.Fatal(err)
 	} // 首轮建基线
 
-	_ = fsys.Write(ctx, "memory/skills/pdf/SKILL.md", []byte("---\nname: pdf---\n步骤"))
+	_ = fsys.Write(ctx, "memory/skills/pdf/SKILL.md",
+		[]byte("---\nname: pdf\ndescription: PDF 处理\n---\n步骤"))
 	state2 := newTestState([]types.Message{
 		{Role: types.RoleUser, Content: "q1"},
 		{Role: types.RoleUser, Content: "q2"},
@@ -190,26 +192,36 @@ func TestRemindResChangeInsertedBeforeStatus(t *testing.T) {
 	if err := h.OnStart(ctx, state2); err != nil {
 		t.Fatal(err)
 	}
-	// 序列应为 [q1, res_change, agent_status, q2]
+	// 序列应为 [q1, resource_change, agent_status, q2]
 	if len(state2.Messages) != 4 {
 		t.Fatalf("messages = %d, want 4: %+v", len(state2.Messages), state2.Messages)
 	}
-	if !strings.Contains(state2.Messages[1].Content, "新增技能 pdf") {
-		t.Fatalf("res_change missing: %q", state2.Messages[1].Content)
+	change := state2.Messages[1].Content
+	if !strings.Contains(change, "新增技能 pdf") {
+		t.Fatalf("resource_change missing: %q", change)
+	}
+	if !strings.Contains(change, "available_skill: pdf - PDF 处理") {
+		t.Fatalf("available_skill line missing: %q", change)
+	}
+	if !strings.Contains(change, "available_mcp: ctx7 - 查库文档") {
+		t.Fatalf("available_mcp line missing: %q", change)
+	}
+	if !strings.Contains(change, "<"+ResChangeTag+">") || strings.Contains(change, "<res_change>") {
+		t.Fatalf("tag must be %s: %q", ResChangeTag, change)
 	}
 	if !strings.Contains(state2.Messages[2].Content, "<"+StatusTag+">") {
-		t.Fatalf("snapshot not after res_change: %q", state2.Messages[2].Content)
+		t.Fatalf("snapshot not after resource_change: %q", state2.Messages[2].Content)
 	}
 }
 
-/* 无变更轮次零 res_change（不浮夸）。 */
+/* 无变更轮次零 resource_change（不浮夸）。 */
 func TestRemindNoChangeNoMessage(t *testing.T) {
 	ctx := context.Background()
 	fsys := memFS{}
 	_ = fsys.Write(ctx, "memory/skills/pdf/SKILL.md", []byte("---\nname: pdf---\n步骤"))
 	store := NewStore(fsys, "t1")
 	h := NewRemind(fsys, store, func() int { return 0 }, 1000,
-		func() []StatusMcp { return nil }, nil)
+		func() []StatusMcp { return nil }, nil, nil, nil)
 	s1 := newTestState([]types.Message{{Role: types.RoleUser, Content: "q1"}})
 	_ = h.OnStart(ctx, s1) // 建基线
 	s2 := newTestState([]types.Message{{Role: types.RoleUser, Content: "q2"}})
@@ -223,10 +235,41 @@ func TestRemindNoChangeNoMessage(t *testing.T) {
 	}
 }
 
+/* remind 快照段：终端/浏览器清单进 <agent_status>；空/无闭包渲染"（无）"。 */
+func TestRemindStatusTermTabs(t *testing.T) {
+	mk := func(terms, tabs func() []string) *types.LoopState {
+		h := NewRemind(memFS{}, NewStore(memFS{}, "t1"), func() int { return 0 }, 1000,
+			func() []StatusMcp { return nil }, nil, terms, tabs)
+		state := newTestState([]types.Message{{Role: types.RoleUser, Content: "q"}})
+		if err := h.OnStart(context.Background(), state); err != nil {
+			t.Fatal(err)
+		}
+		return state
+	}
+	s := mk(func() []string { return []string{"编译监控（盯构建）[t1]", "爬虫[t2]"} },
+		func() []string { return []string{"文档（React 文档）[b3]"} })
+	body := s.Messages[0].Content
+	for _, want := range []string{
+		"当前运行中终端：编译监控（盯构建）[t1]、爬虫[t2]",
+		"当前开启浏览器标签：文档（React 文档）[b3]",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("missing %q in %q", want, body)
+		}
+	}
+	if strings.Contains(body, "整理上下文") {
+		t.Fatal("normal round must not trip frontend timeline keyword")
+	}
+	empty := mk(nil, nil).Messages[0].Content
+	if !strings.Contains(empty, "当前运行中终端：（无）") || !strings.Contains(empty, "当前开启浏览器标签：（无）") {
+		t.Fatalf("nil probes must render （无）: %q", empty)
+	}
+}
+
 /* OnEnd：fork 不记收尾但 LastOutputAt 仍更新。 */
 func TestRemindOnEndForkSkip(t *testing.T) {
 	store := NewStore(memFS{}, "t1")
-	h := NewRemind(memFS{}, store, func() int { return 0 }, 1000, nil, nil)
+	h := NewRemind(memFS{}, store, func() int { return 0 }, 1000, nil, nil, nil, nil)
 	state := &types.LoopState{ForkID: "f1", Messages: []types.Message{}}
 	if err := h.OnEnd(context.Background(), state); err != nil {
 		t.Fatal(err)
@@ -236,5 +279,39 @@ func TestRemindOnEndForkSkip(t *testing.T) {
 	}
 	if store.LastOutputAt() == 0 {
 		t.Fatal("LastOutputAt must be recorded even for fork")
+	}
+}
+
+/* 事故回归：损坏（非法 JSON）的工具参数不得让整轮落盘静默失败。 */
+func TestStoreOnEndSanitizesCorruptedArgs(t *testing.T) {
+	ctx := context.Background()
+	fsys := memFS{}
+	store := NewStore(fsys, "t-corrupt")
+	bad := json.RawMessage(`{"content":"半截`)
+	state := newTestState([]types.Message{
+		{Role: types.RoleUser, Content: "画个应用"},
+		{Role: types.RoleAssistant, ToolCalls: []types.ToolCall{
+			{ID: "c1", Name: "write_file", Args: bad},
+		}},
+		{Role: types.RoleTool, ToolCallID: "c1", Content: "err"},
+	})
+	if err := store.OnEnd(ctx, state); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := state.Metadata["sessionstore_error"]; ok {
+		t.Fatalf("fallback should recover, got error: %v", state.Metadata["sessionstore_error"])
+	}
+	snap, err := LoadSnap(ctx, fsys, "t-corrupt")
+	if err != nil {
+		t.Fatalf("session.json must persist despite corrupted args: %v", err)
+	}
+	if len(snap.Messages) != 3 {
+		t.Fatalf("expect 3 messages persisted, got %d", len(snap.Messages))
+	}
+	if !json.Valid(snap.Messages[1].ToolCalls[0].Args) {
+		t.Fatalf("persisted args must be valid JSON, got %s", snap.Messages[1].ToolCalls[0].Args)
+	}
+	if !strings.Contains(string(snap.Messages[1].ToolCalls[0].Args), "_corrupted_args") {
+		t.Fatalf("persisted args should carry corruption marker, got %s", snap.Messages[1].ToolCalls[0].Args)
 	}
 }

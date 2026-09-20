@@ -479,7 +479,8 @@
   }
   .hdr-row {
     display: grid;
-    grid-template-columns: 1fr 1.4fr auto;
+    /* minmax(0,…) 压掉 1fr 的内容固有宽下限:placeholder 长文不再把行撑出容器 */
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr) auto;
     gap: 6px;
     align-items: center;
   }

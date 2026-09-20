@@ -37,6 +37,7 @@ type wsTermOut struct {
 type wsTermSessionOut struct {
 	ID       string `json:"id"`
 	Name     string `json:"name"`
+	Desc     string `json:"desc,omitempty"`
 	Origin   string `json:"origin"`
 	Exited   bool   `json:"exited"`
 	LastCmd  string `json:"lastCmd"`
@@ -96,7 +97,7 @@ func (c *TerminalController) Ws(g *gin.Context) {
 					out := wsTermOut{Type: "terminals"}
 					for _, t := range f.Sessions {
 						out.Sessions = append(out.Sessions, wsTermSessionOut{
-							ID: t.ID, Name: t.Name, Origin: t.Origin, Exited: t.Exited, LastCmd: t.LastCmd,
+							ID: t.ID, Name: t.Name, Desc: t.Desc, Origin: t.Origin, Exited: t.Exited, LastCmd: t.LastCmd,
 						})
 					}
 					b, _ = json.Marshal(out)
@@ -144,7 +145,7 @@ func (c *TerminalController) writeHello(ctx context.Context, conn *websocket.Con
 	out := wsTermOut{Type: "hello"}
 	for _, t := range c.Svc.List() {
 		out.Sessions = append(out.Sessions, wsTermSessionOut{
-			ID: t.ID, Name: t.Name, Origin: t.Origin, Exited: t.Exited, LastCmd: t.LastCmd,
+			ID: t.ID, Name: t.Name, Desc: t.Desc, Origin: t.Origin, Exited: t.Exited, LastCmd: t.LastCmd,
 			Snapshot: base64.StdEncoding.EncodeToString(c.Svc.Snapshot(t.ID)),
 		})
 	}
@@ -162,13 +163,14 @@ func (c *TerminalController) List(g *gin.Context) {
 	g.JSON(http.StatusOK, c.Svc.List())
 }
 
-/* Create POST /api/terminal/create:新建终端(body{name})。 */
+/* Create POST /api/terminal/create:新建终端(body{name,desc})。 */
 func (c *TerminalController) Create(g *gin.Context) {
 	var body struct {
 		Name string `json:"name"`
+		Desc string `json:"desc"`
 	}
 	_ = g.ShouldBindJSON(&body)
-	info, err := c.Svc.Create(body.Name, "用户")
+	info, err := c.Svc.Create(body.Name, body.Desc, "用户")
 	if err != nil {
 		g.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return

@@ -71,11 +71,15 @@ func (s *SysPrompt) SetIdentityFn(fn func() string) {
 func SessionIdentityBlock(id string) string {
 	wd, _ := os.Getwd() // 进程 cwd 即数据目录（启动时 chdir）
 	p := filepath.ToSlash(filepath.Join(wd, SessionsDir, id, "session.json"))
+	progress := filepath.ToSlash(filepath.Join(wd, SessionsDir, id, "progress.md"))
 	return "<session>\n" +
 		"当前会话 ID：" + id + "\n" +
 		"本会话存档：" + p + "\n" +
 		"（这是本会话的完整历史档案：上下文整理折叠掉的早期对话仍完整保留在此文件中，" +
-		"需要回忆本会话此前内容时读取它。）\n</session>"
+		"需要回忆本会话细节时读取它。）\n" +
+		"进度档案：" + progress + "\n" +
+		"（每次上下文整理自动重写：已完成/正在做/待办/关键事实。整理后要恢复任务现场、" +
+		"或长任务到达阶段性节点时，先读写这份档案，再按需读存档全文。）\n</session>"
 }
 
 /*

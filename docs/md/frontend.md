@@ -38,7 +38,7 @@ flowchart LR
 | `decision.resolved` | {id,resolution} | — | 回放纠正：移除已决卡 |
 | `task.start` / `task.end` | {id,task} / {id,answer…} | ✓ | 分身入口卡 + ensureFork |
 | `status.snapshot` | StatusData{now,ctxTokens,ctxWindow,suggestCompact} | **✗** | 右上角水位条；仅 suggestCompact 时插状态卡（本轮 user 块前） |
-| `res.change` | string[] 变更条目 | **✗** | 资源变更卡（本轮 user 块前）+ liveChanges（右上角行） |
+| `resource.change` | string[] 变更条目 | **✗** | 资源变更卡（本轮 user 块前）+ liveChanges（右上角行） |
 | `filetools.image_loaded` | string[] 图片路径 | ✗ | imgload 块（缩略图走 `/api/workspace/file?path=`） |
 | `session.compacting` / `session.trimming` | 提示文本 | — | note 块（归档/整理进行中） |
 | `session.trim` | TrimInfo{folded,kept} | — | note 块（整理完成分割线） |
@@ -55,7 +55,7 @@ flowchart LR
 | 消息特征 | 产出块 |
 |---|---|
 | user 含 `<agent_status>`（旧 JSON / 新中文文本） | `status` 块——仅含关键词"整理上下文"才入时间线，普通轮次只进右上角 |
-| user 含 `<res_change>` | `reschange` 块（matchAll `/^- (.+)$/gm` 取条目） |
+| user 含 `<resource_change>` | `resourcechange` 块（matchAll `/^- (.+)$/gm` 取条目；available_ 清单行不带前缀，天然忽略） |
 | user 含 `<reference_file>` | 解析载荷 → `user` 块 chips（`items` 空 = 整文件引用走 files，非空 = 带标注引用走 fileRefs；片段全文不还原，点 chip 回资源页读真身） |
 | user 含 `<image_loaded>`（包裹标签） | `imgload` 块（paths + images base64） |
 | user 含 `<end_reason>` | `endtick` 块（正则提取字段拼一行） |
@@ -72,27 +72,27 @@ flowchart LR
 | `assistant` | text/reasoning/streaming | MessageItem（marked + DOMPurify；mermaid 后处理） |
 | `tool` | id/name/args/result/err/state/decision | ToolBlock / ToolGroup（同名连续折叠） |
 | `status` | text/data | StatusTagCard（水位警示行） |
-| `reschange` | items | ResChangeCard（变更列表：新增/用户绿、移除/退出/关闭红） |
+| `resourcechange` | items | ResChangeCard（变更列表：新增/用户绿、移除/退出/关闭红） |
 | `imgload` | paths/images | Timeline 内联（缩略图小行 + "已加载上下文"） |
 | `fork` | forkId | ForkCard（分身入口，点击开抽屉） |
 | `decision` | DecisionData | DecisionCard（审批/提问） |
 | `note` | text | Timeline 内联（分割线/提示行） |
 | `endtick` | icon/title | Timeline 内联（轮次收尾小图标） |
 
-空状态判定排除 note/status/reschange/endtick/imgload（只剩系统记录仍展示欢迎页）。
+空状态判定排除 note/status/resourcechange/endtick/imgload（只剩系统记录仍展示欢迎页）。
 
 ## 四、特殊 tag 全表（前后端契约）
 
 | tag | 生成者 | 模型可见 | 前端实时路径 | 前端历史路径 |
 |---|---|---|---|---|
 | `<agent_status>` | remind 快照段 | ✓（user 消息） | status.snapshot 事件 | 关键词"整理上下文" |
-| `<res_change>` | remind 变更段 | ✓ | res.change 事件 | 标签 + `- ` 行 |
+| `<resource_change>` | remind 变更段 | ✓ | resource.change 事件 | 标签 + `- ` 行（available_ 行只给模型） |
 | `<reference_file>` | reference_file hook（宿主侧） | ✓ | 发送时本地 push user 块（`store.send` 用附件/引用状态，与历史同构：引用独立成块） | 解析标签体 JSON → files/fileRefs chips |
 | `<image_loaded>` 包裹标签 | filetools OnLoop | ✓（user 消息，Images 带 base64） | filetools.image_loaded 事件 | 标签体内路径行 + m.images |
 | `<image_loaded path="…"/>` 自闭合 | read_file 工具结果 | ✓（tool 消息，保留不改写） | 工具卡结果文本 | 同左（不解析） |
 | `<end_reason>` | remind 收尾段 | ✓ | turn_end 合成 endtick | 正则提取 |
-| `<context_trim kept="N">` | trim hook | ✓（替代被折叠消息） | session.trim note | 标签 → note |
-| `<$supper_url>…</$supper_url>` | 模型输出（占位语法，system workspace 段有指引） | ✓（正文） | marked extension 实时解析 | 同左（同一渲染管线） |
+| `<context_trim kept="N">` | trim hook | ✓（替代被折叠消息） | session.trim note | 标签 → note（`trimText` 按【已完成】锚点截 160 字，不兼容旧"摘要："格式） |
+| `<$supper_url>…</$supper_url>` | 模型输出（占位语法，system `<output>` 段有正误示例指引） | ✓（正文） | marked extension 实时解析 | 同左（同一渲染管线） |
 | ↳ 内容 `https://…` | 同上（外链） | ✓ | chip 点击经系统浏览器打开（复用外链拦截） | 同左 |
 | ↳ 内容 `term://<终端id>` | 同上（终端入口） | ✓ | chip 点击 openTermAt：拉开终端抽屉并定位（TerminalTab 消费 store.termFocus） | 同左 |
 | ↳ 内容 `app://<快应用名>` | 同上（快应用入口） | ✓ | chip 点击 POST /api/apps/open 开子窗 | 同左 |

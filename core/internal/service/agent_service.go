@@ -19,13 +19,17 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
+
+	"ezharness/core/internal/config"
 
 	"github.com/xuanlv2002/ezloop/core"
 	"github.com/xuanlv2002/ezloop/ext/hook/approve"
 	"github.com/xuanlv2002/ezloop/ext/hook/askuser"
 	"github.com/xuanlv2002/ezloop/ext/hook/contextfix"
 	"github.com/xuanlv2002/ezloop/ext/hook/filetools"
+	"github.com/xuanlv2002/ezloop/ext/hook/mcp"
 	"github.com/xuanlv2002/ezloop/ext/hook/offload"
 	"github.com/xuanlv2002/ezloop/ext/hook/skill"
 	"github.com/xuanlv2002/ezloop/ext/hook/skilltool"
@@ -52,9 +56,10 @@ import (
 
 /* AgentService 装配领域会话的运行时。 */
 type AgentService struct {
-	Hub     *domain.Hub
-	Term    *TerminalService // 共享终端（魔法看板），可空：term_* 工具与状态注入的前提
-	Browser *BrowserService  // 共享浏览器桥（魔法看板），可空：browser_* 工具注入的前提
+	Hub       *domain.Hub
+	Term      *TerminalService // 共享终端（魔法看板），可空：term_* 工具与状态注入的前提
+	Browser   *BrowserService  // 共享浏览器桥（魔法看板），可空：browser_* 工具注入的前提
+	McpRouter *mcp.Router      // 系统级 MCP router（全局单例注入），可空：不装配 mcp hook
 }
 
 /*
@@ -124,16 +129,43 @@ func (a *AgentService) Assemble(s *domain.Session, st domain.Settings) {
 	}
 	s.Sess.BindCtx(func() (int, int) { return s.CtxTokens(), window })
 	disabledSkills := func() []string { return a.Hub.SettingsSnapshot().DisabledSkills }
+	// 终端/浏览器是进程生命周期态(重启即失),不进 system 固定段,每轮快照现查
+	termsBrief := func() []string {
+		if a.Term == nil {
+			return nil
+		}
+		var out []string
+		for _, t := range a.Term.List() {
+			if t.Exited {
+				continue
+			}
+			label := t.Name
+			if d := briefSeg(t.Desc, 60); d != "" {
+				label += "（" + d + "）"
+			}
+			out = append(out, label+"["+t.ID+"]")
+		}
+		return out
+	}
+	tabsBrief := func() []string {
+		if a.Browser == nil {
+			return nil
+		}
+		return a.Browser.TabsBrief()
+	}
 	remindHook := hooks.NewRemind(s.Fsys, s.Sess,
 		func() int { return s.CtxTokens() },
 		window,
 		func() []hooks.StatusMcp { return mcpStatusList(s.Fsys) },
 		disabledSkills,
+		termsBrief,
+		tabsBrief,
 	)
 	traceHook := hooks.NewTrace(s.Fsys, s.Sess, func() string { return main.Name })
 	trimHook := hooks.NewTrim(provider, traceHook,
 		window*st.TrimPercent/100, // 水位=窗口百分比，随模型自适应（换模型 Reassemble 重算）
 		window,                    // 模型窗口（整理提示展示水位比例用）
+		s.Fsys, func() string { return s.ID }, // 进度档案 progress.md 落盘
 	)
 
 	// 能力槽启用态：图片识别槽启用 → agent 获得图片识别工具
@@ -187,12 +219,12 @@ func (a *AgentService) Assemble(s *domain.Session, st domain.Settings) {
 			contextfix.New(),
 			filetools.New(s.Fsys, filetools.WithWorkDir(ResolveWorkDir(st.WorkDir)), filetools.WithImageHandler(readImage)),
 			skilltool.New(s.Fsys, hooks.SkillsDir, disabledSkills),
-			remindHook,         // 系统提醒：变更段插 <res_change>? + 快照段插 agent_status；OnEnd 收尾 <end_reason>
+			remindHook,         // 系统提醒：变更段插 <resource_change>? + 快照段插 agent_status；OnEnd 收尾 <end_reason>
 			hooks.NewRefFile(), // 有引用轮次在输入前插 <reference_file> 结构化告知（附件+文件页标注统一，模型按需 read_file）
 			approver,
 			asker,
 			task.New(),
-			NewMcpHook(s.Fsys),
+			NewMcpHook(s.Fsys, a.McpRouter),
 			offload.New(s.Fsys, offload.WithSkip(askuser.ToolName, task.ToolName, skilltool.ToolName), offload.WithReplayTool("read_file")), // load_skill 返回的指令集是后续行动依据,卸载再回读纯浪费
 			hooks.NewGuard(s.Fsys, window), // 窗口余量兜底：offload 豁免名单（read_file 等）的大结果放不下时卸载，须在 offload 之后
 			trimHook, // OnLoop 回边水位整理（就地截断，立即生效），OnToolStart 拦模型主动整理
@@ -426,58 +458,41 @@ buildSystemBase 组装 session 的 system 基础段：人格 + SystemExtra +
 标签化注入块（<memory> 长期记忆结构+索引 / <skills> 技能列表 /
 <mcp> MCP 列表）。只在 session 创建时调用一次（同 session 不变）；
 skill 全文与记忆细节不注入（模型按需用文件工具读取），列表变更要等
-下个 session 才进 system，期间由 remind 变更段的 <res_change> 告知模型。
+下个 session 才进 system，期间由 remind 变更段的 <resource_change> 告知模型。
 */
 func buildSystemBase(ctx context.Context, st domain.Settings, fsys osfs.OS) string {
 	var b strings.Builder
 	b.WriteString("你是 ezharness——一个持续陪伴用户的设备级 agent，可全权操作本机文件与命令。" +
 		"能用工具就用工具，回答简洁。" +
 		"用户需要小工具或网页时用 save_app 生成为快应用，用户可一键启动。" +
-		"重要的用户偏好与事实可写入长期记忆（结构见 <memory> 块）。")
+		"重要的用户偏好与事实可写入长期记忆（结构见 <memory> 块）。" +
+		"接任务先看 <action> 行动准则；给用户的可点击入口与输出格式遵守 <output>。")
 	if st.SystemExtra != "" {
 		b.WriteString("\n\n" + st.SystemExtra)
 	}
 	dataDir, _ := os.Getwd() // 进程 cwd 即数据目录（启动时 chdir）
 	workDir := ResolveWorkDir(st.WorkDir)
 	p := func(rel string) string { return filepath.ToSlash(filepath.Join(dataDir, rel)) }
+	memRoot := p("memory")
 	b.WriteString("\n\n<workspace>\n" +
-		"# 目录架构与读写权限（下列均为完整绝对路径，直接使用，不要自行拼接）：\n" +
-		"# " + p("workspace") + "          工作目录，草稿/脚本/命令产物放这里，自由读写（terminal 默认执行目录：" + filepath.ToSlash(workDir) + "）\n" +
-		"# " + filepath.ToSlash(filepath.Join(workDir, "tmp")) + "   用户上传附件的暂存目录；需要附件内容时用 read_file 按路径读取（图片会作为图片消息进入你的上下文，无需调用识别工具）\n" +
-		"# " + p("memory/longterm") + "    长期记忆，可写：harness.md 是索引（已注入上下文），主题文件按需新建，沉淀用户偏好与重要事实\n" +
-		"# " + p("memory/skills") + "      技能库，可写：每技能一个子目录（SKILL.md 指令 + scripts/ 脚本），新建后下个 session 进清单\n" +
-		"# " + p("apps") + "               快应用目录，由 save_app 工具写入，一般不手动改\n" +
-		"# " + p("mcp.json") + "           MCP 服务配置，可写：新增/修改 server 后经 mcp_router 调用（资源变更会出现在轮首 <res_change> 提示）\n" +
-		"# " + p("sessions") + "           历史会话存档，只读：上下文与回忆来源（compact 摘要引用其路径），改写会破坏会话链\n" +
-		"# " + p(".ezloop/offload") + "    大工具结果的卸载区，按需读取，不手动管理\n" +
-		"# " + p("settings.json") + " / " + p("models.json") + " / " + p("stats.json") + " / " + p("topics.json") + "：应用配置与索引，由设置页和应用自身管理，不要直接改写\n" +
-		"# 规则：terminal 每条命令是独立进程（cd 不跨命令保留）；所有文件读写与命令一律绝对路径，不要依赖当前目录；\n" +
-		"# 工作目录之外的临时文件不要随手乱放。\n" +
-		"# 参数语法糖：工具参数的字符串值里写 <@toolArg>绝对路径</@toolArg>，执行时会自动展开为该文件内容" +
-		"（省去先 read_file 再复制的往返；单文件上限 200000 字符，读不到会报错）；\n" +
-		"# 输出占位：回复中给用户可点击的入口用 <$supper_url>类型://标识</$supper_url> 包裹——" +
-		"https:// 外部链接、term://终端id（term_list 可查；长驻程序运行中或任务收尾时把终端入口交付给用户）、" +
-		"browser://浏览器标签id（browser_tab 的 list 可查；浏览器操作期间把入口交付给用户，用户点击即展开浏览器抽屉页并定位标签，实时共见）、" +
-		"app://快应用名（save_app 生成后在回复中引用，用户点击即开）、" +
-		"file://工作目录内文本文件的绝对路径（write_file/read_file 等操作过的代码与文档，交付入口供用户点击查看编辑）；\n" +
-		"# 共享终端（term_start/term_send 等）：魔法看板里的多终端，用户与你实时共见同一屏幕，全局共享（所有会话可用同一批终端）；" +
-		"term_list 查看全部（含用户手开的），term_start 新建（带描述，可附带首条命令）；\n" +
-		"# term_send 发命令并等输出静默返回（也用于应答交互/发 \\u0003 中断），term_read 游标式续读（只返回新增），term_close 关闭；\n" +
-		"# 需要交互式应答/状态保留/长驻程序/想让用户看到过程时用 term_* 系列，一次性无状态命令仍用 terminal；\n" +
-		"# 共享浏览器（browser_tab/browser_action/browser_read）：真实 Chromium，内嵌于桌面端工作区抽屉（browser_tab open 自动展开抽屉页，用户实时共见、可直接接管操作）；" +
-		"browser_tab 管标签（action=open 新建并可选导航——首次使用会自动下载 Chromium 需等待，timeoutMs 放宽；list 清单；close 关闭），" +
-		"browser_action 操作页面（action=navigate 跳转 / click 点击 / type 输入 / key 按键 / scroll 滚动；优先 CSS 选择器，定位不了先截图按视口坐标），" +
-		"browser_read 读页面（mode=text 正文 / links 链接清单 / screenshot 视口截图 / full_page 整页截图，多模态直接看图定位）；" +
-		"检索、查资料、操作网页用浏览器，与 terminal（本机命令）互补；\n" +
-		"# 用户手动在终端里的操作会出现在轮首 <res_change> 资源变更提示里，留意并在需要时接续。\n" +
+		"# 工作区：三个可写位置（下列均为完整绝对路径，直接使用，不要自行拼接）\n" +
+		"# " + p("workspace") + "   工作目录，草稿/脚本/命令产物一律放这里（terminal 默认执行目录：" + filepath.ToSlash(workDir) + "）；" +
+		"其下 tmp/ 是用户上传附件的暂存处，需要附件内容时用 read_file 按路径读取（图片会作为图片消息进入你的上下文，无需调用识别工具）\n" +
+		"# " + memRoot + "/longterm   长期记忆：harness.md 是索引（已注入上下文，见 <memory>），user/projects/lessons 三个固定主题文件按主题沉淀；会话归档时系统会自动合并更新\n" +
+		"# " + memRoot + "/skills     技能库：每技能一个子目录（SKILL.md 指令 + scripts/ 脚本），新建后下个 session 进清单\n" +
+		"# 行为规则（不需要记路径，按规则做即可）：\n" +
+		"# - 技能清单以 <skills> 段、MCP 服务以 <mcp> 段为准，不要读目录或配置文件去发现它们；\n" +
+		"# - 快应用由 save_app 工具生成与更新，不要手动改快应用目录；\n" +
+		"# - 本会话的存档与进度档案路径见 <session> 块（回忆入口）；其他历史会话的存档不要主动翻阅，确有需要先问用户；\n" +
+		"# - 超长工具结果会被系统自动卸载为文件并在工具结果里给出路径，按提示 read_file 取回，不要主动浏览卸载区；\n" +
+		"# - 数据目录下的配置与索引文件（settings、models、stats、topics 等）由应用管理，不要改写；\n" +
+		"# - terminal 每条命令是独立进程（cd 不跨命令保留）；所有文件读写与命令一律绝对路径，临时文件不要丢在工作目录外。\n" +
 		"</workspace>")
-	memRoot := filepath.ToSlash(filepath.Join(dataDir, "memory"))
 	b.WriteString("\n\n<memory>\n" +
-		"# 长期记忆（下列均为完整绝对路径，直接使用，不要自行拼接）\n" +
+		"# 长期记忆\n" +
 		"- 索引 " + memRoot + "/longterm/harness.md：长期记忆入口，全文见下方，可用文件工具直接更新\n" +
-		"- 主题记忆 " + memRoot + "/longterm/：按主题的记忆文件（如 user.md），按需创建，不进上下文，用 findstr/grep 检索\n" +
-		"- 技能 " + memRoot + "/skills/：沉淀的技能，每技能一个子目录（清单见 <skills>）\n" +
-		"- 话题存档 " + filepath.ToSlash(filepath.Join(dataDir, "sessions")) + "/：历代会话全文（compact 归档的世代；在数据目录下，不在 memory 里）\n" +
+		"- 主题文件 " + memRoot + "/longterm/{user,projects,lessons}.md：用户偏好与事实 / 项目与任务背景 / 踩坑与经验，" +
+		"不进上下文，需要时用 findstr/grep 检索；会话归档时系统会把值得长期保留的内容自动合并进这三个文件，对话中也可直接编辑\n" +
 		"# 索引 harness.md 全文\n" +
 		hooks.EnsureHarnessMd(ctx, fsys) +
 		"\n</memory>")
@@ -492,22 +507,85 @@ func buildSystemBase(ctx context.Context, st domain.Settings, fsys osfs.OS) stri
 		skills = kept
 	}
 	if len(skills) > 0 {
-		b.WriteString("\n\n<skills>\n（本清单由系统运行时生成，不在任何文件里；技能正文在 " +
-			memRoot + "/skills/<名>/SKILL.md，可用文件工具编辑，改动下个 session 生效；" +
-			"使用前先调用 load_skill 获取完整指令与脚本路径）")
+		b.WriteString("\n\n<skills>\n（可用技能清单，以此为准，不要读取 memory/skills 目录来发现技能；" +
+			"技能正文在 " + memRoot + "/skills/<名>/SKILL.md，可用文件工具编辑，改动下个 session 生效，" +
+			"轮内变更见 <resource_change>；使用前先调用 load_skill 获取完整指令与脚本路径）")
 		for _, sk := range skills {
-			fmt.Fprintf(&b, "\n- %s: %s", sk.Name, sk.Description)
+			desc := sk.Description
+			if desc == "" {
+				desc = "（无描述）"
+			}
+			fmt.Fprintf(&b, "\n- %s: %s", sk.Name, desc)
 		}
 		b.WriteString("\n</skills>")
 	}
 	if lines := mcpListLines(fsys); len(lines) > 0 {
-		b.WriteString("\n\n<mcp>\n（经 mcp_router 工具调用，先用 mcp_list/tool_list 发现服务与工具）")
+		b.WriteString("\n\n<mcp>\n（可用 MCP 服务清单，以此为准，不要读取 mcp.json 来发现服务；" +
+			"经 mcp_router 工具调用，先用 tool_list 拉取某服务的工具清单再 tool_call，轮内变更见 <resource_change>）")
 		for _, l := range lines {
 			b.WriteString("\n" + l)
 		}
+		if base := localAPIBase(); base != "" {
+			b.WriteString("\n（本机 HTTP 直调：" + base + "/api/mcp/call，POST JSON {\"server\":\"服务名\",\"tool\":\"工具名\",\"args\":{参数}}，" +
+				"返回 {\"result\":\"文本\"}；" + base + "/api/mcp GET 返回服务清单。构建可观测页面、仪表盘等快应用时，" +
+				"可把 MCP 工具当作本地接口直接 fetch 调用，无需经你中转）")
+		}
 		b.WriteString("\n</mcp>")
 	}
+	b.WriteString("\n\n<action>\n" +
+		"# 行动准则\n" +
+		"1. 接任务先匹配技能：对照 <skills> 清单，命中就 load_skill 加载后按其指引执行，不要绕过现成技能自己造流程；没命中再自行设计。\n" +
+		"2. 动手前想清楚：多步骤或有风险的任务，先用 ask_user 提交计划（options 给候选，如 [\"执行\",\"否决\",\"修改\"]）请用户处置，获批后再执行；一步能完成的小事直接做。\n" +
+		"3. 执行工具的选择：\n" +
+		"- 本机一次性命令（构建、查询、跑脚本）用 terminal；\n" +
+		"- 需要交互式应答、长驻程序、或希望用户实时看到过程时，用 term_* 共享终端（term_start 新建可带名称与首条命令，term_send 发命令并等输出静默返回（也用于应答交互或发中断信号），term_read 游标式续读，term_list 查全部含用户手开的；长驻程序运行中或任务收尾时把终端入口交付给用户）；\n" +
+		"- 检索网页、查资料、操作网页用 browser_* 共享浏览器（真实 Chromium，用户实时共见可直接接管；browser_tab 开标签自动展开浏览器页，首次使用会自动下载 Chromium 需等待；browser_action 操作页面——优先 CSS 选择器，定位不了先截图按视口坐标；browser_read 读正文/链接/截图）；与 terminal（本机命令）互补。\n" +
+		"4. MCP：内置工具够用就不绕道；用 MCP 时先 mcp_list / tool_list 发现能力再 tool_call，不凭记忆猜工具名和参数。\n" +
+		"5. 可并行、相互独立、或会产生大量中间输出的子任务，交 task 分身执行（工具集相同、过程互不干扰，结果直接回传），主对话只接结论；任务描述必须自包含（分身看不到本轮对话之外的语境）：写清目标、输入、涉及的文件绝对路径与期望的返回格式；无依赖的子任务一次并行发多个。\n" +
+		"6. 交付与连续性：任务收尾把成果入口用 <$supper_url> 交付（格式见 <output>），产物文件放工作目录；" +
+		"上下文被整理后，从 <session> 块告知的进度档案恢复现场接着干，长任务到达阶段性节点时也可主动把进度补写进该档案。\n" +
+		"</action>")
+	b.WriteString("\n\n<output>\n" +
+		"# 输出规范\n" +
+		"## 可点击入口 <$supper_url>（格式错就不会渲染成可点击入口，用户只能看到原文，务必照抄格式）\n" +
+		"规则：整段闭合包裹、标签紧贴地址、地址内不能有空格/换行/文字；说明文字写在标签外面。\n" +
+		"正确示例：\n" +
+		"<$supper_url>https://example.com/report</$supper_url>\n" +
+		"<$supper_url>term://终端id</$supper_url>（id 来自 term_start/term_list）\n" +
+		"<$supper_url>browser://标签id</$supper_url>（id 来自 browser_tab）\n" +
+		"<$supper_url>app://快应用名</$supper_url>\n" +
+		"<$supper_url>file://C:/完整/绝对/路径.md</$supper_url>\n" +
+		"错误示例（不会渲染）：\n" +
+		"<$supper_url>点这里看终端 term://t1</$supper_url>   ← 地址里夹了文字\n" +
+		"<$supper_url>term:t_1</$supper_url>                 ← 缺 //\n" +
+		"<$supper_url>https://example.com                    ← 没闭合\n" +
+		"## 工具参数引用 <@toolArg>\n" +
+		"工具参数的字符串值里写 <@toolArg>绝对路径</@toolArg>，执行时自动展开为该文件内容——" +
+		"需要把已生成的文件全文作为参数喂给工具（如 save_app 的代码参数引用草稿文件）时用它，" +
+		"省去先 read_file 再粘贴；单文件上限 200000 字符，读不到会报错。\n" +
+		"## 回复风格\n" +
+		"结论先行：先给结果与入口，再给必要说明；不逐条复述工具输出；" +
+		"用户在终端/浏览器里看得见的过程不要文字直播；长说明用列表。\n" +
+		"</output>")
 	return b.String()
+}
+
+/* localAPIBase 返回本机 API 基址（供 <mcp> 段告知 HTTP 直调端点；读不到配置返回空）。 */
+func localAPIBase() string {
+	cfg, err := config.Load()
+	if err != nil || cfg.Port <= 0 {
+		return ""
+	}
+	return "http://127.0.0.1:" + strconv.Itoa(cfg.Port)
+}
+
+/* briefSeg 清单条目的补充段（终端 desc / 标签 title）压平截断，防伪造行与超长。 */
+func briefSeg(s string, max int) string {
+	s = strings.ReplaceAll(strings.ReplaceAll(s, "\r", ""), "\n", " ")
+	if r := []rune(s); len(r) > max {
+		return string(r[:max]) + "…"
+	}
+	return s
 }
 
 /* mcpListLines 返回启用 server 的"名: 描述"清单。 */
@@ -519,13 +597,17 @@ func mcpListLines(fsys osfs.OS) []string {
 	var out []string
 	for _, srv := range f.Servers {
 		if srv.IsEnabled() {
-			out = append(out, "- "+srv.Name+": "+srv.Description)
+			desc := srv.Description
+			if desc == "" {
+				desc = "（无描述）"
+			}
+			out = append(out, "- "+srv.Name+": "+desc)
 		}
 	}
 	return out
 }
 
-/* mcpStatusList 返回 MCP 清单（remind 变更基线用，描述前 8 字）。 */
+/* mcpStatusList 返回 MCP 清单（remind 变更基线与 available 清单用）。 */
 func mcpStatusList(fsys osfs.OS) []hooks.StatusMcp {
 	f := loadMcpFileOrNil(fsys)
 	if f == nil {
@@ -536,11 +618,7 @@ func mcpStatusList(fsys osfs.OS) []hooks.StatusMcp {
 		if !srv.IsEnabled() {
 			continue
 		}
-		desc := []rune(srv.Description)
-		if len(desc) > 8 {
-			desc = desc[:8]
-		}
-		out = append(out, hooks.StatusMcp{Name: srv.Name, Desc: string(desc)})
+		out = append(out, hooks.StatusMcp{Name: srv.Name, Desc: srv.Description})
 	}
 	return out
 }

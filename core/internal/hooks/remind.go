@@ -6,8 +6,9 @@ remind 是系统提醒 hook：统一负责"系统→模型"的全部单向旁路
     SSE 事件（前端右上角水位条）——system 每 session 固定，水位与时间
     是轮内唯一需要同步的运行时状态；
   - 变更段（每轮 OnStart，reschange.go）：skill/mcp 基线 diff，
-    有变化才插一条 <res_change> 消息 + res.change
-    事件（按需、零噪音）；基线持久化随 session（重启不重复报）；
+    有变化才插一条 <resource_change> 消息（附变更后完整清单）+
+    resource.change 事件（按需、零噪音）；基线持久化随 session
+    （重启不重复报）；
   - 收尾段（每轮 OnEnd）：<end_reason> 轮次/时长/结束原因 + 记录
     LastOutputAt（下轮"距上次输出"用）。须排在 sessionstore 落盘前
     ——快照与内存同源。
@@ -38,10 +39,10 @@ const StatusTag = "agent_status"
 const EventStatus = event.EventType("status.snapshot")
 
 /* ResChangeTag 是资源变更记录的包裹标签（前端按它识别渲染变更卡）。 */
-const ResChangeTag = "res_change"
+const ResChangeTag = "resource_change"
 
 /* EventResChange 是资源变更事件（Data 为 []string 变更条目）。 */
-const EventResChange = event.EventType("res.change")
+const EventResChange = event.EventType("resource.change")
 
 /* EndReasonTag 是轮终止记录的包裹标签。 */
 const EndReasonTag = "end_reason"
@@ -51,11 +52,13 @@ StatusData 是水位快照载荷（SSE status.snapshot 的 Data；注入消息
 历史的正文是中文语义化文本，见 renderStatus）。
 */
 type StatusData struct {
-	Now                string `json:"now"`
-	SinceLastOutputMin int64  `json:"sinceLastOutputMin"` // 0 = 无记录
-	CtxTokens          int    `json:"ctxTokens"`
-	CtxWindow          int    `json:"ctxWindow"`
-	SuggestCompact     bool   `json:"suggestCompact"`
+	Now                string   `json:"now"`
+	SinceLastOutputMin int64    `json:"sinceLastOutputMin"` // 0 = 无记录
+	CtxTokens          int      `json:"ctxTokens"`
+	CtxWindow          int      `json:"ctxWindow"`
+	SuggestCompact     bool     `json:"suggestCompact"`
+	Terms              []string `json:"terms,omitempty"` // 运行中终端名（非持久状态，每轮现查）
+	Tabs               []string `json:"tabs,omitempty"`  // 开启中的浏览器标签（同上）
 }
 
 /* Remind 实现系统提醒（快照段 + 收尾段；变更段见 reschange.go）。 */
@@ -66,25 +69,30 @@ type Remind struct {
 	ctxWindow int
 	mcpList   func() []StatusMcp
 	disabled  func() []string // 可空：禁用技能目录名（实时读设置快照）
+	terms     func() []string // 可空：运行中终端名（终端/浏览器是进程生命周期态，重启即失，
+	tabs      func() []string // 不进 system 固定段，走每轮快照——与 skill/mcp 类持久资源分界
 }
 
 /*
 NewRemind 创建系统提醒 hook。ctxTokens 返回最近一次模型调用的 prompt
 tokens；ctxWindow 是主模型上下文窗口（<=0 由调用方兜底默认）；
-mcpList 返回启用的 server 清单（仅作变更基线）；disabled 可空。
+mcpList 返回启用的 server 清单（仅作变更基线）；disabled 可空；
+terms/tabs 可空：运行中终端名与浏览器标签名（每轮现查注入快照）。
 */
 func NewRemind(fsys fs.FileSystem, store *Store, ctxTokens func() int, ctxWindow int,
-	mcpList func() []StatusMcp, disabled func() []string) *Remind {
+	mcpList func() []StatusMcp, disabled func() []string,
+	terms func() []string, tabs func() []string) *Remind {
 	return &Remind{fsys: fsys, store: store, ctxTokens: ctxTokens, ctxWindow: ctxWindow,
-		mcpList: mcpList, disabled: disabled}
+		mcpList: mcpList, disabled: disabled, terms: terms, tabs: tabs}
 }
 
 func (h *Remind) Name() string { return "remind" }
 
 /* OnStart 轮首两段：变更段（有变化才说话）在前、快照段照旧每轮一条。 */
 func (h *Remind) OnStart(ctx context.Context, state *types.LoopState) error {
-	if items := h.buildChanges(ctx); len(items) > 0 {
-		h.insertBeforeLastUser(state, types.Message{Role: types.RoleUser, Content: renderResChange(items)})
+	if items, skills, mcps := h.buildChanges(ctx); len(items) > 0 {
+		h.insertBeforeLastUser(state, types.Message{Role: types.RoleUser,
+			Content: renderResChange(items, skills, mcps)})
 		state.EmitEvent(EventResChange, items)
 	}
 	data := h.buildSnapshot()
@@ -123,6 +131,12 @@ func (h *Remind) buildSnapshot() StatusData {
 	if h.ctxWindow > 0 && data.CtxTokens > h.ctxWindow*7/10 {
 		data.SuggestCompact = true
 	}
+	if h.terms != nil {
+		data.Terms = h.terms()
+	}
+	if h.tabs != nil {
+		data.Tabs = h.tabs()
+	}
 	return data
 }
 
@@ -143,19 +157,63 @@ func renderStatus(d StatusData) string {
 	if d.SinceLastOutputMin > 0 {
 		fmt.Fprintf(&b, "\n距上次输出：%d 分钟", d.SinceLastOutputMin)
 	}
+	b.WriteString("\n当前运行中终端：" + namesOrNone(d.Terms))
+	b.WriteString("\n当前开启浏览器标签：" + namesOrNone(d.Tabs))
 	return b.String()
 }
 
-/* renderResChange 渲染资源变更记录（条目行前缀 "- " 是前端解析契约）。 */
-func renderResChange(items []string) string {
+/* namesOrNone 清单渲染为顿号连接（空给"（无）"；压平换行防伪造行——
+条目格式"name（补充段）[id]"与补充段长度由构造侧 service 包控制，尾部
+id 不能在这里截断）。 */
+func namesOrNone(names []string) string {
+	if len(names) == 0 {
+		return "（无）"
+	}
+	clean := make([]string, 0, len(names))
+	for _, n := range names {
+		clean = append(clean, strings.ReplaceAll(strings.ReplaceAll(n, "\r", ""), "\n", " "))
+	}
+	return strings.Join(clean, "、")
+}
+
+/*
+renderResChange 渲染资源变更记录：变更条目行前缀 "- " 是前端解析契约；
+随后附变更后完整清单（available_ 行不带前缀，前端变更卡自然忽略，
+模型据此即时可知全部资源，不必读目录与配置文件发现）。desc 压平换行
+防伪造条目行。
+*/
+func renderResChange(items []string, skills, mcps []StatusMcp) string {
 	var b strings.Builder
 	b.WriteString("<" + ResChangeTag + ">")
 	b.WriteString("\n（系统检测到的本轮资源变更，非用户发言，无需回应，无需回溯处理）")
 	for _, it := range items {
 		b.WriteString("\n- " + it)
 	}
+	b.WriteString("\n变更后完整清单（技能与 MCP 服务以此为准，不要读取 memory/skills 目录或 mcp.json 来发现技能与服务）：")
+	if len(skills) > 0 {
+		for _, s := range skills {
+			b.WriteString("\navailable_skill: " + s.Name + " - " + descOrNone(s.Desc))
+		}
+	} else {
+		b.WriteString("\navailable_skill: （当前无可用技能）")
+	}
+	if len(mcps) > 0 {
+		for _, m := range mcps {
+			b.WriteString("\navailable_mcp: " + m.Name + " - " + descOrNone(m.Desc))
+		}
+	} else {
+		b.WriteString("\navailable_mcp: （当前无可用 MCP 服务）")
+	}
 	b.WriteString("\n</" + ResChangeTag + ">")
 	return b.String()
+}
+
+/* descOrNone 空描述给括号说明，避免清单行以 " - " 空尾巴收尾。 */
+func descOrNone(desc string) string {
+	if d := oneLine(desc, 200); d != "" {
+		return d
+	}
+	return "（无描述）"
 }
 
 /*

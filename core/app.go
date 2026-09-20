@@ -21,16 +21,19 @@ import (
 	"ezharness/core/internal/config"
 	"ezharness/core/internal/domain"
 	"ezharness/core/internal/service"
+
+	"github.com/xuanlv2002/ezloop/ext/hook/mcp"
 )
 
 type app struct {
-	mu      sync.Mutex
-	cfg     config.Config
-	hub     *domain.Hub             // 当前代领域根（换代重建；退出/换代收尾用）
-	srv     *http.Server            // 当前代 HTTP 服务
-	term    *service.TerminalService // 当前代共享终端（换代重建；收尾杀全部 shell）
-	browser *service.BrowserService // 共享浏览器桥（端无关，跨代复用；真实浏览器在 desktop 壳）
-	boot    atomic.Int64            // 服务代际（换代重启递增，跨代共享）
+	mu        sync.Mutex
+	cfg       config.Config
+	hub       *domain.Hub             // 当前代领域根（换代重建；退出/换代收尾用）
+	srv       *http.Server            // 当前代 HTTP 服务
+	term      *service.TerminalService // 当前代共享终端（换代重建；收尾杀全部 shell）
+	browser   *service.BrowserService // 共享浏览器桥（端无关，跨代复用；真实浏览器在 desktop 壳）
+	mcpRouter *mcp.Router             // 系统级 MCP router（全局唯一：agent hook 与页面/API 共用连接池，跨代复用）
+	boot      atomic.Int64            // 服务代际（换代重启递增，跨代共享）
 }
 
 /* setTerm 记录当前代共享终端（buildRouter 装配时调用）。 */
@@ -108,8 +111,18 @@ func (a *app) restart(port int, listen, dataDir string, ln net.Listener) {
 	go func() { _ = srv.Serve(ln) }()
 }
 
-/* stop 关停当前代（托盘退出/关窗/进程信号时），幂等。 */
-func (a *app) stop() { a.shutdownGeneration() }
+/* stop 关停当前代并释放系统级资源（MCP 连接池；托盘退出/关窗/进程信号时），幂等。
+换代走 restart，router 不在此路径释放（跨代常驻）。 */
+func (a *app) stop() {
+	a.shutdownGeneration()
+	a.mu.Lock()
+	r := a.mcpRouter
+	a.mcpRouter = nil
+	a.mu.Unlock()
+	if r != nil {
+		_ = r.Close()
+	}
+}
 
 /*
 shutdownGeneration 收尾当前代：先取消运行轮并等待落盘（轮内历史只在

@@ -95,7 +95,7 @@ export type Block = { uid: number } & (
   | { kind: 'decision' } & DecisionData
   | { kind: 'note'; text: string }
   | { kind: 'status'; text: string; data: StatusPayload | null }
-  | { kind: 'reschange'; items: string[] }
+  | { kind: 'resourcechange'; items: string[] }
   | { kind: 'endtick'; icon: string; title: string }
   | { kind: 'imgload'; paths: string[] }
 )
@@ -171,11 +171,12 @@ function endIcon(text: string): string {
   return '·'
 }
 
-/* 提取 <context_trim> 摘要为一行（整理分割线文案） */
+/* 提取 <context_trim> 摘要为一行（整理分割线文案；四节结构化摘要从【已完成】节起截取，完整进度在会话目录 progress.md） */
 function trimText(content: string): string {
-  const m = content.match(/摘要：\s*([\s\S]*?)<\/context_trim>/)
+  const m = content.match(/【已完成】\s*([\s\S]*?)<\/context_trim>/)
   const summary = (m?.[1] ?? '').trim().replace(/\s+/g, ' ')
-  return `上下文已整理：此前的对话折叠为摘要。${summary}`
+  const brief = summary.length > 160 ? summary.slice(0, 160) + '…' : summary
+  return `上下文已整理：此前的对话折叠为摘要（完整进度见会话目录 progress.md）。${brief}`
 }
 
 class AppStore {
@@ -225,7 +226,7 @@ class AppStore {
   status = $state<Status | null>(null)
   /* 最新 agent_status 快照（status.snapshot 事件实时更新，右上角水位条数据源） */
   live = $state<StatusPayload | null>(null)
-  /* 本轮资源变更条目（res.change 事件更新，右上角 StatusCard 数据源；
+  /* 本轮资源变更条目（resource.change 事件更新，右上角 StatusCard 数据源；
      loop_start 清空——事件按需推送，不清会滞留上一轮的旧变更） */
   liveChanges = $state<string[]>([])
   settings = $state<Settings | null>(null)
@@ -405,10 +406,11 @@ class AppStore {
           if (m.content.includes('整理上下文')) {
             out.push({ kind: 'status', uid: this.nuid(), text: m.content, data: null })
           }
-        } else if (m.content.includes('<res_change>')) {
-          // 资源变更记录：remind 变更段按需插入（实时由 res.change 事件渲染）
+        } else if (m.content.includes('<resource_change>')) {
+          // 资源变更记录：remind 变更段按需插入（实时由 resource.change 事件渲染；
+          // available_ 清单行不带 "- " 前缀，正则天然忽略，只取变更条目）
           const items = [...m.content.matchAll(/^- (.+)$/gm)].map((x) => x[1].trim()).filter(Boolean)
-          if (items.length) out.push({ kind: 'reschange', uid: this.nuid(), items })
+          if (items.length) out.push({ kind: 'resourcechange', uid: this.nuid(), items })
         } else if (m.content.includes('<reference_file>')) {
           /* 引用记录独立成块（与用户输入各一条消息，不合并）。标签体是
           纯 JSON：refs[].items 空 = 整文件引用（附件 chips），非空 =
@@ -1001,7 +1003,7 @@ class AppStore {
         const d = ev.data
         const obj = d && typeof d === 'object' ? d : null
         const text = typeof d === 'string' ? d : (obj?.text ?? '')
-        // 新一轮开始：清空上一轮的资源变更（右上角只挂本轮）（res.change 按需推送不自动清）
+        // 新一轮开始：清空上一轮的资源变更（右上角只挂本轮）（resource.change 按需推送不自动清）
         if (!ev.forkId) this.liveChanges = []
         if (ev.forkId) {
           // 分身输入进分身聊天框（含任务包装前缀，即分身收到的原文）
@@ -1267,15 +1269,15 @@ class AppStore {
         bs.push({ kind: 'assistant', uid: this.nuid(), text: `⚠️ ${msg}`, reasoning: '', streaming: false })
         break
       }
-      case 'res.change': {
+      case 'resource.change': {
         // 资源变更（remind 变更段推送，单一来源）：变更卡插到本轮 user 块前 +
-        // 右上角 StatusCard 同步行。res.change 不可回放（replayable 排除），
-        // 断线重连靠历史 <res_change> 消息重建。
+        // 右上角 StatusCard 同步行。resource.change 不可回放（replayable 排除），
+        // 断线重连靠历史 <resource_change> 消息重建。
         if (ev.forkId) break
         const items: string[] = Array.isArray(ev.data) ? ev.data : []
         if (!items.length) break
         this.liveChanges = items
-        this.insertBeforeLastUser({ kind: 'reschange', uid: this.nuid(), items })
+        this.insertBeforeLastUser({ kind: 'resourcechange', uid: this.nuid(), items })
         break
       }
       case 'status.snapshot': {
@@ -1446,7 +1448,7 @@ class AppStore {
     else b.reasoning += delta
   }
 
-  /* insertBeforeLastUser 把块插到最后一个 user 块之前（status/reschange
+  /* insertBeforeLastUser 把块插到最后一个 user 块之前（status/resourcechange
      轮首系统卡的实时插入位——send 已先 push 本轮 user 块）；无 user 时尾加 */
   private insertBeforeLastUser(block: Block) {
     let idx = -1

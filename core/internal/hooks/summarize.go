@@ -35,3 +35,34 @@ func summarizeMsgs(ctx context.Context, p provider.ModelProvider, prompt string,
 	}
 	return resp.Content, nil
 }
+
+/*
+normalizeStructuredSummary 规范四节结构化摘要（trim 提示词要求的
+【已完成】【正在做】【待办】【关键事实】）：剥模型手滑加的代码围栏，
+部分缺节补占位，全部缺失时整体包成【关键事实】兜底可用——不重试，
+弱模型的格式保证靠解析端兜底比再调一次模型可靠。
+*/
+func normalizeStructuredSummary(s string) string {
+	s = strings.TrimSpace(s)
+	if strings.HasPrefix(s, "```") { // 剥 ``` 围栏（含 ```markdown 前缀）
+		if i := strings.IndexByte(s[len(s[:3]):], '\n'); i >= 0 {
+			s = strings.TrimSpace(s[3+i+1:])
+		}
+		s = strings.TrimSuffix(strings.TrimSpace(s), "```")
+		s = strings.TrimSpace(s)
+	}
+	for _, sec := range trimSections {
+		if strings.Contains(s, sec) {
+			for _, missing := range trimSections {
+				if !strings.Contains(s, missing) {
+					s += "\n" + missing + "\n（无）"
+				}
+			}
+			return s
+		}
+	}
+	return "【关键事实】\n" + s
+}
+
+/* trimSections trim 结构化摘要的四个固定小节标题。 */
+var trimSections = [4]string{"【已完成】", "【正在做】", "【待办】", "【关键事实】"}

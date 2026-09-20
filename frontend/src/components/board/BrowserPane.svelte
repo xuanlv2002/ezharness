@@ -13,7 +13,7 @@
 
   let { active = false }: { active?: boolean } = $props()
 
-  type TabInfo = { id: string; name: string; origin: string; url: string; title: string; loading: boolean; active: boolean }
+  type TabInfo = { id: string; name: string; desc?: string; origin: string; url: string; title: string; loading: boolean; active: boolean }
 
   /* desktop 壳能力（preload 注入；web 端 undefined） */
   function ezBrowser(): any | undefined {
@@ -119,7 +119,7 @@
   {:else}
     <div class="strip">
       {#each tabs as t (t.id)}
-        <button class="strip-item" class:active={current === t.id} onclick={() => pickTab(t.id)} title="{t.name} · 来源 {t.origin || '?'} · {t.url}">
+        <button class="strip-item" class:active={current === t.id} onclick={() => pickTab(t.id)} title="{t.name}{t.desc ? ` · ${t.desc}` : ''} · 来源 {t.origin || '?'} · {t.url}">
           <span class="dot" class:loading={t.loading}></span>
           <span class="name">{t.title || t.name}</span>
           <span class="x" onclick={(e) => { e.stopPropagation(); ezBrowser().close(t.id) }} role="button" tabindex="-1" title="关闭">

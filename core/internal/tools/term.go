@@ -15,22 +15,24 @@ import (
 )
 
 /* TermIO 是共享终端服务的能力面(service.TerminalService 实现)。
-ctx 透传本轮上下文:用户停止时打断在途的等静默等待。 */
+ctx 透传本轮上下文:用户停止时打断在途的等静默等待。
+返回统一为 termResult JSON:id/name/desc/origin/exited/lastCmd/output/note。 */
 type TermIO interface {
-	/* StartTerm 新建终端(描述必填),可选立即运行命令并等静默返回输出 */
-	StartTerm(ctx context.Context, desc, command string, quietMs, timeoutMs int) (string, error)
+	/* StartTerm 新建终端(name 必填,desc 可选),可选立即运行命令并等静默返回输出 */
+	StartTerm(ctx context.Context, name, desc, command string, quietMs, timeoutMs int) (string, error)
 	/* Send 发送命令并等输出静默,返回本次新增输出(游标推进) */
 	Send(ctx context.Context, id, cmd string, quietMs, timeoutMs int) (string, error)
 	/* ReadTerm 游标式读取新输出(读即消费) */
 	ReadTerm(id string, chars int) (string, error)
-	/* CloseTerm 关闭终端 */
-	CloseTerm(id string) error
-	/* ListTermsJSON 终端清单(JSON 文本) */
+	/* CloseTerm 关闭终端,返回 {"id":..,"closed":true} */
+	CloseTerm(id string) (string, error)
+	/* ListTermsJSON 终端清单(JSON 数组,条目含 id/name/desc/origin/exited/lastCmd) */
 	ListTermsJSON() string
 }
 
 type startArgs struct {
-	Desc      string `json:"desc" desc:"终端描述/名称(如 build-server、日志监控),term_list 与看板中展示"`
+	Name      string `json:"name" desc:"终端名称,简短标识(如 build-server、日志监控),term_list 与看板中展示"`
+	Desc      string `json:"desc,omitempty" desc:"终端描述,详细说明用途(可选)"`
 	Command   string `json:"command,omitempty" desc:"创建后立即运行的命令(可选);带此参数时会等待输出静默并直接返回"`
 	QuietMs   int    `json:"quietMs,omitempty" desc:"输出静默多少毫秒后认为命令完成,默认 800"`
 	TimeoutMs int    `json:"timeoutMs,omitempty" desc:"总等待上限毫秒,默认 30000,超时返回已得输出"`
@@ -60,35 +62,37 @@ func SharedTerm(t TermIO) []types.Tool {
 	return []types.Tool{
 		types.NewTool("term_start",
 			"新建一个终端并可选立即运行命令。终端全局共享,用户可在魔法看板实时看到并接管。"+
-				"desc 是终端描述,用于 term_list 与看板展示。需要长驻程序、交互式程序、想让用户看到过程时用本工具;"+
-				"一次性无状态命令优先用 terminal 工具(更快)。",
+				"name 是简短名称、desc 是详细描述,用于 term_list 与看板展示。"+
+				"需要长驻程序、交互式程序、想让用户看到过程时用本工具;一次性无状态命令优先用 terminal 工具(更快)。"+
+				"返回 JSON:{id,name,desc,origin,exited,lastCmd,output,note}。",
 			func(ctx context.Context, in *startArgs) (string, error) {
-				return t.StartTerm(ctx, in.Desc, in.Command, in.QuietMs, in.TimeoutMs)
+				return t.StartTerm(ctx, in.Name, in.Desc, in.Command, in.QuietMs, in.TimeoutMs)
 			}),
 		types.NewTool("term_send",
 			"向终端发送命令并等待输出静默后返回本次新增输出。与用户看板是同一会话:输出对用户实时可见,cd/环境变量跨命令有效。"+
-				"也可发原始控制输入(如 \\u0003=Ctrl+C 中断当前命令,此时不自动补回车)。termId 省略=最近使用的终端。",
+				"也可发原始控制输入(如 \\u0003=Ctrl+C 中断当前命令,此时不自动补回车)。termId 省略=最近使用的终端。"+
+				"返回 JSON:{id,name,desc,origin,exited,lastCmd,output,note}。",
 			func(ctx context.Context, in *sendArgs) (string, error) {
 				return t.Send(ctx, in.TermID, in.Command, in.QuietMs, in.TimeoutMs)
 			}),
 		types.NewTool("term_read",
 			"游标式读取终端的新输出:每次只返回上次读取之后新增的内容(读即消费,不重复)。"+
-				"term_send 超时、长驻程序持续输出(如 tail -f、构建日志)时用本工具续读。",
-			func(ctx context.Context, in *readArgs) (string, error) {
+				"term_send 超时、长驻程序持续输出(如 tail -f、构建日志)时用本工具续读。"+
+				"返回 JSON:{id,name,desc,origin,exited,output}(无新输出时 output=(无新输出))。",
+			func(_ context.Context, in *readArgs) (string, error) {
 				return t.ReadTerm(in.TermID, in.Chars)
 			}),
 		types.NewTool("term_list",
-			"列出全部共享终端(id、名称、运行状态、最近命令)。用户手动建的与 AI 新建的都在内,所有会话共享。",
-			func(ctx context.Context, _ *struct{}) (string, error) {
+			"列出全部共享终端,条目含 id、名称、描述、运行状态、最近命令。"+
+				"用户手动建的与 AI 新建的都在内,所有会话共享。返回 JSON 数组。",
+			func(_ context.Context, _ *struct{}) (string, error) {
 				return t.ListTermsJSON(), nil
 			}),
 		types.NewTool("term_close",
-			"关闭一个终端(结束 shell 进程树)。长驻程序用完、终端不再需要时关闭,防止资源泄漏。",
-			func(ctx context.Context, in *closeArgs) (string, error) {
-				if err := t.CloseTerm(in.TermID); err != nil {
-					return "", err
-				}
-				return "closed " + in.TermID, nil
+			"关闭一个终端(结束 shell 进程树)。长驻程序用完、终端不再需要时关闭,防止资源泄漏。"+
+				"返回 JSON:{id,closed:true}。",
+			func(_ context.Context, in *closeArgs) (string, error) {
+				return t.CloseTerm(in.TermID)
 			}),
 	}
 }

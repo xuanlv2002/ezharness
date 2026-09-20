@@ -1,5 +1,5 @@
 /*
-mcp.json 装配与配置用例：ezharness 用文件描述 MCP server（http/stdio），
+mcp.json 装配与配置用例：ezharness 用文件描述 MCP server（http/sse/stdio），
 经 Reload 钩子热加载——文件改动下一轮迭代即生效。Enabled=false 的
 服务器不装配。
 
@@ -27,10 +27,12 @@ type McpFile struct {
 type McpServerFile struct {
 	Name        string            `json:"name"`
 	Description string            `json:"description,omitempty"` // 用途说明，mcp_list 时带给模型
-	Type        string            `json:"type"`                  // "http" | "stdio"
-	URL         string            `json:"url"`
-	Headers     map[string]string `json:"headers"`
-	Args        []string          `json:"args"`
+	Type        string            `json:"type"`                  // "http" | "sse" | "stdio"
+	URL         string            `json:"url"`                   // http 与 sse 的服务地址
+	Headers     map[string]string `json:"headers"`               // http 与 sse 的附加请求头
+	Command     string            `json:"command"`               // stdio 要执行的命令（如 python3、npx）
+	Args        []string          `json:"args"`                  // stdio 传给命令的参数
+	Env         map[string]string `json:"env"`                   // stdio 附加环境变量（继承父进程环境之上合并）
 	Allow       []string          `json:"allow"`
 	Enabled     *bool             `json:"enabled,omitempty"`
 }
@@ -39,19 +41,22 @@ type McpServerFile struct {
 func (s McpServerFile) IsEnabled() bool { return s.Enabled == nil || *s.Enabled }
 
 /*
-	McpServerView 是 MCP 页卡片数据。Tools 未连接为 0（前端显示 —）。
+McpServerView 是 MCP 页卡片数据。
 
 Allow 必须回传：前端全量保存，丢字段会清掉 mcp.json 里的白名单。
 */
 type McpServerView struct {
 	Name        string            `json:"name"`
 	Description string            `json:"description"`
-	Transport   string            `json:"transport"` // http | stdio
-	Endpoint    string            `json:"endpoint"`  // http url 或启动命令
+	Transport   string            `json:"transport"` // http | sse | stdio
+	Endpoint    string            `json:"endpoint"`  // http/sse url 或启动命令行
+	Command     string            `json:"command"`
+	Args        []string          `json:"args,omitempty"`
+	Env         map[string]string `json:"env,omitempty"`
+	Headers     map[string]string `json:"headers"`
 	Enabled     bool              `json:"enabled"`
 	Connected   bool              `json:"connected"` // 页面手动会话已建立
-	Tools       int               `json:"tools"`
-	Headers     map[string]string `json:"headers"`
+	Tools       int               `json:"tools"`     // 页面拉取过的工具数；-1 = 会话在但未拉取（agent 共用连接池时常见），0 = 确实无工具
 	Allow       []string          `json:"allow,omitempty"`
 }
 
@@ -63,28 +68,28 @@ type McpToolView struct {
 }
 
 /*
-	McpService MCP 配置用例。clients 是页面手动连接的会话缓存，
-
-与 agent Router 懒建立的连接相互独立。
+McpService MCP 配置用例。连接全部走全局 router（系统级单例，
+与 agent 的 mcp hook 共用同一连接池）；本服务只保留 mcp.json
+读写与页面展示缓存（toolDefs）。
 */
 type McpService struct {
-	Fsys fs.FileSystem
+	Fsys   fs.FileSystem
+	Router *mcp.Router
 
 	mu       sync.Mutex
-	clients  map[string]mcp.Client
-	toolDefs map[string][]mcp.ToolDef
+	toolDefs map[string][]mcp.ToolDef // 页面连过的工具清单缓存（工具数展示）
 }
 
-/* NewMcpService 构造（main 装配用）。 */
-func NewMcpService(fsys fs.FileSystem) *McpService {
+/* NewMcpService 构造（main 装配用，router 为系统级单例）。 */
+func NewMcpService(fsys fs.FileSystem, router *mcp.Router) *McpService {
 	return &McpService{
 		Fsys:     fsys,
-		clients:  map[string]mcp.Client{},
+		Router:   router,
 		toolDefs: map[string][]mcp.ToolDef{},
 	}
 }
 
-/* List 返回 MCP 页数据（连接状态以页面会话缓存为准）。 */
+/* List 返回 MCP 页数据（连接状态以全局 router 为准）。 */
 func (s *McpService) List() []McpServerView {
 	f := loadMcpFileOrNil(s.Fsys)
 	out := make([]McpServerView, 0)
@@ -94,16 +99,23 @@ func (s *McpService) List() []McpServerView {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for _, srv := range f.Servers {
-		_, connected := s.clients[srv.Name]
+		connected := s.Router.Connected(srv.Name)
+		tools := -1 // 会话在但页面没拉过清单(agent 共用连接池连的),数量未知
+		if defs, ok := s.toolDefs[srv.Name]; ok {
+			tools = len(defs)
+		}
 		out = append(out, McpServerView{
 			Name:        srv.Name,
 			Description: srv.Description,
 			Transport:   srv.Type,
 			Endpoint:    endpointOf(srv),
+			Command:     srv.Command,
+			Args:        srv.Args,
+			Env:         srv.Env,
+			Headers:     nonNilHeaders(srv.Headers),
 			Enabled:     srv.IsEnabled(),
 			Connected:   connected,
-			Tools:       len(s.toolDefs[srv.Name]),
-			Headers:     nonNilHeaders(srv.Headers),
+			Tools:       tools,
 			Allow:       srv.Allow,
 		})
 	}
@@ -111,73 +123,47 @@ func (s *McpService) List() []McpServerView {
 }
 
 /*
-	Connect 建立页面侧 MCP 会话并返回工具清单；已有会话则复用刷新，
-
-失效时重建。禁用的 server 也允许连（页面是调试通道）。
+Connect 经全局 router 建立会话并返回工具清单（连接前按 mcp.json
+现值热替换，手改文件也即时生效）；连接失效自动逐出重建一次。
+禁用的 server 不装配进 router，页面同样不可连（禁用即禁用）。
 */
 func (s *McpService) Connect(ctx context.Context, name string) ([]McpToolView, error) {
+	SyncMcpServers(s.Router, s.Fsys)
+	defs, err := s.Router.Tools(ctx, name)
+	if err != nil {
+		s.Router.Drop(name) // 连接失效：逐出重建再试一次
+		if defs, err = s.Router.Tools(ctx, name); err != nil {
+			return nil, errMcp(name + ": " + err.Error())
+		}
+	}
 	s.mu.Lock()
-	defer s.mu.Unlock()
-	srv := findServer(s.Fsys, name)
-	if srv == nil {
-		return nil, errMcp("unknown server: " + name)
-	}
-	if c, live := s.clients[name]; live {
-		if defs, err := c.ListTools(ctx); err == nil {
-			s.toolDefs[name] = defs
-			return toolViews(defs), nil
-		}
-		s.closeClient(name, c) // 会话失效，走重建
-	}
-	sc, ok := buildServerConfig(*srv)
-	if !ok {
-		return nil, errMcp("unsupported server type: " + srv.Type)
-	}
-	c, err := sc.Factory(sc)
-	if err != nil {
-		return nil, errMcp(name + ": connect: " + err.Error())
-	}
-	defs, err := c.ListTools(ctx)
-	if err != nil {
-		if cl, closer := c.(mcp.Closer); closer {
-			_ = cl.Close()
-		}
-		return nil, errMcp(name + ": list_tools: " + err.Error())
-	}
-	s.clients[name] = c
 	s.toolDefs[name] = defs
+	s.mu.Unlock()
 	return toolViews(defs), nil
 }
 
-/* Disconnect 关闭页面会话（stdio 子进程随之释放）；未连接时幂等。 */
+/* Disconnect 断开该 server 的全局连接（stdio 子进程随之释放）；未连接时幂等。 */
 func (s *McpService) Disconnect(name string) {
+	s.Router.Drop(name)
 	s.mu.Lock()
-	defer s.mu.Unlock()
-	if c, live := s.clients[name]; live {
-		s.closeClient(name, c)
-	}
+	delete(s.toolDefs, name)
+	s.mu.Unlock()
 }
 
-/* Call 经页面会话调用工具。不查 allow——白名单约束 agent，页面是用户操作。 */
+/*
+Call 经全局 router 调用工具，未连接时懒建立（冷启动直调——HTTP 消费
+者如快应用不必先 connect）。不查 allow——白名单约束 agent 的
+mcp_router 路径，页面与 API 直调是用户操作。
+*/
 func (s *McpService) Call(ctx context.Context, server, tool string, args json.RawMessage) (string, error) {
-	s.mu.Lock()
-	c, live := s.clients[server]
-	s.mu.Unlock()
-	if !live {
-		return "", errMcp("not connected: " + server + " (connect first)")
-	}
 	if len(args) == 0 {
 		args = json.RawMessage(`{}`)
 	}
-	return c.CallTool(ctx, tool, args)
-}
-
-func (s *McpService) closeClient(name string, c mcp.Client) {
-	if cl, ok := c.(mcp.Closer); ok {
-		_ = cl.Close()
+	out, err := s.Router.Call(ctx, server, tool, args)
+	if err != nil {
+		return "", errMcp(server + ": " + err.Error())
 	}
-	delete(s.clients, name)
-	delete(s.toolDefs, name)
+	return out, nil
 }
 
 /*
@@ -190,11 +176,17 @@ func (s *McpService) Update(f McpFile) error {
 		if srv.Name == "" {
 			return errMcp("server name required")
 		}
-		if srv.Type != "http" && srv.Type != "stdio" {
-			return errMcp("type must be http or stdio")
-		}
-		if srv.Type == "http" && srv.URL == "" {
-			return errMcp("http server requires url")
+		switch srv.Type {
+		case "http", "sse":
+			if srv.URL == "" {
+				return errMcp(srv.Type + " server requires url")
+			}
+		case "stdio":
+			if srv.Command == "" {
+				return errMcp("stdio server requires command")
+			}
+		default:
+			return errMcp("type must be http, sse or stdio")
 		}
 	}
 	data, err := json.MarshalIndent(f, "", "  ")
@@ -204,9 +196,11 @@ func (s *McpService) Update(f McpFile) error {
 	if err := s.Fsys.Write(context.Background(), "mcp.json", data); err != nil {
 		return err
 	}
+	// 即时热替换：被删除/禁用 server 的连接随之关闭，agent 与页面立即可见
+	SyncMcpServers(s.Router, s.Fsys)
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	for name, c := range s.clients {
+	for name := range s.toolDefs {
 		keep := false
 		for _, srv := range f.Servers {
 			if srv.Name == name && srv.IsEnabled() {
@@ -215,7 +209,7 @@ func (s *McpService) Update(f McpFile) error {
 			}
 		}
 		if !keep {
-			s.closeClient(name, c)
+			delete(s.toolDefs, name)
 		}
 	}
 	return nil
@@ -229,22 +223,9 @@ func toolViews(defs []mcp.ToolDef) []McpToolView {
 	return out
 }
 
-func findServer(fsys fs.FileSystem, name string) *McpServerFile {
-	f := loadMcpFileOrNil(fsys)
-	if f == nil {
-		return nil
-	}
-	for i := range f.Servers {
-		if f.Servers[i].Name == name {
-			return &f.Servers[i]
-		}
-	}
-	return nil
-}
-
 func endpointOf(srv McpServerFile) string {
 	if srv.Type == "stdio" {
-		return srv.Name + " " + joinArgs(srv.Args)
+		return srv.Command + " " + joinArgs(srv.Args)
 	}
 	return srv.URL
 }
@@ -253,7 +234,7 @@ type mcpErr string
 
 func (e mcpErr) Error() string { return string(e) }
 
-func errMcp(msg string) error { return mcpErr("mcp.json: " + msg) }
+func errMcp(msg string) error { return mcpErr(msg) }
 
 func joinArgs(args []string) string { return strings.Join(args, " ") }
 
@@ -280,13 +261,24 @@ func McpNames(fsys fs.FileSystem) []string {
 	return out
 }
 
-/* NewMcpHook 从 mcp.json 构造 mcp hook（文件缺失=空集不报错；禁用项不装配）。 */
-func NewMcpHook(fsys fs.FileSystem) *mcp.Hook {
-	return mcp.NewHook(mcp.Config{
-		Servers: buildServers(loadMcpFileOrNil(fsys)),
-		Reload: func(ctx context.Context) ([]mcp.ServerConfig, error) {
-			return buildServers(loadMcpFileOrNil(fsys)), nil
-		},
+/*
+NewMcpRouter 构造系统级 router（全局唯一，连接跨 session 常驻；
+main 装配一次，换代复用）。SyncMcpServers 按当前 mcp.json 热替换
+server 列表（换代切数据目录、保存配置后即时生效共用此入口）。
+*/
+func NewMcpRouter(fsys fs.FileSystem) *mcp.Router {
+	return mcp.NewRouter(buildServers(loadMcpFileOrNil(fsys)))
+}
+
+func SyncMcpServers(r *mcp.Router, fsys fs.FileSystem) {
+	r.ReplaceServers(buildServers(loadMcpFileOrNil(fsys)))
+}
+
+/* NewMcpHook 注入全局 router 构造 mcp hook（连接生命周期归 router，hook 只使用）。
+OnLoop Reload 兜底手改 mcp.json 的热加载；禁用项不装配。 */
+func NewMcpHook(fsys fs.FileSystem, router *mcp.Router) *mcp.Hook {
+	return mcp.NewHookWithRouter(router, func(context.Context) ([]mcp.ServerConfig, error) {
+		return buildServers(loadMcpFileOrNil(fsys)), nil
 	})
 }
 
@@ -323,8 +315,13 @@ func buildServerConfig(s McpServerFile) (mcp.ServerConfig, bool) {
 	switch s.Type {
 	case "http":
 		sc.Factory = mcp.StreamableHTTP(s.URL, s.Headers)
+	case "sse":
+		sc.Factory = mcp.SSE(s.URL, s.Headers)
 	case "stdio":
-		sc.Factory = mcp.Stdio(s.Name, s.Args...)
+		if s.Command == "" {
+			return sc, false
+		}
+		sc.Factory = mcp.Stdio(s.Command, s.Env, s.Args...)
 	default:
 		return sc, false
 	}

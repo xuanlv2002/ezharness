@@ -31,9 +31,22 @@ import (
 type TermInfo struct {
 	ID      string `json:"id"`
 	Name    string `json:"name"`
-	Origin  string `json:"origin"`  // 创建来源:"用户" / "AI·<会话名>"
-	Exited  bool   `json:"exited"`  // shell 已退出(连接保留可看残留输出)
-	LastCmd string `json:"lastCmd"` // 最近一次写入的命令(AI 或用户)
+	Desc    string `json:"desc,omitempty"` // 用途描述(创建时给出,看板提示展示)
+	Origin  string `json:"origin"`         // 创建来源:"用户" / "AI·<会话名>"
+	Exited  bool   `json:"exited"`         // shell 已退出(连接保留可看残留输出)
+	LastCmd string `json:"lastCmd"`        // 最近一次写入的命令(AI 或用户)
+}
+
+/* termResult 是 term_* 工具的操作返回(与 TermInfo 同构 + 输出/状态注记)。 */
+type termResult struct {
+	ID      string `json:"id"`
+	Name    string `json:"name"`
+	Desc    string `json:"desc,omitempty"`
+	Origin  string `json:"origin,omitempty"`
+	Exited  bool   `json:"exited"`
+	LastCmd string `json:"lastCmd,omitempty"`
+	Output  string `json:"output,omitempty"`
+	Note    string `json:"note,omitempty"`
 }
 
 /* TermFrame 是 service → WS 订阅者的广播帧(controller 负责编码)。 */
@@ -122,6 +135,7 @@ func (r *ringBuffer) snapshot() []byte {
 type TermSession struct {
 	ID      string
 	Name    string
+	Desc    string
 	Origin  string
 	LastCmd string
 
@@ -171,8 +185,8 @@ func shellPath() string {
 	return "/bin/sh"
 }
 
-/* Create 启动一个新终端(id 形如 t1/t2)。 */
-func (s *TerminalService) Create(name, origin string) (*TermInfo, error) {
+/* Create 启动一个新终端(id 形如 t1/t2);name 是简短标识,desc 是用途描述。 */
+func (s *TerminalService) Create(name, desc, origin string) (*TermInfo, error) {
 	p, err := pty.New()
 	if err != nil {
 		return nil, fmt.Errorf("pty: %w", err)
@@ -192,7 +206,7 @@ func (s *TerminalService) Create(name, origin string) (*TermInfo, error) {
 		name = id
 	}
 	sess := &TermSession{
-		ID: id, Name: name, Origin: origin,
+		ID: id, Name: name, Desc: desc, Origin: origin,
 		pty: p, cmd: cmd, ring: newRing(termRingSize),
 		lastOut: time.Now(), condCh: make(chan struct{}),
 	}
@@ -214,7 +228,7 @@ func (s *TerminalService) Create(name, origin string) (*TermInfo, error) {
 }
 
 func (sess *TermSession) info() *TermInfo {
-	return &TermInfo{ID: sess.ID, Name: sess.Name, Origin: sess.Origin,
+	return &TermInfo{ID: sess.ID, Name: sess.Name, Desc: sess.Desc, Origin: sess.Origin,
 		Exited: sess.exited, LastCmd: sess.LastCmd}
 }
 
@@ -302,16 +316,16 @@ func (s *TerminalService) ListTermsJSON() string {
 }
 
 /*
-	StartTerm 新建终端(desc 为描述/名称);带 command 时立即运行
+	StartTerm 新建终端(name 简短标识,desc 用途描述);带 command 时立即
 
-并等输出静默返回(等价"新建+send"一步到位)。读位点取注入前的当前
-位置(欢迎横幅不计入 agent 可读增量)。
+运行并等输出静默返回(等价"新建+send"一步到位)。读位点取注入前的当前
+位置(欢迎横幅不计入 agent 可读增量)。返回 termResult JSON。
 */
-func (s *TerminalService) StartTerm(ctx context.Context, desc, command string, quietMs, timeoutMs int) (string, error) {
+func (s *TerminalService) StartTerm(ctx context.Context, name, desc, command string, quietMs, timeoutMs int) (string, error) {
 	quiet := clampInt(quietMs, 100, 5000, 800)
 	timeout := clampInt(timeoutMs, 1000, 60000, 30000)
 
-	info, err := s.Create(desc, "AI")
+	info, err := s.Create(name, desc, "AI")
 	if err != nil {
 		return "", err
 	}
@@ -323,7 +337,7 @@ func (s *TerminalService) StartTerm(ctx context.Context, desc, command string, q
 	sess.readMark = sess.ring.mark()
 	sess.mu.Unlock()
 	if command == "" {
-		return fmt.Sprintf("[终端 #%s %q 已创建(分支绑定,用户可在看板查看接管)]\n后续用 term_send(termId=%s) 发送命令", info.ID, info.Name, info.ID), nil
+		return termResultJSON(*info, nil, "已创建(分支绑定,用户可在看板查看接管),后续用 term_send 发送命令"), nil
 	}
 
 	sess.mu.Lock()
@@ -335,17 +349,8 @@ func (s *TerminalService) StartTerm(ctx context.Context, desc, command string, q
 	out, exited, timedOut := waitQuiet(ctx, sess, gen, quiet, timeout)
 	sess.mu.Lock()
 	sess.readMark = sess.ring.mark()
-	name := sess.Name
 	sess.mu.Unlock()
-	head := fmt.Sprintf("[终端 #%s %q 已创建并执行]", info.ID, name)
-	if exited {
-		head += " shell 已退出"
-	}
-	note := "[输出已静默]"
-	if timedOut {
-		note = fmt.Sprintf("[等待超时(>%ds),命令可能仍在运行,可用 term_read(termId=%s) 续读]", timeout/1000, info.ID)
-	}
-	return renderTermOutput(head, out, note), nil
+	return termResultJSON(*sess.info(), out, quietNote(exited, timedOut, timeout, info.ID)), nil
 }
 
 /*
@@ -450,18 +455,9 @@ func (s *TerminalService) Send(ctx context.Context, id, cmd string, quietMs, tim
 	out, exited, timedOut := waitQuiet(ctx, sess, gen, quiet, timeout)
 	sess.mu.Lock()
 	sess.readMark = sess.ring.mark() // 游标推进:已交付内容不再重复
-	name := sess.Name
+	info := *sess.info()
 	sess.mu.Unlock()
-
-	head := fmt.Sprintf("[终端 #%s %q]", sess.ID, name)
-	if exited {
-		head += " shell 已退出"
-	}
-	note := "[输出已静默]"
-	if timedOut {
-		note = fmt.Sprintf("[等待超时(>%ds),命令可能仍在运行,可用 term_read 续读]", timeout/1000)
-	}
-	return renderTermOutput(head, out, note), nil
+	return termResultJSON(info, out, quietNote(exited, timedOut, timeout, sess.ID)), nil
 }
 
 /* waitQuiet 等待输出静默/退出/超时,返回期间新增输出。 */
@@ -489,21 +485,44 @@ func waitQuiet(ctx context.Context, sess *TermSession, gen int64, quiet, timeout
 	}
 }
 
-/* renderTermOutput 组装工具返回:头行 + 净化输出 + 状态行(截尾 8000 rune)。 */
-func renderTermOutput(head string, out []byte, note string) string {
+/*
+termResultJSON 组装 term_* 操作返回:终端身份/状态 + 净化输出(截尾
+8000 rune,空输出给括号语言说明) + 状态注记,单 JSON 对象(list 与操作
+同构)。
+*/
+func termResultJSON(info TermInfo, out []byte, note string) string {
 	text := string(bytes.ToValidUTF8(out, nil))
 	text = strings.ReplaceAll(text, "\r\n", "\n")
 	text = stripAnsi(text)
 	if r := []rune(text); len(r) > 8000 {
 		text = "…(输出过长,已截断)\n" + string(r[len(r)-8000:])
 	}
-	var b strings.Builder
-	b.WriteString(head + "\n")
 	if body := strings.TrimSpace(text); body != "" {
-		b.WriteString(body + "\n")
+		text = body
+	} else {
+		text = "(无输出)"
 	}
-	b.WriteString(note)
-	return b.String()
+	res := termResult{ID: info.ID, Name: info.Name, Desc: info.Desc, Origin: info.Origin,
+		Exited: info.Exited, LastCmd: info.LastCmd, Output: text, Note: note}
+	b, err := json.Marshal(res)
+	if err != nil {
+		return "{}"
+	}
+	return string(b)
+}
+
+/* quietNote 拼等静默返回的状态注记(超时/退出提示模型续读路径)。 */
+func quietNote(exited, timedOut bool, timeout int, id string) string {
+	var parts []string
+	if timedOut {
+		parts = append(parts, fmt.Sprintf("等待超时(>%ds),命令可能仍在运行,可用 term_read(termId=%s) 续读", timeout/1000, id))
+	} else {
+		parts = append(parts, "输出已静默")
+	}
+	if exited {
+		parts = append(parts, "shell 已退出,连接保留可看残留输出")
+	}
+	return strings.Join(parts, "; ")
 }
 
 /* ReadTerm 游标式读取终端新输出(读即消费,下次只返回新增)。 */
@@ -521,21 +540,22 @@ func (s *TerminalService) ReadTerm(id string, chars int) (string, error) {
 	sess.mu.Lock()
 	out := sess.ring.since(sess.readMark)
 	sess.readMark = sess.ring.mark()
-	exited := sess.exited
-	name := sess.Name
+	info := *sess.info()
 	sess.mu.Unlock()
 
-	head := fmt.Sprintf("[终端 #%s %q]", sess.ID, name)
-	if exited {
-		head += " shell 已退出"
-	}
 	text := string(bytes.ToValidUTF8(out, nil))
 	text = strings.ReplaceAll(text, "\r\n", "\n")
-	body := tailRunes(stripAnsi(text), chars)
+	body := strings.TrimSpace(tailRunes(stripAnsi(text), chars))
 	if body == "" {
 		body = "(无新输出)"
 	}
-	return head + "\n" + body, nil
+	res := termResult{ID: info.ID, Name: info.Name, Desc: info.Desc, Origin: info.Origin,
+		Exited: info.Exited, LastCmd: info.LastCmd, Output: body}
+	b, err := json.Marshal(res)
+	if err != nil {
+		return "{}", nil
+	}
+	return string(b), nil
 }
 
 func tailRunes(s string, n int) string {
@@ -546,14 +566,21 @@ func tailRunes(s string, n int) string {
 	return string(r[len(r)-n:])
 }
 
-/* CloseTerm 关闭终端(杀进程树防子进程残留);幂等。 */
-func (s *TerminalService) CloseTerm(id string) error {
+/* CloseTerm 关闭终端(杀进程树防子进程残留);幂等,返回 closed JSON。 */
+func (s *TerminalService) CloseTerm(id string) (string, error) {
 	sess, err := s.Get(id)
 	if err != nil {
-		return err
+		return "", err
 	}
 	s.remove(sess)
-	return nil
+	b, merr := json.Marshal(struct {
+		ID     string `json:"id"`
+		Closed bool   `json:"closed"`
+	}{ID: sess.ID, Closed: true})
+	if merr != nil {
+		return "{}", nil
+	}
+	return string(b), nil
 }
 
 /* remove 杀进程树并摘除会话,清理 lastAi 引用,广播清单。 */

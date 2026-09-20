@@ -415,13 +415,13 @@ func (s *Session) Publish(e Event) {
 /*
 	replayable 判定帧是否进回放缓存：聚合帧保留，高频增量与瞬态帧跳过
 
-（res.change 与 status.snapshot 同理：对应块插在 pendingUser 截断点
+（resource.change 与 status.snapshot 同理：对应块插在 pendingUser 截断点
 之前，回放重插会重复渲染）。
 */
 func replayable(t string) bool {
 	switch t {
 	case "model_chunk", "reasoning_chunk", "tool_chunk", "model_start",
-		"status.snapshot", "res.change", "turn_end", "loop_end", "iteration_end":
+		"status.snapshot", "resource.change", "turn_end", "loop_end", "iteration_end":
 		return false
 	}
 	return true

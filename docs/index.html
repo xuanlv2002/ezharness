@@ -564,14 +564,14 @@ flowchart TB
    ├─ topics.json              <span class="c"># 分支（线）索引</span>
    ├─ stats.json               <span class="c"># 跨会话生命体征</span>
    ├─ mcp.json                 <span class="c"># MCP server 配置（热加载）</span>
-   ├─ sessions\&lt;id&gt;\            <span class="c"># session.json · trace.jsonl · decisions.jsonl · forks/</span>
-   ├─ memory\longterm\         <span class="c"># harness.md 索引 + 主题记忆</span>
+   ├─ sessions\&lt;id&gt;\            <span class="c"># session.json · progress.md · trace.jsonl · decisions.jsonl · forks/</span>
+   ├─ memory\longterm\         <span class="c"># harness.md 索引 + 固定主题记忆 user/projects/lessons.md</span>
    ├─ memory\skills\           <span class="c"># 技能库 SKILL.md + scripts/</span>
    ├─ apps\                    <span class="c"># 快应用 html（save_app 生成，静态服务 /apps/*）</span>
    ├─ workspace\tmp\           <span class="c"># 上传附件暂存（base64 不入上下文）</span>
    └─ .ezloop\offload\         <span class="c"># 大工具结果卸载区</span></pre>
     </div>
-    <p class="sub">system prompt 的 <code class="inline">&lt;workspace&gt;</code> 段把此布局（绝对路径）原样告知模型——详见第三章 system 组装。</p>
+    <p class="sub">system prompt 的 <code class="inline">&lt;workspace&gt;</code> 段只把<b>三个可写位置</b>（workspace / memory/longterm / memory/skills，绝对路径）告知模型，其余目录行为规则化不诱导翻阅——详见第三章 system 组装；压缩与归档的记忆方案见 <code class="inline">docs/md/compaction.md</code>。</p>
 
     <h3 id="arch-lifecycle">1.6 应用生命周期</h3>
     <div class="codeblock">
@@ -694,18 +694,20 @@ flowchart LR
 
     <div class="ext">
       <h3>compact 换代 <span class="badge base">仅用户手动</span></h3>
-      <p class="sub">归档话题：摘要封存旧库、新库带摘要继续。<code class="inline">POST /api/topics/compact</code></p>
+      <p class="sub">沉淀式归档：先把值得长期保留的内容合并进记忆文件，再精炼交接摘要封存旧库、新库带摘要继续。<code class="inline">POST /api/topics/compact</code></p>
       <div class="codeblock">
         <div class="bar"><span class="dot r"></span><span class="dot y"></span><span class="dot g"></span><span class="name">compact-flow</span></div>
-<pre>BeginArchive 占锁（摘要最长 2 分钟；锁发消息/切分支/二次归档）
-→ summarizeMsgs（模型视图，含 marker 摘要链，链式浓缩）
+<pre>BeginArchive 占锁（沉淀+摘要各 2 分钟；锁发消息/切分支/二次归档）
+→ ① distillToMemory（沉淀步，失败静默）：会话 view + user/projects/lessons 三文件现内容
+   → 模型合并重写（去重/纠偏/每文件 ≤30 行，UNCHANGED 段跳写）→ 整体覆盖写回
+→ ② summarizeMsgs（交接摘要：总体目标/未完成与下一步/关键决定/交付物/待办，300 字内）
 → 旧库翻 Archived=true 封存
 → sys.Set(base, summaryBlock)        <span class="c"># 新 system 两段生效</span>
 → 新库初始快照先落盘（空 messages + compress 边——任一时刻重启新库都可恢复）
 → SetID(newID)（清基线/用量，LineRoot 留）→ SetPrev → topics.UpdateLeaf（换代不换线名）
 → RotateTo（内存换代：清历史/水位）→ Publish session.compact</pre>
       </div>
-      <div class="tip"><b>与 trim 的分工：</b>trim 是<b>上下文管理</b>（模型侧：水位自动 + trim_context 主动，就地截断不换库）；compact 是<b>会话树管理</b>（用户侧：摘要归档换代）。</div>
+      <div class="tip"><b>与 trim 的分工：</b>trim 是<b>接力棒</b>（模型侧：水位自动 + trim_context 主动，四节结构化摘要 + progress.md，就地截断不换库）；compact 是<b>总结沉淀</b>（用户侧：固定三记忆文件合并重写 + 精炼交接摘要换代）。详见 docs/md/compaction.md。</div>
     </div>
 
     <div class="ext">
@@ -715,7 +717,7 @@ flowchart LR
         <li>源是"未产生新消息的 fork"时沿 fork 边上溯到实际内容源（空叉链折叠）</li>
         <li>新 session <b>体内携带 [0, anchor] 完整副本</b>（快照隔离；system / 水位承源）→ topics.Add(Kind:"fork") → LoadBranch + SetActive</li>
         <li>fork 线标题 = 锚点消息内容（TitleFromMsg）；有自己的首条新增 user 后显式切换</li>
-        <li>命名规则：new 线 = 首条真实 user（FirstUserTitle 跳过 agent_status / res_change / end_reason / trim marker 等系统注入，40 字截断）；世代名 = 本代首条 user，命名后固定</li>
+        <li>命名规则：new 线 = 首条真实 user（FirstUserTitle 跳过 agent_status / resource_change / end_reason / trim marker 等系统注入，40 字截断）；世代名 = 本代首条 user，命名后固定</li>
       </ul>
     </div>
 
@@ -786,7 +788,7 @@ sequenceDiagram
 
     E-&gt;&gt;E: AppendMessage(input)  ← 用户输入入史
     E-&gt;&gt;HK: startHooks[].OnStart（按序）
-    Note over HK: sys(system) → trace(观测层，须在会 Skip 短路的 hook 之前)&lt;br/&gt;→ contextfix(修理) → filetools(注册工具) → skilltool&lt;br/&gt;→ remind(变更段 res_change? + 快照段 agent_status) → reference_file(路径告知?)&lt;br/&gt;→ approver/asker/task/mcp(注册) → offload/guard/trim/sessionstore(就位)
+    Note over HK: sys(system) → trace(观测层，须在会 Skip 短路的 hook 之前)&lt;br/&gt;→ contextfix(修理) → filetools(注册工具) → skilltool&lt;br/&gt;→ remind(变更段 resource_change? + 快照段 agent_status) → reference_file(路径告知?)&lt;br/&gt;→ approver/asker/task/mcp(注册) → offload/guard/trim/sessionstore(就位)
 
     loop 迭代（≤MaxIterations）
         E-&gt;&gt;P: 模型调用
@@ -832,8 +834,8 @@ sequenceDiagram
     <p class="sub"><b>每 session 组装一次并固定</b>（重启从快照还原不重组；skill / mcp / 记忆变更等下个 session 生效，过渡期靠 agent_status 告知模型）。sysprompt hook 是 system 的唯一来源，必须在 startHooks 首位。</p>
     <table>
       <tr><th>段</th><th>内容</th><th>时机</th></tr>
-      <tr><td><b>base</b></td><td>人格 + SystemExtra（设置页）+ <code>&lt;workspace&gt;</code> 目录架构（含 toolArg 语法糖、term_* 指南）+ <code>&lt;memory&gt;</code>（记忆结构 + harness.md 索引全文）+ <code>&lt;skills&gt;</code> 清单? + <code>&lt;mcp&gt;</code> 清单?</td><td>session 创建时一次</td></tr>
-      <tr><td><b>identity</b></td><td><code>&lt;session&gt;</code> 会话 ID + 存档绝对路径（trim 折叠后的回忆入口）；render 时求值——换代后 ID 永远正确</td><td>每轮 render 实时</td></tr>
+      <tr><td><b>base</b></td><td>人格 + SystemExtra（设置页）+ <code>&lt;workspace&gt;</code> 三个可写位置与行为规则 + <code>&lt;memory&gt;</code>（记忆结构 + harness.md 索引全文）+ <code>&lt;skills&gt;</code> 清单? + <code>&lt;mcp&gt;</code> 清单? + <code>&lt;action&gt;</code> 行动准则 + <code>&lt;output&gt;</code> 输出规范（supper_url 正误示例）</td><td>session 创建时一次</td></tr>
+      <tr><td><b>identity</b></td><td><code>&lt;session&gt;</code> 会话 ID + 存档与进度档案绝对路径（trim 折叠后的回忆入口 + 恢复现场）；render 时求值——换代后 ID 永远正确</td><td>每轮 render 实时</td></tr>
       <tr><td><b>summary</b></td><td>compact 摘要段（换代时注入 / 热更）</td><td>compact 时</td></tr>
     </table>
     <p class="sub">此外各 hook 的 OnStart 会向 system 追加说明段（幂等）：filetools 的 <b>系统环境段</b>（GOOS + shell 语法提示）与 5 个 <b>&lt;tool-guide&gt;</b>（approve 审批 / ask_user 提问 / task 分身 / mcp_router / load_skill / trim_context）。</p>
@@ -842,24 +844,17 @@ sequenceDiagram
 <pre><span class="c">你是 ezharness——一个持续陪伴用户的设备级 agent，可全权操作本机文件与命令。能用工具就用工具，回答简洁。……（SystemExtra）</span>
 
 <span class="t">&lt;workspace&gt;</span>
-<span class="c"># 目录架构与读写权限（下列均为完整绝对路径，直接使用，不要自行拼接）：</span>
-# D:/ezharness/data/workspace          工作目录，草稿/脚本/命令产物放这里，自由读写
-# D:/ezharness/data/workspace/tmp      用户上传附件的暂存目录；……
-# D:/ezharness/data/memory/longterm    长期记忆，可写：harness.md 是索引……
-# D:/ezharness/data/memory/skills      技能库，可写……
-# D:/ezharness/data/apps               快应用目录，由 save_app 工具写入……
-# D:/ezharness/data/mcp.json           MCP 服务配置，可写……
-# D:/ezharness/data/sessions           历史会话存档，只读……
-# D:/ezharness/data/.ezloop/offload    大工具结果的卸载区……
-# 规则：terminal 每条命令是独立进程（cd 不跨命令保留）；所有文件读写与命令一律绝对路径……
-# 参数语法糖：工具参数的字符串值里写 &lt;@toolArg&gt;绝对路径&lt;/@toolArg&gt;，执行时会自动展开为该文件内容……
-# 输出占位：回复中给用户可点击的入口用 &lt;$supper_url&gt;类型://标识&lt;/$supper_url&gt; 包裹——https:// 外部链接、term://终端id（长驻程序收尾时交付终端入口）、app://快应用名……
-# 共享终端（term_start/term_send 等）：魔法看板里的多终端，用户与你实时共见同一屏幕……
-# 用户手动在终端里的操作会出现在轮首 &lt;res_change&gt; 资源变更提示里，留意并在需要时接续。
+<span class="c"># 工作区：三个可写位置（下列均为完整绝对路径，直接使用，不要自行拼接）</span>
+# D:/ezharness/data/workspace      工作目录，草稿/脚本/命令产物一律放这里；tmp/ 附件暂存（read_file 读，图片自动进上下文）
+# D:/ezharness/data/memory/longterm   长期记忆：harness.md 索引（已注入），user/projects/lessons 三个固定主题文件；归档时系统自动合并更新
+# D:/ezharness/data/memory/skills     技能库：每技能一个子目录，新建后下个 session 进清单
+<span class="c"># 行为规则（不需要记路径）：技能/MCP 清单以 &lt;skills&gt;/&lt;mcp&gt; 段为准不读目录发现；快应用由 save_app 生成；</span>
+<span class="c"># 存档与进度档案见 &lt;session&gt; 块，历史会话不主动翻阅；超长工具结果按提示 read_file 取回；配置文件不改写……</span>
 <span class="t">&lt;/workspace&gt;</span>
 
 <span class="t">&lt;memory&gt;</span>
-<span class="c"># 长期记忆……- 索引 …/longterm/harness.md：长期记忆入口，全文见下方，可用文件工具直接更新……</span>
+<span class="c"># 长期记忆……- 索引 …/longterm/harness.md：长期记忆入口，全文见下方……</span>
+<span class="c"># - 主题文件 …/longterm/{user,projects,lessons}.md：偏好事实/项目背景/踩坑经验，不进上下文，归档时自动合并……</span>
 <span class="c"># 索引 harness.md 全文</span>
 （harness.md 全文）
 <span class="t">&lt;/memory&gt;</span>
@@ -870,26 +865,39 @@ sequenceDiagram
 
 <span class="t">&lt;mcp&gt;</span>（经 mcp_router 工具调用，先用 mcp_list/tool_list 发现服务与工具）
 - server名: 描述
+<span class="c">（本机 HTTP 直调：http://127.0.0.1:5262/api/mcp/call，POST {"server","tool","args"}；构建可观测页面等快应用时把 MCP 工具当本地接口直接 fetch）</span>
 <span class="t">&lt;/mcp&gt;</span>
+
+<span class="t">&lt;action&gt;</span>
+<span class="c"># 行动准则：1 接任务先匹配技能；2 多步/有风险先 ask_user 提交计划获批；3 工具选择（terminal / term_* / browser_*）；</span>
+<span class="c"># 4 MCP 先发现再调用；5 独立子任务交 task 分身（描述自包含，无依赖并行）；6 交付入口用 &lt;$supper_url&gt;，整理后从进度档案恢复现场……</span>
+<span class="t">&lt;/action&gt;</span>
+
+<span class="t">&lt;output&gt;</span>
+<span class="c"># 输出规范：&lt;$supper_url&gt; 整段闭合、标签紧贴地址、地址内无空格文字（正确示例×5 + 错误示例×3）；</span>
+<span class="c"># &lt;@toolArg&gt;绝对路径&lt;/@toolArg&gt; 执行时展开为文件内容；回复风格：结论先行……</span>
+<span class="t">&lt;/output&gt;</span>
 
 <span class="t">&lt;session&gt;</span>
 当前会话 ID：a1b2c3d4
 本会话存档：D:/ezharness/data/sessions/a1b2c3d4/session.json
-（这是本会话的完整历史档案：上下文整理折叠掉的早期对话仍完整保留在此文件中，需要回忆本会话此前内容时读取它。）
+（这是本会话的完整历史档案：上下文整理折叠掉的早期对话仍完整保留在此文件中，需要回忆细节时读取它。）
+进度档案：D:/ezharness/data/sessions/a1b2c3d4/progress.md
+（每次上下文整理自动重写：已完成/正在做/待办/关键事实。恢复任务现场或阶段性节点先读写它。）
 <span class="t">&lt;/session&gt;</span>
 
-<span class="c">（compact 摘要段，仅换代会话有）</span>
+<span class="c">（compact 摘要段，仅换代会话有：存档路径 + 沉淀去向说明 + 交接摘要）</span>
 
 <span class="c">——以下为各 hook OnStart 每轮幂等追加——</span>
 # 系统环境
 当前操作系统：windows（terminal 工具用系统原生 shell 执行，Windows 请写 cmd 语法 dir/type/findstr，类 Unix 请写 POSIX 语法 ls/cat/grep）
 
-<span class="t">&lt;tool-guide&gt;</span>审批：写操作等有副作用的工具调用会先请用户批准再执行……&lt;/tool-guide&gt;
-<span class="t">&lt;tool-guide&gt;</span>ask_user：缺少必要信息、需要澄清或确认方向时向用户提问……&lt;/tool-guide&gt;
-<span class="t">&lt;tool-guide&gt;</span>task：可并行或较复杂的子任务交给 task 分身隔离执行……&lt;/tool-guide&gt;
-<span class="t">&lt;tool-guide&gt;</span>mcp_router：访问外部能力（已配置的 MCP server）统一入口……&lt;/tool-guide&gt;
-<span class="t">&lt;tool-guide&gt;</span>load_skill：接任务先扫技能清单，命中就加载后按其指引执行……&lt;/tool-guide&gt;
-<span class="t">&lt;tool-guide&gt;</span>trim_context：把早期对话就地折叠为摘要……&lt;/tool-guide&gt;</pre>
+<span class="t">&lt;tool-guide&gt;</span>审批：写操作等有副作用的工具调用会先请用户批准再执行，等待是正常流程，不躲避审批变相绕行；被拒先读理由——调整方案/澄清/停手……&lt;/tool-guide&gt;
+<span class="t">&lt;tool-guide&gt;</span>ask_user：缺少必要信息、需要澄清或确认方向时向用户提问，不替用户假设关键参数；options 给候选；问题具体到一句话能答……&lt;/tool-guide&gt;
+<span class="t">&lt;tool-guide&gt;</span>task：可并行、相互独立、或会产生大量中间输出的子任务交分身隔离执行，主上下文只留结论；描述自包含；同批无依赖并行发……&lt;/tool-guide&gt;
+<span class="t">&lt;tool-guide&gt;</span>mcp_router：访问外部能力的统一入口。两步：mcp_list 看清单、tool_list 拉参数 schema，再 tool_call——不凭记忆猜……&lt;/tool-guide&gt;
+<span class="t">&lt;tool-guide&gt;</span>load_skill：接任务的第一个动作是对照技能清单，命中就先加载（全文+脚本路径）后严格按指引执行；改过技能要重新加载……&lt;/tool-guide&gt;
+<span class="t">&lt;tool-guide&gt;</span>trim_context：把早期对话就地折叠为结构化摘要（已完成/正在做/待办/关键事实），并写入进度档案 progress.md……&lt;/tool-guide&gt;</pre>
     </div>
 
     <h3 id="ctx-hooks">3.4 hook 全景表（15 个，装配序即执行序）</h3>
@@ -899,7 +907,7 @@ sequenceDiagram
       <tr><td>2</td><td><b>trace</b></td><td><span class="badge ezh">ezharness</span></td><td>OnModel* / OnTool* / OnEnd</td><td>otel 风格调用链（trace.jsonl）；toolStart 队列必须最前，否则被 Skip 短路的调用无 span</td></tr>
       <tr><td>3</td><td><b>contextfix</b></td><td><span class="badge ezl">ezloop</span></td><td>OnStart</td><td>修理残缺历史（孤儿 tool_call / tool 结果）</td></tr>
       <tr><td>4</td><td><b>filetools</b></td><td><span class="badge ezl">ezloop</span></td><td>OnStart + OnLoop</td><td>注册 read/write/edit/terminal + OS 环境段；OnLoop 图片标记→图片消息</td></tr>
-      <tr><td>5</td><td><b>skilltool</b></td><td><span class="badge ezl">ezloop</span></td><td>OnStart + OnToolStart</td><td>注册 load_skill；拦截渲染 SKILL.md 全文 + 目录树</td></tr>
+      <tr><td>5</td><td><b>skilltool</b></td><td><span class="badge ezl">ezloop</span></td><td>OnStart</td><td>注册 load_skill（工具 Invoke 闭环：渲染 SKILL.md 全文 + 目录树）</td></tr>
       <tr><td>6</td><td><b>remind</b></td><td><span class="badge ezh">ezharness</span></td><td>OnStart + OnEnd</td><td>系统提醒三段：变更段 / 快照段 / 收尾段（见 3.5 详解）</td></tr>
       <tr><td>7</td><td><b>reference_file</b></td><td><span class="badge ezh">ezharness</span></td><td>OnStart</td><td>带引用轮次插 &lt;reference_file&gt;（附件=路径；标注=路径+片段行号+备注），无引用零消息</td></tr>
       <tr><td>8</td><td><b>approve</b></td><td><span class="badge ezl">ezloop</span></td><td>OnStart + OnToolStart</td><td>人机审批：规则匹配挂起等决策，拒绝即 Skip</td></tr>
@@ -973,7 +981,7 @@ D:/…/tmp/att-1694-b.png
       <h3>5 · skilltool <span class="badge hook">hook</span> <span class="badge ezl">ezloop</span></h3>
       <div class="meta-row"><span><b>hook 点：</b>OnStart + OnToolStart</span><span><b>触发：</b>轮首注册 / 模型调用 load_skill 时</span></div>
       <p><b>OnStart：</b>注册 load_skill 壳工具 + system 追加 tool-guide（"接任务先扫技能清单，命中就加载后按其指引执行"）。技能身份用<b>目录名</b>（skill.DirOf），frontmatter name 仅作显示。</p>
-      <p><b>OnToolStart 拦截执行</b>（壳工具 Invoke 不可达）：实时列技能（按 disabled 名单过滤），命中 → Skip 返回渲染结果（免 offload 豁免——指令集是后续行动依据，卸载再回读纯浪费）；未命中 → <code class="inline">skill "X" 不存在。可用技能：a, b, c</code></p>
+      <p><b>工具 Invoke 闭环</b>：调用时实时列技能（按 disabled 名单过滤），命中 → 返回渲染结果（SKILL.md 全文 + 目录树；免 offload 豁免——指令集是后续行动依据，卸载再回读纯浪费）；未命中 → <code class="inline">skill "X" 不存在。可用技能：a, b, c</code></p>
       <div class="msg-stack">
         <div class="msg"><div class="who tool">tool</div><pre><span class="hl"># skill: release-publish</span>
 路径: D:/…/memory/skills/release-publish/SKILL.md
@@ -994,27 +1002,25 @@ release-publish/
       <p>系统→模型的<b>全部单向旁路提醒</b>归这一个 hook，内部分三段独立成模块。变更检测留在此处的分界判据见 1.1。</p>
 
       <h4>变更段（OnStart，有变化才插——零噪音）</h4>
-      <p>对比 session 资源基线 <code class="inline">ResSnapshot{Skills, Mcps, Terms}</code>（持久化随 session，重启不重复报）+ 收割用户终端操作队列（收割即清，漏报即丢）。<b>首轮只建基线不 diff</b>（新建/迁移不算变更）；用户终端操作不走基线、首轮也报。条目为中文完整短语（模型与前端变更卡同源）：</p>
+      <p>对比 session 资源基线 <code class="inline">ResSnapshot{Skills, Mcps}</code>（持久化随 session，重启不重复报）。<b>首轮只建基线不 diff</b>（新建/迁移不算变更）。条目为中文完整短语（模型与前端变更卡同源）：</p>
       <table>
         <tr><th>操作</th><th>条目文案</th></tr>
         <tr><td>启用新技能</td><td><code>新增技能 release-publish</code></td></tr>
         <tr><td>禁用/删除技能</td><td><code>移除技能 release-publish</code></td></tr>
         <tr><td>mcp.json 加 server</td><td><code>新增MCP 服务 time</code></td></tr>
-        <tr><td>用户手开终端</td><td><code>新增终端 t-3(编译 node)，用户手动创建</code></td></tr>
-        <tr><td>AI 开的终端</td><td><code>新增终端 t-4(抓包)，AI 创建</code></td></tr>
-        <tr><td>进程退出</td><td><code>终端 t-3(编译 node) 已退出</code></td></tr>
-        <tr><td>改名/改来源</td><td><code>终端 t-4 已修改（名称 "抓包"→"日志"，来源 "用户"→"AI"）</code></td></tr>
-        <tr><td>终端被关闭</td><td><code>终端 t-4(日志) 已关闭</code></td></tr>
-        <tr><td>用户手敲命令</td><td><code>用户在终端 t-3 执行：npm run build</code></td></tr>
+        <tr><td>mcp.json 删 server</td><td><code>移除MCP 服务 time</code></td></tr>
       </table>
-      <p><b>有变化才</b>插一条 user 消息（位于 agent_status 前、本轮 input 前）+ 发 <code class="inline">res.change</code> 事件：</p>
+      <p><b>有变化才</b>插一条 user 消息（位于 agent_status 前、本轮 input 前）+ 发 <code class="inline">resource.change</code> 事件：</p>
       <div class="msg-stack">
-        <div class="msg"><div class="who inject">user · 注入</div><pre><span class="hl">&lt;res_change&gt;</span>
+        <div class="msg"><div class="who inject">user · 注入</div><pre><span class="hl">&lt;resource_change&gt;</span>
 （系统检测到的本轮资源变更，非用户发言，无需回应，无需回溯处理）
 - 新增技能 release-publish
-- 用户在终端 t-3 执行：npm run build
-<span class="hl">&lt;/res_change&gt;</span></pre></div>
+变更后完整清单（技能与 MCP 服务以此为准，不要读取 memory/skills 目录或 mcp.json 来发现技能与服务）：
+available_skill: release-publish - 把当前分支发布为 release
+available_mcp: context7 - 查询库文档
+<span class="hl">&lt;/resource_change&gt;</span></pre></div>
       </div>
+      <p class="dim">available_ 清单行是给模型的即时资源发现（前端变更卡不展示，只渲染 <code class="inline">- </code> 变更条目行）。</p>
 
       <h4>快照段（OnStart，每轮一条）</h4>
       <p>水位/时间快照，插在本轮 input 前（无变更段时它就是轮首第一条）+ 发 <code class="inline">status.snapshot</code> 事件（前端右上角水位条）：</p>
@@ -1128,8 +1134,11 @@ release-publish/
         <div class="msg"><div class="who user">user × N</div><pre>（保留的末 4 条近期消息，含配对完整的 assistant/tool）</pre></div>
         <div class="msg"><div class="who inject">user · 注入</div><pre><span class="hl">&lt;context_trim kept="4"&gt;</span>
 （系统自动整理，非用户发言，无需回应）
-此前的早期对话已折叠出模型上下文（原始记录仍完整保留在会话档案中），摘要：
-任务是给商城项目加导出功能；已确定用 CSV 格式、导出接口挂在 /api/export；用户要求含订单明细；exporter.py 草稿已写入 workspace。
+此前的早期对话已折叠出模型上下文，整理结果已写入进度档案 sessions/…/progress.md（路径见 <session> 块）。当前任务衔接摘要：
+【已完成】导出方案已定（CSV、/api/export），exporter.py 草稿已写入 workspace
+【正在做】导出接口联调
+【待办】订单明细列对齐
+【关键事实】用户要求含订单明细；草稿在 workspace/exporter.py
 <span class="hl">&lt;/context_trim&gt;</span></pre></div>
       </div>
       <p class="sub"><b>kept 属性是视图起点回溯的依据</b>：ViewStart（marker 的 kept 回溯 + clamp 到上一 marker）是 modelView / MergeFull / 落盘三处共用的同一套判断——"marker 前档案从未进过本轮视图的必须保留，跨轮覆盖不丢档"（见 2.6）。</p>
@@ -1148,7 +1157,7 @@ release-publish/
       <tr><th>消息</th><th>生成者</th><th>插入时机</th><th>条件</th></tr>
       <tr><td><code>system</code></td><td>sysprompt + 各 hook 追加</td><td>每轮首位（重注入）</td><td>恒有</td></tr>
       <tr><td><code>&lt;context_trim&gt;</code></td><td>trim</td><td>整理时尾插</td><td>水位达阈 / 模型主动</td></tr>
-      <tr><td><code>&lt;res_change&gt;</code></td><td>remind 变更段</td><td>轮首、agent_status 前</td><td><b>有变更才插</b></td></tr>
+      <tr><td><code>&lt;resource_change&gt;</code></td><td>remind 变更段</td><td>轮首、agent_status 前</td><td><b>有变更才插</b>（附 available 清单）</td></tr>
       <tr><td><code>&lt;agent_status&gt;</code></td><td>remind 快照段</td><td>轮首、reference_file 前</td><td>每轮</td></tr>
       <tr><td><code>&lt;reference_file&gt;</code></td><td>reference_file</td><td>本轮 input 前</td><td><b>有引用才插</b>（纯 JSON 载荷）</td></tr>
       <tr><td><b>用户真实输入</b></td><td>引擎</td><td>轮首入史（startHooks 前）</td><td>每轮</td></tr>
@@ -1189,10 +1198,10 @@ release-publish/
       <div class="msg"><div class="who inject">user · 注入</div><pre>&lt;end_reason&gt;…运行轮次：2…结束原因：正常结束…&lt;/end_reason&gt;</pre></div>
     </div>
 
-    <h4>场景 C · 技能启停 + 用户终端操作后的下一轮</h4>
-    <p class="sub">上一轮结束后：用户在设置里启用了技能 release-publish，又在终端 t-3 手动跑了 <code class="inline">npm run build</code>，然后让模型发版。变更段只在<b>下一个拥有它的轮次</b>出现一次，再下轮消失（基线已推进）。</p>
+    <h4>场景 C · 技能启停后的下一轮</h4>
+    <p class="sub">上一轮结束后：用户在设置里启用了技能 release-publish，然后让模型发版。变更段只在<b>下一个拥有它的轮次</b>出现一次，再下轮消失（基线已推进）。</p>
     <div class="msg-stack">
-      <div class="msg"><div class="who inject">user · 注入</div><pre><span class="hl">&lt;res_change&gt;</span>\n（系统检测到的本轮资源变更，非用户发言，无需回应，无需回溯处理）\n- 新增技能 release-publish\n- 用户在终端 t-3 执行：npm run build\n<span class="hl">&lt;/res_change&gt;</span></pre></div>
+      <div class="msg"><div class="who inject">user · 注入</div><pre><span class="hl">&lt;resource_change&gt;</span>\n（系统检测到的本轮资源变更，非用户发言，无需回应，无需回溯处理）\n- 新增技能 release-publish\n变更后完整清单（技能与 MCP 服务以此为准，不要读取 memory/skills 目录或 mcp.json 来发现技能与服务）：\navailable_skill: release-publish - 把当前分支发布为 release\n<span class="hl">&lt;/resource_change&gt;</span></pre></div>
       <div class="msg"><div class="who inject">user · 注入</div><pre>&lt;agent_status&gt;…&lt;/agent_status&gt;</pre></div>
       <div class="msg"><div class="who user">user</div><pre>构建刚跑完，帮我按流程发个版本</pre></div>
       <div class="msg"><div class="who assistant">assistant</div><pre>好，先加载发布技能 [tool_use load_skill]  name: "release-publish"</pre></div>
@@ -1205,7 +1214,7 @@ release-publish/
     <div class="msg-stack">
       <div class="msg"><div class="who system">system</div><pre>（不动）</pre></div>
       <div class="msg"><div class="who user">user × 4</div><pre>（保留的末 4 条：孤儿 tool 已前移配对，协议完整）</pre></div>
-      <div class="msg"><div class="who inject">user · 注入</div><pre><span class="hl">&lt;context_trim kept="4"&gt;</span>\n（系统自动整理，非用户发言，无需回应）\n此前的早期对话已折叠出模型上下文（原始记录仍完整保留在会话档案中），摘要：\n……\n<span class="hl">&lt;/context_trim&gt;</span></pre></div>
+      <div class="msg"><div class="who inject">user · 注入</div><pre><span class="hl">&lt;context_trim kept="4"&gt;</span>\n（系统自动整理，非用户发言，无需回应）\n此前的早期对话已折叠出模型上下文，整理结果已写入进度档案 sessions/…/progress.md。当前任务衔接摘要：\n【已完成】…\n【正在做】…\n【待办】…\n【关键事实】…\n<span class="hl">&lt;/context_trim&gt;</span></pre></div>
     </div>
     <p class="sub">会话身份不变（不换库不切线）；被折叠的早期消息进入 Metadata 折叠段，sessionstore 落盘时经 MergeFull 合成全量——前端时间线上整理位置仍可见（note 分割线），只是模型视图不再包含。</p>
 
@@ -1241,12 +1250,12 @@ flowchart LR
     <table>
       <tr><th>tag</th><th>生成者</th><th>模型可见</th><th>前端实时路径</th><th>前端历史路径</th></tr>
       <tr><td><code>&lt;agent_status&gt;</code></td><td>remind 快照段</td><td>✓</td><td>status.snapshot 事件</td><td>关键词「整理上下文」识别进时间线</td></tr>
-      <tr><td><code>&lt;res_change&gt;</code></td><td>remind 变更段</td><td>✓</td><td>res.change 事件</td><td>标签 + <code>- </code> 行（变更卡）</td></tr>
+      <tr><td><code>&lt;resource_change&gt;</code></td><td>remind 变更段</td><td>✓</td><td>resource.change 事件</td><td>标签 + <code>- </code> 行（变更卡；available_ 行只给模型）</td></tr>
       <tr><td><code>&lt;reference_file&gt;</code></td><td>reference_file</td><td>✓</td><td>发送时本地 push user 块</td><td>解析 JSON 载荷 → files/fileRefs chips</td></tr>
       <tr><td><code>&lt;image_loaded&gt;</code> 包裹</td><td>filetools OnLoop</td><td>✓（Images base64）</td><td>filetools.image_loaded 事件</td><td>标签体 + m.images</td></tr>
       <tr><td><code>&lt;image_loaded path=…/&gt;</code> 自闭合</td><td>read_file 工具结果</td><td>✓（保留不改写）</td><td>工具卡结果原文</td><td>同左（不解析）</td></tr>
       <tr><td><code>&lt;end_reason&gt;</code></td><td>remind 收尾段</td><td>✓</td><td>turn_end 合成 endtick</td><td>正则提取字段</td></tr>
-      <tr><td><code>&lt;context_trim kept="N"&gt;</code></td><td>trim</td><td>✓</td><td>session.trim 事件（note 块）</td><td>标签 → note 分割线</td></tr>
+      <tr><td><code>&lt;context_trim kept="N"&gt;</code></td><td>trim</td><td>✓</td><td>session.trim 事件（note 块）</td><td>标签 → note 分割线（【已完成】锚点截 160 字；同内容落 progress.md）</td></tr>
       <tr><td><code>&lt;$supper_url&gt;…</code></td><td>模型输出占位语法</td><td>✓（正文）</td><td>marked extension 实时解析：https:// 外链 / term://终端id 拉开终端抽屉定位 / app://快应用名 开子窗 / browser://标签id 聚焦共享浏览器窗口</td><td>同左（同一渲染管线）</td></tr>
       <tr><td><code>&lt;@toolArg&gt;…</code></td><td>模型工具参数</td><td>✓（入史保持原文）</td><td>工具卡显示原文</td><td>同左</td></tr>
     </table>
@@ -1291,14 +1300,13 @@ flowchart LR
     AG["🤖 agent&lt;br/&gt;term_send / term_read"]:::side --> PT
     US["👤 用户&lt;br/&gt;xterm 直接敲"]:::side --> PT
     PT -- "readMark 单游标&lt;br/&gt;读即消费" --> AG
-    US -- "手动输入聚合进&lt;br/&gt;res_change 变更段" --> AG
 
     classDef core fill:#072331,stroke:#00add8,color:#9be5f7
     classDef side fill:#0b1322,stroke:#33496e,color:#c4cede
     style TERM fill:#0a101d,stroke:#33496e,stroke-dasharray:6 4
 </pre>
     </div>
-    <div class="diagram-cap">不是 agent 私有的副本：agent 的工作目录与终端一致，用户随时接管、演示、纠错；用户敲的命令 agent 每轮都看得见（res_change「用户在终端执行：…」）。</div>
+    <div class="diagram-cap">不是 agent 私有的副本：agent 的工作目录与终端一致，用户随时接管、演示、纠错；输出进同一环形缓冲，双方读的是同一条流。</div>
     <ul>
       <li>单条 WebSocket 多路复用全部终端（帧带 id 路由，断线指数退避重连，环形缓冲恢复快照）</li>
       <li>终端<b>全局共享</b>（个人助手语义）；各会话的终端基线独立——A 会话首轮见到 B 会话开的终端报"新增"是<b>设计</b>（各会话模型知悉全局水位）</li>
