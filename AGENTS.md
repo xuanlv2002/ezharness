@@ -242,3 +242,17 @@ warp 是 ezloop 的**纵向**装饰器（与横向的 hook 并列），包住单
 - AI 侧文件工具（read_file/write_file/edit_file）和画板/文本保存走同一套绝对路径读写，没有目录白名单（`WorkspaceController` 只校验路径有效性与存在性）
 - 跨窗口（抽屉 → 独立窗口）搬运的是**路径快照**（`filePane.serialize`），不复制文件；回流后图片 tab 会重挂按盘重读
 - 浏览器截图每次一个文件名，会累积在 `workspace/browser/`（目前没有清理策略）
+
+## 五、踩坑记录
+
+### 5.1 损坏的工具参数会静默炸掉落盘与续聊（2026-09 事故）
+
+**现象**：超长思考后模型流式输出的 `write_file` 参数损坏（乱码/截断），随后①该轮 `session.json` 没落盘（切页面/重启直接丢上下文）；②之后每轮发送都立刻失败（openai 协议把非法 `Arguments` 原样字符串发给上游 → 400）。
+
+**根因链**：三个 provider 的流式累积收尾（anthropic/openai/openairesponses）都直接 `json.RawMessage(c.args)` 不校验；非法字节进了 `state.Messages` 的 `ToolCall.Args` 后：`sessionstore` 的 `json.MarshalIndent` 失败（只记 `Metadata`，静默丢轮）；openai 请求侧 `string(tc.Args)` 把垃圾重发上游。
+
+**防线（两层，改动时别拆）**：
+- ezloop `provutil.SafeArgs`：流式累积收尾统一清洗——非法 JSON 包成 `{"_corrupted_args":"<1024 预览>"}`，工具以缺参报错回传、模型自纠重发
+- ezharness `sessionstore.OnEnd`：marshal 失败时 `sanitizeMsgArgs` 就地清洗重试一次（顺带治好内存里的历史——下次请求不再带毒）
+
+**教训**：`json.RawMessage` 是"信任边界"字段——凡是**逐块拼接**出来再转 `RawMessage` 的地方（流式增量、外部拼接），必须过 `json.Valid`；落盘失败的错误只进 `Metadata` 等于静默，兜底路径要保证"状态即消息"不破。

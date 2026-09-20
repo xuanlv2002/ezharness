@@ -21,6 +21,7 @@ import (
 
 	"github.com/xuanlv2002/ezloop/ext/fs"
 	"github.com/xuanlv2002/ezloop/ext/hook/task"
+	"github.com/xuanlv2002/ezloop/ext/provider/provutil"
 	"github.com/xuanlv2002/ezloop/types"
 )
 
@@ -361,6 +362,13 @@ func (h *Store) OnEnd(ctx context.Context, state *types.LoopState) error {
 
 	data, err := json.MarshalIndent(out, "", "  ")
 	if err != nil {
+		// 兜底：非法 json.RawMessage（如损坏的工具参数）会让整份快照 marshal
+		// 失败而静默丢轮。清洗 Args 后重试一次——"状态即消息"优先于保真。
+		sanitizeMsgArgs(msgs)
+		out.Messages = msgs
+		data, err = json.MarshalIndent(out, "", "  ")
+	}
+	if err != nil {
 		state.Metadata["sessionstore_error"] = err.Error()
 		return nil
 	}
@@ -372,6 +380,17 @@ func (h *Store) OnEnd(ctx context.Context, state *types.LoopState) error {
 		state.Metadata["sessionstore_error"] = err.Error()
 	}
 	return nil
+}
+
+/* sanitizeMsgArgs 就地把消息里不可 marshal 的工具参数替换为合法占位（原样内容截断保留在预览里）。 */
+func sanitizeMsgArgs(msgs []types.Message) {
+	for i := range msgs {
+		for j := range msgs[i].ToolCalls {
+			if tc := &msgs[i].ToolCalls[j]; !json.Valid(tc.Args) {
+				tc.Args = provutil.SafeArgs(tc.Args)
+			}
+		}
+	}
 }
 
 /* toolNames 从注册表提取本轮全部工具名。 */

@@ -2,6 +2,7 @@ package hooks
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
@@ -278,5 +279,39 @@ func TestRemindOnEndForkSkip(t *testing.T) {
 	}
 	if store.LastOutputAt() == 0 {
 		t.Fatal("LastOutputAt must be recorded even for fork")
+	}
+}
+
+/* 事故回归：损坏（非法 JSON）的工具参数不得让整轮落盘静默失败。 */
+func TestStoreOnEndSanitizesCorruptedArgs(t *testing.T) {
+	ctx := context.Background()
+	fsys := memFS{}
+	store := NewStore(fsys, "t-corrupt")
+	bad := json.RawMessage(`{"content":"半截`)
+	state := newTestState([]types.Message{
+		{Role: types.RoleUser, Content: "画个应用"},
+		{Role: types.RoleAssistant, ToolCalls: []types.ToolCall{
+			{ID: "c1", Name: "write_file", Args: bad},
+		}},
+		{Role: types.RoleTool, ToolCallID: "c1", Content: "err"},
+	})
+	if err := store.OnEnd(ctx, state); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := state.Metadata["sessionstore_error"]; ok {
+		t.Fatalf("fallback should recover, got error: %v", state.Metadata["sessionstore_error"])
+	}
+	snap, err := LoadSnap(ctx, fsys, "t-corrupt")
+	if err != nil {
+		t.Fatalf("session.json must persist despite corrupted args: %v", err)
+	}
+	if len(snap.Messages) != 3 {
+		t.Fatalf("expect 3 messages persisted, got %d", len(snap.Messages))
+	}
+	if !json.Valid(snap.Messages[1].ToolCalls[0].Args) {
+		t.Fatalf("persisted args must be valid JSON, got %s", snap.Messages[1].ToolCalls[0].Args)
+	}
+	if !strings.Contains(string(snap.Messages[1].ToolCalls[0].Args), "_corrupted_args") {
+		t.Fatalf("persisted args should carry corruption marker, got %s", snap.Messages[1].ToolCalls[0].Args)
 	}
 }
