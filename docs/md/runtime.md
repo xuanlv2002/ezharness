@@ -86,7 +86,7 @@ flowchart LR
 | 8 | **approve** | ezloop | OnStart + OnToolStart | 人机审批：规则匹配挂起等决策（SSE approve.request）；拒绝即 Skip |
 | 9 | **askuser** | ezloop | OnStart + OnToolStart | `ask_user`：模型向用户提问，阻塞等回答 |
 | 10 | **task** | ezloop | OnStart + OnToolStart | `task`：fork 分身子循环（独立 LoopState，事件带 forkId），answer 汇回 |
-| 11 | **mcp** | ezloop（ezharness 包装） | OnStart + OnLoop + OnEnd | 注册 `mcp_router`；OnLoop/OnEnd 配置热加载（mcp.json 变更即时生效） |
+| 11 | **mcp** | ezloop（ezharness 包装） | OnStart + OnLoop | 注册 `mcp_router`（系统级单例注入：全部 session 与页面/API 共用 `service.NewMcpRouter` 的全局连接池，OnEnd 不关连接）；OnLoop 兜底热加载（mcp.json 手改；保存配置由 McpService.Update 即时替换） |
 | 12 | **offload** | ezloop | OnToolEnd | >4096 字节工具结果卸载 `.ezloop/offload/`；豁免 ask_user/task/load_skill；read_file 是 ReplayTool |
 | 13 | **guard** | ezharness | OnToolEnd | 窗口余量兜底：offload 豁免名单的大结果放不下时强制卸载（须在 offload 后） |
 | 14 | **trim** | ezharness | OnLoop + OnToolStart | 上下文整理：水位自动（窗口 × TrimPercent%）+ 模型主动 `trim_context`（登记 pending 轮末执行）；就地截断 + `<context_trim>` marker |

@@ -26,6 +26,7 @@ import (
 	"github.com/xuanlv2002/ezloop/ext/hook/askuser"
 	"github.com/xuanlv2002/ezloop/ext/hook/contextfix"
 	"github.com/xuanlv2002/ezloop/ext/hook/filetools"
+	"github.com/xuanlv2002/ezloop/ext/hook/mcp"
 	"github.com/xuanlv2002/ezloop/ext/hook/offload"
 	"github.com/xuanlv2002/ezloop/ext/hook/skill"
 	"github.com/xuanlv2002/ezloop/ext/hook/skilltool"
@@ -52,9 +53,10 @@ import (
 
 /* AgentService 装配领域会话的运行时。 */
 type AgentService struct {
-	Hub     *domain.Hub
-	Term    *TerminalService // 共享终端（魔法看板），可空：term_* 工具与状态注入的前提
-	Browser *BrowserService  // 共享浏览器桥（魔法看板），可空：browser_* 工具注入的前提
+	Hub       *domain.Hub
+	Term      *TerminalService // 共享终端（魔法看板），可空：term_* 工具与状态注入的前提
+	Browser   *BrowserService  // 共享浏览器桥（魔法看板），可空：browser_* 工具注入的前提
+	McpRouter *mcp.Router      // 系统级 MCP router（全局单例注入），可空：不装配 mcp hook
 }
 
 /*
@@ -192,7 +194,7 @@ func (a *AgentService) Assemble(s *domain.Session, st domain.Settings) {
 			approver,
 			asker,
 			task.New(),
-			NewMcpHook(s.Fsys),
+			NewMcpHook(s.Fsys, a.McpRouter),
 			offload.New(s.Fsys, offload.WithSkip(askuser.ToolName, task.ToolName, skilltool.ToolName), offload.WithReplayTool("read_file")), // load_skill 返回的指令集是后续行动依据,卸载再回读纯浪费
 			hooks.NewGuard(s.Fsys, window), // 窗口余量兜底：offload 豁免名单（read_file 等）的大结果放不下时卸载，须在 offload 之后
 			trimHook, // OnLoop 回边水位整理（就地截断，立即生效），OnToolStart 拦模型主动整理
