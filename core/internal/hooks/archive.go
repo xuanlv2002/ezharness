@@ -33,13 +33,16 @@ type CompactInfo struct {
 	PrevPath string `json:"prevPath"`
 }
 
-const archiveSummaryPrompt = "为切换到全新会话生成交接摘要：保留上一会话的关键事实、" +
-	"已达成的决定、未完成的待办与用户偏好；忽略过程细节与状态栏记录；简洁自包含，300 字以内。"
+const archiveSummaryPrompt = "为切换到全新会话生成精炼交接摘要。只保留新会话开工必需的信息：" +
+	"用户本次的总体目标与尚未完成的部分（含下一步从哪接）、已达成的关键决定及一句话理由、" +
+	"交付物位置（文件/终端/应用入口）、明确的待办。忽略过程细节、状态栏记录、已完结且无后续的子任务。" +
+	"300 字以内，自包含——新会话除了这份摘要与本会话存档路径外没有任何上下文。"
 
 /*
-ArchiveSession 执行归档换代：摘要模型视图 → 旧库封存 → 写新库初始
-快照（空 messages + 新 system + compress 边，重启可恢复形态）→ 内存
-切换（sys 热更、SetID/SetPrev、trace 换库、话题线换代）。
+ArchiveSession 执行归档换代：沉淀长期记忆（固定文件合并重写，失败静默
+降级）→ 摘要模型视图 → 旧库封存 → 写新库初始快照（空 messages + 新
+system + compress 边，重启可恢复形态）→ 内存切换（sys 热更、SetID/
+SetPrev、trace 换库、话题线换代）。
 full 是渲染全量历史（话题标题与线规模），view 是模型视图（摘要输入）。
 */
 func ArchiveSession(ctx context.Context, p provider.ModelProvider, fsys fs.FileSystem,
@@ -49,6 +52,7 @@ func ArchiveSession(ctx context.Context, p provider.ModelProvider, fsys fs.FileS
 	if oldID == "" {
 		return CompactInfo{}, errors.New("no session to archive")
 	}
+	_ = distillToMemory(ctx, p, fsys, view) // 沉淀步：增值动作，失败不阻断归档
 	summaryText, err := summarizeMsgs(ctx, p, archiveSummaryPrompt, view)
 	if err != nil {
 		return CompactInfo{}, err
@@ -73,8 +77,10 @@ func ArchiveSession(ctx context.Context, p provider.ModelProvider, fsys fs.FileS
 	} else if b, _ := sys.Parts(); b != "" {
 		base = b
 	}
-	summaryBlock := "<compact-summary>\n上一会话已归档，原始记录在 " + prevPath +
-		"（session.json 可读取全文）。本会话开始前的摘要：\n" + summaryText + "\n</compact-summary>"
+	summaryBlock := "<compact-summary>\n上一会话已归档：原始记录在 " + prevPath +
+		"（session.json 可读取全文）；值得长期保留的偏好/事实/经验已沉淀进 memory/longterm/" +
+		"（user/projects/lessons，索引见 harness.md），需要时检索。\n本会话开始前的交接摘要：\n" +
+		summaryText + "\n</compact-summary>"
 
 	sys.Set(base, summaryBlock) // 新 system 两段生效（sys 是会话持有的热更实例）
 

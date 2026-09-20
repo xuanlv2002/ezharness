@@ -171,11 +171,12 @@ function endIcon(text: string): string {
   return '·'
 }
 
-/* 提取 <context_trim> 摘要为一行（整理分割线文案） */
+/* 提取 <context_trim> 摘要为一行（整理分割线文案；四节结构化摘要从【已完成】节起截取，完整进度在会话目录 progress.md） */
 function trimText(content: string): string {
-  const m = content.match(/摘要：\s*([\s\S]*?)<\/context_trim>/)
+  const m = content.match(/【已完成】\s*([\s\S]*?)<\/context_trim>/)
   const summary = (m?.[1] ?? '').trim().replace(/\s+/g, ' ')
-  return `上下文已整理：此前的对话折叠为摘要。${summary}`
+  const brief = summary.length > 160 ? summary.slice(0, 160) + '…' : summary
+  return `上下文已整理：此前的对话折叠为摘要（完整进度见会话目录 progress.md）。${brief}`
 }
 
 class AppStore {

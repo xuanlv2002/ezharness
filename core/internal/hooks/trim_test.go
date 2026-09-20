@@ -11,7 +11,7 @@ import (
 
 /* newTrimForTest 建 Trim；折叠段从 state.Metadata 断言。 */
 func newTrimForTest(reply string, threshold int) *Trim {
-	return NewTrim(fakeProvider{reply}, nil, threshold, 1000)
+	return NewTrim(fakeProvider{reply}, nil, threshold, 1000, nil, nil)
 }
 
 /* 水位自动路径：OnLoop 触发就地折叠，marker 尾插衔接，折叠段移交档案。 */

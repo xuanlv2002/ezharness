@@ -832,8 +832,8 @@ sequenceDiagram
     <p class="sub"><b>每 session 组装一次并固定</b>（重启从快照还原不重组；skill / mcp / 记忆变更等下个 session 生效，过渡期靠 agent_status 告知模型）。sysprompt hook 是 system 的唯一来源，必须在 startHooks 首位。</p>
     <table>
       <tr><th>段</th><th>内容</th><th>时机</th></tr>
-      <tr><td><b>base</b></td><td>人格 + SystemExtra（设置页）+ <code>&lt;workspace&gt;</code> 目录架构（含 toolArg 语法糖、term_* 指南）+ <code>&lt;memory&gt;</code>（记忆结构 + harness.md 索引全文）+ <code>&lt;skills&gt;</code> 清单? + <code>&lt;mcp&gt;</code> 清单?</td><td>session 创建时一次</td></tr>
-      <tr><td><b>identity</b></td><td><code>&lt;session&gt;</code> 会话 ID + 存档绝对路径（trim 折叠后的回忆入口）；render 时求值——换代后 ID 永远正确</td><td>每轮 render 实时</td></tr>
+      <tr><td><b>base</b></td><td>人格 + SystemExtra（设置页）+ <code>&lt;workspace&gt;</code> 三个可写位置与行为规则 + <code>&lt;memory&gt;</code>（记忆结构 + harness.md 索引全文）+ <code>&lt;skills&gt;</code> 清单? + <code>&lt;mcp&gt;</code> 清单? + <code>&lt;action&gt;</code> 行动准则 + <code>&lt;output&gt;</code> 输出规范（supper_url 正误示例）</td><td>session 创建时一次</td></tr>
+      <tr><td><b>identity</b></td><td><code>&lt;session&gt;</code> 会话 ID + 存档与进度档案绝对路径（trim 折叠后的回忆入口 + 恢复现场）；render 时求值——换代后 ID 永远正确</td><td>每轮 render 实时</td></tr>
       <tr><td><b>summary</b></td><td>compact 摘要段（换代时注入 / 热更）</td><td>compact 时</td></tr>
     </table>
     <p class="sub">此外各 hook 的 OnStart 会向 system 追加说明段（幂等）：filetools 的 <b>系统环境段</b>（GOOS + shell 语法提示）与 5 个 <b>&lt;tool-guide&gt;</b>（approve 审批 / ask_user 提问 / task 分身 / mcp_router / load_skill / trim_context）。</p>
@@ -888,7 +888,7 @@ sequenceDiagram
 <span class="t">&lt;tool-guide&gt;</span>task：可并行或较复杂的子任务交给 task 分身隔离执行……&lt;/tool-guide&gt;
 <span class="t">&lt;tool-guide&gt;</span>mcp_router：访问外部能力（已配置的 MCP server）统一入口……&lt;/tool-guide&gt;
 <span class="t">&lt;tool-guide&gt;</span>load_skill：接任务先扫技能清单，命中就加载后按其指引执行……&lt;/tool-guide&gt;
-<span class="t">&lt;tool-guide&gt;</span>trim_context：把早期对话就地折叠为摘要……&lt;/tool-guide&gt;</pre>
+<span class="t">&lt;tool-guide&gt;</span>trim_context：把早期对话就地折叠为结构化摘要（已完成/正在做/待办/关键事实），并写入进度档案 progress.md……&lt;/tool-guide&gt;</pre>
     </div>
 
     <h3 id="ctx-hooks">3.4 hook 全景表（15 个，装配序即执行序）</h3>
@@ -1125,8 +1125,11 @@ available_mcp: context7 - 查询库文档
         <div class="msg"><div class="who user">user × N</div><pre>（保留的末 4 条近期消息，含配对完整的 assistant/tool）</pre></div>
         <div class="msg"><div class="who inject">user · 注入</div><pre><span class="hl">&lt;context_trim kept="4"&gt;</span>
 （系统自动整理，非用户发言，无需回应）
-此前的早期对话已折叠出模型上下文（原始记录仍完整保留在会话档案中），摘要：
-任务是给商城项目加导出功能；已确定用 CSV 格式、导出接口挂在 /api/export；用户要求含订单明细；exporter.py 草稿已写入 workspace。
+此前的早期对话已折叠出模型上下文，整理结果已写入进度档案 sessions/…/progress.md（路径见 <session> 块）。当前任务衔接摘要：
+【已完成】导出方案已定（CSV、/api/export），exporter.py 草稿已写入 workspace
+【正在做】导出接口联调
+【待办】订单明细列对齐
+【关键事实】用户要求含订单明细；草稿在 workspace/exporter.py
 <span class="hl">&lt;/context_trim&gt;</span></pre></div>
       </div>
       <p class="sub"><b>kept 属性是视图起点回溯的依据</b>：ViewStart（marker 的 kept 回溯 + clamp 到上一 marker）是 modelView / MergeFull / 落盘三处共用的同一套判断——"marker 前档案从未进过本轮视图的必须保留，跨轮覆盖不丢档"（见 2.6）。</p>

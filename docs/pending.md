@@ -11,45 +11,34 @@
 ## 3. mcp 能力优化
 ## 4. 默认携带skill注入
 
-测试:
-  1. resource_change 和 agent_status的区别: 【done】
-  resource_change是主要用于资源变更等低频变更内容, 初始时就存储在了session里面的
-  agent_stauts 则主要用于每轮chat都变更 并且高频变换的东西, session内没有,每次动态获取
-  由于term 和 brown不是持久化状态, 每次启动都会关闭 所以不应该初始注入system 所以当前正在运行了哪些终端 和 brown 应当放在agent_status这个标签内的。
-  应该加上两个东西: 1. 当前开启浏览器tab:xx xx xx 2. 当前运行中终端xx xx xx
+# 测试:
+ ① system prompt 重写(新 session 生效)                                                                                   
+  <workspace> 9 条路径罗列 → 3 个可写位 + 行为规则；新增 <action> 行动准则、<output> 输出规范(<$supper_url>
+  正误示例、<@toolArg>);<mcp> 段加本机直调端点；人设加总纲句。                                                            
+                                                                                                                          
+  ② 六段 tool-guide 强化(ezloop 五段 + trim 段，每段扩成实践指导)
+                                                                                                                          
+  ③ trim 精致压缩：四节结构化摘要(【已完成】【正在做】【待办】【关键事实】)+ 每次整理重写
+  sessions/<id>/progress.md;<session> 块告知该档案路径。
+                                                 
+  ④ 归档改沉淀式：归档前先调模型把会话内容与 memory/longterm/{user,projects,lessons}.md 现有内容合并重写(去重纠偏、≤30
+  行、无新内容 UNCHANGED 跳过)，然后才是精炼交接摘要。
+                                                                                                                          
+  ⑤ skilltool 闭环(ezloop):load_skill 从 OnToolStart 拦截移进工具 Invoke。                                                
+                                                                                                                          
+  ⑥ 前端：trim 分割线改按【已完成】锚点(旧格式存档不再渲染摘要)；本会话早前还有 MCP 页修正(Tools=-1
+  语义、三态按钮、表单溢出与美化)。
 
-    mcp_router设计:  【done】                                           
-  1. 我希望mcp_router是一个系统级别的实例,全部的session                                                 
-  全部的hook本质上是通过一个mcp_router进行的mcp调用。因为当前其实本身就是全局唯一的。                                     
-  2. mcp的hook 需要传入这个mcp_router实例, 后面调用啊 list之类的全部都是用这一个。
-  3. mcp_router我希望向外暴露出可以call的接口, 因为我有个大胆的想法: api->mcp tool-> 再把mcp tool作为api                                                                                                                                                                                                      
-  ① + ② + ⑤ 资源变更（破坏性重命名，不留兼容）【done】                                        
-  - <res_change> → <resource_change>，事件 res.change → resource.change，Go/前端/测试/文档全链路同步                         
-  - 变更块现在附变更后完整清单：available_skill: 名 - 描述 / available_mcp: 名 - 描述 行（不带 -  前缀，前端变更卡天然忽略） 
-  - system prompt 的 <skills>/<mcp> 块加禁令“以此为准，不要读 memory/skills 目录或 mcp.json 发现资源”；删除了“终端操作会进
-  res_change”的残留谎言                                                                                                      
-                                                                               
-  ③ term/browser 工具 【done】                                    
-  - 入参拆 name（简短标识）+ desc（详细描述），TermInfo/tab/desktop/WS/REST 全链路带 desc
-  - 所有操作返回 JSON：终端 {id,name,desc,origin,exited,lastCmd,output,note}、浏览器
-  {id,name,desc,origin,url,title,loading,note}，close 返回 {id,closed}，list 与操作同构
-                                                                                                                                        
-  - 浏览器：title 空 → (无标题)；browser_read 正文空 → (空页面) / 链接空 → (无链接)；desc
-  未填时字段直接省略（可选字段语义明确）                                                                                     
-  - 终端：term_send/term_start×输出空 →aoutput:"(无输出)"；term_read1无新增 → output:"(无新输出)"（note 不再重复）
-  - available 清单：技能或 MCP 全部移除后输出 available_skill: （当前无可用技能） / available_mcp: （当前无可用 MCP          
-  服务）；单项描述空 → （无描述）（system prompt 的 <skills>/<mcp> 块同步兜底，不再有 name -  空尾巴）                                                                                                                  
-  ④ MCP                                                                                                                      
-  - ezloop ext/hook/mcp/sdk.go 重写为 mark3labs/mcp-go v1.1.0，三种传输：StreamableHTTP / SSE / Stdio(command, env,          
-  args...)（env 为附加变量，继承父进程环境合并）；go-sdk 依赖彻底移除；core 启用 replace（go 版本升至 1.25.5）
-  - mcp.json 契约：type 三档 http|sse|stdio，stdio 独立 command/args/env（不再让 command 冒用 name，旧 stdio
-  配置需改写）；错误链去掉 mcp.json: connect: ... 多层前缀
-  - McpView：删除改自制居中确认框（同 MemoryView 样式）；persist
-  链式串行化（排队前取快照，根治删除后无法添加的竞态）；添加/编辑表单三传输完整配置（stdio：command + args 每行一个 + env
-  键值对）
+  你需要测的(按优先级)
 
-  手工项（你自测）：连真实 MCP server（三种传输各一）、删除后立即添加、term_start/browser_tab 的 JSON
-  返回、加技能后看变更卡。
-
-
-
+  1. 新会话 system 检查(最容易出问题)：开新 session 问“复述你的行动准则和可点击入口格式”；顺手看
+  sessions/<id>/session.json 里的 system——确认 <action>/<output> 在、没有 sessions/mcp.json 等路径残留
+  2. 弱模型输出格式：让它交付 file:///term:// 入口，看 chip 渲染率是否改善
+  3. trim:灌长对话到水位阈值(或直接叫它调 trim_context)→ 验证：时间线分割线一行摘要、progress.md
+  四节齐全、接着问“我们做到哪了”看能否从档案续上
+  4. 归档：点归档 → 三记忆文件被合并；马上再归档一次验证不膨胀；拿闲聊会话归档(应全 UNCHANGED、不写文件不报错)；新 session
+   的 compact-summary 含沉淀说明
+  5. load_skill 回归：让模型加载一个技能，返回应与之前一致(全文+目录树)
+  6. MCP 快应用直调：让 AI 建个 fetch http://127.0.0.1:5262/api/mcp/call 的可观测页面(若你改过端口，段里 URL
+  会跟着变，属正常)
+  7. 旧存档回放：老会话翻页看 trim 分割线(旧格式会退化为无摘要的一行提示——你说过不用兼容，确认能接受即可)
