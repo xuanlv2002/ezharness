@@ -331,9 +331,10 @@
       <div class="detail-title">
         <h1>{selected.name}</h1>
         <span class="state" class:on={selected.connected && selected.enabled}>
+          <i></i>
           {selected.enabled ? (selected.connected ? (selected.tools >= 0 ? `已连接 · ${selected.tools} 工具` : '已连接') : '未连接') : '已停用'}
         </span>
-        {#if selected.description}
+        {#if selected.description && selected.description !== selected.name}
           <p class="detail-desc">{selected.description}</p>
         {/if}
       </div>
@@ -479,10 +480,10 @@
                 <path d="M7 12h4M11 12l6-6M11 12l6 6" />
               </svg>
             </div>
-            <span class="state" class:on={s.connected && s.enabled}>{s.enabled ? (s.connected ? (s.tools >= 0 ? `已连接 · ${s.tools} 工具` : '已连接') : '未连接') : '已停用'}</span>
+            <span class="state" class:on={s.connected && s.enabled}><i></i>{s.enabled ? (s.connected ? (s.tools >= 0 ? `已连接 · ${s.tools} 工具` : '已连接') : '未连接') : '已停用'}</span>
           </div>
           <h2>{s.name}</h2>
-          {#if s.description}
+          {#if s.description && s.description !== s.name}
             <p class="card-desc">{s.description}</p>
           {/if}
           <p class="endpoint">
@@ -542,7 +543,7 @@
   {#if adding}
     <div class="add-form">
       <input type="text" placeholder="服务器名（如 github）" bind:value={draft.name} />
-      <input type="text" placeholder="描述（agent 经 mcp_list 发现用，如 GitHub 仓库搜索）" bind:value={draft.desc} />
+      <input type="text" placeholder="描述（供 agent 发现用，如 GitHub 仓库搜索）" bind:value={draft.desc} />
       <select bind:value={draft.type}>
         <option value="http">http</option>
         <option value="sse">sse</option>
@@ -551,9 +552,10 @@
       {#if draft.type === 'stdio'}
         <input type="text" placeholder="命令（如 python3、npx、uvx）" bind:value={draft.command} />
         <textarea spellcheck="false" rows="3" placeholder="参数，每行一个（如 path/to/server.py）" bind:value={draft.argsText}></textarea>
+        <p class="form-sec">环境变量（可选）</p>
         {#each draft.envPairs as p, j}
           <div class="hdr-row">
-            <input type="text" placeholder="环境变量名（如 UV_PYTHON）" bind:value={p.key} />
+            <input type="text" placeholder="变量名（如 UV_PYTHON）" bind:value={p.key} />
             <input type="text" placeholder="值（如 3.12）" bind:value={p.value} />
             <button class="hdr-x" onclick={() => (draft.envPairs = draft.envPairs.filter((_, k) => k !== j))} title="移除">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round">
@@ -565,6 +567,7 @@
         <button class="hdr-add" onclick={() => (draft.envPairs = [...draft.envPairs, { key: '', value: '' }])}>+ 环境变量</button>
       {:else}
         <input type="text" placeholder="https://example.com/mcp" bind:value={draft.url} />
+        <p class="form-sec">鉴权请求头（可选）</p>
         {#each draft.pairs as p, j}
           <div class="hdr-row">
             <input type="text" placeholder="Header（如 Authorization）" bind:value={p.key} />
@@ -654,14 +657,15 @@
   .add-form {
     display: flex;
     flex-direction: column;
-    gap: 8px;
+    gap: 10px;
     border: 1px solid var(--line);
-    border-radius: 12px;
-    padding: 14px;
-    max-width: 360px;
+    border-radius: 14px;
+    padding: 16px;
+    max-width: 420px;
   }
   .add-form input,
-  .add-form select {
+  .add-form select,
+  .add-form textarea {
     border: 1px solid var(--line);
     border-radius: 8px;
     padding: 8px 10px;
@@ -671,9 +675,27 @@
     background: var(--bg);
     color: var(--fg);
   }
+  .add-form textarea {
+    resize: vertical;
+    line-height: 1.6;
+  }
   .add-form input:focus,
-  .add-form select:focus {
-    border-color: var(--line-strong);
+  .add-form select:focus,
+  .add-form textarea:focus {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 12%, transparent);
+  }
+  /* select 去原生外观（Windows 系统控件白底与表单不协调，同 ModelsView），自绘下拉箭头 */
+  .add-form select {
+    appearance: none;
+    padding-right: 30px;
+    cursor: pointer;
+    background: var(--bg) url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'><path d='M1 1l4 4 4-4' fill='none' stroke='%23888' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/></svg>") no-repeat right 10px center;
+  }
+  .form-sec {
+    font-size: 11px;
+    color: var(--faint);
+    margin-top: 2px;
   }
   .add-actions {
     display: flex;
@@ -738,35 +760,55 @@
   .glyph {
     display: grid;
     place-items: center;
-    width: 34px;
-    height: 34px;
-    border-radius: 10px;
+    width: 30px;
+    height: 30px;
+    border-radius: 9px;
     background: var(--bg-soft);
     border: 1px solid var(--line);
     color: var(--muted);
   }
   .glyph.live {
-    background: var(--bg-invert);
-    border-color: var(--bg-invert);
-    color: var(--fg-invert);
+    background: color-mix(in srgb, var(--accent) 11%, transparent);
+    border-color: color-mix(in srgb, var(--accent) 26%, transparent);
+    color: var(--accent);
   }
   .glyph svg {
-    width: 16px;
-    height: 16px;
+    width: 15px;
+    height: 15px;
   }
   .state {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
     font-size: 10.5px;
     font-family: var(--font-mono);
     color: var(--faint);
+    border: 1px solid var(--line);
+    border-radius: 99px;
+    padding: 3px 9px;
+    line-height: 1;
+    white-space: nowrap;
+  }
+  .state i {
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+    background: var(--faint);
+    flex: none;
   }
   .state.on {
     color: var(--accent);
+    border-color: color-mix(in srgb, var(--accent) 32%, transparent);
+    background: color-mix(in srgb, var(--accent) 7%, transparent);
+  }
+  .state.on i {
+    background: var(--accent);
   }
   h2 {
-    font-size: 13.5px;
+    font-size: 14px;
     font-weight: 650;
     color: var(--fg);
-    margin-top: 2px;
+    margin-top: 3px;
   }
   .card-desc {
     font-size: 11px;
@@ -937,8 +979,9 @@
     background: transparent;
     color: var(--muted);
     font-size: 11px;
-    padding: 3px 9px;
-    border-radius: 6px;
+    font-weight: 550;
+    padding: 3.5px 11px;
+    border-radius: 99px;
   }
   .conn:hover {
     border-color: var(--line-strong);
@@ -1081,7 +1124,8 @@
   }
   .hdr-row {
     display: grid;
-    grid-template-columns: 1fr 1.4fr auto;
+    /* minmax(0,…) 压掉 1fr 的内容固有宽下限:placeholder 长文不再把行撑出容器 */
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr) auto;
     gap: 6px;
     align-items: center;
   }
