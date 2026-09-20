@@ -112,6 +112,8 @@ available_mcp: playwright - 浏览器自动化
 当前时间：2026-09-15 23:49
 上下文水位：26663 / 128000 tokens
 距上次输出：3 分钟
+当前运行中终端：编译监控、爬虫
+当前开启浏览器标签：文档（React 文档）
 </agent_status>                                                          ← ⑫ 每轮都插
 [user]
 <reference_file>
@@ -147,7 +149,7 @@ available_mcp: playwright - 浏览器自动化
         上一轮末  <end_reason>        每轮都有，OnEnd 尾插
    ┌── 轮首（startHooks，全部插在本轮 input 之前，按 hook 序）
    │    <resource_change>  仅当 skill/mcp 基线有变更（附变更后 available 完整清单）
-   │    <agent_status>     每轮都有（水位/时间/距上次输出）
+   │    <agent_status>     每轮都有（水位/时间/距上次输出/运行中终端/浏览器标签）
    │    <reference_file>   仅当本轮带附件或文件引用
    ├── 本轮 input           引擎 AppendMessage（先入史，上面三条插到它前面）
    ├── 迭代（≤MaxIterations）

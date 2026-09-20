@@ -89,7 +89,7 @@ func TestFirstUserTitleSkipsSystemNotes(t *testing.T) {
 
 /* remind 收尾段：错误轮须落错误详情（换行压平、超长截断） */
 func TestRemindEndNoteErrorDetail(t *testing.T) {
-	h := NewRemind(memFS{}, NewStore(memFS{}, "t1"), func() int { return 0 }, 1000, nil, nil)
+	h := NewRemind(memFS{}, NewStore(memFS{}, "t1"), func() int { return 0 }, 1000, nil, nil, nil, nil)
 	long := strings.Repeat("错", 400)
 	state := &types.LoopState{StopReason: types.StopError, LastError: fmt.Errorf("boom\nline2 %s", long)}
 	if err := h.OnEnd(context.Background(), state); err != nil {
@@ -145,7 +145,7 @@ func TestRemindFirstRoundBaselineOnly(t *testing.T) {
 	_ = fsys.Write(ctx, "memory/skills/pdf/SKILL.md", []byte("---\nname: pdf---\n步骤"))
 	store := NewStore(fsys, "t1")
 	h := NewRemind(fsys, store, func() int { return 0 }, 1000,
-		func() []StatusMcp { return nil }, nil)
+		func() []StatusMcp { return nil }, nil, nil, nil)
 	state := newTestState([]types.Message{{Role: types.RoleUser, Content: "q"}})
 	if err := h.OnStart(ctx, state); err != nil {
 		t.Fatal(err)
@@ -176,7 +176,7 @@ func TestRemindResChangeInsertedBeforeStatus(t *testing.T) {
 	fsys := memFS{}
 	store := NewStore(fsys, "t1")
 	mcpList := func() []StatusMcp { return []StatusMcp{{Name: "ctx7", Desc: "查库文档"}} }
-	h := NewRemind(fsys, store, func() int { return 0 }, 1000, mcpList, nil)
+	h := NewRemind(fsys, store, func() int { return 0 }, 1000, mcpList, nil, nil, nil)
 	state1 := newTestState([]types.Message{{Role: types.RoleUser, Content: "q1"}})
 	if err := h.OnStart(ctx, state1); err != nil {
 		t.Fatal(err)
@@ -220,7 +220,7 @@ func TestRemindNoChangeNoMessage(t *testing.T) {
 	_ = fsys.Write(ctx, "memory/skills/pdf/SKILL.md", []byte("---\nname: pdf---\n步骤"))
 	store := NewStore(fsys, "t1")
 	h := NewRemind(fsys, store, func() int { return 0 }, 1000,
-		func() []StatusMcp { return nil }, nil)
+		func() []StatusMcp { return nil }, nil, nil, nil)
 	s1 := newTestState([]types.Message{{Role: types.RoleUser, Content: "q1"}})
 	_ = h.OnStart(ctx, s1) // 建基线
 	s2 := newTestState([]types.Message{{Role: types.RoleUser, Content: "q2"}})
@@ -234,10 +234,41 @@ func TestRemindNoChangeNoMessage(t *testing.T) {
 	}
 }
 
+/* remind 快照段：终端/浏览器清单进 <agent_status>；空/无闭包渲染"（无）"。 */
+func TestRemindStatusTermTabs(t *testing.T) {
+	mk := func(terms, tabs func() []string) *types.LoopState {
+		h := NewRemind(memFS{}, NewStore(memFS{}, "t1"), func() int { return 0 }, 1000,
+			func() []StatusMcp { return nil }, nil, terms, tabs)
+		state := newTestState([]types.Message{{Role: types.RoleUser, Content: "q"}})
+		if err := h.OnStart(context.Background(), state); err != nil {
+			t.Fatal(err)
+		}
+		return state
+	}
+	s := mk(func() []string { return []string{"编译监控", "爬虫"} },
+		func() []string { return []string{"文档（React 文档）"} })
+	body := s.Messages[0].Content
+	for _, want := range []string{
+		"当前运行中终端：编译监控、爬虫",
+		"当前开启浏览器标签：文档（React 文档）",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("missing %q in %q", want, body)
+		}
+	}
+	if strings.Contains(body, "整理上下文") {
+		t.Fatal("normal round must not trip frontend timeline keyword")
+	}
+	empty := mk(nil, nil).Messages[0].Content
+	if !strings.Contains(empty, "当前运行中终端：（无）") || !strings.Contains(empty, "当前开启浏览器标签：（无）") {
+		t.Fatalf("nil probes must render （无）: %q", empty)
+	}
+}
+
 /* OnEnd：fork 不记收尾但 LastOutputAt 仍更新。 */
 func TestRemindOnEndForkSkip(t *testing.T) {
 	store := NewStore(memFS{}, "t1")
-	h := NewRemind(memFS{}, store, func() int { return 0 }, 1000, nil, nil)
+	h := NewRemind(memFS{}, store, func() int { return 0 }, 1000, nil, nil, nil, nil)
 	state := &types.LoopState{ForkID: "f1", Messages: []types.Message{}}
 	if err := h.OnEnd(context.Background(), state); err != nil {
 		t.Fatal(err)

@@ -1,16 +1,7 @@
 # 代办事项
-需求:
-1. resource_change 和 agent_status的区别:
-resource_change是主要用于资源变更等低频变更内容, 初始时就存储在了session里面的
-agent_stauts 则主要用于每轮chat都变更 并且高频变换的东西, session内没有,每次动态获取
-由于term 和 brown不是持久化状态, 每次启动都会关闭 所以不应该初始注入system 所以当前正在运行了哪些终端 和 brown 应当放在agent_status这个标签内的。
-应该加上两个东西: 1. 当前开启浏览器tab:xx xx xx 2. 当前运行中终端xx xx xx
 
-mcp_router设计:                                                                 
-  1. 我希望mcp_router是一个系统级别的实例,全部的session                                                 
-  全部的hook本质上是通过一个mcp_router进行的mcp调用。因为当前其实本身就是全局唯一的。                                     
-  2. mcp的hook 需要传入这个mcp_router实例, 后面调用啊 list之类的全部都是用这一个。
-  3. mcp_router我希望向外暴露出可以call的接口, 因为我有个大胆的想法: api->mcp tool-> 再把mcp tool作为api   
+
+
 ## 6. 系统提示词重点优化(更新 重点/非必要/语法糖等)
 ## 8. tmp文件夹乱用
 ## 1. 快应用优化
@@ -21,14 +12,24 @@ mcp_router设计:
 ## 4. 默认携带skill注入
 
 测试:
-                                                                                                                                                                                                           
-  ① + ② + ⑤ 资源变更（破坏性重命名，不留兼容）                                            
+  1. resource_change 和 agent_status的区别: 【done】
+  resource_change是主要用于资源变更等低频变更内容, 初始时就存储在了session里面的
+  agent_stauts 则主要用于每轮chat都变更 并且高频变换的东西, session内没有,每次动态获取
+  由于term 和 brown不是持久化状态, 每次启动都会关闭 所以不应该初始注入system 所以当前正在运行了哪些终端 和 brown 应当放在agent_status这个标签内的。
+  应该加上两个东西: 1. 当前开启浏览器tab:xx xx xx 2. 当前运行中终端xx xx xx
+
+    mcp_router设计:  【done】                                           
+  1. 我希望mcp_router是一个系统级别的实例,全部的session                                                 
+  全部的hook本质上是通过一个mcp_router进行的mcp调用。因为当前其实本身就是全局唯一的。                                     
+  2. mcp的hook 需要传入这个mcp_router实例, 后面调用啊 list之类的全部都是用这一个。
+  3. mcp_router我希望向外暴露出可以call的接口, 因为我有个大胆的想法: api->mcp tool-> 再把mcp tool作为api                                                                                                                                                                                                      
+  ① + ② + ⑤ 资源变更（破坏性重命名，不留兼容）【done】                                        
   - <res_change> → <resource_change>，事件 res.change → resource.change，Go/前端/测试/文档全链路同步                         
   - 变更块现在附变更后完整清单：available_skill: 名 - 描述 / available_mcp: 名 - 描述 行（不带 -  前缀，前端变更卡天然忽略） 
   - system prompt 的 <skills>/<mcp> 块加禁令“以此为准，不要读 memory/skills 目录或 mcp.json 发现资源”；删除了“终端操作会进
   res_change”的残留谎言                                                                                                      
                                                                                
-  ③ term/browser 工具                                   
+  ③ term/browser 工具 【done】                                    
   - 入参拆 name（简短标识）+ desc（详细描述），TermInfo/tab/desktop/WS/REST 全链路带 desc
   - 所有操作返回 JSON：终端 {id,name,desc,origin,exited,lastCmd,output,note}、浏览器
   {id,name,desc,origin,url,title,loading,note}，close 返回 {id,closed}，list 与操作同构
@@ -50,6 +51,5 @@ mcp_router设计:
   手工项（你自测）：连真实 MCP server（三种传输各一）、删除后立即添加、term_start/browser_tab 的 JSON
   返回、加技能后看变更卡。
 
-验收:
 
 

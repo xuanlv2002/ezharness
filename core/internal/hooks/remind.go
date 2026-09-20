@@ -52,11 +52,13 @@ StatusData 是水位快照载荷（SSE status.snapshot 的 Data；注入消息
 历史的正文是中文语义化文本，见 renderStatus）。
 */
 type StatusData struct {
-	Now                string `json:"now"`
-	SinceLastOutputMin int64  `json:"sinceLastOutputMin"` // 0 = 无记录
-	CtxTokens          int    `json:"ctxTokens"`
-	CtxWindow          int    `json:"ctxWindow"`
-	SuggestCompact     bool   `json:"suggestCompact"`
+	Now                string   `json:"now"`
+	SinceLastOutputMin int64    `json:"sinceLastOutputMin"` // 0 = 无记录
+	CtxTokens          int      `json:"ctxTokens"`
+	CtxWindow          int      `json:"ctxWindow"`
+	SuggestCompact     bool     `json:"suggestCompact"`
+	Terms              []string `json:"terms,omitempty"` // 运行中终端名（非持久状态，每轮现查）
+	Tabs               []string `json:"tabs,omitempty"`  // 开启中的浏览器标签（同上）
 }
 
 /* Remind 实现系统提醒（快照段 + 收尾段；变更段见 reschange.go）。 */
@@ -67,17 +69,21 @@ type Remind struct {
 	ctxWindow int
 	mcpList   func() []StatusMcp
 	disabled  func() []string // 可空：禁用技能目录名（实时读设置快照）
+	terms     func() []string // 可空：运行中终端名（终端/浏览器是进程生命周期态，重启即失，
+	tabs      func() []string // 不进 system 固定段，走每轮快照——与 skill/mcp 类持久资源分界
 }
 
 /*
 NewRemind 创建系统提醒 hook。ctxTokens 返回最近一次模型调用的 prompt
 tokens；ctxWindow 是主模型上下文窗口（<=0 由调用方兜底默认）；
-mcpList 返回启用的 server 清单（仅作变更基线）；disabled 可空。
+mcpList 返回启用的 server 清单（仅作变更基线）；disabled 可空；
+terms/tabs 可空：运行中终端名与浏览器标签名（每轮现查注入快照）。
 */
 func NewRemind(fsys fs.FileSystem, store *Store, ctxTokens func() int, ctxWindow int,
-	mcpList func() []StatusMcp, disabled func() []string) *Remind {
+	mcpList func() []StatusMcp, disabled func() []string,
+	terms func() []string, tabs func() []string) *Remind {
 	return &Remind{fsys: fsys, store: store, ctxTokens: ctxTokens, ctxWindow: ctxWindow,
-		mcpList: mcpList, disabled: disabled}
+		mcpList: mcpList, disabled: disabled, terms: terms, tabs: tabs}
 }
 
 func (h *Remind) Name() string { return "remind" }
@@ -125,6 +131,12 @@ func (h *Remind) buildSnapshot() StatusData {
 	if h.ctxWindow > 0 && data.CtxTokens > h.ctxWindow*7/10 {
 		data.SuggestCompact = true
 	}
+	if h.terms != nil {
+		data.Terms = h.terms()
+	}
+	if h.tabs != nil {
+		data.Tabs = h.tabs()
+	}
 	return data
 }
 
@@ -145,7 +157,21 @@ func renderStatus(d StatusData) string {
 	if d.SinceLastOutputMin > 0 {
 		fmt.Fprintf(&b, "\n距上次输出：%d 分钟", d.SinceLastOutputMin)
 	}
+	b.WriteString("\n当前运行中终端：" + namesOrNone(d.Terms))
+	b.WriteString("\n当前开启浏览器标签：" + namesOrNone(d.Tabs))
 	return b.String()
+}
+
+/* namesOrNone 清单渲染为顿号连接（空给"（无）"；条目含换行会被压平防伪造行）。 */
+func namesOrNone(names []string) string {
+	if len(names) == 0 {
+		return "（无）"
+	}
+	clean := make([]string, 0, len(names))
+	for _, n := range names {
+		clean = append(clean, oneLine(n, 80))
+	}
+	return strings.Join(clean, "、")
 }
 
 /*

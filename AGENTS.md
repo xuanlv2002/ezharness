@@ -103,7 +103,7 @@ hook 是 ezloop 引擎的横向扩展点（接口见 ezloop `hook/hook.go`：`On
 | 文件 | 接口方法 | 职责 |
 |---|---|---|
 | `sysprompt.go` `SysPrompt` | `OnStart` | system 消息唯一来源；渲染 = base + 身份块 + 摘要块 |
-| `remind.go` `Remind` | `OnStart` `OnEnd` | 轮首注入 `<agent_status>` 快照（时间/水位/距上次输出），有资源变更时另插 `<resource_change>`（含变更后 available 清单）；轮末注入 `<end_reason>` |
+| `remind.go` `Remind` | `OnStart` `OnEnd` | 轮首注入 `<agent_status>` 快照（时间/水位/距上次输出/运行中终端/浏览器标签——终端与浏览器是进程生命周期态，重启即失，不进 system 固定段，与 skill/mcp 类持久资源分界），有资源变更时另插 `<resource_change>`（含变更后 available 清单）；轮末注入 `<end_reason>` |
 | `reschange.go` | （`Remind` 的内部实现） | skill/MCP 基线 diff → 变更条目 + 完整清单 |
 | `reference_file.go` `RefFileHook` | `OnStart` | 本轮有附件/文件引用时，在用户输入前插 `<reference_file>` 结构化消息 |
 | `trim.go` `Trim` | `OnStart` `OnLoop` `OnToolStart` | 注册 `trim_context` 工具；回边水位整理：就地折叠早期消息 + 插 `<context_trim>` 标记（同一 session 内） |

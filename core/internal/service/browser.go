@@ -320,3 +320,38 @@ func (s *BrowserService) ListBrowserTabsJSON(ctx context.Context) string {
 	}
 	return reply.Result
 }
+
+/*
+TabsBrief 返回开启中标签的展示名清单("name（页面标题）",agent_status
+快照每轮现查用)。桥未连接/查询失败/超时返回 nil(渲染为"（无）",
+不视为错误——web 端直连本就无浏览器)。自带 2 秒短超时:每轮 OnStart
+同步调用,desktop 卡死不能拖住轮首。
+*/
+func (s *BrowserService) TabsBrief() []string {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	reply, err := s.call(ctx, "list", nil, 2*time.Second)
+	if err != nil {
+		return nil
+	}
+	var tabs []struct {
+		Name  string `json:"name"`
+		Title string `json:"title"`
+		URL   string `json:"url"`
+	}
+	if json.Unmarshal([]byte(reply.Result), &tabs) != nil {
+		return nil
+	}
+	out := make([]string, 0, len(tabs))
+	for _, t := range tabs {
+		label := t.Name
+		switch {
+		case t.Title != "":
+			label += "（" + t.Title + "）"
+		case t.URL != "":
+			label += "（" + t.URL + "）"
+		}
+		out = append(out, label)
+	}
+	return out
+}

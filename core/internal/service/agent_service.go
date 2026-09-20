@@ -126,11 +126,32 @@ func (a *AgentService) Assemble(s *domain.Session, st domain.Settings) {
 	}
 	s.Sess.BindCtx(func() (int, int) { return s.CtxTokens(), window })
 	disabledSkills := func() []string { return a.Hub.SettingsSnapshot().DisabledSkills }
+	// 终端/浏览器是进程生命周期态(重启即失),不进 system 固定段,每轮快照现查
+	termsBrief := func() []string {
+		if a.Term == nil {
+			return nil
+		}
+		var out []string
+		for _, t := range a.Term.List() {
+			if !t.Exited {
+				out = append(out, t.Name)
+			}
+		}
+		return out
+	}
+	tabsBrief := func() []string {
+		if a.Browser == nil {
+			return nil
+		}
+		return a.Browser.TabsBrief()
+	}
 	remindHook := hooks.NewRemind(s.Fsys, s.Sess,
 		func() int { return s.CtxTokens() },
 		window,
 		func() []hooks.StatusMcp { return mcpStatusList(s.Fsys) },
 		disabledSkills,
+		termsBrief,
+		tabsBrief,
 	)
 	traceHook := hooks.NewTrace(s.Fsys, s.Sess, func() string { return main.Name })
 	trimHook := hooks.NewTrim(provider, traceHook,
