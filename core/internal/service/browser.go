@@ -322,10 +322,11 @@ func (s *BrowserService) ListBrowserTabsJSON(ctx context.Context) string {
 }
 
 /*
-TabsBrief 返回开启中标签的展示名清单("name（页面标题）",agent_status
-快照每轮现查用)。桥未连接/查询失败/超时返回 nil(渲染为"（无）",
-不视为错误——web 端直连本就无浏览器)。自带 2 秒短超时:每轮 OnStart
-同步调用,desktop 卡死不能拖住轮首。
+TabsBrief 返回开启中标签的展示名清单("name（页面标题）[tabId]",
+agent_status 快照每轮现查用;id 供模型直接 browser_action/read 与
+交付 browser:// 入口,免一次 list 发现)。桥未连接/查询失败/超时
+返回 nil(渲染为"（无）",不视为错误——web 端直连本就无浏览器)。
+自带 2 秒短超时:每轮 OnStart 同步调用,desktop 卡死不能拖住轮首。
 */
 func (s *BrowserService) TabsBrief() []string {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
@@ -335,7 +336,9 @@ func (s *BrowserService) TabsBrief() []string {
 		return nil
 	}
 	var tabs []struct {
+		ID    string `json:"id"`
 		Name  string `json:"name"`
+		Desc  string `json:"desc"`
 		Title string `json:"title"`
 		URL   string `json:"url"`
 	}
@@ -345,13 +348,17 @@ func (s *BrowserService) TabsBrief() []string {
 	out := make([]string, 0, len(tabs))
 	for _, t := range tabs {
 		label := t.Name
-		switch {
-		case t.Title != "":
-			label += "（" + t.Title + "）"
-		case t.URL != "":
-			label += "（" + t.URL + "）"
+		seg := briefSeg(t.Title, 60)
+		if seg == "" {
+			seg = briefSeg(t.Desc, 60)
 		}
-		out = append(out, label)
+		if seg == "" {
+			seg = briefSeg(t.URL, 60)
+		}
+		if seg != "" {
+			label += "（" + seg + "）"
+		}
+		out = append(out, label+"["+t.ID+"]")
 	}
 	return out
 }

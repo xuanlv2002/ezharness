@@ -245,12 +245,12 @@ func TestRemindStatusTermTabs(t *testing.T) {
 		}
 		return state
 	}
-	s := mk(func() []string { return []string{"编译监控", "爬虫"} },
-		func() []string { return []string{"文档（React 文档）"} })
+	s := mk(func() []string { return []string{"编译监控（盯构建）[t1]", "爬虫[t2]"} },
+		func() []string { return []string{"文档（React 文档）[b3]"} })
 	body := s.Messages[0].Content
 	for _, want := range []string{
-		"当前运行中终端：编译监控、爬虫",
-		"当前开启浏览器标签：文档（React 文档）",
+		"当前运行中终端：编译监控（盯构建）[t1]、爬虫[t2]",
+		"当前开启浏览器标签：文档（React 文档）[b3]",
 	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("missing %q in %q", want, body)

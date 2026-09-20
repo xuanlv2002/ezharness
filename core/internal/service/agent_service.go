@@ -133,9 +133,14 @@ func (a *AgentService) Assemble(s *domain.Session, st domain.Settings) {
 		}
 		var out []string
 		for _, t := range a.Term.List() {
-			if !t.Exited {
-				out = append(out, t.Name)
+			if t.Exited {
+				continue
 			}
+			label := t.Name
+			if d := briefSeg(t.Desc, 60); d != "" {
+				label += "（" + d + "）"
+			}
+			out = append(out, label+"["+t.ID+"]")
 		}
 		return out
 	}
@@ -535,6 +540,15 @@ func buildSystemBase(ctx context.Context, st domain.Settings, fsys osfs.OS) stri
 		b.WriteString("\n</mcp>")
 	}
 	return b.String()
+}
+
+/* briefSeg 清单条目的补充段（终端 desc / 标签 title）压平截断，防伪造行与超长。 */
+func briefSeg(s string, max int) string {
+	s = strings.ReplaceAll(strings.ReplaceAll(s, "\r", ""), "\n", " ")
+	if r := []rune(s); len(r) > max {
+		return string(r[:max]) + "…"
+	}
+	return s
 }
 
 /* mcpListLines 返回启用 server 的"名: 描述"清单。 */
