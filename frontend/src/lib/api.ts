@@ -88,7 +88,7 @@ export interface McpServerView {
   env?: Record<string, string>
   enabled: boolean
   connected: boolean
-  tools: number
+  tools: number // 页面拉取过的工具数;-1 = 会话在但未拉取,0 = 确实无工具
   headers: Record<string, string>
   allow?: string[]
 }

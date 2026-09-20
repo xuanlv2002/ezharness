@@ -41,7 +41,7 @@ type McpServerFile struct {
 func (s McpServerFile) IsEnabled() bool { return s.Enabled == nil || *s.Enabled }
 
 /*
-	McpServerView 是 MCP 页卡片数据。Tools 未连接为 0（前端显示 —）。
+McpServerView 是 MCP 页卡片数据。
 
 Allow 必须回传：前端全量保存，丢字段会清掉 mcp.json 里的白名单。
 */
@@ -56,7 +56,7 @@ type McpServerView struct {
 	Headers     map[string]string `json:"headers"`
 	Enabled     bool              `json:"enabled"`
 	Connected   bool              `json:"connected"` // 页面手动会话已建立
-	Tools       int               `json:"tools"`
+	Tools       int               `json:"tools"`     // 页面拉取过的工具数；-1 = 会话在但未拉取（agent 共用连接池时常见），0 = 确实无工具
 	Allow       []string          `json:"allow,omitempty"`
 }
 
@@ -100,6 +100,10 @@ func (s *McpService) List() []McpServerView {
 	defer s.mu.Unlock()
 	for _, srv := range f.Servers {
 		connected := s.Router.Connected(srv.Name)
+		tools := -1 // 会话在但页面没拉过清单(agent 共用连接池连的),数量未知
+		if defs, ok := s.toolDefs[srv.Name]; ok {
+			tools = len(defs)
+		}
 		out = append(out, McpServerView{
 			Name:        srv.Name,
 			Description: srv.Description,
@@ -111,7 +115,7 @@ func (s *McpService) List() []McpServerView {
 			Headers:     nonNilHeaders(srv.Headers),
 			Enabled:     srv.IsEnabled(),
 			Connected:   connected,
-			Tools:       len(s.toolDefs[srv.Name]),
+			Tools:       tools,
 			Allow:       srv.Allow,
 		})
 	}

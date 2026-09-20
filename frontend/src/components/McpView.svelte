@@ -331,7 +331,7 @@
       <div class="detail-title">
         <h1>{selected.name}</h1>
         <span class="state" class:on={selected.connected && selected.enabled}>
-          {selected.enabled ? (selected.connected ? `已连接 · ${selected.tools} 工具` : '未连接') : '已停用'}
+          {selected.enabled ? (selected.connected ? (selected.tools >= 0 ? `已连接 · ${selected.tools} 工具` : '已连接') : '未连接') : '已停用'}
         </span>
         {#if selected.description}
           <p class="detail-desc">{selected.description}</p>
@@ -353,9 +353,9 @@
         class="conn"
         class:on={selected.connected}
         disabled={connecting === selected.name}
-        onclick={() => (connectedTools[sel.name]?.length ? disconnect(sel) : connect(sel))}
+        onclick={() => (selected.connected && connectedTools[sel.name]?.length ? disconnect(sel) : connect(sel))}
       >
-        {connecting === selected.name ? '连接中…' : connectedTools[selected.name]?.length ? '断开会话' : '建立会话'}
+        {connecting === selected.name ? '连接中…' : selected.connected ? (connectedTools[selected.name]?.length ? '断开会话' : '拉取工具') : '建立会话'}
       </button>
       <button class="op" onclick={startEdit}>{editing ? '收起编辑' : '编辑'}</button>
       <button class="op danger" onclick={() => removeServer(sel)}>删除</button>
@@ -435,8 +435,10 @@
             </div>
           {/if}
         {/each}
-      {:else}
+      {:else if selected.tools === 0}
         <p class="lead">已连接，该 server 未暴露工具。</p>
+      {:else}
+        <p class="lead">会话已建立，点击「拉取工具」查看工具清单。</p>
       {/if}
     </div>
   </div>
@@ -477,7 +479,7 @@
                 <path d="M7 12h4M11 12l6-6M11 12l6 6" />
               </svg>
             </div>
-            <span class="state" class:on={s.connected && s.enabled}>{s.enabled ? (s.connected ? `已连接 · ${s.tools} 工具` : '未连接') : '已停用'}</span>
+            <span class="state" class:on={s.connected && s.enabled}>{s.enabled ? (s.connected ? (s.tools >= 0 ? `已连接 · ${s.tools} 工具` : '已连接') : '未连接') : '已停用'}</span>
           </div>
           <h2>{s.name}</h2>
           {#if s.description}
@@ -488,7 +490,7 @@
           </p>
           <div class="foot">
             <span class="tools">
-              {s.connected ? `${s.tools} 个工具` : '点击查看'}
+              {s.connected ? (s.tools >= 0 ? `${s.tools} 个工具` : '工具未拉取') : '点击查看'}
               {#if (s.transport === 'http' || s.transport === 'sse') && Object.keys(s.headers ?? {}).length > 0}
                 <i>· {Object.keys(s.headers).length} 个请求头</i>
               {/if}
@@ -500,10 +502,10 @@
                 disabled={connecting === s.name}
                 onclick={(e) => {
                   e.stopPropagation()
-                  connectedTools[s.name]?.length ? disconnect(s) : connect(s)
+                  s.connected && connectedTools[s.name]?.length ? disconnect(s) : connect(s)
                 }}
               >
-                {connecting === s.name ? '…' : connectedTools[s.name]?.length ? '断开' : '连接'}
+                {connecting === s.name ? '…' : s.connected ? (connectedTools[s.name]?.length ? '断开' : '拉取工具') : '连接'}
               </button>
               <button
                 class="toggle"
