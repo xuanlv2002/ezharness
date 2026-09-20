@@ -67,7 +67,9 @@ remind hook（per-session；internal/hooks/remind.go + reschange.go）
 | ezharness（宿主域） | remind（基线 ResSnapshot 在 Store）、trim（水位/折叠档案）、sessionstore、reference_file、guard、trace、sysprompt | 需要 session 状态（基线/历史/水位/SysPrompt） |
 | ezloop（可复用组件） | filetools（工具+图片链）、skilltool、mcp、approve、askuser、task、offload、contextfix | 纯领域工具，参数化注入即用 |
 
-skilltool 已下沉（`ext/hook/skilltool`，技能目录布局知识随迁 `skill.DirOf`）；skill/mcp hook 不做状态变更检测——一旦检测就耦合宿主基线，丧失可下沉性（这正是变更检测归 remind 的原因）。
+skilltool 已下沉（`ext/hook/skilltool`，技能目录布局知识随迁 `skill.DirOf`，`load_skill` 为工具 Invoke 闭环）；skill/mcp hook 不做状态变更检测——一旦检测就耦合宿主基线，丧失可下沉性（这正是变更检测归 remind 的原因）。
+
+trim 与归档（compact）的摘要与记忆方案（四节结构化 + progress.md、固定三记忆文件合并重写）详见 **compaction.md**。
 
 ## 五、warp 原则
 

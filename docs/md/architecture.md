@@ -104,7 +104,7 @@ core 内部分层：**controller（表现）→ service（用例）→ domain（
 | `internal/controller` | gin handler 只做绑定、校验与响应，业务在 service |
 | `internal/service` | ChatService（发送/取消/决策/事件流消费）、SessionService（bootstrap/状态/历史/摘要）、TopicService（新建/fork/切换/归档换代）、SettingsService + MemoryService、McpService、AppsService、TerminalService（共享终端公共池：ConPTY，用户 WS 与 AI term_* 共写）、BrowserService（共享浏览器 core 侧：经 `/api/browser/bridge` 把 `browser_*` 转发给桌面壳执行）、AgentService（agent 装配中枢）、AppService（配置/迁移/换代/boot） |
 | `internal/domain` | Session（会话聚合并发状态机）+ Hub（全局容器）+ 事件帧，零 HTTP 依赖 |
-| `internal/hooks` | 宿主侧 hook：sessionstore（落盘）、sysprompt、trim、remind+reschange（系统提醒）、reference_file（引用告知）、guard、trace、topics、memory、archive、summarize、recall（预留） |
+| `internal/hooks` | 宿主侧 hook：sessionstore（落盘）、sysprompt、trim（四节结构化 + progress.md）、remind+reschange（系统提醒）、reference_file（引用告知）、guard、trace、topics、memory、archive+distill（沉淀式归档）、summarize、recall（预留） |
 | `internal/tools` | 自有工具：save_app、term_*（共享终端）、image_recognize（识别槽） |
 | `internal/warp` | 装饰器：modeldump（调试打印）、visionguard（无视觉剥图）、toolarg（参数语法糖） |
 | `internal/osfs` | 无沙箱全权限文件系统（直连 os，不委托 fs.NewLocal——根挂载前缀检查会误杀） |
@@ -142,12 +142,14 @@ core 进程内并发靠 goroutine：一轮 chat 一个运行 goroutine（引擎�
 | `sessions/<id>/` | 会话存档（见 session.md） | sessionstore |
 | `memory/longterm/harness.md` | 长期记忆索引（初始进上下文） | EnsureHarnessMd / agent 维护 |
 | `memory/skills/` | 技能库（SKILL.md + scripts/） | CreateSkill/Delete / skilltool |
+| `memory/longterm/{user,projects,lessons}.md` | 长期记忆三个固定主题文件 | 归档沉淀步合并重写 / 模型直接编辑（见 compaction.md） |
 | `apps/` | 快应用 html（save_app 生成） | 静态服务 `/apps/*` |
 | `workspace/` | 工作目录（settings.WorkDir 空 = 此默认） | agent 自由读写 |
 | `workspace/tmp/` | 用户上传附件暂存（base64 不入上下文） | ChatService 落盘 / read_file 读 |
+| `sessions/<id>/progress.md` | 任务进度档案（四节，trim 每次整理重写） | trim 写 / 模型恢复现场读写 |
 | `.ezloop/offload/` | 大工具结果卸载区 | offload / guard |
 
-system prompt 的 `<workspace>` 段把此布局（绝对路径）原样告知模型。
+system prompt 的 `<workspace>` 段只把**三个可写位置**（workspace / memory/longterm / memory/skills，绝对路径）告知模型，其余目录一律行为规则化（不诱导翻阅）。
 
 ## 五、通信通道
 

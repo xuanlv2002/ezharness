@@ -113,7 +113,7 @@ BeginArchive 占锁 → summarizeMsgs(模型视图，含 marker 摘要链，链�
 → RotateTo（内存换代：清历史/水位）→ Publish session.compact
 ```
 
-与 trim 的分工：**trim** 是上下文管理（模型侧，水位自动 + `trim_context` 主动，就地截断不换库）；**compact** 是会话树管理（用户侧，摘要归档换代）。详见 hooks.md 分层说明。
+与 trim 的分工：**trim** 是上下文管理（模型侧，水位自动 + `trim_context` 主动，就地截断不换库）；**compact** 是会话树管理（用户侧，摘要归档换代）。详见 hooks.md 分层说明；两操作的摘要与记忆方案（四节结构化 + progress.md、固定三记忆文件合并重写）详见 **compaction.md**。
 
 ### fork 分叉（`POST /api/sessions/:id/fork` body{anchor}）
 

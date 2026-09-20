@@ -127,17 +127,17 @@ flowchart LR
 ```
 
 - **fork 分叉**：复制 `[0, anchor]` 前缀为完整副本开新线，删源不伤分叉
-- **compact 换代**：摘要模型生成前情（2 分钟预算，原子锁防并发）→ 旧库封存只读 → 新库空消息 + 摘要 system → 内存热切换，前端无感
+- **compact 换代（沉淀式归档）**：先把值得长期保留的偏好/事实/经验**合并重写**进 `memory/longterm/{user,projects,lessons}.md` 三个固定记忆文件（去重纠偏，失败静默），再生成精炼交接摘要 → 旧库封存只读 → 新库空消息 + 摘要 system → 内存热切换，前端无感
 - **线间并发**：切线不取消后台分支的运行轮，切回时重建现场
-- trim 是模型侧上下文整理（就地折叠不换库），archive 是用户侧会话树管理（换代封存）
+- trim 是模型侧上下文整理（接力棒：四节结构化摘要 + progress.md，就地折叠不换库），compact 是用户侧总结沉淀（长期记忆 + 换代封存）——方案详见 [docs/md/compaction.md](docs/md/compaction.md)
 
 ### 上下文工程（[docs/md/context.md](docs/md/context.md)）
 
 一条线同一时刻只有一个活跃上下文（system + 消息库视图）：
 
-- **system 两段式**：`base`（人格 + workspace 架构 + 记忆索引 + skills / mcp 清单）+ `identity`（会话 ID 与存档路径——trim 折叠后模型的回忆入口），每 session 组装一次并固定
-- **trim 双触发**：水位自动（超窗口 75%，可配）+ 模型主动 `trim_context` 工具；摘要折叠段 → `[head, tail, marker]` 截断，孤儿 tool 前移保证配对完整
-- **agent_status 轮首快照**：每轮注入时间、水位、建议 compact、资源变更（用户在终端干了什么）——不是状态机，是快照记录
+- **system 两段式**：`base`（人格 + workspace 三可写位与行为规则 + `<action>` 行动准则 + `<output>` 输出规范（supper_url 正误示例）+ 记忆索引 + skills / mcp 清单与直调端点）+ `identity`（会话 ID 与存档/进度档案路径），每 session 组装一次并固定
+- **trim 双触发**：水位自动（超窗口 75%，可配）+ 模型主动 `trim_context` 工具；四节结构化摘要（已完成/正在做/待办/关键事实）重写 `sessions/<id>/progress.md` → `[head, tail, marker]` 截断，孤儿 tool 前移保证配对完整
+- **agent_status 轮首快照**：每轮注入时间、水位、建议 compact、资源变更（用户在终端干了什么）、运行中终端与浏览器标签——不是状态机，是快照记录
 - **guard 兜底**：按窗口余量动态卸载放不下的工具结果，trim 没来得及跑也不会溢出
 
 ### 人机交互（[docs/interaction.md](docs/interaction.md)）

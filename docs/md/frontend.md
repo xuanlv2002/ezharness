@@ -91,8 +91,8 @@ flowchart LR
 | `<image_loaded>` 包裹标签 | filetools OnLoop | ✓（user 消息，Images 带 base64） | filetools.image_loaded 事件 | 标签体内路径行 + m.images |
 | `<image_loaded path="…"/>` 自闭合 | read_file 工具结果 | ✓（tool 消息，保留不改写） | 工具卡结果文本 | 同左（不解析） |
 | `<end_reason>` | remind 收尾段 | ✓ | turn_end 合成 endtick | 正则提取 |
-| `<context_trim kept="N">` | trim hook | ✓（替代被折叠消息） | session.trim note | 标签 → note |
-| `<$supper_url>…</$supper_url>` | 模型输出（占位语法，system workspace 段有指引） | ✓（正文） | marked extension 实时解析 | 同左（同一渲染管线） |
+| `<context_trim kept="N">` | trim hook | ✓（替代被折叠消息） | session.trim note | 标签 → note（`trimText` 按【已完成】锚点截 160 字，不兼容旧"摘要："格式） |
+| `<$supper_url>…</$supper_url>` | 模型输出（占位语法，system `<output>` 段有正误示例指引） | ✓（正文） | marked extension 实时解析 | 同左（同一渲染管线） |
 | ↳ 内容 `https://…` | 同上（外链） | ✓ | chip 点击经系统浏览器打开（复用外链拦截） | 同左 |
 | ↳ 内容 `term://<终端id>` | 同上（终端入口） | ✓ | chip 点击 openTermAt：拉开终端抽屉并定位（TerminalTab 消费 store.termFocus） | 同左 |
 | ↳ 内容 `app://<快应用名>` | 同上（快应用入口） | ✓ | chip 点击 POST /api/apps/open 开子窗 | 同左 |
