@@ -438,10 +438,12 @@ const executors = {
     const tab = tabOf(tabId)
     const amount = amountPx > 0 ? amountPx : 600
     const wc = tab.view.webContents
-    const bounds = wc.getBounds() // 视口尺寸（挂主窗口后的 view bounds）
+    const bounds = tab.view.getBounds() // 视口尺寸是 WebContentsView 的 bounds（webContents 上没有 getBounds——曾因此报 "wc.getBounds is not a function"）
+    const w = bounds.width || 800 // 视图从未上屏时 0×0：兜底常量尺寸，滚轮落视口中部
+    const h = bounds.height || 600
     wc.sendInputEvent({
       type: 'mouseWheel',
-      x: bounds.width / 2, y: bounds.height / 2,
+      x: w / 2, y: h / 2,
       deltaY: direction === 'up' ? -amount : amount,
     })
     await delay(200)
