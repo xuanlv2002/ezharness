@@ -244,10 +244,11 @@ class AppStore {
   /* 工具触发的抽屉自动拉开:免审调用延迟 ~1s 打开(tool_start 先于
   approve.request 到达,1s 内无审批请求即视为免审直接执行);进入审批
   则等用户批准(decision.resolved=已批准)才打开——未批准时命令不会
-  运行,提前弹出只是打扰。浏览器共见 = 自动拉开浏览器抽屉页。 */
+  运行,提前弹出只是打扰。只保留"创建类"操作(新终端/新浏览器标签):
+  term_send 等复用已有资源的操作不拉——用户收起抽屉后不该被普通
+  消息触发的工具又弹开。 */
   private autoOpenDrawers = new Map<string, DrawerTool>([
     ['term_start', 'term'],
-    ['term_send', 'term'],
     ['browser_tab:open', 'browser'],
   ])
   private toolOpenTimers = new Map<string, ReturnType<typeof setTimeout>>()

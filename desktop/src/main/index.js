@@ -10,7 +10,7 @@ const path = require('path')
 const fs = require('fs')
 const http = require('http')
 const { spawn } = require('child_process')
-const { startBrowserModule } = require('./browser')
+const { startBrowserModule, overlayBrowser } = require('./browser')
 
 let mainWindow = null
 let tray = null
@@ -150,6 +150,15 @@ async function handleCloseRequest() {
     mainWindow.hide()
     return { prompt: false }
   }
+  /* 确认框是主窗内的页面 modal——主窗若被别的窗口（弹出窗/快应用/
+     其他程序）压住，弹框就跟着"不在最上层"。弹之前先把主窗带前台；
+     共享浏览器视图是 OS 层子视图（永远在页面 DOM 之上），一并临时
+     藏起，否则浏览器内容会盖住确认框 */
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.show()
+    mainWindow.focus()
+  }
+  overlayBrowser(true)
   mainWindow.webContents.send('ez:close-prompt')
   return { prompt: true }
 }
@@ -196,6 +205,7 @@ function registerIpc() {
   ipcMain.handle('ez:is-maximized', () => mainWindow?.isMaximized() ?? false)
   ipcMain.handle('ez:close-request', () => handleCloseRequest())
   ipcMain.on('ez:close-decision', (_e, tray, remember) => {
+    overlayBrowser(false) /* 恢复被确认框临时藏起的浏览器视图 */
     if (tray) {
       mainWindow?.hide()
       if (remember) void saveCloseToTray(true)
@@ -203,6 +213,8 @@ function registerIpc() {
       quitApp()
     }
   })
+  /* 取消关闭：同样恢复浏览器视图（关闭确认框把它临时藏起了） */
+  ipcMain.on('ez:close-cancel', () => overlayBrowser(false))
   ipcMain.on('ez:open-url', (_e, url) => {
     if (typeof url === 'string' && /^https?:\/\//.test(url)) shell.openExternal(url)
   })

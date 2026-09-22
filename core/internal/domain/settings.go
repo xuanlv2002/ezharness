@@ -105,7 +105,7 @@ type Settings struct {
 	WorkDir        string   `json:"workDir"`        // 工作目录（terminal 默认目录；空=数据目录下 workspace/，相对=相对数据目录）
 	CloseToTray    bool     `json:"closeToTray"`    // 桌面端点关闭 = 最小化到托盘（关窗时实时读取，即改即生效）
 	DisabledSkills []string `json:"disabledSkills"` // 已禁用 skill 的目录名（load_skill/状态面板实时读取，system 清单下个 session 生效）
-	MaxIterations  int      `json:"maxIterations"`  // 单轮对话的最大模型迭代次数（0 = 默认 12；随 Reassemble 生效）
+	MaxIterations  int      `json:"maxIterations"`  // 单轮对话的最大模型迭代次数（0 = 默认 64，上限 128；随 Reassemble 生效）
 }
 
 /*

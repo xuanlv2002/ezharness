@@ -2,12 +2,12 @@
   import type { ToolBlockData } from '../lib/store.svelte'
 
   let { data }: { data: ToolBlockData } = $props()
-  /* null＝用户未操作：未完成（building/running）默认展开（过程可见），
-     done 默认折叠；用户点击后固定展开态 */
-  let open = $state<boolean | null>(null)
+  /* 详情一律默认折叠（头部右侧的一行摘要已够辨识）；只有用户手动点开
+     才展开。别做"执行中默认展开、完成自动折叠"——状态切换时高度
+     反复变化，配吸底就是整条时间线的滚动条抖动 */
+  let open = $state(false)
 
-  /* 当前可见性：未操作时执行中展开、完成折叠 */
-  const shown = $derived(open ?? data.state !== 'done')
+  const shown = $derived(open)
 
   function prettyArgs(raw: string): string {
     try {
@@ -59,25 +59,27 @@
     {/if}
   </button>
   {#if data.state === 'building'}
-    {#if shown && tail}
+    <div class="dwrap" class:closed={!shown || !tail}>
       <div class="detail">
         <pre class="stream">{tail}</pre>
       </div>
-    {/if}
-  {:else if shown}
-    <div class="detail">
-      {#if data.args}
-        <div class="section">
-          <span class="label">args</span>
-          <pre>{prettyArgs(data.args)}</pre>
-        </div>
-      {/if}
-      {#if data.result || data.err}
-        <div class="section">
-          <span class="label">result</span>
-          <pre class:err={!!data.err}>{data.err || data.result}</pre>
-        </div>
-      {/if}
+    </div>
+  {:else}
+    <div class="dwrap" class:closed={!shown}>
+      <div class="detail">
+        {#if data.args}
+          <div class="section">
+            <span class="label">args</span>
+            <pre>{prettyArgs(data.args)}</pre>
+          </div>
+        {/if}
+        {#if data.result || data.err}
+          <div class="section">
+            <span class="label">result</span>
+            <pre class:err={!!data.err}>{data.err || data.result}</pre>
+          </div>
+        {/if}
+      </div>
     </div>
   {/if}
 </div>
@@ -188,7 +190,7 @@
     line-height: 1.5;
     white-space: pre-wrap;
     word-break: break-all;
-    max-height: 140px;
+    max-height: 180px;
     overflow: hidden;
     color: var(--muted);
     mask-image: linear-gradient(to bottom, transparent, #000 28px);
@@ -206,12 +208,27 @@
     padding: 1px 6px;
     border-radius: 4px;
   }
+  /* 展开/折叠：max-height 过渡 + overflow hidden 硬裁剪（折叠态 0 高度，
+     绝无内容泄漏——grid-rows 0fr 技巧在本 Chromium 上裁不住，出过
+     "折叠了参数还露出来"的事故）。高度骤变曾是吸底抖动主源，过渡
+     让吸底跟随平滑 */
+  .dwrap {
+    overflow: hidden;
+    max-height: 520px;
+    transition: max-height 0.2s var(--ease-out);
+  }
+  .dwrap.closed {
+    max-height: 0;
+  }
   .detail {
     border-top: 1px solid var(--line);
     padding: 10px 12px;
     display: flex;
     flex-direction: column;
     gap: 8px;
+  }
+  .dwrap.closed .detail {
+    border-top-color: transparent;
   }
   .section .label {
     display: block;
@@ -221,14 +238,17 @@
     color: var(--faint);
     margin-bottom: 4px;
   }
+  /* building 尾预览与 running 全文的可见高度上限统一：阶段切换
+     （tail→pretty）不再跳高，配 max-height 过渡进一步抹平 */
   pre {
     font-family: var(--font-mono);
     font-size: 12px;
     line-height: 1.55;
     white-space: pre-wrap;
     word-break: break-all;
-    max-height: 280px;
+    max-height: 180px;
     overflow-y: auto;
+    transition: max-height 0.18s var(--ease-out);
   }
   pre.err {
     color: var(--fg);

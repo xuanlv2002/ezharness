@@ -252,17 +252,23 @@ func (s *BrowserService) ScrollBrowser(ctx context.Context, tabID, direction str
 	return reply.Result, nil
 }
 
-/* ReadBrowser 读页面内容:mode=text 返回正文,mode=links 返回链接清单。 */
-func (s *BrowserService) ReadBrowser(ctx context.Context, tabID, mode string, chars int) (string, error) {
+/* ReadBrowser 读页面内容:mode=text 返回正文,mode=links 返回链接清单。
+timeoutMs 透传 desktop——页面仍在加载时先等收尾(默认 8000ms)再读,
+免读到半页;桥等待上限随之放宽(超时+10s 余量给正文提取)。 */
+func (s *BrowserService) ReadBrowser(ctx context.Context, tabID, mode string, chars, timeoutMs int) (string, error) {
 	if chars <= 0 {
 		chars = 4000
 	}
 	if chars > 20000 {
 		chars = 20000
 	}
+	timeout := 30 * time.Second
+	if timeoutMs > 0 {
+		timeout = time.Duration(timeoutMs+10000) * time.Millisecond
+	}
 	reply, err := s.call(ctx, "read", map[string]any{
-		"tabId": tabID, "mode": mode, "chars": chars,
-	}, 30*time.Second)
+		"tabId": tabID, "mode": mode, "chars": chars, "timeoutMs": timeoutMs,
+	}, timeout)
 	if err != nil {
 		return "", err
 	}
@@ -275,10 +281,16 @@ browser/<tabID>-<时间戳>.png(每张一个新文件——图片按路径进上
 时间线,同名覆写会让历史截图全被最后一张顶掉)。主模型有视觉时返回
 image_loaded 标记(由 filetools 转持久化图片消息),无视觉返回路径文字引导。
 */
-func (s *BrowserService) ScreenshotBrowser(ctx context.Context, tabID string, fullPage bool) (string, error) {
+func (s *BrowserService) ScreenshotBrowser(ctx context.Context, tabID string, fullPage bool, timeoutMs int) (string, error) {
+	/* timeoutMs 透传:desktop 先等加载收尾(默认 10000ms)再截,消除
+	"返回即截图"撞首帧未合成的竞态;桥上限 = 等待 + 截图余量 */
+	timeout := 30 * time.Second
+	if timeoutMs > 0 {
+		timeout = time.Duration(timeoutMs+20000) * time.Millisecond
+	}
 	reply, err := s.call(ctx, "screenshot", map[string]any{
-		"tabId": tabID, "fullPage": fullPage,
-	}, 30*time.Second)
+		"tabId": tabID, "fullPage": fullPage, "timeoutMs": timeoutMs,
+	}, timeout)
 	if err != nil {
 		return "", err
 	}

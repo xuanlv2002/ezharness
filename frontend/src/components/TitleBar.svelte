@@ -40,6 +40,12 @@
     ezWindow()?.closeDecision(trayChoice, trayChoice)
   }
 
+  /* 取消：通知壳恢复被确认框临时藏起的浏览器视图 */
+  function cancelClose() {
+    closePrompt = false
+    ezWindow()?.closeCanceled?.()
+  }
+
   /* 最大化状态跟随：拖拽还原/系统快捷键改变窗口态时同步按钮图标 */
   $effect(() => {
     if (!desktop) return
@@ -81,7 +87,7 @@
   </div>
 
   {#if closePrompt}
-    <div class="close-mask" role="presentation" onclick={() => (closePrompt = false)}>
+    <div class="close-mask" role="presentation" onclick={() => cancelClose()}>
       <div class="close-dialog" role="dialog" aria-modal="true" onclick={(e) => e.stopPropagation()}>
         <p class="close-q">关闭 ezharness？</p>
         <label class="close-opt">
@@ -89,7 +95,7 @@
           最小化到托盘（以后不再询问）
         </label>
         <div class="close-btns">
-          <button class="cb cancel" onclick={() => (closePrompt = false)}>取消</button>
+          <button class="cb cancel" onclick={() => cancelClose()}>取消</button>
           <button class="cb ok" onclick={() => decideClose()}>关闭</button>
         </div>
       </div>

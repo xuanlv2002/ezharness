@@ -96,7 +96,6 @@
           const desktopWindow = (window as any).ez?.window
           if (desktopWindow) desktopWindow.openApp(r.path, r.title)
           else window.open(r.path, '_blank')
-          store.lastStatus = `正在打开快应用 ${id}`
         })
         .catch((err: unknown) => (store.lastStatus = `打开快应用失败：${(err as Error).message}`))
     } else if (kind === 'file') {
@@ -108,6 +107,11 @@
 
   /* 模型输出渲染 markdown（XSS 消毒）；mermaid 在流结束后由 effect 替换渲染 */
   const mdHtml = $derived(text ? DOMPurify.sanitize(marked.parse(text) as string) : '')
+
+  /* 流式期思考只渲染尾部：超长思考逐 chunk 全文重排会卡死页面
+     （每 chunk O(n)，累计 O(n²)）；结束后恢复全文 */
+  const reasoningView = $derived(streaming ? reasoning.slice(-1200) : reasoning)
+  const reasoningClipped = $derived(streaming && reasoning.length > 1200)
 
   let bodyEl: HTMLDivElement | undefined = $state()
   let mmdSeq = 0
@@ -214,7 +218,8 @@
       {#if reasoning}
         <details class="reasoning">
           <summary>思考过程</summary>
-          <div class="reasoning-text">{reasoning}</div>
+          {#if reasoningClipped}<div class="rclip">…（流式中，前文暂折叠，结束后展开全文）</div>{/if}
+          <div class="reasoning-text">{reasoningView}</div>
         </details>
       {/if}
       {#if text}
@@ -416,6 +421,11 @@
     user-select: none;
     font-size: 12px;
     letter-spacing: 0.02em;
+  }
+  .rclip {
+    margin-top: 5px;
+    font-size: 11px;
+    color: var(--faint);
   }
   .reasoning-text {
     white-space: pre-wrap;

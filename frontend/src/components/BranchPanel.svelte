@@ -146,7 +146,8 @@
     height: 36px;
     border: 1px solid var(--line);
     border-radius: 10px;
-    background: var(--bg);
+    background: var(--glass);
+    backdrop-filter: var(--glass-blur);
     color: var(--muted);
     cursor: pointer;
     transition: color var(--dur-fast) var(--ease-out), border-color var(--dur-fast) var(--ease-out);

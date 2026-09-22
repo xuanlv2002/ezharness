@@ -93,9 +93,12 @@ func buildProvider(m *domain.ModelEntry) provider.ModelProvider {
 /* Assemble 按配置装配 agent 并注入会话（主模型取 models 四槽 main 启用条目）。 */
 func (a *AgentService) Assemble(s *domain.Session, st domain.Settings) {
 	ctx := context.Background()
-	maxIters := 12 // 单轮最大模型迭代次数（设置页可配；0/负数回落默认 12）
+	maxIters := 64 // 单轮最大模型迭代次数（设置页可配；0/负数回落默认 64，上限 128）
 	if st.MaxIterations > 0 {
 		maxIters = st.MaxIterations
+	}
+	if maxIters > 128 {
+		maxIters = 128
 	}
 
 	main := a.Hub.ModelsSnapshot().ActiveMain()
@@ -163,8 +166,8 @@ func (a *AgentService) Assemble(s *domain.Session, st domain.Settings) {
 	)
 	traceHook := hooks.NewTrace(s.Fsys, s.Sess, func() string { return main.Name })
 	trimHook := hooks.NewTrim(provider, traceHook,
-		window*st.TrimPercent/100, // 水位=窗口百分比，随模型自适应（换模型 Reassemble 重算）
-		window,                    // 模型窗口（整理提示展示水位比例用）
+		window*st.TrimPercent/100,             // 水位=窗口百分比，随模型自适应（换模型 Reassemble 重算）
+		window,                                // 模型窗口（整理提示展示水位比例用）
 		s.Fsys, func() string { return s.ID }, // 进度档案 progress.md 落盘
 	)
 
@@ -214,7 +217,7 @@ func (a *AgentService) Assemble(s *domain.Session, st domain.Settings) {
 		core.WithToolWarp(toolarg.Warp(s.Fsys), limit.Warp(4), safetool.Warp()),
 		core.WithTools(agentTools...),
 		core.WithHooks(
-			sys, // startHooks 首位：system base 唯一来源；后续 hook 在其 OnStart 里追加 tool-guide 说明段
+			sys,       // startHooks 首位：system base 唯一来源；后续 hook 在其 OnStart 里追加 tool-guide 说明段
 			traceHook, // toolStart 首位：task/ask_user/load_skill 等 OnToolStart 内干活的 hook 返回 Skip 会短路后续 hook，观测层必须排在它们前面才有 span
 			contextfix.New(),
 			filetools.New(s.Fsys, filetools.WithWorkDir(ResolveWorkDir(st.WorkDir)), filetools.WithImageHandler(readImage)),
@@ -227,8 +230,8 @@ func (a *AgentService) Assemble(s *domain.Session, st domain.Settings) {
 			NewMcpHook(s.Fsys, a.McpRouter),
 			offload.New(s.Fsys, offload.WithSkip(askuser.ToolName, task.ToolName, skilltool.ToolName), offload.WithReplayTool("read_file")), // load_skill 返回的指令集是后续行动依据,卸载再回读纯浪费
 			hooks.NewGuard(s.Fsys, window), // 窗口余量兜底：offload 豁免名单（read_file 等）的大结果放不下时卸载，须在 offload 之后
-			trimHook, // OnLoop 回边水位整理（就地截断，立即生效），OnToolStart 拦模型主动整理
-			s.Sess,   // 最后落盘
+			trimHook,                       // OnLoop 回边水位整理（就地截断，立即生效），OnToolStart 拦模型主动整理
+			s.Sess,                         // 最后落盘
 		),
 		core.WithLoopParams(core.LoopParams{MaxIterations: maxIters}),
 		core.WithStreaming(true),
@@ -525,10 +528,16 @@ func buildSystemBase(ctx context.Context, st domain.Settings, fsys osfs.OS) stri
 		for _, l := range lines {
 			b.WriteString("\n" + l)
 		}
+		b.WriteString("\n（HTTP 直调：core 把上面的 MCP 服务整体暴露为本机 API，不经你中转，页面、脚本、外部程序都可调——\n" +
+			"POST /api/mcp/call，JSON 载荷 {\"server\":\"服务名\",\"tool\":\"工具名\",\"args\":{参数}}，" +
+			"成功 {\"result\":\"文本\"}、失败 {\"error\":\"原因\"}；GET /api/mcp 返回服务清单。\n" +
+			"工具名与参数以清单/工具 schema 为准，不要臆造（例：time 服务的工具是 getCurrentTime，不是 timeNow）。\n" +
+			"同源页面（save_app 快应用）用相对路径 fetch('/api/mcp/call', {method: 'POST', " +
+			"headers: {'Content-Type': 'application/json'}, body: JSON.stringify({server: '服务名', tool: '工具名', args: {}})})，" +
+			"即可把 MCP 工具当作页面后端。页面里调用遵守实战守则（都是真实踩过的坑）：\n" +
+			"重点:result 是字符串化文本，里面可能还内嵌一层 JSON——先 r.text() 再层层 JSON.parse 直到解析成对象（deepParse）")
 		if base := localAPIBase(); base != "" {
-			b.WriteString("\n（本机 HTTP 直调：" + base + "/api/mcp/call，POST JSON {\"server\":\"服务名\",\"tool\":\"工具名\",\"args\":{参数}}，" +
-				"返回 {\"result\":\"文本\"}；" + base + "/api/mcp GET 返回服务清单。构建可观测页面、仪表盘等快应用时，" +
-				"可把 MCP 工具当作本地接口直接 fetch 调用，无需经你中转）")
+			b.WriteString("\n（非同源客户端用完整地址：" + base + "/api/mcp/call（调用）/ " + base + "/api/mcp（清单））")
 		}
 		b.WriteString("\n</mcp>")
 	}

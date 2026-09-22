@@ -33,6 +33,21 @@
     activeUid = cur
   }
 
+  /* ── 吸底（stick）机制 ──
+  selfScroll：程序设 scrollTop 引发的 scroll 事件不算用户滚动（否则
+  吸底回弹会被误判成"用户滚回底部"又把 stick 置真）。
+  lastUserScrollAt：用户滚动（滚动条拖动/触摸/wheel）后 300ms 内暂停
+  跟随——流式 tick 不再把刚滚上去的视口拽回底部，脱离吸附不再费劲。
+  滞回：<30px 恢复跟随，>120px 脱离，中间保持，杜绝边界抖动。 */
+  let selfScroll = false
+  let lastUserScrollAt = 0
+
+  function follow() {
+    if (!el) return
+    selfScroll = true
+    el.scrollTop = el.scrollHeight
+  }
+
   function jumpTo(uid: number) {
     if (!el) return
     const node = el.querySelector<HTMLElement>(`[data-uid="${uid}"]`)
@@ -111,7 +126,7 @@
      未达阈值停顿弹回；达阈值进入 armed，停止滚动 450ms 加载 */
   function onWheel(e: WheelEvent) {
     if (!el) return
-    stick = el.scrollHeight - el.scrollTop - el.clientHeight < 120
+    if (e.deltaY < 0) stick = false /* 向上滚 = 明确脱离跟随：别等距离阈值，下一个流式 tick 就不该再被拉回底部 */
     if (e.deltaY < 0 && atTop()) {
       if (!store.hasPrev || loading) {
         if (!store.hasPrev) hintNoMore()
@@ -184,11 +199,22 @@
 
   function onScroll() {
     if (!el) return
-    stick = el.scrollHeight - el.scrollTop - el.clientHeight < 120
+    if (selfScroll) {
+      /* 程序滚动（吸底回弹）：不动 stick，也别记成用户滚动 */
+      selfScroll = false
+      updateActive()
+      return
+    }
+    lastUserScrollAt = Date.now()
+    const dist = el.scrollHeight - el.scrollTop - el.clientHeight
+    if (dist < 30) stick = true
+    else if (dist > 120) stick = false
     updateActive()
   }
 
-  /* 模型调用中但正文尚未流出（首 token 前 / 纯工具调用构造期）→ 思考指示 */
+  /* 模型调用中但正文尚未流出（首 token 前 / 工具参数流式构造期）→ 思考
+  指示。building 工具的参数就是模型流式输出——也算"输出中"，否则
+  tool_chunk→tool_start 间指示条会显隐跳变（配合吸底就是闪动） */
   const thinking = $derived.by(() => {
     if (!store.modelActive) return false
     for (let i = store.blocks.length - 1; i >= 0; i--) {
@@ -197,15 +223,17 @@
         return !(b.streaming && (b.text || b.reasoning))
       }
       if (b.kind === 'user') return true
-      if (b.kind === 'tool' && b.state === 'building') return false
+      if (b.kind === 'tool' && b.state === 'building') return true
     }
     return true
   })
 
   $effect(() => {
     void store.tick
-    if (el && stick && !pull) el.scrollTop = el.scrollHeight
-    updateActive()
+    /* 用户刚滚动过就别抢滚动位置（300ms 冷却）；updateActive 只在
+    scroll 事件里跑——每 tick 遍历全部块节点量矩形会强制布局，
+    流式高频 tick 下整页卡死的主凶之一 */
+    if (el && stick && !pull && Date.now() - lastUserScrollAt > 300) follow()
   })
 </script>
 
@@ -249,7 +277,7 @@
         </div>
       {:else if seg.b.kind === 'assistant'}
         {@const ab = seg.b}
-        <div class:reveal={store.batchIds.has(ab.uid)}>
+        <div class:reveal={store.batchIds.has(ab.uid)} data-uid={ab.uid}>
           <MessageItem
             text={ab.text}
             reasoning={ab.reasoning}

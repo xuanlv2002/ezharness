@@ -1,15 +1,19 @@
 :root {
-  --bg: #ffffff;
-  --bg-soft: #fafafa;
-  --bg-invert: #0a0a0a;
-  --fg: #0a0a0a;
-  --fg-invert: #ffffff;
-  --muted: #666666;
-  --faint: #a3a3a3;
-  --line: #e5e5e5;
-  --line-strong: #0a0a0a;
+  --bg: #fbfcfe;
+  --bg-soft: #f3f5f9;
+  --bg-invert: #2e3138;
+  --fg: #26272d;
+  --fg-invert: #f7f8fa;
+  --muted: #6a7280;
+  --faint: #a6acba;
+  --line: #e8eaf1;
+  --line-strong: #43474f;
   --accent: #2563eb;
   --accent-soft: #dbeafe;
+
+  /* 玻璃面板：悬浮卡片/输入框的柔滑底（backdrop-filter 需与半透明底同用） */
+  --glass: color-mix(in srgb, var(--bg) 72%, transparent);
+  --glass-blur: blur(18px) saturate(1.4);
 
   --font-ui: 'Inter', system-ui, -apple-system, 'Segoe UI', 'Microsoft YaHei', sans-serif;
   --font-mono: ui-monospace, 'Cascadia Code', 'JetBrains Mono', Consolas, monospace;
@@ -42,8 +46,8 @@ body {
 }
 
 ::selection {
-  background: var(--fg);
-  color: var(--bg);
+  background: color-mix(in srgb, var(--accent) 20%, transparent);
+  color: inherit;
 }
 
 button {
@@ -96,4 +100,16 @@ button {
 
 .enter-float {
   animation: float-in var(--dur-fast) var(--ease-out) both;
+}
+
+/* ── 页面内查找高亮（FindBar 自绘，跨组件全局类）：黄底所有命中，
+当前项橙底深字 ── */
+.ezfh {
+  background: rgb(255 213 79 / 55%);
+  border-radius: 2px;
+  color: inherit;
+}
+.ezfh-cur {
+  background: #ff9632;
+  color: #1c1c1c;
 }

@@ -29,6 +29,14 @@
   let message = $state('')
   let adding = $state<SlotKey | null>(null)
   let draft = $state({ name: '', baseUrl: '', apiKey: '', contextWindow: 128000, protocol: 'openai', vision: false, pairs: [] as HeaderPair[] })
+
+  /* 上下文窗口快捷档（与现有 1M=1024000 的千进口径一致） */
+  const CTX_PRESETS = [
+    { label: '128K', v: 128000 },
+    { label: '256K', v: 256000 },
+    { label: '512K', v: 512000 },
+    { label: '1M', v: 1024000 },
+  ]
   let editing = $state<{ slot: SlotKey; idx: number } | null>(null)
   let editDraft = $state({ name: '', baseUrl: '', apiKey: '', contextWindow: 128000, protocol: 'openai', vision: false, pairs: [] as HeaderPair[] })
 
@@ -208,6 +216,12 @@
                   <input type="text" placeholder="API 端点" bind:value={editDraft.baseUrl} />
                   <input type="password" placeholder="API Key" bind:value={editDraft.apiKey} />
                   <input type="number" placeholder="上下文窗口（tokens）" bind:value={editDraft.contextWindow} title="上下文窗口（tokens），水位与压缩按此计算；0 表示未知（按 128k 兜底）" />
+                  <div class="ctx-quick">
+                    <span class="cq-label">快捷</span>
+                    {#each CTX_PRESETS as p (p.v)}
+                      <button type="button" class:active={Number(editDraft.contextWindow) === p.v} onclick={() => (editDraft.contextWindow = p.v)}>{p.label}</button>
+                    {/each}
+                  </div>
                   <label class="vision-ck" title="勾选表示模型支持多模态视觉输入（可发图片）；未勾选时带图请求会自动省略图片，防止不支持视觉的模型报错卡死会话">
                     <input type="checkbox" bind:checked={editDraft.vision} />
                     <span>支持视觉（图片输入）</span>
@@ -246,6 +260,12 @@
               <input type="text" placeholder={defaultBase()} bind:value={draft.baseUrl} />
               <input type="password" placeholder="API Key" bind:value={draft.apiKey} />
               <input type="number" placeholder="上下文窗口（tokens）" bind:value={draft.contextWindow} title="上下文窗口（tokens），水位与压缩按此计算；0 表示未知（按 128k 兜底）" />
+              <div class="ctx-quick">
+                <span class="cq-label">快捷</span>
+                {#each CTX_PRESETS as p (p.v)}
+                  <button type="button" class:active={Number(draft.contextWindow) === p.v} onclick={() => (draft.contextWindow = p.v)}>{p.label}</button>
+                {/each}
+              </div>
               <label class="vision-ck" title="勾选表示模型支持多模态视觉输入（可发图片）；未勾选时带图请求会自动省略图片，防止不支持视觉的模型报错卡死会话">
                 <input type="checkbox" bind:checked={draft.vision} />
                 <span>支持视觉（图片输入）</span>
@@ -509,6 +529,39 @@
     color: var(--accent);
     font-size: 11.5px;
     padding: 2px 0;
+  }
+  /* 上下文窗口快捷档：小 chip 一排，当前值高亮 */
+  .ctx-quick {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .cq-label {
+    font-size: 11px;
+    color: var(--faint);
+  }
+  .ctx-quick button {
+    border: 1px solid var(--line);
+    background: transparent;
+    color: var(--muted);
+    font-size: 11px;
+    font-family: var(--font-mono);
+    padding: 2px 10px;
+    border-radius: 999px;
+    cursor: pointer;
+    transition:
+      background var(--dur-fast) var(--ease-out),
+      color var(--dur-fast) var(--ease-out),
+      border-color var(--dur-fast) var(--ease-out);
+  }
+  .ctx-quick button:hover {
+    background: var(--bg-soft);
+    color: var(--fg);
+  }
+  .ctx-quick button.active {
+    border-color: var(--accent);
+    color: var(--accent);
+    background: color-mix(in srgb, var(--accent) 8%, transparent);
   }
   .add-actions {
     display: flex;

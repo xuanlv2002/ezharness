@@ -1,8 +1,7 @@
 # 代办事项
 
 
-
-## 6. 系统提示词重点优化(更新 重点/非必要/语法糖等) 【done】
+## mcpRouter 转api调用 系统提示词补充
 ## 8. tmp文件夹乱用
 ## 1. 快应用优化
 ## 2. 知识库开发
@@ -11,7 +10,23 @@
 ## 3. mcp 能力优化
 ## 4. 默认携带skill注入
 
-# 测试:
+# 测试:          
+  6. 系统提示词重点优化(更新 重点/非必要/语法糖等) 【done】
+
+  1.1 柔和性 — app.css:1 调色板整体柔化：纯黑文字→软墨
+  #26272d、纯白底→微冷白、黑色按钮/气泡→炭灰、聚焦黑边→灰；选中态改蓝色淡染。新增 --glass/--glass-blur 玻璃    
+  token,状态卡/通知栏/分支钮/分身抽屉/工具入口钮/输入框全部磨砂玻璃化(悬浮卡片覆盖滚动内容处有真实雾化效果)。
+                                                                                                               
+  1.2 抽屉关闭键 — WorkspaceDrawer.svelte 头部在“弹出窗口”钮旁新增 ✕ 收起钮。                                  
+                       
+  1.3 仅创建类操作自动开抽屉 — store.svelte.ts 的 autoOpenDrawers 移除 term_send(复用已有终端不再弹)，保留     
+  term_start(新终端)与 browser_tab:open(新标签)；审批通过路径同步收敛。
+                            
+  1.4 移除提示 — MessageItem.svelte 点快应用后不再写 lastStatus(右下角“正在打开快应用 xxx”消失)，失败提示保留。
+                                                                                                               
+  已按 dev.bat 链完成：vite build ✅ → 拷贝 core/web/dist ✅ → go build                                        
+  ✅(bin/ezharness-core.exe)。视觉风格建议重启应用实际过目，色值不合口味可再微调。
+
  ① system prompt 重写(新 session 生效)                                                                                   
   <workspace> 9 条路径罗列 → 3 个可写位 + 行为规则；新增 <action> 行动准则、<output> 输出规范(<$supper_url>
   正误示例、<@toolArg>);<mcp> 段加本机直调端点；人设加总纲句。                                                            

@@ -34,10 +34,10 @@ type BrowserIO interface {
 	PressBrowserKey(ctx context.Context, tabID, combo string) (string, error)
 	/* ScrollBrowser 滚动(up|down) */
 	ScrollBrowser(ctx context.Context, tabID, direction string, amountPx int) (string, error)
-	/* ReadBrowser 读正文/链接清单 */
-	ReadBrowser(ctx context.Context, tabID, mode string, chars int) (string, error)
-	/* ScreenshotBrowser 截图(落盘+image_loaded 标记) */
-	ScreenshotBrowser(ctx context.Context, tabID string, fullPage bool) (string, error)
+	/* ReadBrowser 读正文/链接清单(timeoutMs=页面仍在加载时的等待上限) */
+	ReadBrowser(ctx context.Context, tabID, mode string, chars, timeoutMs int) (string, error)
+	/* ScreenshotBrowser 截图(落盘+image_loaded 标记;timeoutMs=等首帧上限) */
+	ScreenshotBrowser(ctx context.Context, tabID string, fullPage bool, timeoutMs int) (string, error)
 	/* CloseBrowserTab 关闭标签,返回 {"id":..,"closed":true} */
 	CloseBrowserTab(ctx context.Context, tabID string) (string, error)
 	/* ListBrowserTabsJSON 标签清单(JSON 数组,条目含 id/name/desc/origin/url/title/loading/active) */
@@ -71,9 +71,10 @@ type browserActionArgs struct {
 }
 
 type browserReadArgs struct {
-	TabID string `json:"tabId" desc:"目标标签 id(必填;browser_tab 的 list 可查)"`
-	Mode  string `json:"mode,omitempty" desc:"text=页面正文(默认);links=链接清单(文字→地址);screenshot=视口截图;full_page=整页截图"`
-	Chars int    `json:"chars,omitempty" desc:"text/links:返回字符数上限,默认 4000,上限 20000"`
+	TabID     string `json:"tabId" desc:"目标标签 id(必填;browser_tab 的 list 可查)"`
+	Mode      string `json:"mode,omitempty" desc:"text=页面正文(默认);links=链接清单(文字→地址);screenshot=视口截图;full_page=整页截图"`
+	Chars     int    `json:"chars,omitempty" desc:"text/links:返回字符数上限,默认 4000,上限 20000"`
+	TimeoutMs int    `json:"timeoutMs,omitempty" desc:"页面仍在加载时的等待上限毫秒,默认 8000(截图 10000);慢页可调大"`
 }
 
 /* SharedBrowser 构造浏览器三工具(b 为 nil 返回 nil,测试装配可不注入)。 */
@@ -131,11 +132,11 @@ func SharedBrowser(b BrowserIO) []types.Tool {
 					if mode == "" {
 						mode = "text"
 					}
-					return b.ReadBrowser(ctx, in.TabID, mode, in.Chars)
+					return b.ReadBrowser(ctx, in.TabID, mode, in.Chars, in.TimeoutMs)
 				case "screenshot":
-					return b.ScreenshotBrowser(ctx, in.TabID, false)
+					return b.ScreenshotBrowser(ctx, in.TabID, false, in.TimeoutMs)
 				case "full_page":
-					return b.ScreenshotBrowser(ctx, in.TabID, true)
+					return b.ScreenshotBrowser(ctx, in.TabID, true, in.TimeoutMs)
 				}
 				return "", fmt.Errorf("未知 mode %q(text/links/screenshot/full_page)", in.Mode)
 			}),
