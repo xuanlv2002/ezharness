@@ -111,7 +111,7 @@
      未达阈值停顿弹回；达阈值进入 armed，停止滚动 450ms 加载 */
   function onWheel(e: WheelEvent) {
     if (!el) return
-    stick = el.scrollHeight - el.scrollTop - el.clientHeight < 120
+    if (e.deltaY < 0) stick = false /* 向上滚 = 明确脱离跟随：别等距离阈值，下一个流式 tick 就不该再被拉回底部 */
     if (e.deltaY < 0 && atTop()) {
       if (!store.hasPrev || loading) {
         if (!store.hasPrev) hintNoMore()
@@ -184,11 +184,17 @@
 
   function onScroll() {
     if (!el) return
-    stick = el.scrollHeight - el.scrollTop - el.clientHeight < 120
+    /* 吸底滞回：距底 <40 恢复跟随，>80 脱离，中间保持原状——单阈值
+    会在边界随流式内容增高来回翻转（滚动条抖动） */
+    const dist = el.scrollHeight - el.scrollTop - el.clientHeight
+    if (dist < 40) stick = true
+    else if (dist > 80) stick = false
     updateActive()
   }
 
-  /* 模型调用中但正文尚未流出（首 token 前 / 纯工具调用构造期）→ 思考指示 */
+  /* 模型调用中但正文尚未流出（首 token 前 / 工具参数流式构造期）→ 思考
+  指示。building 工具的参数就是模型流式输出——也算"输出中"，否则
+  tool_chunk→tool_start 间指示条会显隐跳变（配合吸底就是闪动） */
   const thinking = $derived.by(() => {
     if (!store.modelActive) return false
     for (let i = store.blocks.length - 1; i >= 0; i--) {
@@ -197,7 +203,7 @@
         return !(b.streaming && (b.text || b.reasoning))
       }
       if (b.kind === 'user') return true
-      if (b.kind === 'tool' && b.state === 'building') return false
+      if (b.kind === 'tool' && b.state === 'building') return true
     }
     return true
   })
