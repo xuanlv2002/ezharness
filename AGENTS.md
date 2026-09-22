@@ -256,3 +256,18 @@ warp 是 ezloop 的**纵向**装饰器（与横向的 hook 并列），包住单
 - ezharness `sessionstore.OnEnd`：marshal 失败时 `sanitizeMsgArgs` 就地清洗重试一次（顺带治好内存里的历史——下次请求不再带毒）
 
 **教训**：`json.RawMessage` 是"信任边界"字段——凡是**逐块拼接**出来再转 `RawMessage` 的地方（流式增量、外部拼接），必须过 `json.Valid`；落盘失败的错误只进 `Metadata` 等于静默，兜底路径要保证"状态即消息"不破。
+
+### 5.2 浏览器桥三连败：tab 记录缺 id + 加载完成信号竞态（2026-09）
+
+**现象**：同一标签新建后连续操作——① open 带_url 后立即 screenshot 报"浏览器操作超时(30s)"；② 再 screenshot 报 `target closed while handling command`；③ navigate 实际成功却回 `note:"标签已不存在"`。
+
+**根因链**（desktop `browser/index.js`）：
+- `createTab` 的 tab 记录**没存 `id`** → 各执行器 `tabState(tab.id)` 传 undefined → 永远命中 `{note:'标签已不存在'}` 分支（id 还被 JSON 丢掉，模型从此失去标签引用）——③ 的误报与② 的"target 被重建"错觉都源于此
+- `start/navigate` 里 `loadURL` 不 await，`waitLoad` 又在 `!isLoading()` 时立即返回——loadURL 尚未置位 loading，竞态下"已加载"是假的，紧接着的截图撞在首帧未合成上，CDP `Page.captureScreenshot` 无限挂 → 桥 30s 超时（①）
+- CDP 在 target 换代（导航提交/渲染进程重建瞬间）报 target closed 类错误，与页面挂了无法区分，无重试（②）
+
+**防线（改动时别拆）**：
+- tab 记录必须带 `id`（`tabState` 的"标签已不存在"只剩操作中途被真关一条真路径）
+- 导航等待只走 `loadSettled`：`loadURL()` 返回的 promise（页面收尾落定）与超时竞速；**别**再写"先 loadURL 再查 isLoading"的等待
+- `read/screenshot` 前过 `waitIdle`（轮询 isLoading，封顶放行——降级语义，不报错）；`browser_read` 有显式 `timeoutMs` 透传
+- `cdpScreenshot` 20s 护栏 + target/session 类错误按当前 target 重挂重试一次；桥等待上限 = 等待 + 余量（core 侧 `timeoutMs+N` 秒），别让 desktop 内部等待吃光桥超时

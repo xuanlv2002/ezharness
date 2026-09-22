@@ -195,7 +195,7 @@ function createTab(name, desc, origin, startURL) {
       session: session.fromPartition('persist:ezbrowser'),
     },
   })
-  const tab = { view, name: name || id, desc: desc || '', origin, url, title: '', loading: !!startURL }
+  const tab = { id, view, name: name || id, desc: desc || '', origin, url, title: '', loading: !!startURL }
   tabs.set(id, tab)
 
   const wc = view.webContents
@@ -244,20 +244,29 @@ function closeTab(id) {
   }, 0)
 }
 
-/* waitLoad 等主帧加载完成（或超时），返回尽力而为的标题。 */
-function waitLoad(wc, timeoutMs) {
-  return new Promise((resolve) => {
-    const timer = setTimeout(() => cleanup(), timeoutMs)
-    const done = () => { cleanup(); resolve(wc.getTitle()) }
-    const cleanup = () => {
-      clearTimeout(timer)
-      wc.removeListener('did-finish-load', done)
-      wc.removeListener('did-fail-load', done)
-    }
-    wc.on('did-finish-load', done)
-    wc.on('did-fail-load', done)
-    if (!wc.isLoading()) done()
-  })
+/* loadSettled 导航并等加载收尾（did-finish/did-fail 或超时），返回尽力而为
+的标题。必须走 loadURL 返回的 promise（页面收尾时落定）：旧实现先 fire
+loadLoad 再查 isLoading()，而 loadURL 尚未把 loading 置位——竞态下
+"!isLoading" 立即成立，返回「已加载」时页面根本没开始加载，紧接着的
+截图就撞在首帧未合成上。超时/失败都照常返回（不 throw）：标签状态里
+url/title/loading 自明，调用方语义是"尽力等到稳定"。 */
+async function loadSettled(wc, url, timeoutMs) {
+  try {
+    await Promise.race([
+      wc.loadURL(url).catch(() => {}), /* 加载失败（DNS/拒绝）不算调用失败 */
+      delay(timeoutMs || 20000),
+    ])
+  } catch { /* 不会到这，兜底 */ }
+  return wc.getTitle()
+}
+
+/* waitIdle 等加载收尾（每 150ms 轮询 isLoading，封顶 capMs 后放行）——
+截图/读取在页面加载中硬上，轻则读到半页，重则首帧未合成把 CDP 拖到
+桥超时。放行而非报错：降级语义，晚到好过不到。 */
+async function waitIdle(wc, capMs) {
+  const cap = capMs > 0 ? capMs : 0
+  const start = Date.now()
+  while (wc.isLoading() && (!cap || Date.now() - start < cap)) await delay(150)
 }
 
 /* ── 执行器（browser_* 工具的直接实现） ── */
@@ -300,14 +309,24 @@ function sendKey(wc, key, modifiers) {
 
 /* screenshot 视口截图；fullPage 走 CDP captureBeyondViewport。
 抽屉收起/视图卸载时 capturePage 可能空白甚至 reject(UnknownVizError:
-视图未上屏无合成 surface)——统一优先 capturePage,空图或抛错回落 CDP。 */
+视图未上屏无合成 surface)——统一优先 capturePage,空图或抛错回落 CDP。
+CDP 在 target 换代（导航提交/渲染进程重建的瞬间）会报 target closed 类
+错误，与页面挂了无法区分——按 tabId 重挂**当前** target 重试一次再定论。 */
 async function screenshot(wc, fullPage) {
-  if (fullPage) return cdpScreenshot(wc, { captureBeyondViewport: true })
+  const params = fullPage ? { captureBeyondViewport: true } : {}
+  if (!fullPage) {
+    try {
+      const image = await wc.capturePage()
+      if (!image.isEmpty()) return image.toPNG().toString('base64')
+    } catch { /* 视图未上屏:回落 CDP */ }
+  }
   try {
-    const image = await wc.capturePage()
-    if (!image.isEmpty()) return image.toPNG().toString('base64')
-  } catch { /* 视图未上屏:回落 CDP */ }
-  return cdpScreenshot(wc, {})
+    return await cdpScreenshot(wc, params)
+  } catch (err) {
+    if (!/target|session|context/i.test(String(err?.message || err))) throw err
+    await delay(600)
+    return cdpScreenshot(wc, params)
+  }
 }
 
 const CDP_VERSION = '1.3'
@@ -315,9 +334,12 @@ async function cdpScreenshot(wc, extraParams) {
   const ours = !wc.debugger.isAttached()
   if (ours) wc.debugger.attach(CDP_VERSION)
   try {
-    const { data } = await wc.debugger.sendCommand('Page.captureScreenshot', {
-      format: 'png', ...extraParams,
-    })
+    /* 首帧迟迟不合成时 sendCommand 可能无限挂——不设护栏会把整个桥调用
+       拖到 core 侧 30s 超时，报错还是一句不痛不痒的"操作超时" */
+    const { data } = await Promise.race([
+      wc.debugger.sendCommand('Page.captureScreenshot', { format: 'png', ...extraParams }),
+      delay(20000).then(() => { throw new Error('截图超时:页面长时间未合成首帧') }),
+    ])
     return data
   } finally {
     /* 用完即摘（只摘自己挂的）：调试器长期挂着会让该标签明显变慢，
@@ -348,8 +370,7 @@ const executors = {
     const note = '已创建,后续操作用返回的 id;内嵌于工作区抽屉,用户实时共见可随时接管'
     if (!url) return { result: JSON.stringify({ ...tabState(id), note }) }
     const tab = tabs.get(id)
-    tab.view.webContents.loadURL(completeURL(url))
-    const title = await waitLoad(tab.view.webContents, timeoutMs || 20000)
+    const title = await loadSettled(tab.view.webContents, completeURL(url), timeoutMs || 20000)
     const state = tabState(id)
     if (title) state.title = title
     return { result: JSON.stringify({ ...state, note: `${note};页面已加载` }) }
@@ -357,8 +378,7 @@ const executors = {
 
   async navigate({ tabId, url, timeoutMs }) {
     const tab = tabOf(tabId)
-    tab.view.webContents.loadURL(completeURL(url))
-    const title = await waitLoad(tab.view.webContents, timeoutMs || 20000)
+    const title = await loadSettled(tab.view.webContents, completeURL(url), timeoutMs || 20000)
     const state = tabState(tab.id)
     if (title) state.title = title
     return { result: JSON.stringify(state) }
@@ -428,10 +448,11 @@ const executors = {
     return { result: JSON.stringify(tabState(tab.id)) }
   },
 
-  async read({ tabId, mode, chars }) {
+  async read({ tabId, mode, chars, timeoutMs }) {
     const tab = tabOf(tabId)
     const limit = chars > 0 ? chars : 4000
     const wc = tab.view.webContents
+    await waitIdle(wc, timeoutMs || 8000)
     let body
     if (mode === 'links') {
       body = await wc.executeJavaScript(`
@@ -454,9 +475,11 @@ const executors = {
     }
   },
 
-  async screenshot({ tabId, fullPage }) {
+  async screenshot({ tabId, fullPage, timeoutMs }) {
     const tab = tabOf(tabId)
-    const imageB64 = await screenshot(tab.view.webContents, !!fullPage)
+    const wc = tab.view.webContents
+    await waitIdle(wc, timeoutMs || 10000)
+    const imageB64 = await screenshot(wc, !!fullPage)
     return { result: JSON.stringify(tabState(tab.id)), imageB64 }
   },
 
