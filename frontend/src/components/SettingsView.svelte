@@ -29,7 +29,7 @@
   let closeToTray = $state(false)
   let savingTray = $state(false)
 
-  /* 单轮最大迭代次数（模型工具循环上限；0 = 默认 12，随 Reassemble 生效） */
+  /* 单轮最大迭代次数（模型工具循环上限；0 = 默认 64，上限 128，随 Reassemble 生效） */
   let iters = $state<number | ''>('')
   let origIters = $state<number | null>(null)
   let savingIters = $state(false)
@@ -53,8 +53,8 @@
       origWorkDir = st.workDir ?? ''
       origExtra = st.systemExtra ?? ''
       closeToTray = st.closeToTray ?? false
-      iters = st.maxIterations ?? 12
-      origIters = st.maxIterations ?? 12
+      iters = st.maxIterations ?? 64
+      origIters = st.maxIterations ?? 64
     } catch {
       /* 上下文配置加载失败不阻塞页面 */
     }
@@ -211,7 +211,7 @@
       {savingThreshold ? '保存中…' : '保存水位'}
     </button>
     <label class="field">
-      <span>单轮最大迭代次数（0 = 默认 12）</span>
+      <span>单轮最大迭代次数（0 = 默认 64，上限 128）</span>
       <input type="number" bind:value={iters} min="0" max="50" />
     </label>
     <button

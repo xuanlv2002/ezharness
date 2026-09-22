@@ -191,7 +191,7 @@ warp 是 ezloop 的**纵向**装饰器（与横向的 hook 并列），包住单
 
 **加一个新 warp**：在对应文件写 `func Warp(...) warp.ModelHandler` / `warp.ToolHandler`，然后插进 `agent_service.go:161` 的切片或 `:182` 的 `WithToolWarp(...)` 参数即可；工具 warp 不需要额外注册到工具上。
 
-注意：`core/go.mod` 里指向本地 ezloop 的 `replace` 目前**是注释状态**，实际编译用的是 module cache 里的 `ezloop@v1.3.8`；要改 ezloop 本身须先启用 replace（发布前再升版本去掉）。
+注意：`core/go.mod` 里指向本地 ezloop 的 `replace` **已启用**（`=> C:/Users/guy/Desktop/ai/ezloop`），改本地 ezloop 源码即直接生效；发布前须升 ezloop 版本并去掉 replace。
 
 ---
 
@@ -256,6 +256,8 @@ warp 是 ezloop 的**纵向**装饰器（与横向的 hook 并列），包住单
 - ezharness `sessionstore.OnEnd`：marshal 失败时 `sanitizeMsgArgs` 就地清洗重试一次（顺带治好内存里的历史——下次请求不再带毒）
 
 **教训**：`json.RawMessage` 是"信任边界"字段——凡是**逐块拼接**出来再转 `RawMessage` 的地方（流式增量、外部拼接），必须过 `json.Valid`；落盘失败的错误只进 `Metadata` 等于静默，兜底路径要保证"状态即消息"不破。
+
+**5.1 增补（2026-09-23）**：`write_file` 频繁报 `path is required` 的另一根因是 **anthropic 协议 max_tokens 上限截断**——ezloop 固定下发 16384，思考模型的 thinking 也计入输出，写大文件时参数 JSON 在流中被服务端切断 → SafeArgs 判非法包成 `_corrupted_args` → path 丢失。修复：`ezloop ext/provider/anthropic` 的 `DefaultMaxTokens` 提到 65536（BigModel/DeepSeek 兼容端已验证接受）。判别方法：看工具卡参数是否为 `{"_corrupted_args":"...\"path\":..."}`——预览里能看到 path 字样即此案。
 
 ### 5.2 浏览器桥三连败：tab 记录缺 id + 加载完成信号竞态（2026-09）
 

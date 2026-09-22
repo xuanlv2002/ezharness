@@ -134,7 +134,7 @@ export interface Settings {
   trimPercent?: number | null
   workDir?: string
   closeToTray?: boolean
-  maxIterations?: number // 单轮最大模型迭代次数（0/空 = 默认 12）
+  maxIterations?: number // 单轮最大模型迭代次数（0/空 = 默认 64，上限 128）
 }
 
 export interface ModelEntry {

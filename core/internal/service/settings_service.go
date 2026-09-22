@@ -67,8 +67,8 @@ func (s *SettingsService) Update(v SettingsView) error {
 		st.CloseToTray = *v.CloseToTray
 	}
 	if v.MaxIterations != nil {
-		if *v.MaxIterations < 0 || *v.MaxIterations > 50 {
-			return errors.New("最大迭代次数需在 0-50 之间（0 = 默认 12）")
+		if *v.MaxIterations < 0 || *v.MaxIterations > 128 {
+			return errors.New("最大迭代次数需在 0-128 之间（0 = 默认 64）")
 		}
 		st.MaxIterations = *v.MaxIterations
 	}

@@ -93,9 +93,12 @@ func buildProvider(m *domain.ModelEntry) provider.ModelProvider {
 /* Assemble 按配置装配 agent 并注入会话（主模型取 models 四槽 main 启用条目）。 */
 func (a *AgentService) Assemble(s *domain.Session, st domain.Settings) {
 	ctx := context.Background()
-	maxIters := 12 // 单轮最大模型迭代次数（设置页可配；0/负数回落默认 12）
+	maxIters := 64 // 单轮最大模型迭代次数（设置页可配；0/负数回落默认 64，上限 128）
 	if st.MaxIterations > 0 {
 		maxIters = st.MaxIterations
+	}
+	if maxIters > 128 {
+		maxIters = 128
 	}
 
 	main := a.Hub.ModelsSnapshot().ActiveMain()
