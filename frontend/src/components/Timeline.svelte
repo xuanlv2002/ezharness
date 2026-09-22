@@ -33,6 +33,21 @@
     activeUid = cur
   }
 
+  /* ── 吸底（stick）机制 ──
+  selfScroll：程序设 scrollTop 引发的 scroll 事件不算用户滚动（否则
+  吸底回弹会被误判成"用户滚回底部"又把 stick 置真）。
+  lastUserScrollAt：用户滚动（滚动条拖动/触摸/wheel）后 300ms 内暂停
+  跟随——流式 tick 不再把刚滚上去的视口拽回底部，脱离吸附不再费劲。
+  滞回：<30px 恢复跟随，>120px 脱离，中间保持，杜绝边界抖动。 */
+  let selfScroll = false
+  let lastUserScrollAt = 0
+
+  function follow() {
+    if (!el) return
+    selfScroll = true
+    el.scrollTop = el.scrollHeight
+  }
+
   function jumpTo(uid: number) {
     if (!el) return
     const node = el.querySelector<HTMLElement>(`[data-uid="${uid}"]`)
@@ -184,11 +199,16 @@
 
   function onScroll() {
     if (!el) return
-    /* 吸底滞回：距底 <40 恢复跟随，>80 脱离，中间保持原状——单阈值
-    会在边界随流式内容增高来回翻转（滚动条抖动） */
+    if (selfScroll) {
+      /* 程序滚动（吸底回弹）：不动 stick，也别记成用户滚动 */
+      selfScroll = false
+      updateActive()
+      return
+    }
+    lastUserScrollAt = Date.now()
     const dist = el.scrollHeight - el.scrollTop - el.clientHeight
-    if (dist < 40) stick = true
-    else if (dist > 80) stick = false
+    if (dist < 30) stick = true
+    else if (dist > 120) stick = false
     updateActive()
   }
 
@@ -210,8 +230,10 @@
 
   $effect(() => {
     void store.tick
-    if (el && stick && !pull) el.scrollTop = el.scrollHeight
-    updateActive()
+    /* 用户刚滚动过就别抢滚动位置（300ms 冷却）；updateActive 只在
+    scroll 事件里跑——每 tick 遍历全部块节点量矩形会强制布局，
+    流式高频 tick 下整页卡死的主凶之一 */
+    if (el && stick && !pull && Date.now() - lastUserScrollAt > 300) follow()
   })
 </script>
 

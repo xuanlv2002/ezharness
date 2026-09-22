@@ -14,6 +14,8 @@ contextBridge.exposeInMainWorld('ez', {
     closeRequest: () => ipcRenderer.invoke('ez:close-request'),
     /* 关闭框决策：tray=true 隐藏到托盘（remember 记住选择），false 整体退出 */
     closeDecision: (tray, remember) => ipcRenderer.send('ez:close-decision', tray, remember),
+    /* 取消关闭确认：恢复被确认框临时藏起的共享浏览器视图 */
+    closeCanceled: () => ipcRenderer.send('ez:close-cancel'),
     openUrl: (url) => ipcRenderer.send('ez:open-url', url),
     openApp: (url, title) => ipcRenderer.send('ez:open-app', url, title),
     /* 系统级关闭（Alt+F4/任务栏）由主进程转到前端弹框 */

@@ -598,4 +598,24 @@ function startBrowserModule({ corePort: port, getParentWindow: parent, findBrows
   connectBridge()
 }
 
-module.exports = { startBrowserModule, detachViewsFromWindow }
+/* overlayBrowser(hide)：主窗页面弹 modal（关闭确认框等）时临时藏起
+激活标签的视图——WebContentsView 是 OS 层子视图，永远浮在页面 DOM
+之上，页内 z-index 盖不住它（"弹框不在最上层"的根因）。恢复时无脑
+setVisible(true)（视图只可能因这里被藏）。 */
+let hiddenForOverlay = false
+function overlayBrowser(hide) {
+  const t = tabs.get(activeTab)
+  if (!t) return
+  if (hide) {
+    const parent = getParentWindow()
+    if (hostWindow && parent && hostWindow === parent && !parent.isDestroyed()) {
+      hiddenForOverlay = true
+      t.view.setVisible(false)
+    }
+  } else if (hiddenForOverlay) {
+    hiddenForOverlay = false
+    if (!t.view.webContents.isDestroyed()) t.view.setVisible(true)
+  }
+}
+
+module.exports = { startBrowserModule, detachViewsFromWindow, overlayBrowser }
