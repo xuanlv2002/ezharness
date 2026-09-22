@@ -528,10 +528,14 @@ func buildSystemBase(ctx context.Context, st domain.Settings, fsys osfs.OS) stri
 		for _, l := range lines {
 			b.WriteString("\n" + l)
 		}
+		b.WriteString("\n（HTTP 直调：core 把上面的 MCP 服务整体暴露为本机 API，不经你中转，页面、脚本、外部程序都可调——\n" +
+			"POST /api/mcp/call，JSON 载荷 {\"server\":\"服务名\",\"tool\":\"工具名\",\"args\":{参数}}，" +
+			"响应 {\"result\":\"文本\"}（失败 {\"error\"}）；GET /api/mcp 返回服务清单。服务名/工具名以上方清单为准。\n" +
+			"同源页面（如 save_app 快应用）直接用相对路径：fetch('/api/mcp/call', {method: 'POST', " +
+			"headers: {'Content-Type': 'application/json'}, body: JSON.stringify({server: '服务名', tool: '工具名', args: {}})})，" +
+			"即可把 MCP 工具当作页面后端。例：实时时钟快应用——setInterval 定时调 timeNow，把返回的 d.result 渲染到页面）")
 		if base := localAPIBase(); base != "" {
-			b.WriteString("\n（本机 HTTP 直调：" + base + "/api/mcp/call，POST JSON {\"server\":\"服务名\",\"tool\":\"工具名\",\"args\":{参数}}，" +
-				"返回 {\"result\":\"文本\"}；" + base + "/api/mcp GET 返回服务清单。构建可观测页面、仪表盘等快应用时，" +
-				"可把 MCP 工具当作本地接口直接 fetch 调用，无需经你中转）")
+			b.WriteString("\n（非同源客户端用完整地址：" + base + "/api/mcp/call（调用）/ " + base + "/api/mcp（清单））")
 		}
 		b.WriteString("\n</mcp>")
 	}
