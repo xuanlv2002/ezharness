@@ -2,6 +2,7 @@
   import { onMount } from 'svelte'
   import Timeline from './Timeline.svelte'
   import InputBar from './InputBar.svelte'
+  import FindBar from './FindBar.svelte'
   import StatusCard from './StatusCard.svelte'
   import NoticePanel from './NoticePanel.svelte'
   import ForkPanel from './ForkPanel.svelte'
@@ -137,6 +138,7 @@
 </script>
 
 <div class="chat" class:dragging>
+  <FindBar />
   <aside class="side-left">
     <BranchPanel />
   </aside>

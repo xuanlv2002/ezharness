@@ -249,7 +249,7 @@
         </div>
       {:else if seg.b.kind === 'assistant'}
         {@const ab = seg.b}
-        <div class:reveal={store.batchIds.has(ab.uid)}>
+        <div class:reveal={store.batchIds.has(ab.uid)} data-uid={ab.uid}>
           <MessageItem
             text={ab.text}
             reasoning={ab.reasoning}

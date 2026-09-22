@@ -60,7 +60,7 @@ tools / hooks 为领域扩展；osfs / config 为基础设施；warp 包模型�
 | `src/lib/store.svelte.ts` | 全局状态机：bootstrap、SSE 归约（`apply`）、历史重建（`buildBlocks`）、抽屉/弹窗/草稿/附件/通知。前端最核心的文件 |
 | `src/lib/term.ts` | 终端 WS 管理器：单连接多路复用（帧带 id 路由）+ 断线重连 + hello 快照 |
 | `src/lib/desktop.ts` `textfile.ts` `filePaneState.ts` | `?desktop=1` 判定 / 路径工具 / 资源页跨窗口状态胶囊 |
-| `src/components/ChatView.svelte` `Timeline.svelte` `MessageItem.svelte` `InputBar.svelte` | 对话主列：时间线按 block kind 分发、消息渲染、输入框与附件 |
+| `src/components/ChatView.svelte` `Timeline.svelte` `MessageItem.svelte` `InputBar.svelte` `FindBar.svelte` | 对话主列：时间线按 block kind 分发、消息渲染、输入框与附件；FindBar=Ctrl+F 页面内查找（**纯 DOM 自绘高亮**：TreeWalker 遍历文本节点，匹配拆分包裹 `.ezfh` span，当前项 `.ezfh-cur` 居中滚动；跳过表单/可编辑/查找栏自身子树。**别改回 Electron findInPage**——它抢文档焦点、有会话竞态、导航按钮 click 被焦点护栏吞掉，连出三次事故后废弃） |
 | `src/components/ToolBlock.svelte` `ToolGroup.svelte` `StatusCard.svelte` `StatusTagCard.svelte` `ResChangeCard.svelte` `DecisionCard.svelte` `NoticePanel.svelte` `ForkCard.svelte` `ForkPanel.svelte` `BranchPanel.svelte` | 时间线卡片族与分支/分身面板 |
 | `src/components/Sidebar.svelte` `TitleBar.svelte` `ModelsView.svelte` `MemoryView.svelte` `KnowledgeView.svelte` `ToolsView.svelte` `McpView.svelte` `SecurityView.svelte` `SettingsView.svelte` | 侧栏、标题栏与各设置页 |
 | `src/components/board/` | 工作区抽屉：`WorkspaceDrawer.svelte`（容器 + 拖拽脱离手势）、`TerminalTab.svelte`（xterm per 终端保活）、`BrowserPane.svelte`（标签条/地址栏 + 内容区 rect 上报） |

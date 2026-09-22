@@ -101,3 +101,15 @@ button {
 .enter-float {
   animation: float-in var(--dur-fast) var(--ease-out) both;
 }
+
+/* ── 页面内查找高亮（FindBar 自绘，跨组件全局类）：黄底所有命中，
+当前项橙底深字 ── */
+.ezfh {
+  background: rgb(255 213 79 / 55%);
+  border-radius: 2px;
+  color: inherit;
+}
+.ezfh-cur {
+  background: #ff9632;
+  color: #1c1c1c;
+}
