@@ -105,8 +105,9 @@
     z-index: 55;
     display: flex;
     flex-direction: column;
-    background: var(--bg);
-    border-left: 1px solid var(--line-strong);
+    background: var(--glass);
+    backdrop-filter: var(--glass-blur);
+    border-left: 1px solid var(--line);
     box-shadow: -12px 0 32px rgb(0 0 0 / 10%);
     animation: slide-in var(--dur, 0.22s) var(--ease-out, ease-out) both;
   }

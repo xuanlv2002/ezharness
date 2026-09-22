@@ -163,6 +163,11 @@
           <path d="M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5" />
         </svg>
       </button>
+      <button class="pop" onclick={() => store.closeTermDrawer()} title="收起抽屉（Esc）">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+          <path d="M6 6l12 12M18 6L6 18" />
+        </svg>
+      </button>
     </header>
     <div class="body">
       <div class="pane" class:hidden={tool !== 'term'}>

@@ -112,7 +112,8 @@
     max-height: 100%;
     overflow-y: auto;
     padding: 12px 14px;
-    background: var(--bg);
+    background: var(--glass);
+    backdrop-filter: var(--glass-blur);
     border: 1px solid var(--line);
     border-radius: 12px;
     box-shadow: 0 1px 3px rgb(0 0 0 / 4%);
@@ -127,7 +128,8 @@
     height: 38px;
     border: 1px solid var(--line);
     border-radius: 10px;
-    background: var(--bg);
+    background: var(--glass);
+    backdrop-filter: var(--glass-blur);
     cursor: pointer;
     padding: 0;
   }

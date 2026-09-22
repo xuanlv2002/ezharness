@@ -224,7 +224,7 @@
     right: -48px;
     bottom: 100%;
     height: 36px;
-    background: linear-gradient(to top, var(--bg), transparent);
+    background: linear-gradient(to top, color-mix(in srgb, var(--bg) 85%, transparent), transparent);
     pointer-events: none;
   }
   .status {
@@ -412,7 +412,8 @@
     gap: 8px;
     align-items: center;
     border: 1px solid var(--line);
-    background: var(--bg-soft);
+    background: var(--glass);
+    backdrop-filter: var(--glass-blur);
     border-radius: 16px;
     padding: 12px 12px 12px 18px;
     transition:
@@ -421,8 +422,8 @@
       background var(--dur-fast) var(--ease-out);
   }
   .bar.focused .box {
-    border-color: var(--line-strong);
-    background: var(--bg);
+    border-color: color-mix(in srgb, var(--accent) 45%, var(--line));
+    background: color-mix(in srgb, var(--bg) 88%, transparent);
     box-shadow: 0 2px 12px rgb(0 0 0 / 6%);
   }
   textarea {

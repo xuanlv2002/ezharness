@@ -293,7 +293,8 @@
     width: 34px;
     height: 34px;
     border: 1px solid var(--line);
-    background: var(--bg);
+    background: var(--glass);
+    backdrop-filter: var(--glass-blur);
     color: var(--muted);
     border-radius: 10px;
     box-shadow: 0 4px 16px rgb(0 0 0 / 8%);
@@ -336,7 +337,8 @@
     font-size: 14px;
     font-weight: 550;
     color: var(--accent);
-    background: var(--bg);
+    background: var(--glass);
+    backdrop-filter: var(--glass-blur);
     border: 1px solid var(--accent-soft);
     border-radius: 12px;
     padding: 12px 22px;
