@@ -12,6 +12,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -72,6 +73,9 @@ func ArchiveSession(ctx context.Context, p provider.ModelProvider, fsys fs.FileS
 	}
 
 	prevPath := SessionsDir + "/" + oldID
+	if abs, aerr := filepath.Abs(prevPath); aerr == nil { // 给模型看的路径一律绝对
+		prevPath = filepath.ToSlash(abs)
+	}
 	base := ""
 	if rebuildBase != nil {
 		base = rebuildBase()
@@ -79,8 +83,8 @@ func ArchiveSession(ctx context.Context, p provider.ModelProvider, fsys fs.FileS
 		base = b
 	}
 	summaryBlock := "<compact-summary>\n上一会话已归档：原始记录在 " + prevPath +
-		"（session.json 可读取全文）；值得长期保留的用户信息与工作习惯已沉淀进 memory/longterm/" +
-		"（user.md/soul.md，随上下文常驻），项目记忆在 project-<名>.md（索引见 project.md）。\n" +
+		"/session.json（可读取全文）；值得长期保留的用户信息与工作习惯已沉淀进长期记忆" +
+		"（user.md/soul.md 随上下文常驻，见 <memory> 段；项目记忆索引在 project.md）。\n" +
 		"本会话开始前的交接摘要：\n" + summaryText + "\n</compact-summary>"
 
 	sys.Set(base, summaryBlock) // 新 system 两段生效（sys 是会话持有的热更实例）

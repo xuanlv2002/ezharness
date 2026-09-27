@@ -92,6 +92,15 @@ func buildProvider(m *domain.ModelEntry) provider.ModelProvider {
 	}
 }
 
+/* absSkillsDir 技能库的绝对路径（提示里给模型的路径一律绝对）。 */
+func absSkillsDir() string {
+	abs, err := filepath.Abs(hooks.SkillsDir)
+	if err != nil {
+		return hooks.SkillsDir
+	}
+	return filepath.ToSlash(abs)
+}
+
 /* stripTitle 剥首行 markdown 标题（段标题已标注来源，文件头再写一遍是冗余）。 */
 func stripTitle(s string) string {
 	if !strings.HasPrefix(s, "#") {
@@ -247,14 +256,20 @@ func (a *AgentService) Assemble(s *domain.Session, st domain.Settings) {
 			hooks.NewLoopGuard(), // 循环护栏：trace 后、Skip 型 hook 前——被拒后反复重试同样计数；重复触发 <loop_guard> 提醒（不拦调用）
 			contextfix.New(),
 			filetools.New(s.Fsys, filetools.WithWorkDir(ResolveWorkDir(st.WorkDir)), filetools.WithImageHandler(readImage)),
-			skilltool.New(s.Fsys, hooks.SkillsDir, disabledSkills),
+			skilltool.New(s.Fsys, absSkillsDir(), disabledSkills), // 绝对目录：load_skill 返回的技能路径被模型直接拿去读写
 			remindHook,         // 系统提醒：变更段插 <resource_change>? + 快照段插 agent_status；OnEnd 收尾 <end_reason>
 			hooks.NewRefFile(), // 有引用轮次在输入前插 <reference_file> 结构化告知（附件+文件页标注统一，模型按需 read_file）
 			approver,
 			asker,
 			task.New(),
 			NewMcpHook(s.Fsys, a.McpRouter),
-			offload.New(s.Fsys, offload.WithSkip(askuser.ToolName, task.ToolName, skilltool.ToolName), offload.WithReplayTool("read_file")), // load_skill 返回的指令集是后续行动依据,卸载再回读纯浪费
+			offload.New(s.Fsys, offload.WithSkip(askuser.ToolName, task.ToolName, skilltool.ToolName), offload.WithReplayTool("read_file"),
+				offload.WithAbs(func(p string) string { // 提示给绝对路径：模型不知道 FS 挂载基准，按工作目录拼相对路径必错
+					if abs, err := filepath.Abs(p); err == nil {
+						return filepath.ToSlash(abs)
+					}
+					return p
+				})), // load_skill 返回的指令集是后续行动依据,卸载再回读纯浪费
 			hooks.NewGuard(s.Fsys, window), // 窗口余量兜底：offload 豁免名单（read_file 等）的大结果放不下时卸载，须在 offload 之后
 			trimHook,                       // OnLoop 回边水位整理（就地截断，立即生效），OnToolStart 拦模型主动整理
 			s.Sess,                         // 最后落盘
@@ -504,7 +519,8 @@ func buildSystemBase(ctx context.Context, st domain.Settings, fsys osfs.OS) stri
 	p := func(rel string) string { return filepath.ToSlash(filepath.Join(dataDir, rel)) }
 	memRoot := p("memory")
 	b.WriteString("\n\n<workspace>\n" +
-		"# 工作区：三个可写位置（下列均为完整绝对路径，直接使用，不要自行拼接）\n" +
+		"# 数据目录：" + filepath.ToSlash(dataDir) + "（配置 mcp.json、记忆 memory/、会话 sessions/ 的根；本块与 <memory> 段给出的路径均为绝对路径，直接使用，不要自行拼接或再拼相对前缀）\n" +
+		"# 工作区：三个可写位置\n" +
 		"# " + p("workspace") + "   工作目录，草稿/脚本/命令产物一律放这里（terminal 默认执行目录：" + filepath.ToSlash(workDir) + "）；" +
 		"其下 tmp/ 是用户上传附件的暂存处，需要附件内容时用 read_file 按路径读取（图片会作为图片消息进入你的上下文，无需调用识别工具）\n" +
 		"# " + memRoot + "/longterm   长期记忆（user.md/soul.md/project-<名>.md，结构见 <memory> 段，读写按其纪律）\n" +
@@ -520,12 +536,13 @@ func buildSystemBase(ctx context.Context, st domain.Settings, fsys osfs.OS) stri
 		"缺少路径信息先问用户，不要自行上溯目录猜路径；\n" +
 		"# - terminal 每条命令是独立进程（cd 不跨命令保留）；所有文件读写与命令一律绝对路径，临时文件不要丢在工作目录外。\n" +
 		"</workspace>")
+	ltRoot := memRoot + "/longterm"
 	b.WriteString("\n\n<memory>\n" +
-		"# 长期记忆（记忆树，入口 " + hooks.HarnessMd + "）\n" +
+		"# 长期记忆（记忆树，入口 " + ltRoot + "/harness.md）\n" +
 		stripTitle(hooks.EnsureHarnessMd(ctx, fsys)) +
-		"\n\n# user.md（用户个人信息）\n" + readMemo(ctx, fsys, hooks.UserMd) +
-		"\n\n# soul.md（agent 工作习惯）\n" + readMemo(ctx, fsys, hooks.SoulMd) +
-		"\n\n# project.md（项目索引）\n" + readMemo(ctx, fsys, hooks.ProjectMd) +
+		"\n\n# " + ltRoot + "/user.md（用户个人信息）\n" + readMemo(ctx, fsys, hooks.UserMd) +
+		"\n\n# " + ltRoot + "/soul.md（agent 工作习惯）\n" + readMemo(ctx, fsys, hooks.SoulMd) +
+		"\n\n# " + ltRoot + "/project.md（项目索引）\n" + readMemo(ctx, fsys, hooks.ProjectMd) +
 		"\n</memory>")
 	skills := builtinskill.Skills()
 	if user, err := skill.LoadDir(ctx, fsys, hooks.SkillsDir); err == nil {

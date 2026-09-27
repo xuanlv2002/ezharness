@@ -203,6 +203,8 @@ warp 是 ezloop 的**纵向**装饰器（与横向的 hook 并列），包住单
 
 ### 4.1 目录布局
 
+**路径纪律（给模型的路径一律绝对）**：系统提示段标题（`<workspace>` 首行给数据目录、`<memory>` 各文件、`<session>`）、工具结果（offload 的 `WithAbs`）、提醒标记（archive 摘要）与 `load_skill` 返回（宿主给 skilltool 传绝对目录）里出现的路径全部是绝对路径——FS 内部读写用相对（cwd=数据目录），渲染处统一 `filepath.Abs + ToSlash`。模型不知道 FS 挂载基准，相对路径必被按工作目录拼错（offload 因此出过事故）。
+
 应用根 = 数据目录 = core exe 所在目录（也是进程 cwd，`config.Root()`；`--root` 可覆盖）：
 
 | 路径 | 用途 |
@@ -214,7 +216,7 @@ warp 是 ezloop 的**纵向**装饰器（与横向的 hook 并列），包住单
 | `memory/longterm/` | 长期记忆树：`harness.md`（入口：树说明+读写纪律）、`user.md`/`soul.md`/`project.md` 索引——四者常驻进 system；`project-<名>.md` 项目详情按需读 |
 | `memory/skills/<名>/` | 技能（`SKILL.md` + `scripts/`） |
 | `sessions/<id>/session.json` | 会话历史（含图片消息的 base64 本体） |
-| `.ezloop/offload/` | 大工具结果的卸载区（模型按需读回） |
+| `.ezloop/offload/` | 大工具结果的卸载区（模型按需读回；提示给绝对路径——offload 的 `WithAbs` 按 cwd 渲染，相对路径会被模型按工作目录拼错） |
 | `logs/core-YYYYMMDD.log` | 进程日志（log/gin/modeldump，按天滚动保留 7 天） |
 | `settings.json` `models.json` `mcp.json` `topics.json` `stats.json` `toolRules.json` | 应用配置与索引 |
 

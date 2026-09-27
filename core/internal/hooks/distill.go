@@ -13,6 +13,7 @@ package hooks
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -33,7 +34,7 @@ const distillPrompt = "你在维护一个 agent 的长期记忆。下面是刚�
 	"- project:<id>：项目记忆——背景/约定/关键路径/交付物位置（≤40 行，markdown 首行 '# <项目名>'）。" +
 	"仅当会话围绕明确项目展开时输出；<id> 为小写英文数字连字符（优先工作目录名）；" +
 	"输入含该项目旧文则融合更新，否则新建\n" +
-	"- project.md：项目索引，一行一项目「- 项目名 — 项目描述 | 记忆: memory/longterm/project-<id>.md」；" +
+	"- project.md：项目索引，一行一项目「- 项目名 — 项目描述 | 记忆: %s/project-<id>.md」（地址用这个绝对前缀拼，模型直接按它 read_file）；" +
 	"输出 project:<id> 段时同步输出（其他项目行原样保留，不造重复行）\n" +
 	"不要提取：一次性任务过程、临时性决定、可从代码或文档中恢复的技术细节。\n" +
 	"无新内容的文件段输出 UNCHANGED；会话与项目无关时 project:<id> 与 project.md 段都不输出。\n" +
@@ -51,7 +52,11 @@ func distillToMemory(ctx context.Context, p provider.ModelProvider, fsys fs.File
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 	defer cancel()
 	var b strings.Builder
-	b.WriteString(fmt.Sprintf(distillPrompt, workDir))
+	ltAbs, err := filepath.Abs(LongtermDir) // 索引里的记忆地址给绝对路径：模型不知道 FS 挂载基准
+	if err != nil {
+		ltAbs = LongtermDir
+	}
+	b.WriteString(fmt.Sprintf(distillPrompt, filepath.ToSlash(ltAbs), workDir))
 	current := map[string]string{}
 	for _, name := range distillFiles {
 		b.WriteString("\n=== " + name + " ===\n")
