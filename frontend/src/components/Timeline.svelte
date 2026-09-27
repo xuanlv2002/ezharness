@@ -1,6 +1,7 @@
 <script lang="ts">
   import { store, type Block } from '../lib/store.svelte'
   import Logo from './Logo.svelte'
+  import EzAvatar from './EzAvatar.svelte'
   import MessageItem from './MessageItem.svelte'
   import ToolBlock from './ToolBlock.svelte'
   import ToolGroup from './ToolGroup.svelte'
@@ -235,20 +236,19 @@
     updateActive()
   }
 
-  /* 模型调用中但正文尚未流出（首 token 前 / 工具参数流式构造期）→ 思考
-  指示。building 工具的参数就是模型流式输出——也算"输出中"，否则
-  tool_chunk→tool_start 间指示条会显隐跳变（配合吸底就是闪动） */
-  const thinking = $derived.by(() => {
-    if (!store.modelActive) return false
+  /* 模型活跃且正文尚未流出时的活动指示：思考（首 token 前 / 只有思考在
+  流——思考默认折叠，长时间无正文像卡死）与输出（工具参数流式构造期）两
+  态；正文一旦流出即收指示（内容本身是进度）。building 工具的参数就是模
+  型流式输出，计"输出"避免 tool_chunk→tool_start 间指示条显隐跳变 */
+  const modelPhase = $derived.by(() => {
+    if (!store.modelActive) return ''
     for (let i = store.blocks.length - 1; i >= 0; i--) {
       const b = store.blocks[i]
-      if (b.kind === 'assistant') {
-        return !(b.streaming && (b.text || b.reasoning))
-      }
-      if (b.kind === 'user') return true
-      if (b.kind === 'tool' && b.state === 'building') return true
+      if (b.kind === 'assistant') return b.streaming && b.text ? '' : 'think'
+      if (b.kind === 'user') return 'think'
+      if (b.kind === 'tool' && b.state === 'building') return 'gen'
     }
-    return true
+    return 'think'
   })
 
   $effect(() => {
@@ -274,7 +274,7 @@
       </div>
     {/if}
     {#if !empty}
-      {#each rows as row (row.key)}
+      {#each rows as row, i (row.key)}
       {#if row.kind === 'user'}
         {@const ub = row.b}
         <div class:reveal={store.batchIds.has(ub.uid)} data-uid={ub.uid}>
@@ -289,7 +289,12 @@
         </div>
       {:else}
         <div class="grp" class:leader={row.kind === 'leader'}>
-          {#if row.kind === 'group'}<span class="tag">ez</span>{/if}
+          {#if row.kind === 'group'}
+            {@const live = i === rows.length - 1}
+            <span class="tag">
+              <EzAvatar size={48} run={live && store.busy} animate={live}>ez</EzAvatar>
+            </span>
+          {/if}
           <div class="gbody">
           {#each row.segs as seg}
           {#if seg.type === 'tools'}
@@ -359,12 +364,16 @@
       {/if}
       {/each}
     {/if}
-    {#if thinking || store.lastTool}
-      <div class="thinking"><span class="tdot"></span>{store.lastTool ? `⚙ ${store.lastTool} 执行中…` : '模型输出中…'}</div>
+    {#if modelPhase || store.lastTool}
+      <div class="thinking"><span class="tdot"></span>{store.lastTool
+          ? `⚙ ${store.lastTool} 执行中…`
+          : modelPhase === 'gen'
+            ? '模型输出中…'
+            : '模型思考中…'}</div>
     {/if}
     {#if empty}
       <div class="empty">
-        <div class="mark"><Logo size={56} /></div>
+        <div class="mark"><EzAvatar size={56} random><Logo size={56} /></EzAvatar></div>
         <p>向 ezharness 发出第一条指令——它可全权操作本机。</p>
         {#if store.hasPrev}
           <p class="hint">↑ 下拉可查看上一话题</p>
@@ -628,16 +637,22 @@
     flex: none;
     display: grid;
     place-items: center;
-    width: 26px;
-    height: 26px;
-    margin-top: 2px;
+    width: 48px;
+    height: 48px;
+    margin-top: 1px;
     font-family: var(--font-mono);
-    font-size: 11px;
+    font-size: 12px;
     font-weight: 700;
     border: 1px solid var(--line-strong);
-    border-radius: 6px;
+    border-radius: 10px;
     background: var(--bg);
     color: var(--fg);
+  }
+  /* 表情图上屏后去掉徽章底：头像直接露出（回退 ez 字样仍是徽章）。
+  img 来自子组件，:global 逃逸作用域才能命中 */
+  .grp .tag:has(> :global(img)) {
+    border-color: transparent;
+    background: transparent;
   }
   .gbody {
     flex: 1;

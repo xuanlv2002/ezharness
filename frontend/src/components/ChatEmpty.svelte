@@ -5,10 +5,11 @@
   */
   import { store } from '../lib/store.svelte'
   import Logo from './Logo.svelte'
+  import EzAvatar from './EzAvatar.svelte'
 </script>
 
 <div class="chatempty">
-  <div class="logo"><Logo /></div>
+  <div class="logo"><EzAvatar size={44} random><Logo size={44} /></EzAvatar></div>
   <h2>没有打开的会话</h2>
   <p>会话都在，只是没开标签——关掉标签不会结束任何会话。</p>
   <button class="cta" onclick={() => store.newChatTab()}>

@@ -165,7 +165,6 @@
 
 {#if role === 'user'}
   <div class="user enter-rise">
-    <span class="tag">你</span>
     <div class="ucontent">
       {#if files?.length}
         <div class="fchips">
@@ -287,25 +286,21 @@
     color: var(--accent);
     background: var(--bg-soft);
   }
+  /* 非组内助手（分身面板）的「ez」徽章 */
   .tag {
     flex: none;
     display: grid;
     place-items: center;
-    width: 26px;
-    height: 26px;
-    margin-top: 2px;
+    width: 36px;
+    height: 36px;
+    margin-top: 1px;
     font-family: var(--font-mono);
-    font-size: 11px;
+    font-size: 12px;
     font-weight: 700;
     border: 1px solid var(--line-strong);
-    border-radius: 6px;
+    border-radius: 8px;
     background: var(--bg);
     color: var(--fg);
-  }
-  .user .tag {
-    background: var(--bg-invert);
-    color: var(--fg-invert);
-    border-color: var(--bg-invert);
   }
   /* 黑底气泡保留；全局 ::selection 是黑底，在黑气泡上选中态隐形——
      气泡内覆盖为白色半透明，复制范围清晰可见 */
