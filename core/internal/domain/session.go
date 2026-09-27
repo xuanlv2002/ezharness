@@ -421,7 +421,7 @@ func (s *Session) Publish(e Event) {
 func replayable(t string) bool {
 	switch t {
 	case "model_chunk", "reasoning_chunk", "tool_chunk", "model_start",
-		"status.snapshot", "resource.change", "turn_end", "loop_end", "iteration_end":
+		"status.snapshot", "resource.change", "loop.guard", "turn_end", "loop_end", "iteration_end":
 		return false
 	}
 	return true

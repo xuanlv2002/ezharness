@@ -444,6 +444,10 @@ class AppStore {
           if (detail) out.push({ kind: 'endtick', uid: this.nuid(), icon: endIcon(detail), title: detail })
         } else if (m.content.includes('<context_trim')) {
           out.push({ kind: 'note', uid: this.nuid(), text: `✂️ ${trimText(m.content)}` })
+        } else if (m.content.includes('<loop_guard>')) {
+          // 循环护栏提醒：小字条呈现（标签体是人话文本）
+          const inner = m.content.replace(/^[\s\S]*?<loop_guard>|<\/loop_guard>[\s\S]*$/g, '').trim()
+          if (inner) out.push({ kind: 'note', uid: this.nuid(), text: `🛑 ${inner}` })
         } else if (!m.content.trim() && !m.images?.length) {
           // 空输入（纯附件轮，引用已由上一块独立呈现）：不渲染
         } else {
@@ -980,6 +984,15 @@ class AppStore {
   apply(ev: SseEvent) {
     this.tick++
     switch (ev.type) {
+      case 'loop.guard': {
+        // 循环护栏：时间线实时小字条（历史重建由 <loop_guard> 消息渲染，回放不重发）
+        const d = ev.data as { tool?: string; count?: number } | undefined
+        if (!ev.forkId) {
+          const tool = d?.tool ? `工具 ${d.tool} ` : '任务'
+          this.blocks.push({ kind: 'note', uid: this.nuid(), text: `🛑 ${tool}重复调用 ${d?.count ?? '?'} 次，已提醒模型停止重复；无效可停止本轮` })
+        }
+        break
+      }
       case 'replay.sync': {
         // SSE 建连首帧（后端权威运行态）：无运行轮时复位 busy（轮在断线
         // 窗口内结束会错过 turn_end 而卡"运行中"）；有运行轮时截断本地

@@ -116,6 +116,8 @@ func MapEvent(e event.Event) Event {
 		out.Data = raw(e.Data) // StatusData 原样透传
 	case hooks.EventResChange:
 		out.Data = raw(e.Data) // []string 变更条目原样透传（前端变更卡）
+	case hooks.EventLoopGuard:
+		out.Data = raw(e.Data) // LoopGuardData 原样透传（前端时间线护栏小字条）
 	case "task.start", "task.end":
 		mapTaskEvent(&out, e)
 	default:
