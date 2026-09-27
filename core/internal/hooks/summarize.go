@@ -17,7 +17,7 @@ import (
 )
 
 func summarizeMsgs(ctx context.Context, p provider.ModelProvider, prompt string, msgs []types.Message) (string, error) {
-	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 	defer cancel()
 	var b strings.Builder
 	for _, m := range msgs {

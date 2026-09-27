@@ -111,7 +111,7 @@ hook 是 ezloop 引擎的横向扩展点（接口见 ezloop `hook/hook.go`：`On
 | `guard.go` `Guard` | `OnToolEnd` | 窗口余量兜底：offload 豁免名单（read_file 等）的大结果放不下时也卸载 |
 | `sessionstore.go` `Store` | `OnStart` `OnEnd` | 轮末把历史与 system 快照写 `sessions/<id>/session.json` |
 | `trace.go` `Trace` | 全部 | 跨度记录 → `trace.jsonl` |
-| `archive.go` `ArchiveSession`（函数，非 hook） | — | 归档换代（沉淀式，长期记忆导向）：先 `distill.go` 沉淀步（user/soul 覆盖写，失败静默）→ 精炼交接摘要 → 封旧 session → 开新代；由 `service/topic_service.go` 调用（手动 Compact 唯一生产路径） |
+| `archive.go` `ArchiveSession`（函数，非 hook） | — | 归档换代（沉淀式，长期记忆导向）：先 `distill.go` 沉淀步（**单次模型调用**：全量旧文 user/soul/project.md/各 project-*.md + 会话 → `===段名===` 分段输出各文件新全文，段名 `user`/`soul`/`project.md`/`project:<id>`（id 经 slug 规范化，非法丢弃），代码解析后覆盖写回，UNCHANGED 跳过；失败静默）→ 精炼交接摘要 → 封旧 session → 开新代；由 `service/topic_service.go` 调用（手动 Compact 唯一生产路径，workDir 作 projectId 线索传入） |
 | `summarize.go`（函数） | — | trim 与 archive 共用的总结器 |
 | `topics.go` `Topics` | — | `topics.json` 分支线索引管理（非 hook） |
 | `memory.go` `Memory`、`recall.go` `Recall` | — | **已定义但未接线**（无 `NewMemory`/`NewRecall` 调用点）。长期记忆实际由 `buildSystemBase` 的 `<memory>` 段注入；`recall_topic` 未注册 |
@@ -150,7 +150,7 @@ hook 是 ezloop 引擎的横向扩展点（接口见 ezloop `hook/hook.go`：`On
 - **加/删/换一个 hook** → `agent_service.go` 的 `Assemble`，`core.WithHooks(...)` 列表；注意上面 2.1 的顺序规则
 - **改 system 文案与块结构** → `buildSystemBase`（`agent_service.go`）。已在跑的 session 不会回填（system 固定），只对新 session 生效
 - **改提醒（`<agent_status>` / `<resource_change>` / `<end_reason>`）文案** → `hooks/remind.go` + `hooks/reschange.go`；同时检查前端解析：`store.svelte.ts` 的 `buildBlocks` 按关键词判定（如 `整理上下文`；变更条目按 `- ` 行前缀、available 清单按 `available_` 前缀区分），`StatusTagCard.svelte` 按文案解析，改文案必须同步，否则记录被吞或全量铺开
-- **改 trim / 归档语义** → `hooks/trim.go`（同 session 折叠，四节结构化 + progress.md）与 `hooks/archive.go`（换代）+ `hooks/distill.go`（沉淀步，固定三记忆文件合并重写），共用 `hooks/summarize.go`（`normalizeStructuredSummary` 兜底格式）；折叠边界由 `hooks.ViewStart` / `MergeFull` 定义
+- **改 trim / 归档语义** → `hooks/trim.go`（同 session 折叠，四节结构化 + progress.md）与 `hooks/archive.go`（换代）+ `hooks/distill.go`（沉淀步：user/soul 覆盖写 + 项目记忆工作流），共用 `hooks/summarize.go`（`normalizeStructuredSummary` 兜底格式）；折叠边界由 `hooks.ViewStart` / `MergeFull` 定义
 - **加一个新标记标签** → 生成处 + 落盘（决定前端刷新后能否重建）+ `buildBlocks` 分支 + 消费组件，四处配套
 
 ---
