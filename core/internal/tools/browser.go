@@ -18,9 +18,12 @@ import (
 	"github.com/xuanlv2002/ezloop/types"
 )
 
-/* BrowserIO 是共享浏览器服务的能力面(service.BrowserService 实现)。
+/*
+	BrowserIO 是共享浏览器服务的能力面(service.BrowserService 实现)。
+
 ctx 透传本轮上下文:用户停止时打断在途的桥调用等待。
-操作返回统一为标签状态 JSON:id/name/desc/origin/url/title/loading/note(read 正文放 output)。 */
+操作返回统一为标签状态 JSON:id/name/desc/origin/url/title/loading/note(read 正文放 output)。
+*/
 type BrowserIO interface {
 	/* StartBrowser 新建标签(name 必填,desc 可选)并可选导航 */
 	StartBrowser(ctx context.Context, name, desc, url string, timeoutMs int) (string, error)
@@ -72,8 +75,8 @@ type browserActionArgs struct {
 
 type browserReadArgs struct {
 	TabID     string `json:"tabId" desc:"目标标签 id(必填;browser_tab 的 list 可查)"`
-	Mode      string `json:"mode,omitempty" desc:"text=页面正文(默认);links=链接清单(文字→地址);screenshot=视口截图;full_page=整页截图"`
-	Chars     int    `json:"chars,omitempty" desc:"text/links:返回字符数上限,默认 4000,上限 20000"`
+	Mode      string `json:"mode,omitempty" desc:"elements=可交互元素清单(含 CSS 选择器,自动化定位用);text=页面正文(默认);links=链接清单;screenshot=视口截图;full_page=整页截图"`
+	Chars     int    `json:"chars,omitempty" desc:"elements/text/links:返回字符数上限,默认 4000,上限 20000"`
 	TimeoutMs int    `json:"timeoutMs,omitempty" desc:"页面仍在加载时的等待上限毫秒,默认 8000(截图 10000);慢页可调大"`
 }
 
@@ -103,7 +106,8 @@ func SharedBrowser(b BrowserIO) []types.Tool {
 			}),
 		types.NewTool("browser_action",
 			"操作浏览器页面。action=navigate 打开新网址并等加载,返回页面标题;"+
-				"action=click 点击——优先给 CSS 选择器(等元素出现后点击,稳定),无法定位时先 browser_read screenshot 看图再给视口像素坐标 x/y;"+
+				"action=click 点击——优先给 CSS 选择器(先 browser_read mode=elements 拿可交互元素与选择器,稳定);"+
+				"确无选择器时才 browser_read screenshot 看图给视口像素坐标 x/y;"+
 				"action=type 输入文本(selector 定位输入框,省略=当前焦点处,submit=true 回车提交);"+
 				"action=key 按键或组合键;action=scroll 滚动(direction=up|down,amountPx 默认 600)。",
 			func(ctx context.Context, in *browserActionArgs) (string, error) {
@@ -122,12 +126,14 @@ func SharedBrowser(b BrowserIO) []types.Tool {
 				return "", fmt.Errorf("未知 action %q(navigate/click/type/key/scroll)", in.Action)
 			}),
 		types.NewTool("browser_read",
-			"读取浏览器页面内容。mode=text 返回页面正文(默认);mode=links 返回链接清单(文字→地址,适合找下一步入口);"+
+			"读取浏览器页面内容。mode=elements 返回可交互元素清单(每行 tag [CSS选择器] \"文本\" -> 链接,"+
+				"click/type 的 selector 从这拿——自动化操作首选,无需看图);"+
+				"mode=text 返回页面正文(默认);mode=links 返回链接清单(文字→地址,适合找下一步入口);"+
 				"mode=screenshot 截当前视口(坐标点击以此为准);mode=full_page 截整页(只用于观察)。"+
 				"截图经 image_loaded 转图片消息,多模态模型直接看图定位。",
 			func(ctx context.Context, in *browserReadArgs) (string, error) {
 				switch in.Mode {
-				case "", "text", "links":
+				case "", "text", "links", "elements":
 					mode := in.Mode
 					if mode == "" {
 						mode = "text"
@@ -138,7 +144,7 @@ func SharedBrowser(b BrowserIO) []types.Tool {
 				case "full_page":
 					return b.ScreenshotBrowser(ctx, in.TabID, true, in.TimeoutMs)
 				}
-				return "", fmt.Errorf("未知 mode %q(text/links/screenshot/full_page)", in.Mode)
+				return "", fmt.Errorf("未知 mode %q(elements/text/links/screenshot/full_page)", in.Mode)
 			}),
 	}
 }

@@ -307,6 +307,31 @@ function sendKey(wc, key, modifiers) {
   wc.sendInputEvent({ type: 'keyUp', modifiers, keyCode })
 }
 
+/* withSurface 截图前的上屏保障：视图未挂任何窗口时（浏览器抽屉没开过/
+目标是非激活标签——syncHost 只把激活视图挂到上屏宿主），capturePage 报
+UnknownVizError、CDP 等首帧直到护栏超时。临时把视图挂到主窗口外沿
+（屏幕外 bounds：attach 有合成面但用户不可见），完事摘除并收敛宿主。 */
+async function withSurface(tab, fn) {
+  const hosts = [getParentWindow(), ...paneWindows].filter((w) => w && !w.isDestroyed())
+  const attached = hosts.some((w) => w.contentView.children.includes(tab.view))
+  const win = getParentWindow()
+  if (attached || !win || win.isDestroyed()) return fn()
+  win.contentView.addChildView(tab.view)
+  const size = win.getContentSize()
+  tab.view.setBounds({ x: -30000, y: 0, width: size[0] || 1280, height: size[1] || 800 })
+  try {
+    await delay(120) /* 等首帧合成 */
+    return await fn()
+  } finally {
+    try {
+      if (!win.isDestroyed() && win.contentView.children.includes(tab.view)) {
+        win.contentView.removeChildView(tab.view)
+      }
+    } catch { /* 窗口已销毁 */ }
+    syncHost()
+  }
+}
+
 /* screenshot 视口截图；fullPage 走 CDP captureBeyondViewport。
 抽屉收起/视图卸载时 capturePage 可能空白甚至 reject(UnknownVizError:
 视图未上屏无合成 surface)——统一优先 capturePage,空图或抛错回落 CDP。
@@ -456,7 +481,55 @@ const executors = {
     const wc = tab.view.webContents
     await waitIdle(wc, timeoutMs || 8000)
     let body
-    if (mode === 'links') {
+    if (mode === 'elements') {
+      body = await wc.executeJavaScript(`
+        (() => {
+          const attr = (v) => String(v).replace(/"/g, '&quot;')
+          const cssId = (id) => '#' + (window.CSS && CSS.escape ? CSS.escape(id) : id)
+          const unique = (sel) => { try { return document.querySelectorAll(sel).length === 1 } catch { return false } }
+          /* selector 生成优先级:#id > [name] > [aria-label] > [placeholder] > nth-of-type 路径 */
+          const path = (el) => {
+            const tag = el.tagName.toLowerCase()
+            if (el.id && unique(cssId(el.id))) return cssId(el.id)
+            if (el.name && unique(tag + '[name="' + attr(el.name) + '"]')) return tag + '[name="' + attr(el.name) + '"]'
+            const aria = el.getAttribute && el.getAttribute('aria-label')
+            if (aria && unique(tag + '[aria-label="' + attr(aria) + '"]')) return tag + '[aria-label="' + attr(aria) + '"]'
+            const ph = el.getAttribute && el.getAttribute('placeholder')
+            if (ph && unique(tag + '[placeholder="' + attr(ph) + '"]')) return tag + '[placeholder="' + attr(ph) + '"]'
+            const parts = []
+            let n = el
+            for (let i = 0; i < 5 && n && n !== document.body; i++) {
+              const parent = n.parentElement
+              if (!parent) break
+              const same = Array.from(parent.children).filter((c) => c.tagName === n.tagName)
+              parts.unshift(same.length > 1 ? n.tagName.toLowerCase() + ':nth-of-type(' + (same.indexOf(n) + 1) + ')' : n.tagName.toLowerCase())
+              n = parent
+            }
+            return parts.join('>')
+          }
+          const els = document.querySelectorAll('a,button,input,select,textarea,[role="button"],[role="link"],[role="tab"],[role="menuitem"],[contenteditable="true"]')
+          const out = []
+          for (const el of els) {
+            if (out.length >= 150) break
+            const r = el.getBoundingClientRect()
+            if (r.width < 2 || r.height < 2) continue
+            const st = getComputedStyle(el)
+            if (st.display === 'none' || st.visibility === 'hidden') continue
+            let sel
+            try { sel = path(el) } catch { continue }
+            if (!sel) continue
+            const text = (el.innerText || el.value || el.placeholder || (el.getAttribute && el.getAttribute('aria-label')) || '')
+              .trim().replace(/\\s+/g, ' ').slice(0, 60)
+            let line = el.tagName.toLowerCase() + ' [' + sel + ']'
+            if (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA') line += ' type=' + (el.type || 'text')
+            if (text) line += ' "' + text + '"'
+            if (el.tagName === 'A' && el.href) line += ' -> ' + el.href.slice(0, 100)
+            out.push(line)
+          }
+          return out.join('\\n')
+        })()
+      `, true)
+    } else if (mode === 'links') {
       body = await wc.executeJavaScript(`
         Array.from(document.querySelectorAll('a')).slice(0, 200)
           .map(a => (a.innerText.trim().slice(0,60) || '(无文字)') + ' → ' + a.href).join('\\n')
@@ -481,7 +554,7 @@ const executors = {
     const tab = tabOf(tabId)
     const wc = tab.view.webContents
     await waitIdle(wc, timeoutMs || 10000)
-    const imageB64 = await screenshot(wc, !!fullPage)
+    const imageB64 = await withSurface(tab, () => screenshot(wc, !!fullPage))
     return { result: JSON.stringify(tabState(tab.id)), imageB64 }
   },
 
