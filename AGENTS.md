@@ -275,3 +275,11 @@ warp 是 ezloop 的**纵向**装饰器（与横向的 hook 并列），包住单
 - 导航等待只走 `loadSettled`：`loadURL()` 返回的 promise（页面收尾落定）与超时竞速；**别**再写"先 loadURL 再查 isLoading"的等待
 - `read/screenshot` 前过 `waitIdle`（轮询 isLoading，封顶放行——降级语义，不报错）；`browser_read` 有显式 `timeoutMs` 透传
 - `cdpScreenshot` 20s 护栏 + target/session 类错误按当前 target 重挂重试一次；桥等待上限 = 等待 + 余量（core 侧 `timeoutMs+N` 秒），别让 desktop 内部等待吃光桥超时
+
+### 5.3 视图未上屏截图挂死 + 元素定位缺失（2026-09-27）
+
+**现象**：①浏览器抽屉没开（或截图目标是非激活标签）时 screenshot 一直转圈到桥超时——`syncHost` 只把**激活**视图挂到**上屏**宿主，视图不挂任何窗口时 `capturePage` 报 UnknownVizError、CDP 等首帧挂到护栏超时；②自动化操作拿不到 selector，模型只能截图猜坐标（非多模态模型完全没法定位）。
+
+**防线（改动时别拆）**：
+- desktop `withSurface`：截图前查目标视图是否挂在任一宿主（主窗+paneWindows），未挂则临时 `addChildView` 到主窗 + 屏幕外 bounds（x:-30000，attach 有合成面但不可见），截完摘除并 `syncHost()` 收敛
+- `browser_read mode=elements`：页面内采集可见可交互元素（a/button/input/select/textarea/[role]/[contenteditable]），每行 `tag [CSS选择器] "文本" -> 链接`；selector 生成优先 `#id` > `[name]` > `[aria-label]` > `[placeholder]` > `nth-of-type` 路径。工具描述引导：click/type 优先 elements 拿 selector，截图只做视觉确认
