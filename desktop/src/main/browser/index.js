@@ -16,6 +16,7 @@ capturePage / CDP 整页截图）后回执。
 （webContents 存活，AI 可继续操作）。应用退出时全部销毁。
 */
 const { BrowserWindow, WebContentsView, ipcMain, session } = require('electron')
+const { attachInspectMenu } = require('../inspect')
 
 let corePort = 5260
 let getParentWindow = null
@@ -204,6 +205,7 @@ function createTab(name, desc, origin, startURL) {
     createTab(hostOf(target) || '新标签', '', '用户', target)
     return { action: 'deny' }
   })
+  attachInspectMenu(wc)
   wc.on('did-start-loading', () => { tab.loading = true; broadcastTabs() })
   wc.on('did-stop-loading', () => { tab.loading = false; broadcastTabs() })
   wc.on('did-navigate', (_e, target) => { tab.url = target; broadcastTabs() })

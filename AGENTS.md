@@ -74,6 +74,7 @@ tools / hooks 为领域扩展；osfs / config 为基础设施；warp 包模型�
 |---|---|
 | `desktop/src/main/index.js` | 主进程：spawn core + 健康轮询、无边框主窗、托盘、关闭语义（托盘/确认框）、快应用子窗、抽屉工具的弹出窗口与**拖拽脱离**（tear-off）、全部窗口类 IPC |
 | `desktop/src/main/browser/index.js` | 共享浏览器 = **WebContentsView**（每标签一个，`partition: persist:ezbrowser` 共享登录态）；抽屉页只做 UI，内容区 rect 由渲染层上报、主进程 `setBounds` 贴靠；同时是 core `/api/browser/bridge` 的 WS 客户端与执行器 |
+| `desktop/src/main/inspect.js` | `attachInspectMenu(wc)`：右键菜单「检查元素 / 开发者工具」。**Electron 默认没有右键菜单**，浏览器标签（WebContentsView）与快应用窗口各自在创建处调用；开发者工具一律 detach（dock 会挤压由呈现层上报的内容区 rect） |
 | `desktop/src/preload/index.js` | contextBridge 暴露 `window.ez`（`window.*` / `popout.*` / `browser.*`）；web 端没有它，所有调用点判空降级 |
 
 ### 1.5 其他
