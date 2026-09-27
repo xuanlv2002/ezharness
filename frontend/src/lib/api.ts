@@ -135,6 +135,7 @@ export interface Settings {
   workDir?: string
   closeToTray?: boolean
   maxIterations?: number // 单轮最大模型迭代次数（0/空 = 默认 64，上限 128）
+  debugMode?: boolean // 调试模式：模型完整输入写进日志（即改即生效）
 }
 
 export interface ModelEntry {

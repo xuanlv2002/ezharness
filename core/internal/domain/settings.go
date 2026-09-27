@@ -106,6 +106,7 @@ type Settings struct {
 	CloseToTray    bool     `json:"closeToTray"`    // 桌面端点关闭 = 最小化到托盘（关窗时实时读取，即改即生效）
 	DisabledSkills []string `json:"disabledSkills"` // 已禁用 skill 的目录名（load_skill/状态面板实时读取，system 清单下个 session 生效）
 	MaxIterations  int      `json:"maxIterations"`  // 单轮对话的最大模型迭代次数（0 = 默认 64，上限 128；随 Reassemble 生效）
+	DebugMode      bool     `json:"debugMode"`      // 调试模式：把每次模型请求的全量输入写进日志（modeldump 实时读取，即改即生效）
 }
 
 /*
@@ -129,10 +130,13 @@ func LoadSettings(fsys fs.FileSystem) Settings {
 		return out
 	}
 	var s struct {
-		SystemExtra string `json:"systemExtra"`
-		TrimPercent *int   `json:"trimPercent"` // 指针：区分未提交与显式 0（禁用）
-		WorkDir     string `json:"workDir"`
-		CloseToTray *bool  `json:"closeToTray"`
+		SystemExtra    string   `json:"systemExtra"`
+		TrimPercent    *int     `json:"trimPercent"` // 指针：区分未提交与显式 0（禁用）
+		WorkDir        string   `json:"workDir"`
+		CloseToTray    *bool    `json:"closeToTray"`
+		DisabledSkills []string `json:"disabledSkills"`
+		MaxIterations  *int     `json:"maxIterations"`
+		DebugMode      *bool    `json:"debugMode"`
 	}
 	if json.Unmarshal(data, &s) != nil {
 		return out
@@ -144,6 +148,13 @@ func LoadSettings(fsys fs.FileSystem) Settings {
 	}
 	if s.TrimPercent != nil {
 		out.TrimPercent = clamp(*s.TrimPercent, 0, 100)
+	}
+	out.DisabledSkills = s.DisabledSkills
+	if s.MaxIterations != nil {
+		out.MaxIterations = clamp(*s.MaxIterations, 0, 128)
+	}
+	if s.DebugMode != nil {
+		out.DebugMode = *s.DebugMode
 	}
 	return out
 }

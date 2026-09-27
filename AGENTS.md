@@ -28,7 +28,7 @@ tools / hooks 为领域扩展；osfs / config 为基础设施；warp 包模型�
 
 | 路径 | 职责 |
 |---|---|
-| `core/main.go` | 入口：解析 `--root`、`config.Load`、日志落盘（log/gin 输出 → `<数据目录>/logs/core-日期.log`，须在 newApp 之前；`EZ_MODEL_DUMP=1` 时含 modeldump）、`newApp`、`buildRouter` 装配整栈 |
+| `core/main.go` | 入口：解析 `--root`、`config.Load`、日志落盘（log/gin/modeldump 输出 → `<数据目录>/logs/core-日期.log`，须在 newApp 之前；modeldump 开关在 buildRouter 随设置 + `EZ_MODEL_DUMP` 推导）、`newApp`、`buildRouter` 装配整栈 |
 | `core/app.go` | 应用生命周期：持有当前代 `http.Server`；**重启 = 换代**（关旧 server → 切数据目录 → 重建 Hub/Router → 新 server），`boot` 代际计数供前端判断就绪 |
 | `core/embed.go` | `go:embed web/dist` + `distFS()` |
 | `core/internal/config/cfg.go` `logfile.go` | 应用根、端口、数据目录、chdir / 日志落盘：`logs/core-YYYYMMDD.log` 按天滚动保留 7 天，stderr 双写（dev 终端可见；打包版 GUI 无控制台，文件是唯一出口）。`OpenLogWriter` 在 main 接管 log/gin/modeldump 输出，换代 `FollowDataDir` 跟随数据目录 |
@@ -179,7 +179,7 @@ warp 是 ezloop 的**纵向**装饰器（与横向的 hook 并列），包住单
 
 | warp | 来源 | 作用 |
 |---|---|---|
-| `modeldump` | 本仓库 `internal/warp/modeldump` | 每次模型请求的全量输入 dump（Messages + Tools，图片 base64 截断）到包级 `Out`。**默认关闭**；`EZ_MODEL_DUMP=1`（dev.bat 已设）时 main 接管为日志 writer（终端 + logs/）。放最外层，重试不会重复打印 |
+| `modeldump` | 本仓库 `internal/warp/modeldump` | 每次模型请求的全量输入 dump（Messages + Tools，图片 base64 截断）到包级 `Out`（恒为日志 writer）。写不写由 `SetEnabled` 开关决定：设置页「调试模式」（settings.json `debugMode`，保存即生效）+ `EZ_MODEL_DUMP=1`（dev.bat，启动期强制）。放最外层，重试不会重复打印 |
 | `modelretry` | ezloop `ext/warp/model/modelretry` | 指数退避重试 |
 | `noempty` | 本仓库 `internal/warp/noempty` | 纯附件轮：user 消息 content 为空时填占位文案（否则部分 provider 报错） |
 | `visionguard` | 本仓库 `internal/warp/visionguard` | 主模型 `Vision=false` 时剥掉请求里的图片、给 `<image_loaded>` 开标签加 `omitted` 说明。**只改请求副本，落盘历史不动**（换回多模态自动恢复） |

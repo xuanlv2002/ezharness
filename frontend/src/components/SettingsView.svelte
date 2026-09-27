@@ -29,6 +29,10 @@
   let closeToTray = $state(false)
   let savingTray = $state(false)
 
+  /* 调试模式（模型完整输入进日志；后端实时开关，即改即生效） */
+  let debugMode = $state(false)
+  let savingDebug = $state(false)
+
   /* 单轮最大迭代次数（模型工具循环上限；0 = 默认 64，上限 128，随 Reassemble 生效） */
   let iters = $state<number | ''>('')
   let origIters = $state<number | null>(null)
@@ -53,6 +57,7 @@
       origWorkDir = st.workDir ?? ''
       origExtra = st.systemExtra ?? ''
       closeToTray = st.closeToTray ?? false
+      debugMode = st.debugMode ?? false
       iters = st.maxIterations ?? 64
       origIters = st.maxIterations ?? 64
     } catch {
@@ -69,6 +74,18 @@
       /* 保存失败回滚开关（下次加载以服务端为准） */
     } finally {
       savingTray = false
+    }
+  }
+
+  async function saveDebug(v: boolean) {
+    savingDebug = true
+    try {
+      await api.saveSettings({ systemExtra: origExtra, debugMode: v })
+      debugMode = v
+    } catch {
+      /* 保存失败回滚开关（下次加载以服务端为准） */
+    } finally {
+      savingDebug = false
     }
   }
 
@@ -263,6 +280,20 @@
         checked={closeToTray}
         disabled={savingTray}
         onchange={(e) => saveTray((e.currentTarget as HTMLInputElement).checked)}
+      />
+    </label>
+  </section>
+
+  <section>
+    <h2>调试</h2>
+    <p class="hint">调试模式：把每次发给模型的完整输入（消息 + 工具清单）写进 data/logs/core-日期.log，排查上下文问题用；关闭时日志不记模型输入。dev.bat 启动时默认开启。</p>
+    <label class="switch-row">
+      <span>模型输入进日志（调试模式）</span>
+      <input
+        type="checkbox"
+        checked={debugMode}
+        disabled={savingDebug}
+        onchange={(e) => saveDebug((e.currentTarget as HTMLInputElement).checked)}
       />
     </label>
   </section>

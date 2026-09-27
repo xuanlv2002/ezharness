@@ -20,6 +20,7 @@ import (
 	"ezharness/core/internal/builtinskill"
 	"ezharness/core/internal/domain"
 	"ezharness/core/internal/hooks"
+	"ezharness/core/internal/warp/modeldump"
 )
 
 /* SettingsService 设置用例。 */
@@ -41,6 +42,7 @@ type SettingsView struct {
 	WorkDir       *string `json:"workDir,omitempty"`
 	CloseToTray   *bool   `json:"closeToTray,omitempty"`
 	MaxIterations *int    `json:"maxIterations,omitempty"`
+	DebugMode     *bool   `json:"debugMode,omitempty"`
 }
 
 /* Get 返回当前行为设置。 */
@@ -48,7 +50,8 @@ func (s *SettingsService) Get() SettingsView {
 	st := s.Hub.SettingsSnapshot()
 	p := st.TrimPercent
 	w := st.WorkDir
-	return SettingsView{SystemExtra: st.SystemExtra, TrimPercent: &p, WorkDir: &w, CloseToTray: &st.CloseToTray}
+	return SettingsView{SystemExtra: st.SystemExtra, TrimPercent: &p, WorkDir: &w,
+		CloseToTray: &st.CloseToTray, DebugMode: &st.DebugMode}
 }
 
 /* Update 保存行为设置并重建 agent（busy 时拒绝；水位随 Reassemble 生效）。 */
@@ -67,6 +70,9 @@ func (s *SettingsService) Update(v SettingsView) error {
 	if v.CloseToTray != nil {
 		st.CloseToTray = *v.CloseToTray
 	}
+	if v.DebugMode != nil {
+		st.DebugMode = *v.DebugMode
+	}
 	if v.MaxIterations != nil {
 		if *v.MaxIterations < 0 || *v.MaxIterations > 128 {
 			return errors.New("最大迭代次数需在 0-128 之间（0 = 默认 64）")
@@ -84,6 +90,7 @@ func (s *SettingsService) Update(v SettingsView) error {
 		return err
 	}
 	s.Hub.ApplySettings(st)
+	modeldump.SetEnabled(st.DebugMode) // 调试模式即改即生效，不必等 Reassemble
 	return s.Agents.Reassemble(st)
 }
 

@@ -56,10 +56,8 @@ func main() {
 	log.SetOutput(logWriter)
 	gin.DefaultWriter = logWriter
 	gin.DefaultErrorWriter = logWriter
-	// modeldump 默认关闭；EZ_MODEL_DUMP=1（dev.bat 已设）时开启，输出进日志
-	if os.Getenv("EZ_MODEL_DUMP") == "1" {
-		modeldump.Out = logWriter
-	}
+	// modeldump 输出恒进日志（写不写由开关决定，开关随设置/换代在 buildRouter 推导）
+	modeldump.Out = logWriter
 
 	a, err := newApp(c)
 	if err != nil {
@@ -83,6 +81,9 @@ func (a *app) buildRouter() *gin.Engine {
 	a.mu.Lock()
 	a.hub = hub
 	a.mu.Unlock()
+
+	// 调试模式随代际重载：设置页开关，EZ_MODEL_DUMP=1（dev.bat）启动期强制开启
+	modeldump.SetEnabled(os.Getenv("EZ_MODEL_DUMP") == "1" || hub.SettingsSnapshot().DebugMode)
 
 	// 共享终端(魔法看板):workDir 与 agent shell 一致;换代随 shutdownGeneration 重建
 	termSvc := service.NewTerminalService(service.ResolveWorkDir(hub.SettingsSnapshot().WorkDir))
