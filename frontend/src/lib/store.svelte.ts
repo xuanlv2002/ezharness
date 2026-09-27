@@ -1107,6 +1107,48 @@ class AppStore {
         this.appendDelta(bs, delta, ev.type === 'model_chunk')
         break
       }
+      case 'stream.snapshot': {
+        /* 回放重建：in-flight 流的累积快照（只进回放缓存，实时订阅者收增量）。
+        正文/思考替换当前流式块（重连纠偏，之后的增量继续追加），构造期
+        工具块按快照重建 building 态（tool_start 到达时按名认领） */
+        const d = ev.data || {}
+        const bs = ev.forkId ? this.ensureFork(ev.forkId).blocks : this.blocks
+        if (d.content || d.reasoning) {
+          const last = bs[bs.length - 1]
+          if (last && last.kind === 'assistant' && last.streaming) {
+            last.text = d.content || ''
+            last.reasoning = d.reasoning || ''
+          } else {
+            bs.push({
+              kind: 'assistant',
+              uid: this.nuid(),
+              text: d.content || '',
+              reasoning: d.reasoning || '',
+              streaming: true,
+            })
+          }
+        }
+        for (const t of d.tools ?? []) {
+          const key = `b-${ev.forkId || 'm'}-${t.index ?? 0}`
+          const ex = bs.find((b) => b.kind === 'tool' && b.id === key && b.state === 'building')
+          if (ex && ex.kind === 'tool') {
+            ex.name = t.name || ''
+            ex.args = t.args || ''
+          } else {
+            bs.push({
+              kind: 'tool',
+              uid: this.nuid(),
+              id: key,
+              name: t.name || '',
+              args: t.args || '',
+              result: '',
+              err: '',
+              state: 'building',
+            })
+          }
+        }
+        break
+      }
       case 'model_end': {
         this.modelActive = false
         // 关闭本次调用所属块流的流式态（fork 关自己的）：否则下一轮正文
@@ -1356,10 +1398,15 @@ class AppStore {
         this.pendingUserUid = 0
         this.pendingUserText = ''
         // 兜底收尾：取消路径引擎不发 model_end，流式块的打字光标须在此收掉；
-        // 残留 building 工具块（模型输出了调用但引擎未执行）同样标记完成
+        // 残留 building 工具块（模型输出了调用但引擎未执行）同样标记完成；
+        // running 工具块的 tool_end 若在慢消费丢帧窗口丢掉，这里补终态
+        // （否则转圈卡死——正常路径早已 done，不误伤）
         for (const bs of [this.blocks, ...Object.values(this.forks).map((f) => f.blocks)]) {
           for (const b of bs) {
-            if (b.kind === 'tool' && b.state === 'building') b.state = 'done'
+            if (b.kind === 'tool' && (b.state === 'building' || b.state === 'running')) {
+              if (b.state === 'running' && !b.result && !b.err) b.err = '已中断（本轮结束）'
+              b.state = 'done'
+            }
             if (b.kind === 'assistant' && b.streaming) b.streaming = false
           }
         }

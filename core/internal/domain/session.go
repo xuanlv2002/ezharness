@@ -76,6 +76,8 @@ type Session struct {
 	sysP       *hooks.SysPrompt   // system 来源（Assemble 创建；resume/compact 热更）
 	turnFrames [][]byte           // 本轮聚合帧缓存（刷新回放重建时间线；轮开始清空）
 	turnRefs   []hooks.RefFile    // 本轮引用（StartRun 存入：loop_start 帧附带供回放重建 chips）
+	snapAcc    map[string]*StreamSnapshot // forkID → in-flight 流累积快照（chunk 到达即累积）
+	snapIdx    map[string]int             // forkID → 快照帧在 turnFrames 的下标
 }
 
 /* Attach 注入装配产物（service 层构造，领域持有引用）。 */
@@ -241,6 +243,8 @@ func (s *Session) StartRun(ctx context.Context, text string, refs []hooks.RefFil
 	s.cur = &runState{ctx: turnCtx, cancel: cancel}
 	s.turnRefs = refs
 	s.turnFrames = nil
+	s.snapAcc = map[string]*StreamSnapshot{}
+	s.snapIdx = map[string]int{}
 	s.mu.Unlock()
 	return h, cancel, nil
 }
@@ -400,16 +404,127 @@ func (s *Session) Publish(e Event) {
 			s.pending[d.ID] = e
 		}
 	}
+	s.trackStreamLocked(e)
 	if replayable(e.Type) {
 		s.turnFrames = append(s.turnFrames, data)
 	}
 	for ch := range s.subs {
 		select {
 		case ch <- data:
-		default: // 慢消费者丢帧（前端有 turn_end 校正兜底）
+		default:
+			// 慢消费者满缓冲：流式增量可丢（回放有快照帧兜底），人机请求
+			// 不可丢——挤掉最旧一帧腾位送达，否则审批卡等会让整轮挂死
+			if e.Type == "approve.request" || e.Type == "askuser.request" {
+				select {
+				case <-ch:
+				default:
+				}
+				select {
+				case ch <- data:
+				default:
+				}
+			}
 		}
 	}
 	s.mu.Unlock()
+}
+
+/*
+trackStreamLocked 维护 in-flight 流的快照帧：增量帧（正文/思考/构造期
+工具）到达即累积进快照并在 turnFrames 就地更新（一条流一帧，内存有界），
+model_end 落定后丢弃（内容已被聚合帧覆盖），turn_end/新轮清场。只进
+回放缓存，不发给实时订阅者（它们收增量帧）。
+*/
+func (s *Session) trackStreamLocked(e Event) {
+	fork := e.ForkID
+	switch e.Type {
+	case "model_chunk", "reasoning_chunk":
+		var delta string
+		if json.Unmarshal(e.Data, &delta) != nil || delta == "" {
+			return
+		}
+		acc := s.snapAcc[fork]
+		if acc == nil {
+			acc = &StreamSnapshot{}
+			s.snapAcc[fork] = acc
+		}
+		if e.Type == "model_chunk" {
+			acc.Content += delta
+		} else {
+			acc.Reasoning += delta
+		}
+	case "tool_chunk":
+		var d struct {
+			Index     int    `json:"index"`
+			NameDelta string `json:"nameDelta"`
+			ArgsDelta string `json:"argsDelta"`
+		}
+		if json.Unmarshal(e.Data, &d) != nil || (d.NameDelta == "" && d.ArgsDelta == "") {
+			return
+		}
+		acc := s.snapAcc[fork]
+		if acc == nil {
+			acc = &StreamSnapshot{}
+			s.snapAcc[fork] = acc
+		}
+		var bucket *SnapTool
+		for i := range acc.Tools {
+			if acc.Tools[i].Index == d.Index {
+				bucket = &acc.Tools[i]
+				break
+			}
+		}
+		if bucket == nil {
+			acc.Tools = append(acc.Tools, SnapTool{Index: d.Index})
+			bucket = &acc.Tools[len(acc.Tools)-1]
+		}
+		bucket.Name += d.NameDelta
+		bucket.Args += d.ArgsDelta
+	case "model_end", "turn_end", "loop_start":
+		s.dropSnapLocked(fork)
+		return
+	default:
+		return
+	}
+	s.putSnapLocked(e, fork)
+}
+
+/* putSnapLocked 把当前快照写进 turnFrames（已有则原位替换）。 */
+func (s *Session) putSnapLocked(e Event, fork string) {
+	acc := s.snapAcc[fork]
+	if acc == nil || (acc.Content == "" && acc.Reasoning == "" && len(acc.Tools) == 0) {
+		return
+	}
+	frame := Event{Type: "stream.snapshot", Ts: e.Ts, ForkID: fork, Data: Raw(*acc)}
+	b, err := json.Marshal(frame)
+	if err != nil {
+		return
+	}
+	if i, ok := s.snapIdx[fork]; ok && i < len(s.turnFrames) {
+		s.turnFrames[i] = b
+		return
+	}
+	s.turnFrames = append(s.turnFrames, b)
+	s.snapIdx[fork] = len(s.turnFrames) - 1
+}
+
+/* dropSnapLocked 丢弃该流的快照帧并修正其余下标。 */
+func (s *Session) dropSnapLocked(fork string) {
+	delete(s.snapAcc, fork)
+	i, ok := s.snapIdx[fork]
+	if !ok {
+		return
+	}
+	delete(s.snapIdx, fork)
+	if i >= len(s.turnFrames) {
+		return
+	}
+	s.turnFrames = append(s.turnFrames[:i], s.turnFrames[i+1:]...)
+	for k, v := range s.snapIdx {
+		if v > i {
+			s.snapIdx[k] = v - 1
+		}
+	}
 }
 
 /*
@@ -438,6 +553,25 @@ func (s *Session) PendingFrames() [][]byte {
 		}
 	}
 	return out
+}
+
+/* SnapTool 是流式快照里的构造期工具调用（累积量，非增量）。 */
+type SnapTool struct {
+	Index int    `json:"index"`
+	Name  string `json:"name"`
+	Args  string `json:"args"`
+}
+
+/*
+StreamSnapshot 是 in-flight 流的累积快照帧载荷：当前这次模型调用的
+正文/思考/构造期工具调用全量。增量帧（model_chunk 等）不进回放缓存，
+切回分支/断线重连时正在流式的内容只有这里可见——快照帧在 turnFrames
+里就地更新（一条流一帧，内存有界），实时订阅者不收它（走增量）。
+*/
+type StreamSnapshot struct {
+	Content   string     `json:"content,omitempty"`
+	Reasoning string     `json:"reasoning,omitempty"`
+	Tools     []SnapTool `json:"tools,omitempty"`
 }
 
 /* PendingNotice 是通知栏全局条目（GET /api/notifications 的域模型）。 */
@@ -697,6 +831,8 @@ func (h *Hub) newSession(id string, rootID string, snap *hooks.SessionSnap) *Ses
 		snap:    snap,
 		subs:    map[chan []byte]struct{}{},
 		pending: map[string]Event{},
+		snapAcc: map[string]*StreamSnapshot{},
+		snapIdx: map[string]int{},
 	}
 	s.Sess.SetLineRoot(rootID)
 	return s

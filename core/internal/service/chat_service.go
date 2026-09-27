@@ -8,6 +8,8 @@ package service
 
 import (
 	"context"
+	"errors"
+	"log"
 	"time"
 
 	"github.com/xuanlv2002/ezloop/event"
@@ -70,6 +72,10 @@ func (c *ChatService) Send(rootID, text string, refs []hooks.RefFile) error {
 			s.Publish(domain.MapEvent(ev))
 		}
 		state, waitErr := h.Wait()
+		// 轮失败进日志（错误只在 UI 呈现，远程排障没有落点）；用户主动取消不算
+		if waitErr != nil && !errors.Is(waitErr, context.Canceled) {
+			log.Printf("ezharness: 轮失败（session %s）: %v", s.ID, waitErr)
+		}
 		var usage *types.Usage
 		stop, iters := "", 0
 		if state != nil {

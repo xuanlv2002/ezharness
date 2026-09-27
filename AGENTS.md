@@ -43,7 +43,7 @@ tools / hooks 为领域扩展；osfs / config 为基础设施；warp 包模型�
 | `core/internal/service/browser.go` | 共享浏览器 core 侧：经 `/api/browser/bridge` 把 `browser_*` 转发给 desktop |
 | `core/internal/service/mcp.go` `stash.go` `apps_service.go` `app_service.go` | MCP 客户端与热重载 / 附件暂存 / 快应用扫描与启动（`Term` 是 `appTerm` 最小接口，单测注入假实现）/ 换代重启 |
 | `core/internal/quickapp/protocol.go` | **快应用协议**：`apps/<名>/app.quick` 声明（title/entry/backend/icon，未识别字段忽略＝向前兼容）、`SafeEntry` 入口越界校验；save_app（写）与 apps_service（读）共用 |
-| `core/internal/domain/session.go` | `Hub`（全局根：会话表、Topics、Fsys、设置快照）+ `Session` 聚合（history、`StartRun`/`FinishRun`/`Cancel`、`Publish`、`replayable` 名单） |
+| `core/internal/domain/session.go` | `Hub`（全局根：会话表、Topics、Fsys、设置快照）+ `Session` 聚合（history、`StartRun`/`FinishRun`/`Cancel`、`Publish`、`replayable` 名单、`stream.snapshot` 流式快照回放） |
 | `core/internal/domain/event.go` | SSE 事件类型与 `MapEvent` |
 | `core/internal/domain/settings.go` `toolrules.go` `stats.go` | 设置模型 / 工具审批规则 / 用量统计 |
 | `core/internal/hooks/` | 宿主侧 hook 与相关实现，见第二节 |
@@ -146,7 +146,7 @@ hook 是 ezloop 引擎的横向扩展点（接口见 ezloop `hook/hook.go`：`On
 | `<$supper_url>` | 模型自己在回复里写（约定在 `<workspace>` 段） | 是 | `MessageItem.svelte`（渲染可点 chip，回跳抽屉/终端/浏览器/快应用） |
 | `<@toolArg>` | 模型写，执行时由工具 warp 展开（见第三节） | 原文保留 | 无 |
 
-实时侧对应 SSE 事件（`domain/event.go` 的 `MapEvent` → 前端 `store.apply`）：部分事件在 `session.go` 的 `replayable` 名单里被排除（如 `turn_end`、`resource.change`、`status.snapshot`），断线重连靠历史重建，不靠回放。
+实时侧对应 SSE 事件（`domain/event.go` 的 `MapEvent` → 前端 `store.apply`）：部分事件在 `session.go` 的 `replayable` 名单里被排除（如 `model_chunk`/`reasoning_chunk`/`tool_chunk`、`turn_end`、`resource.change`、`status.snapshot`），断线重连靠历史重建，不靠回放。**增量帧不回放，但 in-flight 流靠 `stream.snapshot` 帧回放**：`Publish` 把正在流式的正文/思考/构造期工具累积成快照帧在 `turnFrames` 就地更新（一条流一帧、实时订阅者不收），`model_end` 落定即丢——切回分支/重连时正流到一半的内容由此重建。慢消费者满缓冲时增量帧可丢，`approve/askuser.request` 挤掉最旧一帧也要送达（丢了审批卡等会挂死整轮）；轮失败 `chat_service` 写日志（错误只在 UI 呈现，远程排障需要落点）。
 
 ### 2.4 常见改动落点
 
