@@ -1,7 +1,9 @@
 # 代办事项
+1. modelretry: giving up, anthropic: read stream: context deadline exceeded【done 2026-09-27：ezloop 三协议 provider 流式超时改为空闲超时（provutil.IdleWatch，连续 5 分钟无数据才断，超长思考不受限；idle 触发的错误标记 deadline 语义，modelretry 仍可重试）】
+   ezharness添加日志【done 2026-09-27：core 落盘 data/logs/core-日期.log（log/gin 全接管 + modeldump 开关 EZ_MODEL_DUMP，按天滚动保留 7 天）】
+2. 
 
 
-## mcpRouter 转api调用 系统提示词补充
 ## 8. tmp文件夹乱用
 ## 1. 快应用优化
 ## 2. 知识库开发
@@ -11,6 +13,7 @@
 ## 4. 默认携带skill注入
 
 # 测试:          
+  mcpRouter 转api调用 系统提示词补充 【done】
   6. 系统提示词重点优化(更新 重点/非必要/语法糖等) 【done】
 
   1.1 柔和性 — app.css:1 调色板整体柔化：纯黑文字→软墨

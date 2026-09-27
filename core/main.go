@@ -32,6 +32,7 @@ import (
 	"ezharness/core/internal/controller"
 	"ezharness/core/internal/domain"
 	"ezharness/core/internal/service"
+	"ezharness/core/internal/warp/modeldump"
 )
 
 /* appStart 进程启动时刻（启动分段计时日志用）。 */
@@ -48,6 +49,17 @@ func main() {
 		os.Exit(1)
 	}
 	gin.SetMode(gin.ReleaseMode)
+
+	// 日志落盘（须在 newApp/buildRouter 之前，gin.Logger 构造时捕获 writer）：
+	// log + gin 输出写 <数据目录>/logs/，dev 终端同时可见
+	logWriter := config.OpenLogWriter(c.DataDir)
+	log.SetOutput(logWriter)
+	gin.DefaultWriter = logWriter
+	gin.DefaultErrorWriter = logWriter
+	// modeldump 默认关闭；EZ_MODEL_DUMP=1（dev.bat 已设）时开启，输出进日志
+	if os.Getenv("EZ_MODEL_DUMP") == "1" {
+		modeldump.Out = logWriter
+	}
 
 	a, err := newApp(c)
 	if err != nil {
