@@ -489,6 +489,9 @@ func buildSystemBase(ctx context.Context, st domain.Settings, fsys osfs.OS) stri
 		"# - 本会话的存档与进度档案路径见 <session> 块（回忆入口）；其他历史会话的存档不要主动翻阅，确有需要先问用户；\n" +
 		"# - 超长工具结果会被系统自动卸载为文件并在工具结果里给出路径，按提示 read_file 取回，不要主动浏览卸载区；\n" +
 		"# - 数据目录下的配置与索引文件（settings、models、stats、topics 等）由应用管理，不要改写；\n" +
+		"# - 路径纪律：用户给了路径就把检索与读写限定在该路径内，没给路径就只在上面的工作目录内；" +
+		"禁止对 C:/ 根、用户主目录、桌面等宽泛位置做递归搜索或遍历（find/grep 全盘极易超时卡死且对结论无贡献）；" +
+		"缺少路径信息先问用户，不要自行上溯目录猜路径；\n" +
 		"# - terminal 每条命令是独立进程（cd 不跨命令保留）；所有文件读写与命令一律绝对路径，临时文件不要丢在工作目录外。\n" +
 		"</workspace>")
 	b.WriteString("\n\n<memory>\n" +
