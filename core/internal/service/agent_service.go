@@ -31,6 +31,7 @@ import (
 	"github.com/xuanlv2002/ezloop/ext/hook/filetools"
 	"github.com/xuanlv2002/ezloop/ext/hook/mcp"
 	"github.com/xuanlv2002/ezloop/ext/hook/offload"
+	"github.com/xuanlv2002/ezloop/ext/fs"
 	"github.com/xuanlv2002/ezloop/ext/hook/skill"
 	"github.com/xuanlv2002/ezloop/ext/hook/skilltool"
 	"github.com/xuanlv2002/ezloop/ext/hook/task"
@@ -89,6 +90,16 @@ func buildProvider(m *domain.ModelEntry) provider.ModelProvider {
 	default:
 		return openai.New(opts)
 	}
+}
+
+/* readMemo 读常驻记忆文件内容（缺失或空给占位符）。 */
+func readMemo(ctx context.Context, fsys fs.FileSystem, path string) string {
+	if data, err := fsys.Read(ctx, path); err == nil {
+		if s := strings.TrimSpace(string(data)); s != "" {
+			return s
+		}
+	}
+	return "（暂无）"
 }
 
 /* Assemble 按配置装配 agent 并注入会话（主模型取 models 四槽 main 启用条目）。 */
@@ -496,12 +507,11 @@ func buildSystemBase(ctx context.Context, st domain.Settings, fsys osfs.OS) stri
 		"# - terminal 每条命令是独立进程（cd 不跨命令保留）；所有文件读写与命令一律绝对路径，临时文件不要丢在工作目录外。\n" +
 		"</workspace>")
 	b.WriteString("\n\n<memory>\n" +
-		"# 长期记忆\n" +
-		"- 索引 " + memRoot + "/longterm/harness.md：长期记忆入口，全文见下方，可用文件工具直接更新\n" +
-		"- 主题文件 " + memRoot + "/longterm/{user,projects,lessons}.md：用户偏好与事实 / 项目与任务背景 / 踩坑与经验，" +
-		"不进上下文，需要时用 findstr/grep 检索；会话归档时系统会把值得长期保留的内容自动合并进这三个文件，对话中也可直接编辑\n" +
-		"# 索引 harness.md 全文\n" +
+		"# 长期记忆（记忆树，入口 " + hooks.HarnessMd + "）\n" +
 		hooks.EnsureHarnessMd(ctx, fsys) +
+		"\n\n# user.md（用户个人信息）\n" + readMemo(ctx, fsys, hooks.UserMd) +
+		"\n\n# soul.md（agent 工作习惯）\n" + readMemo(ctx, fsys, hooks.SoulMd) +
+		"\n\n# project.md（项目索引）\n" + readMemo(ctx, fsys, hooks.ProjectMd) +
 		"\n</memory>")
 	skills := builtinskill.Skills()
 	if user, err := skill.LoadDir(ctx, fsys, hooks.SkillsDir); err == nil {

@@ -111,7 +111,7 @@ hook 是 ezloop 引擎的横向扩展点（接口见 ezloop `hook/hook.go`：`On
 | `guard.go` `Guard` | `OnToolEnd` | 窗口余量兜底：offload 豁免名单（read_file 等）的大结果放不下时也卸载 |
 | `sessionstore.go` `Store` | `OnStart` `OnEnd` | 轮末把历史与 system 快照写 `sessions/<id>/session.json` |
 | `trace.go` `Trace` | 全部 | 跨度记录 → `trace.jsonl` |
-| `archive.go` `ArchiveSession`（函数，非 hook） | — | 归档换代（沉淀式，长期记忆导向）：先 `distill.go` 沉淀步（固定三记忆文件 user/projects/lessons 合并重写，失败静默）→ 精炼交接摘要 → 封旧 session → 开新代；由 `service/topic_service.go` 调用（手动 Compact 唯一生产路径） |
+| `archive.go` `ArchiveSession`（函数，非 hook） | — | 归档换代（沉淀式，长期记忆导向）：先 `distill.go` 沉淀步（user/soul 覆盖写，失败静默）→ 精炼交接摘要 → 封旧 session → 开新代；由 `service/topic_service.go` 调用（手动 Compact 唯一生产路径） |
 | `summarize.go`（函数） | — | trim 与 archive 共用的总结器 |
 | `topics.go` `Topics` | — | `topics.json` 分支线索引管理（非 hook） |
 | `memory.go` `Memory`、`recall.go` `Recall` | — | **已定义但未接线**（无 `NewMemory`/`NewRecall` 调用点）。长期记忆实际由 `buildSystemBase` 的 `<memory>` 段注入；`recall_topic` 未注册 |
@@ -124,7 +124,7 @@ hook 是 ezloop 引擎的横向扩展点（接口见 ezloop `hook/hook.go`：`On
 
 **一份逐条标注的完整上下文（system 十段各自的来源 + 每轮标签的生成者与插入条件）见 `docs/md/context.md`**——改文案、标签或插入位置前先对那一份。
 
-**system 段** — `agent_service.go` 的 `buildSystemBase`（约 460 行）。段序：人格（含总纲句）→ `SystemExtra`（设置页）→ `<workspace>`（三个可写位置 + 行为规则——路径只给写入目标，读取向全部规则化防诱导）→ `<memory>`（含 `harness.md` 全文，`hooks.EnsureHarnessMd`；固定主题文件 user/projects/lessons）→ `<skills>`（`skill.LoadDir`，按 `DisabledSkills` 过滤）→ `<mcp>` → `<action>`（行动准则：技能匹配/计划审批/工具选择/并行分身/交付与连续性）→ `<output>`（输出规范：`<$supper_url>` 正误示例、`<@toolArg>`、回复风格——弱模型抄示例）。
+**system 段** — `agent_service.go` 的 `buildSystemBase`（约 460 行）。段序：人格（含总纲句）→ `SystemExtra`（设置页）→ `<workspace>`（三个可写位置 + 行为规则——路径只给写入目标，读取向全部规则化防诱导）→ `<memory>`（记忆树常驻：`harness.md` 入口/读写纪律 + `user.md` + `soul.md` + `project.md` 索引，`hooks.EnsureHarnessMd`；`project-<名>.md` 详情按需读）→ `<skills>`（builtinskill + `skill.LoadDir`，按 `DisabledSkills` 过滤）→ `<mcp>` → `<action>`（行动准则：技能匹配/计划审批/工具选择/并行分身/交付与连续性）→ `<output>`（输出规范：`<$supper_url>` 正误示例、`<@toolArg>`、回复风格——弱模型抄示例）。
 每 session **只组装一次**：存 `Session.sysP`（`domain/session.go` 的 `SetSysP`/`SysPromptRef`）并落进 `session.json` 快照（`sessionstore.go`）；改了记忆/skill/MCP 要下个 session 才进 system，期间由 `<resource_change>` 告知模型。归档换代时热换。
 
 **历史** — `Session.history`（`domain/session.go`），落盘 `sessions/<id>/session.json`。`StartRun` 把 `modelViewLocked(history)` 交给引擎；ModelView 从**最后一个 `<context_trim>` 标记**起（折叠掉的旧档只留在存档里）。`FinishRun`：本轮有折叠 → `hooks.MergeFull(history, state)`，否则整轮替换。`Store.OnEnd` 对磁盘快照做同样的合并。
@@ -210,7 +210,7 @@ warp 是 ezloop 的**纵向**装饰器（与横向的 hook 并列），包住单
 | `<工作目录>/tmp/` | **附件暂存区**：拖入、粘贴、画板产物都落这里（`service.StashFiles`，命名 `att-<YYYYMMDD-HHMMSS>-<自增序号>-<净化文件名>`） |
 | `<工作目录>/browser/` | 浏览器截图（`<tabID>-<时间戳>.png`，每次一张新文件，不覆写） |
 | `apps/` | 快应用 HTML（`save_app` 写入，`/apps/*` 静态服务） |
-| `memory/longterm/` | 长期记忆：`harness.md`（索引，全文进 system）+ 主题文件（按需 grep） |
+| `memory/longterm/` | 长期记忆树：`harness.md`（入口：树说明+读写纪律）、`user.md`/`soul.md`/`project.md` 索引——四者常驻进 system；`project-<名>.md` 项目详情按需读 |
 | `memory/skills/<名>/` | 技能（`SKILL.md` + `scripts/`） |
 | `sessions/<id>/session.json` | 会话历史（含图片消息的 base64 本体） |
 | `.ezloop/offload/` | 大工具结果的卸载区（模型按需读回） |

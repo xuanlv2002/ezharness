@@ -29,18 +29,15 @@ func TestNormalizeStructuredSummary(t *testing.T) {
 	}
 }
 
-/* parseDistillSections：固定三段解析、未知段名丢弃、无段返回空。 */
+/* parseDistillSections：固定两段解析、未知段名丢弃、无段返回空。 */
 func TestParseDistillSections(t *testing.T) {
-	in := "===user===\n偏好深色主题\n===projects===\n在做 ezharness\n===lessons===\nWindows 路径要 ToSlash\n===hacker===\n不该出现\n"
+	in := "===user===\n偏好深色主题\n===soul===\n验证前先 go build\n===hacker===\n不该出现\n"
 	sec := parseDistillSections(in)
 	if got := strings.TrimSpace(sec["user"]); got != "偏好深色主题" {
 		t.Fatalf("user = %q", got)
 	}
-	if got := strings.TrimSpace(sec["projects"]); got != "在做 ezharness" {
-		t.Fatalf("projects = %q", got)
-	}
-	if got := strings.TrimSpace(sec["lessons"]); got != "Windows 路径要 ToSlash" {
-		t.Fatalf("lessons = %q", got)
+	if got := strings.TrimSpace(sec["soul"]); got != "验证前先 go build" {
+		t.Fatalf("soul = %q", got)
 	}
 	if _, ok := sec["hacker"]; ok {
 		t.Fatal("unknown section must be dropped")
@@ -50,11 +47,11 @@ func TestParseDistillSections(t *testing.T) {
 	}
 }
 
-/* distillToMemory：正常三段覆盖写（带文件头）；UNCHANGED 段跳过不写。 */
+/* distillToMemory：user/soul 覆盖写（带文件头）；UNCHANGED 段跳过不写。 */
 func TestDistillToMemory(t *testing.T) {
 	ctx := context.Background()
 	fsys := memFS{}
-	reply := "===user===\n偏好简洁回复\n===projects===\nUNCHANGED\n===lessons===\nWindows 用 findstr\n"
+	reply := "===user===\n偏好简洁回复\n===soul===\nUNCHANGED\n"
 	if err := distillToMemory(ctx, fakeProvider{reply}, fsys, nil); err != nil {
 		t.Fatal(err)
 	}
@@ -62,12 +59,8 @@ func TestDistillToMemory(t *testing.T) {
 	if !strings.HasPrefix(userMd, "# user\n") || !strings.Contains(userMd, "偏好简洁回复") {
 		t.Fatalf("user.md wrong: %q", userMd)
 	}
-	if _, ok := fsys[LongtermDir+"/projects.md"]; ok {
+	if _, ok := fsys[LongtermDir+"/soul.md"]; ok {
 		t.Fatal("UNCHANGED section must be skipped")
-	}
-	lessonsMd := string(fsys[LongtermDir+"/lessons.md"])
-	if !strings.Contains(lessonsMd, "Windows 用 findstr") {
-		t.Fatalf("lessons.md wrong: %q", lessonsMd)
 	}
 }
 
