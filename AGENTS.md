@@ -39,9 +39,10 @@ tools / hooks 为领域扩展；osfs / config 为基础设施；warp 包模型�
 | `core/internal/service/session_service.go` | 历史读取、bootstrap、status/水位 |
 | `core/internal/service/topic_service.go` | 分支线（topics.json）、归档换代、分叉 |
 | `core/internal/service/settings_service.go` | 设置/模型/安全规则/记忆/skill 读写 |
-| `core/internal/service/terminal.go` | 共享终端（PTY 会话池 + WS 多路复用 + readMark 游标） |
+| `core/internal/service/terminal.go` | 共享终端（PTY 会话池 + WS 多路复用 + readMark 游标）。`Create` 在服务 workDir 起 shell；私有 `create(dir,…)` 加目录参数，`Launch` 借它在指定目录写命令**不等输出**（快应用后端起法，`StartTerm` 会等静默不能挂请求路径） |
 | `core/internal/service/browser.go` | 共享浏览器 core 侧：经 `/api/browser/bridge` 把 `browser_*` 转发给 desktop |
-| `core/internal/service/mcp.go` `stash.go` `apps_service.go` `app_service.go` | MCP 客户端与热重载 / 附件暂存 / 快应用 / 换代重启 |
+| `core/internal/service/mcp.go` `stash.go` `apps_service.go` `app_service.go` | MCP 客户端与热重载 / 附件暂存 / 快应用扫描与启动（`Term` 是 `appTerm` 最小接口，单测注入假实现）/ 换代重启 |
+| `core/internal/quickapp/protocol.go` | **快应用协议**：`apps/<名>/app.quick` 声明（title/entry/backend/icon，未识别字段忽略＝向前兼容）、`SafeEntry` 入口越界校验；save_app（写）与 apps_service（读）共用 |
 | `core/internal/domain/session.go` | `Hub`（全局根：会话表、Topics、Fsys、设置快照）+ `Session` 聚合（history、`StartRun`/`FinishRun`/`Cancel`、`Publish`、`replayable` 名单） |
 | `core/internal/domain/event.go` | SSE 事件类型与 `MapEvent` |
 | `core/internal/domain/settings.go` `toolrules.go` `stats.go` | 设置模型 / 工具审批规则 / 用量统计 |
@@ -49,7 +50,7 @@ tools / hooks 为领域扩展；osfs / config 为基础设施；warp 包模型�
 | `core/internal/tools/` | 宿主侧工具：`tools.go`(save_app)、`term.go`(term_*)、`browser.go`(browser_*)、`vision.go`(image_recognize)；接口定义在 tools、实现在 service（避免 import 环） |
 | `core/internal/warp/` | 模型/工具装饰器，见第三节 |
 | `core/internal/osfs/osfs.go` | 无沙箱全权限 FileSystem |
-| `core/internal/builtinskill/` | 内建技能（go:embed `skills/<目录>/SKILL.md`，现 mcp-config / skill-install）：操作手册类，教模型经文件通道自配置应用（mcp.json 热加载、技能目录写入）。buildSystemBase 与用户技能合并进 `<skills>` 清单（标注〔内建〕），记忆页技能卡同样合并展示（`builtin` 标记，可禁用不可删），共用 DisabledSkills 禁用名单、不占用户目录 |
+| `core/internal/builtinskill/` | 内建技能（go:embed `skills/<目录>/SKILL.md`，现 mcp-config / skill-install / quick-app）：操作手册类，教模型经文件通道自配置应用（mcp.json 热加载、技能目录写入、快应用构建）。buildSystemBase 与用户技能合并进 `<skills>` 清单（标注〔内建〕），记忆页技能卡同样合并展示（`builtin` 标记，可禁用不可删），共用 DisabledSkills 禁用名单、不占用户目录。**新增技能后 `builtinskill_test` 的钉名断言要跟着加** |
 
 ### 1.3 frontend
 
@@ -212,7 +213,7 @@ warp 是 ezloop 的**纵向**装饰器（与横向的 hook 并列），包住单
 | `workspace/` | 工作目录（`service.ResolveWorkDir`：设置里的 `WorkDir` 为空 = 数据目录下 `workspace/`；相对路径按数据目录解析）。也是 terminal / 共享终端的执行目录 |
 | `<工作目录>/tmp/` | **附件暂存区**：拖入、粘贴、画板产物都落这里（`service.StashFiles`，命名 `att-<YYYYMMDD-HHMMSS>-<自增序号>-<净化文件名>`） |
 | `<工作目录>/browser/` | 浏览器截图（`<tabID>-<时间戳>.png`，每次一张新文件，不覆写） |
-| `apps/` | 快应用 HTML（`save_app` 写入，`/apps/*` 静态服务） |
+| `apps/<名>/` | **快应用**：`app.quick` 声明（协议见 `internal/quickapp`）+ `entry` 前端 + 可选 `backend` 命令。含 `app.quick` 的目录才算应用；前端由 `/apps/*` 静态同源伺服，点启动＝开窗＋（有 backend 时）在共享终端里把后端跑起来（Origin `快应用·<名>`，同名在跑则复用不重起） |
 | `memory/longterm/` | 长期记忆树：`harness.md`（入口：树说明+读写纪律）、`user.md`/`soul.md`/`project.md` 索引——四者常驻进 system；`project-<名>.md` 项目详情按需读 |
 | `memory/skills/<名>/` | 技能（`SKILL.md` + `scripts/`） |
 | `sessions/<id>/session.json` | 会话历史（含图片消息的 base64 本体） |

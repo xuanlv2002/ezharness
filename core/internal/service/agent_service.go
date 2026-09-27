@@ -509,7 +509,7 @@ func buildSystemBase(ctx context.Context, st domain.Settings, fsys osfs.OS) stri
 	var b strings.Builder
 	b.WriteString("你是 ezharness——一个持续陪伴用户的设备级 agent，可全权操作本机文件与命令。" +
 		"能用工具就用工具，回答简洁。" +
-		"用户需要小工具或网页时用 save_app 生成为快应用，用户可一键启动。" +
+		"用户需要小工具或网页时用 save_app 生成为快应用，用户可一键启动（需要后端进程的见 quick-app 技能）。" +
 		"重要的用户偏好与事实可写入长期记忆（结构见 <memory> 块）。" +
 		"接任务先看 <action> 行动准则；给用户的可点击入口与输出格式遵守 <output>。")
 	if st.SystemExtra != "" {
@@ -526,9 +526,10 @@ func buildSystemBase(ctx context.Context, st domain.Settings, fsys osfs.OS) stri
 		"其下 tmp/ 是用户上传附件的暂存处，需要附件内容时用 read_file 按路径读取（图片会作为图片消息进入你的上下文，无需调用识别工具）\n" +
 		"# " + memRoot + "/longterm   长期记忆（user.md/soul.md/project-<名>.md，结构见 <memory> 段，读写按其纪律）\n" +
 		"# " + memRoot + "/skills     技能库：每技能一个子目录（SKILL.md 指令 + scripts/ 脚本），新建后下个 session 进清单\n" +
+		"# " + p("apps") + "   快应用目录：每个应用一个子目录（声明 app.quick + 前端 + 可选后端脚本），构建约定见 quick-app 技能\n" +
 		"# 行为规则（不需要记路径，按规则做即可）：\n" +
 		"# - 技能清单以 <skills> 段、MCP 服务以 <mcp> 段为准，不要读目录或配置文件去发现它们；\n" +
-		"# - 快应用由 save_app 工具生成与更新，不要手动改快应用目录；\n" +
+		"# - 快应用是 apps/<名>/ 目录应用：前端用 save_app 写，后端脚本等额外文件用 write_file 补进同目录（约定见 quick-app 技能），不要手改其他快应用的文件；\n" +
 		"# - 本会话的存档与进度档案路径见 <session> 块（回忆入口）；其他历史会话的存档不要主动翻阅，确有需要先问用户；\n" +
 		"# - 超长工具结果会被系统自动卸载为文件并在工具结果里给出路径，按提示 read_file 取回，不要主动浏览卸载区；\n" +
 		"# - 数据目录下的配置与索引文件（settings、models、stats、topics 等）由应用管理，不要改写；\n" +

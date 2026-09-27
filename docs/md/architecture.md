@@ -143,7 +143,7 @@ core 进程内并发靠 goroutine：一轮 chat 一个运行 goroutine（引擎�
 | `memory/longterm/harness.md` | 长期记忆索引（初始进上下文） | EnsureHarnessMd / agent 维护 |
 | `memory/skills/` | 技能库（SKILL.md + scripts/） | CreateSkill/Delete / skilltool |
 | `memory/longterm/{user,projects,lessons}.md` | 长期记忆三个固定主题文件 | 归档沉淀步合并重写 / 模型直接编辑（见 compaction.md） |
-| `apps/` | 快应用 html（save_app 生成） | 静态服务 `/apps/*` |
+| `apps/<名>/` | 快应用（`app.quick` 协议声明 + entry 前端 + 可选 backend 命令；见 quickapp 包） | 静态服务 `/apps/*`；启动 POST /api/apps/open（有 backend 则在共享终端里起后端） |
 | `workspace/` | 工作目录（settings.WorkDir 空 = 此默认） | agent 自由读写 |
 | `workspace/tmp/` | 用户上传附件暂存（base64 不入上下文） | ChatService 落盘 / read_file 读 |
 | `sessions/<id>/progress.md` | 任务进度档案（四节，trim 每次整理重写） | trim 写 / 模型恢复现场读写 |

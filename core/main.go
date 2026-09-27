@@ -119,7 +119,7 @@ func (a *app) buildRouter() *gin.Engine {
 		},
 		Topics:    &controller.TopicController{Svc: &service.TopicService{Hub: hub, Agents: agents}},
 		Mcp:       &controller.McpController{Svc: service.NewMcpService(hub.Fsys, a.mcpRouter)},
-		Apps:      &controller.AppsController{Svc: &service.AppsService{Fsys: hub.Fsys}},
+		Apps:      &controller.AppsController{Svc: &service.AppsService{Fsys: hub.Fsys, Term: termSvc}},
 		App:       &controller.AppController{Svc: appSvc},
 		Terminal:  &controller.TerminalController{Svc: termSvc},
 		Browser:   &controller.BrowserController{Svc: a.browser},

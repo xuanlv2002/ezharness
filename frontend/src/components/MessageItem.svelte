@@ -96,6 +96,7 @@
           const desktopWindow = (window as any).ez?.window
           if (desktopWindow) desktopWindow.openApp(r.path, r.title)
           else window.open(r.path, '_blank')
+          if (r.termId) store.openTermAt(r.termId)
         })
         .catch((err: unknown) => (store.lastStatus = `打开快应用失败：${(err as Error).message}`))
     } else if (kind === 'file') {

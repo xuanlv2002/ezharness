@@ -1,9 +1,10 @@
 <script lang="ts">
   import { onMount } from 'svelte'
   import { api, type AppEntry } from '../lib/api'
+  import { store } from '../lib/store.svelte'
 
-  /* 快应用 = agent 经 save_app 生成的 html 小工具（apps/ 目录）。
-  desktop 壳 = IPC 开独立子窗口；浏览器访问 = 新标签页直开。 */
+  /* 快应用 = apps/<名>/ 目录应用（app.quick 声明）。desktop 壳 = IPC 开独立
+  子窗口；浏览器访问 = 新标签页直开。声明了后端的应用由后端把终端拉进侧边栏。 */
   let apps = $state<AppEntry[]>([])
   let loaded = $state(false)
 
@@ -17,15 +18,17 @@
     loaded = true
   })
 
-  /* 校验通过后开窗：desktop 壳子窗口（IPC），web 端新标签页 */
+  /* 启动：desktop 壳子窗口（IPC），web 端新标签页；带后端的应用把它的
+  终端拉到侧边栏（后端可能起不来，失败要出声） */
   async function launch(a: AppEntry) {
     try {
       const r = await api.openApp(a.name)
       const desktopWindow = (window as any).ez?.window
       if (desktopWindow) desktopWindow.openApp(r.path, r.title)
       else window.open(r.path, '_blank')
-    } catch {
-      /* 校验失败（名单外）静默 */
+      if (r.termId) store.openTermAt(r.termId)
+    } catch (err) {
+      store.lastStatus = `启动快应用失败：${(err as Error).message}`
     }
   }
 </script>
@@ -34,7 +37,7 @@
   <div class="head">
     <div>
       <h1>快应用</h1>
-      <p class="lead">agent 生成的小工具（html 等）都在这里，一键启动。</p>
+      <p class="lead">agent 构建的快应用都在这里，一键启动；带后端的会在侧边栏终端里跑起来。</p>
     </div>
   </div>
 
@@ -79,7 +82,7 @@
           </div>
         </div>
         <h2>暂无工具</h2>
-        <p class="desc">让 agent 做一个——「帮我写个 xx 的 html 小工具」，生成后自动出现在这里。</p>
+        <p class="desc">让 agent 做一个——「帮我写个 xx 的快应用」，生成后自动出现在这里。</p>
       </div>
     {/if}
   </div>

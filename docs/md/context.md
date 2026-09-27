@@ -37,11 +37,12 @@ runtime.md 讲流程（什么时候发生），本文讲**成品长什么样**�
 [system]
 你是 ezharness——一个持续陪伴用户的设备级 agent，可全权操作本机文件与命令。…   ← ①
 <workspace>
-# 工作区：三个可写位置（下列均为完整绝对路径，直接使用，不要自行拼接）
+# 工作区：四个可写位置（下列均为完整绝对路径，直接使用，不要自行拼接）
 # …/data/workspace         工作目录，草稿/脚本/命令产物一律放这里；tmp/ 附件暂存（read_file 读，图片自动进上下文）
 # …/data/memory/longterm   长期记忆：harness.md 是索引（已注入，见 <memory>），user/projects/lessons 固定主题文件
 # …/data/memory/skills     技能库：每技能一子目录，新建后下个 session 进清单
-# 行为规则（不需要记路径）：技能/MCP 清单以 <skills>/<mcp> 段为准不读目录发现；快应用由 save_app 生成；
+# …/data/apps              快应用目录：每应用一子目录（声明 app.quick + 前端 + 可选后端脚本）
+# 行为规则（不需要记路径）：技能/MCP 清单以 <skills>/<mcp> 段为准不读目录发现；快应用是 apps/<名>/ 目录应用（协议 app.quick）；
 # 存档与进度档案见 <session> 块，历史会话不主动翻阅；超长工具结果按提示 read_file 取回；配置文件不改写；
 # terminal 每条命令独立进程；一律绝对路径。
 </workspace>                                                              ← ②
