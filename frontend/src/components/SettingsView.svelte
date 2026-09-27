@@ -102,7 +102,7 @@
     savingIters = true
     itersMsg = ''
     try {
-      const v = Math.min(Math.max(Number(iters) || 0, 0), 50)
+      const v = Math.min(Math.max(Number(iters) || 0, 0), 128)
       await api.saveSettings({ systemExtra: origExtra, maxIterations: v })
       iters = v
       origIters = v
@@ -212,7 +212,7 @@
     </button>
     <label class="field">
       <span>单轮最大迭代次数（0 = 默认 64，上限 128）</span>
-      <input type="number" bind:value={iters} min="0" max="50" />
+      <input type="number" bind:value={iters} min="0" max="128" />
     </label>
     <button
       class="primary"
