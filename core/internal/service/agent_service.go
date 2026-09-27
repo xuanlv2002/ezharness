@@ -256,7 +256,8 @@ func (a *AgentService) Assemble(s *domain.Session, st domain.Settings) {
 			hooks.NewLoopGuard(), // 循环护栏：trace 后、Skip 型 hook 前——被拒后反复重试同样计数；重复触发 <loop_guard> 提醒（不拦调用）
 			contextfix.New(),
 			filetools.New(s.Fsys, filetools.WithWorkDir(ResolveWorkDir(st.WorkDir)), filetools.WithImageHandler(readImage)),
-			skilltool.New(s.Fsys, absSkillsDir(), disabledSkills), // 绝对目录：load_skill 返回的技能路径被模型直接拿去读写
+			skilltool.New(s.Fsys, absSkillsDir(), disabledSkills, // 绝对目录：load_skill 返回的技能路径被模型直接拿去读写
+				skilltool.WithExtra(builtinskill.Skills)), // 内建技能不落磁盘，直接进 load_skill 名称表
 			remindHook,         // 系统提醒：变更段插 <resource_change>? + 快照段插 agent_status；OnEnd 收尾 <end_reason>
 			hooks.NewRefFile(), // 有引用轮次在输入前插 <reference_file> 结构化告知（附件+文件页标注统一，模型按需 read_file）
 			approver,
