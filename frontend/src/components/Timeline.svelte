@@ -513,6 +513,7 @@
     flex-direction: column;
     gap: 20px;
     min-height: 100%; /* 空状态时也撑满可视区，使欢迎语垂直居中 */
+    --av-size: 48px; /* 头像列宽：组头像与用户行占位共用 */
   }
   .pullind {
     display: flex;
@@ -637,8 +638,8 @@
     flex: none;
     display: grid;
     place-items: center;
-    width: 48px;
-    height: 48px;
+    width: var(--av-size);
+    height: var(--av-size);
     margin-top: 1px;
     font-family: var(--font-mono);
     font-size: 12px;

@@ -165,6 +165,7 @@
 
 {#if role === 'user'}
   <div class="user enter-rise">
+    <span class="avph"></span>
     <div class="ucontent">
       {#if files?.length}
         <div class="fchips">
@@ -285,6 +286,12 @@
   .forkbtn:hover {
     color: var(--accent);
     background: var(--bg-soft);
+  }
+  /* 用户行头像占位：宽度与所在上下文的助手头像列一致（--av-size
+     由容器设，回复组 48px、分身面板回落 36px），气泡与助手正文对齐 */
+  .avph {
+    flex: none;
+    width: var(--av-size, 36px);
   }
   /* 非组内助手（分身面板）的「ez」徽章 */
   .tag {
