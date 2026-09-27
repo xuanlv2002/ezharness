@@ -92,10 +92,23 @@ func buildProvider(m *domain.ModelEntry) provider.ModelProvider {
 	}
 }
 
-/* readMemo 读常驻记忆文件内容（缺失或空给占位符）。 */
+/* stripTitle 剥首行 markdown 标题（段标题已标注来源，文件头再写一遍是冗余）。 */
+func stripTitle(s string) string {
+	if !strings.HasPrefix(s, "#") {
+		return s
+	}
+	if i := strings.IndexByte(s, '\n'); i > 0 {
+		if body := strings.TrimSpace(s[i+1:]); body != "" {
+			return body
+		}
+	}
+	return ""
+}
+
+/* readMemo 读常驻记忆文件内容（剥首行标题；缺失或空给占位符）。 */
 func readMemo(ctx context.Context, fsys fs.FileSystem, path string) string {
 	if data, err := fsys.Read(ctx, path); err == nil {
-		if s := strings.TrimSpace(string(data)); s != "" {
+		if s := stripTitle(strings.TrimSpace(string(data))); s != "" {
 			return s
 		}
 	}
@@ -493,7 +506,7 @@ func buildSystemBase(ctx context.Context, st domain.Settings, fsys osfs.OS) stri
 		"# 工作区：三个可写位置（下列均为完整绝对路径，直接使用，不要自行拼接）\n" +
 		"# " + p("workspace") + "   工作目录，草稿/脚本/命令产物一律放这里（terminal 默认执行目录：" + filepath.ToSlash(workDir) + "）；" +
 		"其下 tmp/ 是用户上传附件的暂存处，需要附件内容时用 read_file 按路径读取（图片会作为图片消息进入你的上下文，无需调用识别工具）\n" +
-		"# " + memRoot + "/longterm   长期记忆：harness.md 是索引（已注入上下文，见 <memory>），user/projects/lessons 三个固定主题文件按主题沉淀；会话归档时系统会自动合并更新\n" +
+		"# " + memRoot + "/longterm   长期记忆（user.md/soul.md/project-<名>.md，结构见 <memory> 段，读写按其纪律）\n" +
 		"# " + memRoot + "/skills     技能库：每技能一个子目录（SKILL.md 指令 + scripts/ 脚本），新建后下个 session 进清单\n" +
 		"# 行为规则（不需要记路径，按规则做即可）：\n" +
 		"# - 技能清单以 <skills> 段、MCP 服务以 <mcp> 段为准，不要读目录或配置文件去发现它们；\n" +
@@ -508,7 +521,7 @@ func buildSystemBase(ctx context.Context, st domain.Settings, fsys osfs.OS) stri
 		"</workspace>")
 	b.WriteString("\n\n<memory>\n" +
 		"# 长期记忆（记忆树，入口 " + hooks.HarnessMd + "）\n" +
-		hooks.EnsureHarnessMd(ctx, fsys) +
+		stripTitle(hooks.EnsureHarnessMd(ctx, fsys)) +
 		"\n\n# user.md（用户个人信息）\n" + readMemo(ctx, fsys, hooks.UserMd) +
 		"\n\n# soul.md（agent 工作习惯）\n" + readMemo(ctx, fsys, hooks.SoulMd) +
 		"\n\n# project.md（项目索引）\n" + readMemo(ctx, fsys, hooks.ProjectMd) +
