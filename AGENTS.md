@@ -49,6 +49,7 @@ tools / hooks 为领域扩展；osfs / config 为基础设施；warp 包模型�
 | `core/internal/tools/` | 宿主侧工具：`tools.go`(save_app)、`term.go`(term_*)、`browser.go`(browser_*)、`vision.go`(image_recognize)；接口定义在 tools、实现在 service（避免 import 环） |
 | `core/internal/warp/` | 模型/工具装饰器，见第三节 |
 | `core/internal/osfs/osfs.go` | 无沙箱全权限 FileSystem |
+| `core/internal/builtinskill/` | 内建技能（go:embed `skills/<目录>/SKILL.md`，现 mcp-config / skill-install）：操作手册类，教模型经文件通道自配置应用（mcp.json 热加载、技能目录写入）。buildSystemBase 与用户技能合并进 `<skills>` 清单（标注〔内建〕），共用 DisabledSkills 禁用名单、不可删、不占用户目录 |
 
 ### 1.3 frontend
 

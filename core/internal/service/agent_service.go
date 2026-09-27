@@ -45,6 +45,7 @@ import (
 	"github.com/xuanlv2002/ezloop/warp"
 
 	"ezharness/core/internal/domain"
+	"ezharness/core/internal/builtinskill"
 	"ezharness/core/internal/hooks"
 	"ezharness/core/internal/osfs"
 	"ezharness/core/internal/tools"
@@ -502,8 +503,11 @@ func buildSystemBase(ctx context.Context, st domain.Settings, fsys osfs.OS) stri
 		"# 索引 harness.md 全文\n" +
 		hooks.EnsureHarnessMd(ctx, fsys) +
 		"\n</memory>")
-	skills, err := skill.LoadDir(ctx, fsys, hooks.SkillsDir)
-	if err == nil && len(st.DisabledSkills) > 0 {
+	skills := builtinskill.Skills()
+	if user, err := skill.LoadDir(ctx, fsys, hooks.SkillsDir); err == nil {
+		skills = append(skills, user...)
+	}
+	if len(st.DisabledSkills) > 0 {
 		kept := skills[:0]
 		for _, sk := range skills {
 			if !slices.Contains(st.DisabledSkills, hooks.SkillDirOf(sk.Path)) {
@@ -515,13 +519,18 @@ func buildSystemBase(ctx context.Context, st domain.Settings, fsys osfs.OS) stri
 	if len(skills) > 0 {
 		b.WriteString("\n\n<skills>\n（可用技能清单，以此为准，不要读取 memory/skills 目录来发现技能；" +
 			"技能正文在 " + memRoot + "/skills/<名>/SKILL.md，可用文件工具编辑，改动下个 session 生效，" +
-			"轮内变更见 <resource_change>；使用前先调用 load_skill 获取完整指令与脚本路径）")
+			"轮内变更见 <resource_change>；使用前先调用 load_skill 获取完整指令与脚本路径。" +
+			"标注〔内建〕的技能随应用分发，正文同样可 load_skill 查看）")
 		for _, sk := range skills {
 			desc := sk.Description
 			if desc == "" {
 				desc = "（无描述）"
 			}
-			fmt.Fprintf(&b, "\n- %s: %s", sk.Name, desc)
+			mark := ""
+			if builtinskill.IsBuiltin(hooks.SkillDirOf(sk.Path)) {
+				mark = "〔内建〕"
+			}
+			fmt.Fprintf(&b, "\n- %s%s: %s", sk.Name, mark, desc)
 		}
 		b.WriteString("\n</skills>")
 	}
