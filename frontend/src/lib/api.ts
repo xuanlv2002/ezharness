@@ -251,6 +251,7 @@ export interface MemorySkillEntry {
   name: string
   desc: string
   enabled: boolean
+  builtin?: boolean
 }
 export interface MemoryConfig {
   longterm: { dir: string; harnessMd: MemoryFileInfo | null; files: MemoryFileInfo[] }

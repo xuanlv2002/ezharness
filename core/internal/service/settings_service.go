@@ -17,6 +17,7 @@ import (
 
 	"github.com/xuanlv2002/ezloop/ext/hook/skill"
 
+	"ezharness/core/internal/builtinskill"
 	"ezharness/core/internal/domain"
 	"ezharness/core/internal/hooks"
 )
@@ -207,6 +208,7 @@ type SkillEntryView struct {
 	Name    string `json:"name"`
 	Desc    string `json:"desc"`
 	Enabled bool   `json:"enabled"`
+	Builtin bool   `json:"builtin,omitempty"` // 内建技能：可禁用不可删
 }
 
 /*
@@ -249,8 +251,15 @@ func (m *MemoryService) Config() MemoryConfigView {
 			}
 		}
 	}
+	disabled := m.Hub.SettingsSnapshot().DisabledSkills
+	for _, s := range builtinskill.Skills() {
+		id := hooks.SkillDirOf(s.Path)
+		v.Skills.Items = append(v.Skills.Items, SkillEntryView{
+			ID: id, Name: s.Name, Desc: s.Description,
+			Enabled: !slices.Contains(disabled, id), Builtin: true,
+		})
+	}
 	if entries, err := skill.LoadDir(context.Background(), m.Hub.Fsys, hooks.SkillsDir); err == nil {
-		disabled := m.Hub.SettingsSnapshot().DisabledSkills
 		for _, s := range entries {
 			id := hooks.SkillDirOf(s.Path)
 			v.Skills.Items = append(v.Skills.Items, SkillEntryView{
@@ -349,6 +358,9 @@ func (m *MemoryService) ToggleSkill(id string, enabled bool) error {
 func (m *MemoryService) DeleteSkill(id string) error {
 	if !validSkillID(id) {
 		return fmt.Errorf("非法技能名 %q", id)
+	}
+	if builtinskill.IsBuiltin(id) {
+		return fmt.Errorf("内建技能 %q 不可删除（可禁用）", id)
 	}
 	dir := hooks.SkillsDir + "/" + id
 	if _, err := os.Stat(dir); err != nil {
