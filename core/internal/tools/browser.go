@@ -109,7 +109,9 @@ func SharedBrowser(b BrowserIO) []types.Tool {
 				"action=click 点击——优先给 CSS 选择器(先 browser_read mode=elements 拿可交互元素与选择器,稳定);"+
 				"确无选择器时才 browser_read screenshot 看图给视口像素坐标 x/y;"+
 				"action=type 输入文本(selector 定位输入框,省略=当前焦点处,submit=true 回车提交);"+
-				"action=key 按键或组合键;action=scroll 滚动(direction=up|down,amountPx 默认 600)。",
+				"action=key 按键或组合键;action=scroll 滚动(direction=up|down,amountPx 默认 600)。"+
+					"click/type/scroll/key 的返回含页面实时 url/title/scrollY(以此判断操作是否生效,scrollY 不变即没滚动,别再原样重试);"+
+					"点击打开了新标签时返回 note 会明示(原标签不跳转属正常)。",
 			func(ctx context.Context, in *browserActionArgs) (string, error) {
 				switch in.Action {
 				case "navigate":

@@ -271,6 +271,30 @@ async function waitIdle(wc, capMs) {
 
 /* ── 执行器（browser_* 工具的直接实现） ── */
 
+/* pageState 页面内实时状态（操作返回的成功判据：url/title 不取缓存、
+scrollY 让滚动可观测）。读不到（页面跳转中）返回 null，调用方回落缓存态。 */
+async function pageState(wc) {
+  try {
+    return await wc.executeJavaScript(
+      '({ url: location.href, title: document.title, scrollY: Math.round(window.scrollY) })', true)
+  } catch { return null }
+}
+
+/* domClick 页面内原生点击：链接跳转（同窗导航）与 SPA onClick 都可靠；
+合成输入（sendInputEvent）两者都可能不生效（JS 收得到事件但不触发默认行为）。 */
+async function domClick(wc, selector) {
+  const safe = JSON.stringify(selector)
+  return wc.executeJavaScript(`
+    (() => {
+      const el = document.querySelector(${safe})
+      if (!el) return false
+      el.scrollIntoView({ block: 'center', inline: 'center' })
+      el.click()
+      return true
+    })()
+  `, true)
+}
+
 /* clickAt 视口坐标点击（move 前置：悬浮态/hover 依赖）。 */
 function clickAt(wc, x, y) {
   wc.sendInputEvent({ type: 'mouseMove', x, y, button: 'none' })
@@ -412,15 +436,22 @@ const executors = {
   async click({ tabId, selector, x, y }) {
     const tab = tabOf(tabId)
     const wc = tab.view.webContents
+    const before = tabs.size
+    let note
     if (selector) {
-      const point = await elementPoint(wc, selector)
-      if (!point) throw new Error(`元素 ${selector} 未找到`)
-      clickAt(wc, point[0], point[1])
+      const ok = await domClick(wc, selector)
+      if (!ok) throw new Error(`元素 ${selector} 未找到`)
     } else {
       clickAt(wc, x || 0, y || 0)
     }
     await delay(300)
-    return { result: JSON.stringify(tabState(tab.id)) }
+    /* target=_blank 类点击会就地开新标签（原标签不跳转）——明示给模型，别误判"点击无效" */
+    if (tabs.size > before) {
+      const newIds = [...tabs.keys()].slice(-tabs.size + before)
+      note = `点击打开了新标签 ${newIds.join('、')}（原标签未跳转）`
+    }
+    const live = await pageState(wc)
+    return { result: JSON.stringify({ ...tabState(tab.id), ...(live || {}), ...(note ? { note } : {}) }) }
   },
 
   async type({ tabId, selector, text, submit }) {
@@ -439,7 +470,8 @@ const executors = {
       sendKey(wc, 'Enter', [])
       await delay(500)
     }
-    return { result: JSON.stringify(tabState(tab.id)) }
+    const live = await pageState(wc)
+    return { result: JSON.stringify({ ...tabState(tab.id), ...(live || {}) }) }
   },
 
   async key({ tabId, combo }) {
@@ -456,7 +488,8 @@ const executors = {
     })
     sendKey(tab.view.webContents, key, modifiers)
     await delay(300)
-    return { result: JSON.stringify(tabState(tab.id)) }
+    const live = await pageState(tab.view.webContents)
+    return { result: JSON.stringify({ ...tabState(tab.id), ...(live || {}) }) }
   },
 
   async scroll({ tabId, direction, amountPx }) {
@@ -466,13 +499,16 @@ const executors = {
     const bounds = tab.view.getBounds() // 视口尺寸是 WebContentsView 的 bounds（webContents 上没有 getBounds——曾因此报 "wc.getBounds is not a function"）
     const w = bounds.width || 800 // 视图从未上屏时 0×0：兜底常量尺寸，滚轮落视口中部
     const h = bounds.height || 600
+    /* deltaY 符号：负值向下滚（scrollY 增）、正值向上——与直觉相反，
+       实测 up 发负值反而向下滚 400、down 发正值在顶部无空间不动 */
     wc.sendInputEvent({
       type: 'mouseWheel',
       x: w / 2, y: h / 2,
-      deltaY: direction === 'up' ? -amount : amount,
+      deltaY: direction === 'down' ? -amount : amount,
     })
     await delay(200)
-    return { result: JSON.stringify(tabState(tab.id)) }
+    const live = await pageState(wc)
+    return { result: JSON.stringify({ ...tabState(tab.id), ...(live || {}) }) }
   },
 
   async read({ tabId, mode, chars, timeoutMs }) {
