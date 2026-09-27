@@ -244,6 +244,7 @@ func (a *AgentService) Assemble(s *domain.Session, st domain.Settings) {
 		core.WithHooks(
 			sys,       // startHooks 首位：system base 唯一来源；后续 hook 在其 OnStart 里追加 tool-guide 说明段
 			traceHook, // toolStart 首位：task/ask_user/load_skill 等 OnToolStart 内干活的 hook 返回 Skip 会短路后续 hook，观测层必须排在它们前面才有 span
+			hooks.NewLoopGuard(), // 循环护栏：trace 后、Skip 型 hook 前——被拒后反复重试同样计数；重复触发 <loop_guard> 提醒（不拦调用）
 			contextfix.New(),
 			filetools.New(s.Fsys, filetools.WithWorkDir(ResolveWorkDir(st.WorkDir)), filetools.WithImageHandler(readImage)),
 			skilltool.New(s.Fsys, hooks.SkillsDir, disabledSkills),
@@ -588,6 +589,8 @@ func buildSystemBase(ctx context.Context, st domain.Settings, fsys osfs.OS) stri
 		"5. 可并行、相互独立、或会产生大量中间输出的子任务，交 task 分身执行（工具集相同、过程互不干扰，结果直接回传），主对话只接结论；任务描述必须自包含（分身看不到本轮对话之外的语境）：写清目标、输入、涉及的文件绝对路径与期望的返回格式；无依赖的子任务一次并行发多个。\n" +
 		"6. 交付与连续性：任务收尾把成果入口用 <$supper_url> 交付（格式见 <output>），产物文件放工作目录；" +
 		"上下文被整理后，从 <session> 块告知的进度档案恢复现场接着干，长任务到达阶段性节点时也可主动把进度补写进该档案。\n" +
+		"7. 重试纪律：同一手段连续 2 次无可见效果立即停——没有新信息不再重复，换手段（如滚不动换 key 翻页）或先建可观测信号（读返回的 url/title/scrollY、截图）确认状态再动；" +
+		"调试先求\"能看见状态\"，再动目标；同一子任务调用约 10 次仍无进展即停手向用户汇报现状与已试手段；长任务每几步用一句话报进度，不让用户猜你在干嘛。\n" +
 		"</action>")
 	b.WriteString("\n\n<output>\n" +
 		"# 输出规范\n" +

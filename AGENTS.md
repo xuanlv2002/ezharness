@@ -97,7 +97,7 @@ hook 是 ezloop 引擎的横向扩展点（接口见 ezloop `hook/hook.go`：`On
 - `sessionstore` 最后（落盘）
 
 当前链序：
-`sysprompt → trace → contextfix → filetools → skilltool → remind → reference_file → approve → askuser → task → mcp → offload → guard → trim → sessionstore`
+`sysprompt → trace → loopguard → contextfix → filetools → skilltool → remind → reference_file → approve → askuser → task → mcp → offload → guard → trim → sessionstore`
 
 ### 2.2 宿主 hook（`core/internal/hooks/`）
 
@@ -111,6 +111,7 @@ hook 是 ezloop 引擎的横向扩展点（接口见 ezloop `hook/hook.go`：`On
 | `guard.go` `Guard` | `OnToolEnd` | 窗口余量兜底：offload 豁免名单（read_file 等）的大结果放不下时也卸载 |
 | `sessionstore.go` `Store` | `OnStart` `OnEnd` | 轮末把历史与 system 快照写 `sessions/<id>/session.json` |
 | `trace.go` `Trace` | 全部 | 跨度记录 → `trace.jsonl` |
+| `loopguard.go` `LoopGuard` | `OnToolStart` `OnEnd` | 循环护栏：同一工具同参数反复调用达 4 次插一条 `<loop_guard>` 提醒（模型自省 + 时间线用户可见），只提醒不拦截、每组合仅一次；排在 Skip 型 hook 之前，被拒后重试同样计数 |
 | `archive.go` `ArchiveSession`（函数，非 hook） | — | 归档换代（沉淀式，长期记忆导向）：先 `distill.go` 沉淀步（**单次模型调用**：全量旧文 user/soul/project.md/各 project-*.md + 会话 → `===段名===` 分段输出各文件新全文，段名 `user`/`soul`/`project.md`/`project:<id>`（id 经 slug 规范化，非法丢弃），代码解析后覆盖写回，UNCHANGED 跳过；失败静默）→ 精炼交接摘要 → 封旧 session → 开新代；由 `service/topic_service.go` 调用（手动 Compact 唯一生产路径，workDir 作 projectId 线索传入） |
 | `summarize.go`（函数） | — | trim 与 archive 共用的总结器 |
 | `topics.go` `Topics` | — | `topics.json` 分支线索引管理（非 hook） |
@@ -283,3 +284,14 @@ warp 是 ezloop 的**纵向**装饰器（与横向的 hook 并列），包住单
 **防线（改动时别拆）**：
 - desktop `withSurface`：截图前查目标视图是否挂在任一宿主（主窗+paneWindows），未挂则临时 `addChildView` 到主窗 + 屏幕外 bounds（x:-30000，attach 有合成面但不可见），截完摘除并 `syncHost()` 收敛
 - `browser_read mode=elements`：页面内采集可见可交互元素（a/button/input/select/textarea/[role]/[contenteditable]），每行 `tag [CSS选择器] "文本" -> 链接`；selector 生成优先 `#id` > `[name]` > `[aria-label]` > `[placeholder]` > `nth-of-type` 路径。工具描述引导：click/type 优先 elements 拿 selector，截图只做视觉确认
+
+### 5.4 浏览器操作三连坑：滚轮符号 / 合成点击不导航 / 返回值滞后（2026-09-27 诊断页实测）
+
+**现象**：①`scroll down` 纹丝不动、`up 400` 反而向下滚 400；②selector 点击 JS 事件能收到（计数器/SPA 菜单生效）但 `<a>` 链接不导航、语言切换无效；③操作返回的 url/title 常是上一拍缓存，模型没有成功判据、同动作无限重试 25 次。
+
+**根因与防线（改动时别拆）**：
+- `mouseWheel` 的 `deltaY` **负值=向下滚**（与直觉相反）：`direction==='down' ? -amount : +amount`。up 发负值实测反而 scrollY 增、down 发正值在顶部无空间——符号反了正好吻合两个"怪象"
+- selector 点击走 `domClick`（页面内 `el.click()` 原生点击）：合成输入（sendInputEvent）JS 监听收得到但**不触发链接导航等默认行为**；坐标点击保留合成输入（canvas/视觉定位场景）
+- click 后对比 `tabs.size`：`target=_blank` 类点击就地开新标签（原标签不跳转），返回 `note` 明示——模型不再误判"点击无效"
+- click/type/scroll/key 返回统一融合 `pageState()`（页面内实读 url/title/scrollY，不取缓存）——操作自带成功判据（scrollY 不变即没滚动）；工具描述明示"以此判断生效，别原样重试"
+- `<action>` 第 7 条重试纪律：同手段 2 次无可见效果即停换手段、调试先建可观测信号、子任务约 10 次无进展停手汇报、长任务每几步报进度
