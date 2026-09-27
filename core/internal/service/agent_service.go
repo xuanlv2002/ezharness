@@ -31,6 +31,7 @@ import (
 	"github.com/xuanlv2002/ezloop/ext/hook/filetools"
 	"github.com/xuanlv2002/ezloop/ext/hook/mcp"
 	"github.com/xuanlv2002/ezloop/ext/hook/offload"
+	"github.com/xuanlv2002/ezloop/ext/fs"
 	"github.com/xuanlv2002/ezloop/ext/hook/skill"
 	"github.com/xuanlv2002/ezloop/ext/hook/skilltool"
 	"github.com/xuanlv2002/ezloop/ext/hook/task"
@@ -45,6 +46,7 @@ import (
 	"github.com/xuanlv2002/ezloop/warp"
 
 	"ezharness/core/internal/domain"
+	"ezharness/core/internal/builtinskill"
 	"ezharness/core/internal/hooks"
 	"ezharness/core/internal/osfs"
 	"ezharness/core/internal/tools"
@@ -88,6 +90,38 @@ func buildProvider(m *domain.ModelEntry) provider.ModelProvider {
 	default:
 		return openai.New(opts)
 	}
+}
+
+/* absSkillsDir 技能库的绝对路径（提示里给模型的路径一律绝对）。 */
+func absSkillsDir() string {
+	abs, err := filepath.Abs(hooks.SkillsDir)
+	if err != nil {
+		return hooks.SkillsDir
+	}
+	return filepath.ToSlash(abs)
+}
+
+/* stripTitle 剥首行 markdown 标题（段标题已标注来源，文件头再写一遍是冗余）。 */
+func stripTitle(s string) string {
+	if !strings.HasPrefix(s, "#") {
+		return s
+	}
+	if i := strings.IndexByte(s, '\n'); i > 0 {
+		if body := strings.TrimSpace(s[i+1:]); body != "" {
+			return body
+		}
+	}
+	return ""
+}
+
+/* readMemo 读常驻记忆文件内容（剥首行标题；缺失或空给占位符）。 */
+func readMemo(ctx context.Context, fsys fs.FileSystem, path string) string {
+	if data, err := fsys.Read(ctx, path); err == nil {
+		if s := stripTitle(strings.TrimSpace(string(data))); s != "" {
+			return s
+		}
+	}
+	return "（暂无）"
 }
 
 /* Assemble 按配置装配 agent 并注入会话（主模型取 models 四槽 main 启用条目）。 */
@@ -219,16 +253,24 @@ func (a *AgentService) Assemble(s *domain.Session, st domain.Settings) {
 		core.WithHooks(
 			sys,       // startHooks 首位：system base 唯一来源；后续 hook 在其 OnStart 里追加 tool-guide 说明段
 			traceHook, // toolStart 首位：task/ask_user/load_skill 等 OnToolStart 内干活的 hook 返回 Skip 会短路后续 hook，观测层必须排在它们前面才有 span
+			hooks.NewLoopGuard(), // 循环护栏：trace 后、Skip 型 hook 前——被拒后反复重试同样计数；重复触发 <loop_guard> 提醒（不拦调用）
 			contextfix.New(),
 			filetools.New(s.Fsys, filetools.WithWorkDir(ResolveWorkDir(st.WorkDir)), filetools.WithImageHandler(readImage)),
-			skilltool.New(s.Fsys, hooks.SkillsDir, disabledSkills),
+			skilltool.New(s.Fsys, absSkillsDir(), disabledSkills, // 绝对目录：load_skill 返回的技能路径被模型直接拿去读写
+				skilltool.WithExtra(builtinskill.Skills)), // 内建技能不落磁盘，直接进 load_skill 名称表
 			remindHook,         // 系统提醒：变更段插 <resource_change>? + 快照段插 agent_status；OnEnd 收尾 <end_reason>
 			hooks.NewRefFile(), // 有引用轮次在输入前插 <reference_file> 结构化告知（附件+文件页标注统一，模型按需 read_file）
 			approver,
 			asker,
 			task.New(),
 			NewMcpHook(s.Fsys, a.McpRouter),
-			offload.New(s.Fsys, offload.WithSkip(askuser.ToolName, task.ToolName, skilltool.ToolName), offload.WithReplayTool("read_file")), // load_skill 返回的指令集是后续行动依据,卸载再回读纯浪费
+			offload.New(s.Fsys, offload.WithSkip(askuser.ToolName, task.ToolName, skilltool.ToolName), offload.WithReplayTool("read_file"),
+				offload.WithAbs(func(p string) string { // 提示给绝对路径：模型不知道 FS 挂载基准，按工作目录拼相对路径必错
+					if abs, err := filepath.Abs(p); err == nil {
+						return filepath.ToSlash(abs)
+					}
+					return p
+				})), // load_skill 返回的指令集是后续行动依据,卸载再回读纯浪费
 			hooks.NewGuard(s.Fsys, window), // 窗口余量兜底：offload 豁免名单（read_file 等）的大结果放不下时卸载，须在 offload 之后
 			trimHook,                       // OnLoop 回边水位整理（就地截断，立即生效），OnToolStart 拦模型主动整理
 			s.Sess,                         // 最后落盘
@@ -467,7 +509,7 @@ func buildSystemBase(ctx context.Context, st domain.Settings, fsys osfs.OS) stri
 	var b strings.Builder
 	b.WriteString("你是 ezharness——一个持续陪伴用户的设备级 agent，可全权操作本机文件与命令。" +
 		"能用工具就用工具，回答简洁。" +
-		"用户需要小工具或网页时用 save_app 生成为快应用，用户可一键启动。" +
+		"用户需要小工具或网页时用 save_app 生成为快应用，用户可一键启动（需要后端进程的见 quick-app 技能）。" +
 		"重要的用户偏好与事实可写入长期记忆（结构见 <memory> 块）。" +
 		"接任务先看 <action> 行动准则；给用户的可点击入口与输出格式遵守 <output>。")
 	if st.SystemExtra != "" {
@@ -478,29 +520,37 @@ func buildSystemBase(ctx context.Context, st domain.Settings, fsys osfs.OS) stri
 	p := func(rel string) string { return filepath.ToSlash(filepath.Join(dataDir, rel)) }
 	memRoot := p("memory")
 	b.WriteString("\n\n<workspace>\n" +
-		"# 工作区：三个可写位置（下列均为完整绝对路径，直接使用，不要自行拼接）\n" +
+		"# 数据目录：" + filepath.ToSlash(dataDir) + "（配置 mcp.json、记忆 memory/、会话 sessions/ 的根；本块与 <memory> 段给出的路径均为绝对路径，直接使用，不要自行拼接或再拼相对前缀）\n" +
+		"# 工作区：三个可写位置\n" +
 		"# " + p("workspace") + "   工作目录，草稿/脚本/命令产物一律放这里（terminal 默认执行目录：" + filepath.ToSlash(workDir) + "）；" +
 		"其下 tmp/ 是用户上传附件的暂存处，需要附件内容时用 read_file 按路径读取（图片会作为图片消息进入你的上下文，无需调用识别工具）\n" +
-		"# " + memRoot + "/longterm   长期记忆：harness.md 是索引（已注入上下文，见 <memory>），user/projects/lessons 三个固定主题文件按主题沉淀；会话归档时系统会自动合并更新\n" +
+		"# " + memRoot + "/longterm   长期记忆（user.md/soul.md/project-<名>.md，结构见 <memory> 段，读写按其纪律）\n" +
 		"# " + memRoot + "/skills     技能库：每技能一个子目录（SKILL.md 指令 + scripts/ 脚本），新建后下个 session 进清单\n" +
+		"# " + p("apps") + "   快应用目录：每个应用一个子目录（声明 app.quick + 前端 + 可选后端脚本），构建约定见 quick-app 技能\n" +
 		"# 行为规则（不需要记路径，按规则做即可）：\n" +
 		"# - 技能清单以 <skills> 段、MCP 服务以 <mcp> 段为准，不要读目录或配置文件去发现它们；\n" +
-		"# - 快应用由 save_app 工具生成与更新，不要手动改快应用目录；\n" +
+		"# - 快应用是 apps/<名>/ 目录应用：前端用 save_app 写，后端脚本等额外文件用 write_file 补进同目录（约定见 quick-app 技能），不要手改其他快应用的文件；\n" +
 		"# - 本会话的存档与进度档案路径见 <session> 块（回忆入口）；其他历史会话的存档不要主动翻阅，确有需要先问用户；\n" +
 		"# - 超长工具结果会被系统自动卸载为文件并在工具结果里给出路径，按提示 read_file 取回，不要主动浏览卸载区；\n" +
 		"# - 数据目录下的配置与索引文件（settings、models、stats、topics 等）由应用管理，不要改写；\n" +
+		"# - 路径纪律：用户给了路径就把检索与读写限定在该路径内，没给路径就只在上面的工作目录内；" +
+		"禁止对 C:/ 根、用户主目录、桌面等宽泛位置做递归搜索或遍历（find/grep 全盘极易超时卡死且对结论无贡献）；" +
+		"缺少路径信息先问用户，不要自行上溯目录猜路径；\n" +
 		"# - terminal 每条命令是独立进程（cd 不跨命令保留）；所有文件读写与命令一律绝对路径，临时文件不要丢在工作目录外。\n" +
 		"</workspace>")
+	ltRoot := memRoot + "/longterm"
 	b.WriteString("\n\n<memory>\n" +
-		"# 长期记忆\n" +
-		"- 索引 " + memRoot + "/longterm/harness.md：长期记忆入口，全文见下方，可用文件工具直接更新\n" +
-		"- 主题文件 " + memRoot + "/longterm/{user,projects,lessons}.md：用户偏好与事实 / 项目与任务背景 / 踩坑与经验，" +
-		"不进上下文，需要时用 findstr/grep 检索；会话归档时系统会把值得长期保留的内容自动合并进这三个文件，对话中也可直接编辑\n" +
-		"# 索引 harness.md 全文\n" +
-		hooks.EnsureHarnessMd(ctx, fsys) +
+		"# 长期记忆（记忆树，入口 " + ltRoot + "/harness.md）\n" +
+		stripTitle(hooks.EnsureHarnessMd(ctx, fsys)) +
+		"\n\n# " + ltRoot + "/user.md（用户个人信息）\n" + readMemo(ctx, fsys, hooks.UserMd) +
+		"\n\n# " + ltRoot + "/soul.md（agent 工作习惯）\n" + readMemo(ctx, fsys, hooks.SoulMd) +
+		"\n\n# " + ltRoot + "/project.md（项目索引）\n" + readMemo(ctx, fsys, hooks.ProjectMd) +
 		"\n</memory>")
-	skills, err := skill.LoadDir(ctx, fsys, hooks.SkillsDir)
-	if err == nil && len(st.DisabledSkills) > 0 {
+	skills := builtinskill.Skills()
+	if user, err := skill.LoadDir(ctx, fsys, hooks.SkillsDir); err == nil {
+		skills = append(skills, user...)
+	}
+	if len(st.DisabledSkills) > 0 {
 		kept := skills[:0]
 		for _, sk := range skills {
 			if !slices.Contains(st.DisabledSkills, hooks.SkillDirOf(sk.Path)) {
@@ -512,13 +562,18 @@ func buildSystemBase(ctx context.Context, st domain.Settings, fsys osfs.OS) stri
 	if len(skills) > 0 {
 		b.WriteString("\n\n<skills>\n（可用技能清单，以此为准，不要读取 memory/skills 目录来发现技能；" +
 			"技能正文在 " + memRoot + "/skills/<名>/SKILL.md，可用文件工具编辑，改动下个 session 生效，" +
-			"轮内变更见 <resource_change>；使用前先调用 load_skill 获取完整指令与脚本路径）")
+			"轮内变更见 <resource_change>；使用前先调用 load_skill 获取完整指令与脚本路径。" +
+			"标注〔内建〕的技能随应用分发，正文同样可 load_skill 查看）")
 		for _, sk := range skills {
 			desc := sk.Description
 			if desc == "" {
 				desc = "（无描述）"
 			}
-			fmt.Fprintf(&b, "\n- %s: %s", sk.Name, desc)
+			mark := ""
+			if builtinskill.IsBuiltin(hooks.SkillDirOf(sk.Path)) {
+				mark = "〔内建〕"
+			}
+			fmt.Fprintf(&b, "\n- %s%s: %s", sk.Name, mark, desc)
 		}
 		b.WriteString("\n</skills>")
 	}
@@ -553,6 +608,8 @@ func buildSystemBase(ctx context.Context, st domain.Settings, fsys osfs.OS) stri
 		"5. 可并行、相互独立、或会产生大量中间输出的子任务，交 task 分身执行（工具集相同、过程互不干扰，结果直接回传），主对话只接结论；任务描述必须自包含（分身看不到本轮对话之外的语境）：写清目标、输入、涉及的文件绝对路径与期望的返回格式；无依赖的子任务一次并行发多个。\n" +
 		"6. 交付与连续性：任务收尾把成果入口用 <$supper_url> 交付（格式见 <output>），产物文件放工作目录；" +
 		"上下文被整理后，从 <session> 块告知的进度档案恢复现场接着干，长任务到达阶段性节点时也可主动把进度补写进该档案。\n" +
+		"7. 重试纪律：同一手段连续 2 次无可见效果立即停——没有新信息不再重复，换手段（如滚不动换 key 翻页）或先建可观测信号（读返回的 url/title/scrollY、截图）确认状态再动；" +
+		"调试先求\"能看见状态\"，再动目标；同一子任务调用约 10 次仍无进展即停手向用户汇报现状与已试手段；长任务每几步用一句话报进度，不让用户猜你在干嘛。\n" +
 		"</action>")
 	b.WriteString("\n\n<output>\n" +
 		"# 输出规范\n" +

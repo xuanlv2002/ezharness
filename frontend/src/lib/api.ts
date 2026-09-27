@@ -135,6 +135,7 @@ export interface Settings {
   workDir?: string
   closeToTray?: boolean
   maxIterations?: number // 单轮最大模型迭代次数（0/空 = 默认 64，上限 128）
+  debugMode?: boolean // 调试模式：模型完整输入写进日志（即改即生效）
 }
 
 export interface ModelEntry {
@@ -251,6 +252,7 @@ export interface MemorySkillEntry {
   name: string
   desc: string
   enabled: boolean
+  builtin?: boolean
 }
 export interface MemoryConfig {
   longterm: { dir: string; harnessMd: MemoryFileInfo | null; files: MemoryFileInfo[] }
@@ -373,9 +375,11 @@ export const api = {
 
   getApps: () => fetch('/api/apps').then(json<{ apps: AppEntry[] }>),
 
-  /* 快应用名单校验（chip 的 id 来自模型输出不可信），返回路径与标题；
+  /* 启动快应用（chip 的 id 来自模型输出不可信，名单校验在后端）：返回前端
+     入口路径与标题、以及声明了后端的应用的内置终端 id（无后端时不带该字段）；
      开窗由调用方执行：desktop 壳 IPC 子窗口 / web 新标签页 */
-  openApp: (name: string) => post<{ ok: boolean; path: string; title: string }>('/api/apps/open', { name }),
+  openApp: (name: string) =>
+    post<{ ok: boolean; path: string; title: string; termId?: string }>('/api/apps/open', { name }),
 
   /* 文本文件保存（file:// 编辑器）；按绝对路径写，与 /api/workspace/file 同源 */
   saveFile: (path: string, content: string) =>

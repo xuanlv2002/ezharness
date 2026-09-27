@@ -1,8 +1,8 @@
 /*
 memory 是长期记忆 hook：每轮 OnStart 把 memory/longterm/harness.md
-（索引文件）拼进 system（复用 skill 的单条 system 拼接模式），agent
-用文件工具直接编辑该文件或 grep 其余记忆文件。长期记忆是一套文件
-系统：harness.md 初始加载，其余文件按需检索。
+（记忆入口：树说明 + 读写纪律）拼进 system（复用 skill 的单条 system
+拼接模式）。长期记忆是一棵文件树：入口 + user/soul/项目索引常驻，
+project-<名>.md 详情按需读取（agent 用文件工具直接维护）。
 */
 package hooks
 
@@ -20,7 +20,10 @@ const (
 	MemoryDir   = "memory"
 	LongtermDir = "memory/longterm"
 	SkillsDir   = "memory/skills"
-	HarnessMd   = LongtermDir + "/harness.md"
+	HarnessMd   = LongtermDir + "/harness.md"        // 记忆入口：树说明 + 读写纪律（常驻）
+	UserMd      = LongtermDir + "/user.md"           // 用户个人信息（常驻）
+	SoulMd      = LongtermDir + "/soul.md"           // agent 工作习惯（常驻）
+	ProjectMd   = LongtermDir + "/project.md"        // 项目记忆索引（常驻）
 )
 
 /*
@@ -34,19 +37,24 @@ func SkillDirOf(path string) string {
 }
 
 /*
-DefaultHarnessMd 是索引文件的初始模板：首次访问（文件缺失）时落盘，
-此后完全归 agent 维护。
+DefaultHarnessMd 是记忆入口文件的初始模板：首次访问（文件缺失）时落盘，
+此后完全归 agent 维护。记忆树：入口说明（本文件）+ user/soul/项目索引
+常驻注入，项目详情文件按需读取。
 */
-const DefaultHarnessMd = `# ezharness 长期记忆索引
+const DefaultHarnessMd = `# ezharness 长期记忆入口
 
-本文件是长期记忆的入口，随会话加载进上下文。长期记忆固定三个主题文件：
-- user.md — 用户偏好与习惯、稳定的用户事实
-- projects.md — 项目与任务背景（在做什么、关键路径与约定、交付物位置）
-- lessons.md — 踩过的坑与解法、验证过的环境特性
+记忆树（四个文件都在本文件同目录；各自绝对路径见 system <memory> 段的段标题，
+文件工具一律用其给出的绝对路径）：
+- user.md — 用户个人信息：偏好与习惯、背景、工作环境、约定（归档时系统自动沉淀）
+- soul.md — agent 自己的工作习惯：本环境下顺手的做法、工具与验证方式偏好（归档时系统自动沉淀）
+- project.md — 项目记忆索引：一行一个项目（- 项目名 — 项目描述 | 记忆: 记忆文件绝对地址）
+- project-<名>.md — 单个项目的记忆（背景、约定、进度），按需读取
 
-会话归档时系统会把值得长期保留的内容自动合并进这三个文件；对话中
-也可用文件工具直接编辑它们或本索引。三个文件不进上下文，需要时用
-grep/findstr 检索。
+读写纪律：
+- user/soul/项目索引随上下文常驻；project-<名>.md 相关时才 read_file，不主动全读
+- 对话中出现值得长期保留的用户信息或工作习惯，直接编辑 user.md/soul.md，无需声明
+- 项目记忆：判断值得跨会话保留时写 project-<名>.md（同目录），并在 project.md 加/改索引行；项目结束或信息过时及时更新
+- 更新一律覆盖式：读旧全文 → 融合新信息 → 写新全文；宁精勿杂，过时即删
 `
 
 /*

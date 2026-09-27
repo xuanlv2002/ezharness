@@ -32,6 +32,7 @@ import (
 	"ezharness/core/internal/controller"
 	"ezharness/core/internal/domain"
 	"ezharness/core/internal/service"
+	"ezharness/core/internal/warp/modeldump"
 )
 
 /* appStart 进程启动时刻（启动分段计时日志用）。 */
@@ -48,6 +49,15 @@ func main() {
 		os.Exit(1)
 	}
 	gin.SetMode(gin.ReleaseMode)
+
+	// 日志落盘（须在 newApp/buildRouter 之前，gin.Logger 构造时捕获 writer）：
+	// log + gin 输出写 <数据目录>/logs/，dev 终端同时可见
+	logWriter := config.OpenLogWriter(c.DataDir)
+	log.SetOutput(logWriter)
+	gin.DefaultWriter = logWriter
+	gin.DefaultErrorWriter = logWriter
+	// modeldump 输出恒进日志（写不写由开关决定，开关随设置/换代在 buildRouter 推导）
+	modeldump.Out = logWriter
 
 	a, err := newApp(c)
 	if err != nil {
@@ -71,6 +81,9 @@ func (a *app) buildRouter() *gin.Engine {
 	a.mu.Lock()
 	a.hub = hub
 	a.mu.Unlock()
+
+	// 调试模式随代际重载：设置页开关，EZ_MODEL_DUMP=1（dev.bat）启动期强制开启
+	modeldump.SetEnabled(os.Getenv("EZ_MODEL_DUMP") == "1" || hub.SettingsSnapshot().DebugMode)
 
 	// 共享终端(魔法看板):workDir 与 agent shell 一致;换代随 shutdownGeneration 重建
 	termSvc := service.NewTerminalService(service.ResolveWorkDir(hub.SettingsSnapshot().WorkDir))
@@ -107,7 +120,7 @@ func (a *app) buildRouter() *gin.Engine {
 		},
 		Topics:    &controller.TopicController{Svc: &service.TopicService{Hub: hub, Agents: agents}},
 		Mcp:       &controller.McpController{Svc: service.NewMcpService(hub.Fsys, a.mcpRouter)},
-		Apps:      &controller.AppsController{Svc: &service.AppsService{Fsys: hub.Fsys}},
+		Apps:      &controller.AppsController{Svc: &service.AppsService{Fsys: hub.Fsys, Term: termSvc}},
 		App:       &controller.AppController{Svc: appSvc},
 		Terminal:  &controller.TerminalController{Svc: termSvc},
 		Browser:   &controller.BrowserController{Svc: a.browser},

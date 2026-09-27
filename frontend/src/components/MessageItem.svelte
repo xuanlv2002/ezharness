@@ -13,6 +13,7 @@
     reasoning = '',
     streaming = false,
     role,
+    bare = false,
     onFork,
   }: {
     text: string
@@ -22,6 +23,7 @@
     reasoning?: string
     streaming?: boolean
     role: 'user' | 'assistant'
+    bare?: boolean /* 无头像形态：回复组内由组头提供唯一头像 */
     onFork?: () => void
   } = $props()
 
@@ -96,6 +98,7 @@
           const desktopWindow = (window as any).ez?.window
           if (desktopWindow) desktopWindow.openApp(r.path, r.title)
           else window.open(r.path, '_blank')
+          if (r.termId) store.openTermAt(r.termId)
         })
         .catch((err: unknown) => (store.lastStatus = `打开快应用失败：${(err as Error).message}`))
     } else if (kind === 'file') {
@@ -162,7 +165,7 @@
 
 {#if role === 'user'}
   <div class="user enter-rise">
-    <span class="tag">你</span>
+    <span class="avph"></span>
     <div class="ucontent">
       {#if files?.length}
         <div class="fchips">
@@ -212,12 +215,12 @@
     {/if}
   </div>
 {:else}
-  <div class="assistant">
-    <span class="tag">ez</span>
+  <div class="assistant" class:bare>
+    {#if !bare}<span class="tag">ez</span>{/if}
     <div class="body">
       {#if reasoning}
         <details class="reasoning">
-          <summary>思考过程</summary>
+          <summary>思考 · {reasoning.length} 字</summary>
           {#if reasoningClipped}<div class="rclip">…（流式中，前文暂折叠，结束后展开全文）</div>{/if}
           <div class="reasoning-text">{reasoningView}</div>
         </details>
@@ -284,25 +287,27 @@
     color: var(--accent);
     background: var(--bg-soft);
   }
+  /* 用户行头像占位：宽度与所在上下文的助手头像列一致（--av-size
+     由容器设，回复组 48px、分身面板回落 36px），气泡与助手正文对齐 */
+  .avph {
+    flex: none;
+    width: var(--av-size, 36px);
+  }
+  /* 非组内助手（分身面板）的「ez」徽章 */
   .tag {
     flex: none;
     display: grid;
     place-items: center;
-    width: 26px;
-    height: 26px;
-    margin-top: 2px;
+    width: 36px;
+    height: 36px;
+    margin-top: 1px;
     font-family: var(--font-mono);
-    font-size: 11px;
+    font-size: 12px;
     font-weight: 700;
     border: 1px solid var(--line-strong);
-    border-radius: 6px;
+    border-radius: 8px;
     background: var(--bg);
     color: var(--fg);
-  }
-  .user .tag {
-    background: var(--bg-invert);
-    color: var(--fg-invert);
-    border-color: var(--bg-invert);
   }
   /* 黑底气泡保留；全局 ::selection 是黑底，在黑气泡上选中态隐形——
      气泡内覆盖为白色半透明，复制范围清晰可见 */
@@ -396,6 +401,9 @@
     flex: 1;
     padding-top: 3px;
   }
+  .assistant.bare .body {
+    padding-top: 0;
+  }
   .text {
     white-space: pre-wrap;
     word-break: break-word;
@@ -410,16 +418,17 @@
     animation: caret 1s steps(1) infinite;
   }
   .reasoning {
-    margin-bottom: 8px;
+    margin-bottom: 6px;
     border-left: 2px solid var(--line);
-    padding-left: 12px;
+    padding-left: 10px;
     color: var(--muted);
-    font-size: 13px;
+    font-size: 12.5px;
   }
   .reasoning summary {
     cursor: pointer;
     user-select: none;
-    font-size: 12px;
+    font-size: 11px;
+    font-variant-numeric: tabular-nums;
     letter-spacing: 0.02em;
   }
   .rclip {

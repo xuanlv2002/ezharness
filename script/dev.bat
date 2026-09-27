@@ -2,6 +2,8 @@
 rem dev: debug script
 rem chain: frontend build -> copy dist to core/web/dist -> go build (bin/) -> npm run start
 setlocal EnableExtensions
+rem 打开 modeldump（每次模型请求全量输入的打印，进终端与 data/logs/）；正式版不设即关闭
+set "EZ_MODEL_DUMP=1"
 cd /d "%~dp0.."
 
 echo [dev] building frontend...

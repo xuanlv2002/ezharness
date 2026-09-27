@@ -8,8 +8,8 @@ health.boot 与 restart 响应的 boot 匹配来判断新服务已就绪。
 package main
 
 import (
-	"fmt"
 	"io"
+	"log"
 	"net"
 	"net/http"
 	"os"
@@ -95,6 +95,7 @@ func (a *app) restart(port int, listen, dataDir string, ln net.Listener) {
 	if err := os.MkdirAll(dataDir, 0o755); err == nil {
 		_ = os.Chdir(dataDir)
 	}
+	config.FollowDataDir(dataDir) // 日志文件跟随数据目录换代
 	engine := a.buildRouter()
 	srv := &http.Server{Handler: engine}
 	a.mu.Lock()
@@ -104,7 +105,7 @@ func (a *app) restart(port int, listen, dataDir string, ln net.Listener) {
 	if ln == nil {
 		var err error
 		if ln, err = net.Listen("tcp", a.addr()); err != nil {
-			fmt.Println("重启失败（端口重听）:", err)
+			log.Printf("重启失败（端口重听）: %v", err)
 			return
 		}
 	}

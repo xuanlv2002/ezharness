@@ -14,6 +14,8 @@ import (
 	"sort"
 
 	"github.com/xuanlv2002/ezloop/ext/hook/skill"
+
+	"ezharness/core/internal/builtinskill"
 )
 
 /* StatusMcp 是状态基线与 available 清单用的 MCP 服务摘要。 */
@@ -31,6 +33,12 @@ func (h *Remind) buildChanges(ctx context.Context) (items []string, skills, mcps
 	var off []string
 	if h.disabled != nil {
 		off = h.disabled()
+	}
+	for _, s := range builtinskill.Skills() {
+		if slices.Contains(off, SkillDirOf(s.Path)) {
+			continue
+		}
+		skills = append(skills, StatusMcp{Name: s.Name, Desc: s.Description})
 	}
 	if loaded, err := skill.LoadDir(ctx, h.fsys, SkillsDir); err == nil {
 		for _, s := range loaded {

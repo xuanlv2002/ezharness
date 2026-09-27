@@ -187,6 +187,14 @@ func shellPath() string {
 
 /* Create 启动一个新终端(id 形如 t1/t2);name 是简短标识,desc 是用途描述。 */
 func (s *TerminalService) Create(name, desc, origin string) (*TermInfo, error) {
+	return s.create(s.workDir, name, desc, origin)
+}
+
+/* create 是 Create 与 Launch 的公共实现;dir 是 shell 的初始目录,空则用服务 workDir。 */
+func (s *TerminalService) create(dir, name, desc, origin string) (*TermInfo, error) {
+	if dir == "" {
+		dir = s.workDir
+	}
 	p, err := pty.New()
 	if err != nil {
 		return nil, fmt.Errorf("pty: %w", err)
@@ -196,7 +204,7 @@ func (s *TerminalService) Create(name, desc, origin string) (*TermInfo, error) {
 		return nil, fmt.Errorf("pty resize: %w", err)
 	}
 	cmd := p.Command(shellPath())
-	cmd.Dir = s.workDir
+	cmd.Dir = dir
 	cmd.Env = append(os.Environ(), "TERM=xterm-256color")
 
 	s.mu.Lock()
@@ -351,6 +359,29 @@ func (s *TerminalService) StartTerm(ctx context.Context, name, desc, command str
 	sess.readMark = sess.ring.mark()
 	sess.mu.Unlock()
 	return termResultJSON(*sess.info(), out, quietNote(exited, timedOut, timeout, info.ID)), nil
+}
+
+/*
+Launch 在 dir 目录新建终端并写入 command，不等输出返回——给"起了就一直
+跑"的服务进程用（快应用后端）。起的动作只负责写进去，日志留在终端里供
+用户与模型按需读；读位点取注入前的当前位置，与 StartTerm 一致（欢迎横幅
+不计入 agent 可读增量）。
+*/
+func (s *TerminalService) Launch(dir, name, desc, origin, command string) (*TermInfo, error) {
+	info, err := s.create(dir, name, desc, origin)
+	if err != nil {
+		return nil, err
+	}
+	sess, ok := s.get(info.ID)
+	if !ok {
+		return nil, fmt.Errorf("终端 %q 创建后即失效", info.ID)
+	}
+	sess.mu.Lock()
+	sess.readMark = sess.ring.mark()
+	sess.lastOut = time.Now()
+	sess.mu.Unlock()
+	s.writeAI(sess, command, termPayload(command))
+	return info, nil
 }
 
 /*

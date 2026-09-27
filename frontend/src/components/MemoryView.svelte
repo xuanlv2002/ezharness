@@ -285,7 +285,7 @@
   async function switchLine(n: SessionNode) {
     if (!n.lineRoot) return
     try {
-      await store.switchBranch(n.lineRoot)
+      await store.openTab(n.lineRoot)
       onNavigate?.('chat')
     } catch (e) {
       message = `切换分支失败：${(e as Error).message}`
@@ -497,11 +497,13 @@
                 </svg>
               </div>
               <div class="card-ops">
-                <button class="del" title="删除技能" onclick={() => (delTarget = s)}>
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-                    <path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14M10 11v6M14 11v6" />
-                  </svg>
-                </button>
+                {#if !s.builtin}
+                  <button class="del" title="删除技能" onclick={() => (delTarget = s)}>
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                      <path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14M10 11v6M14 11v6" />
+                    </svg>
+                  </button>
+                {/if}
                 <span
                   class="toggle"
                   class:on={s.enabled}
@@ -515,7 +517,7 @@
                 </span>
               </div>
             </div>
-            <h3>{s.name}</h3>
+            <h3>{s.name}{#if s.builtin}<span class="bi" title="随应用分发，可禁用不可删">内建</span>{/if}</h3>
             <p class="card-desc">{s.desc}</p>
           </div>
         {/each}
@@ -995,6 +997,17 @@
     font-weight: 650;
     color: var(--fg);
     margin-top: 2px;
+  }
+  .card h3 .bi {
+    display: inline-block;
+    margin-left: 6px;
+    padding: 1px 7px;
+    border-radius: 6px;
+    font-size: 10.5px;
+    font-weight: 500;
+    vertical-align: 1px;
+    color: var(--accent);
+    background: var(--accent-soft);
   }
   .card-desc {
     font-size: 11.5px;

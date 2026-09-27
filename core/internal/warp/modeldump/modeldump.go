@@ -1,6 +1,9 @@
 /*
 modeldump 是 provider 装饰器：每次模型调用前把完整输入
-（Messages + Tools）全文打印到控制台，供调试上下文机制。
+（Messages + Tools）全文打印到 Out，供调试上下文机制。
+开关（SetEnabled）由设置页「调试模式」实时控制，随设置落盘；
+EZ_MODEL_DUMP=1 是启动期强制开启（dev.bat）。Out 恒为日志 writer
+（终端 + <数据目录>/logs/core-*.log），关着时一条不写。
 挂在 warp 链最外层（先于 modelretry 注册），重试不重复打印；
 fork 分身复刻 warp 链，分身的输入同样可见。
 */
@@ -10,6 +13,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -23,7 +27,18 @@ import (
 var (
 	seq atomic.Int64
 	mu  sync.Mutex // fork 与主循环并行时避免多次打印交错
+
+	enabled atomic.Bool
+
+	// Out 是输出目标；默认 io.Discard，main 接管为日志 writer（开关只控制写不写）
+	Out io.Writer = io.Discard
 )
+
+/* SetEnabled 开关模型输入打印（设置页「调试模式」与启动环境变量共用）。 */
+func SetEnabled(on bool) { enabled.Store(on) }
+
+/* Enabled 报告当前是否打印模型输入。 */
+func Enabled() bool { return enabled.Load() }
 
 /* Warp 返回模型输入打印装饰器。 */
 func Warp() warp.ModelHandler {
@@ -57,6 +72,9 @@ type dumpTool struct {
 
 /* dump 打印一行头部摘要 + 请求全量 JSON（图片 base64 截断，防日志爆炸）。 */
 func dump(req *types.ModelRequest) {
+	if !enabled.Load() {
+		return
+	}
 	tools := make([]dumpTool, 0, len(req.Tools))
 	chars := 0
 	imgChars := 0
@@ -92,7 +110,7 @@ func dump(req *types.ModelRequest) {
 	}
 	mu.Lock()
 	defer mu.Unlock()
-	fmt.Printf("========== [model-dump #%d] %s · %d msgs · %d chars · %d img-chars · %d tools ==========\n%s\n",
+	fmt.Fprintf(Out, "========== [model-dump #%d] %s · %d msgs · %d chars · %d img-chars · %d tools ==========\n%s\n",
 		seq.Add(1), time.Now().Format("15:04:05"), len(req.Messages), chars, imgChars, len(tools), body)
 }
 

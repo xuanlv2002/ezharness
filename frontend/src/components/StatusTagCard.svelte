@@ -50,7 +50,7 @@
     align-items: center;
     gap: 10px;
     flex-wrap: wrap;
-    padding: 3px 12px;
+    padding: 2px 10px;
     font-size: 11.5px;
     color: var(--muted);
     border-left: 2px solid #d29922;

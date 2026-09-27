@@ -31,3 +31,7 @@ data/
 # IDE
 .idea/
 .vscode/
+
+# 内建技能的嵌入资源是源码（上面的 skills/ 规则只针对运行时用户技能目录）
+!core/internal/builtinskill/skills/
+!core/internal/builtinskill/skills/**

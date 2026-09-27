@@ -23,7 +23,7 @@
     display: flex;
     flex-direction: column;
     gap: 2px;
-    padding: 3px 12px;
+    padding: 2px 10px;
     font-size: 11.5px;
     color: var(--muted);
     border-left: 2px solid var(--line-strong);

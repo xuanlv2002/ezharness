@@ -365,7 +365,7 @@ func (t *TopicService) Compact(ctx context.Context, rootID string) error {
 	st := t.Hub.SettingsSnapshot()
 	info, err := hooks.ArchiveSession(ctx, w.Provider, t.Hub.Fsys, s.Sess, sys,
 		s.Topics, w.Trace, func() string { return buildSystemBase(ctx, st, s.Fsys) },
-		s.History(), s.ModelView())
+		s.History(), s.ModelView(), ResolveWorkDir(st.WorkDir))
 	if err != nil {
 		return err
 	}

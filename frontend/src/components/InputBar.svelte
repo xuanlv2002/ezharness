@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from 'svelte'
+  import { onDestroy, onMount, tick, untrack } from 'svelte'
   import { store, type Attachment, type FileRef } from '../lib/store.svelte'
   import { fileBaseName, isImagePath } from '../lib/textfile'
 
@@ -28,6 +28,26 @@
   let text = $state('')
   let focused = $state(false)
   let el: HTMLTextAreaElement | undefined = $state()
+
+  /* 每标签草稿：切换标签时换出者存草稿、换入者恢复（读 text 须 untrack，
+  写回自身状态再读会成环）；销毁时也存——切视图页再回来输入不丢 */
+  let lastTabId = ''
+  $effect(() => {
+    const id = store.activeId
+    if (id === lastTabId) return
+    if (lastTabId) store.drafts[lastTabId] = untrack(() => text)
+    text = store.drafts[id] ?? ''
+    lastTabId = id
+    void tick().then(() => {
+      if (el) {
+        el.style.height = 'auto'
+        el.style.height = el.scrollHeight + 'px'
+      }
+    })
+  })
+  onDestroy(() => {
+    if (lastTabId) store.drafts[lastTabId] = text
+  })
 
   /* 附件缩略：真身路径走文件服务源（与聊天记录同源，带版本参数——
   画板写回后强制刷新）；path 空 = 拖入暂存中占位 */

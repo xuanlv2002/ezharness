@@ -1,6 +1,7 @@
 <script lang="ts">
   import { store, type Block } from '../lib/store.svelte'
   import Logo from './Logo.svelte'
+  import EzAvatar from './EzAvatar.svelte'
   import MessageItem from './MessageItem.svelte'
   import ToolBlock from './ToolBlock.svelte'
   import ToolGroup from './ToolGroup.svelte'
@@ -56,25 +57,48 @@
     el.scrollTo({ top, behavior: 'smooth' })
   }
 
-  /* 连续工具段分组：≥ TOOL_GROUP_MIN 折成一条摘要（审批卡等非 tool 块打断分组） */
-  const TOOL_GROUP_MIN = 5
+  /* 行模型：user 块独立成行，其余块并入其后的回复组（一个用户输入只对
+  应一个头像）；首 user 之前的系统记录成引导组（无头像平铺）。组内连续
+  tool 段 ≥ TOOL_GROUP_MIN 折成一条摘要（审批卡等非 tool 块打断分组）。
+  组 key 用前置 user 块 uid——组内中段增删不换 key，流式与展开态不抖 */
+  const TOOL_GROUP_MIN = 2
   type ToolBlockB = Extract<Block, { kind: 'tool' }>
   type Seg = { type: 'one'; b: Block } | { type: 'tools'; blocks: ToolBlockB[] }
-  const segs = $derived.by(() => {
-    const out: Seg[] = []
-    let cur: ToolBlockB[] = []
-    const flush = () => {
-      if (cur.length) out.push({ type: 'tools', blocks: cur })
-      cur = []
-    }
-    for (const b of store.blocks) {
-      if (b.kind === 'tool') cur.push(b)
-      else {
-        flush()
-        out.push({ type: 'one', b })
+  type Row =
+    | { kind: 'leader'; key: 'L'; segs: Seg[] }
+    | { kind: 'user'; key: string; b: Extract<Block, { kind: 'user' }> }
+    | { kind: 'group'; key: string; segs: Seg[] }
+  const rows = $derived.by(() => {
+    const out: Row[] = []
+    let segs: Seg[] = []
+    let toolRun: ToolBlockB[] = []
+    let curKey = 'L'
+    const flushTools = () => {
+      if (toolRun.length) {
+        segs.push({ type: 'tools', blocks: toolRun })
+        toolRun = []
       }
     }
-    flush()
+    const flushGroup = () => {
+      flushTools()
+      if (!segs.length) return
+      if (curKey === 'L') out.push({ kind: 'leader', key: 'L', segs })
+      else out.push({ kind: 'group', key: 'g' + curKey, segs })
+      segs = []
+    }
+    for (const b of store.blocks) {
+      if (b.kind === 'user') {
+        flushGroup()
+        out.push({ kind: 'user', key: 'u' + b.uid, b })
+        curKey = String(b.uid)
+      } else if (b.kind === 'tool') {
+        toolRun.push(b)
+      } else {
+        flushTools()
+        segs.push({ type: 'one', b })
+      }
+    }
+    flushGroup()
     return out
   })
 
@@ -212,20 +236,19 @@
     updateActive()
   }
 
-  /* 模型调用中但正文尚未流出（首 token 前 / 工具参数流式构造期）→ 思考
-  指示。building 工具的参数就是模型流式输出——也算"输出中"，否则
-  tool_chunk→tool_start 间指示条会显隐跳变（配合吸底就是闪动） */
-  const thinking = $derived.by(() => {
-    if (!store.modelActive) return false
+  /* 模型活跃且正文尚未流出时的活动指示：思考（首 token 前 / 只有思考在
+  流——思考默认折叠，长时间无正文像卡死）与输出（工具参数流式构造期）两
+  态；正文一旦流出即收指示（内容本身是进度）。building 工具的参数就是模
+  型流式输出，计"输出"避免 tool_chunk→tool_start 间指示条显隐跳变 */
+  const modelPhase = $derived.by(() => {
+    if (!store.modelActive) return ''
     for (let i = store.blocks.length - 1; i >= 0; i--) {
       const b = store.blocks[i]
-      if (b.kind === 'assistant') {
-        return !(b.streaming && (b.text || b.reasoning))
-      }
-      if (b.kind === 'user') return true
-      if (b.kind === 'tool' && b.state === 'building') return true
+      if (b.kind === 'assistant') return b.streaming && b.text ? '' : 'think'
+      if (b.kind === 'user') return 'think'
+      if (b.kind === 'tool' && b.state === 'building') return 'gen'
     }
-    return true
+    return 'think'
   })
 
   $effect(() => {
@@ -251,20 +274,9 @@
       </div>
     {/if}
     {#if !empty}
-      {#each segs as seg}
-      {#if seg.type === 'tools'}
-        {@const key = seg.blocks[0].uid}
-        {#if seg.blocks.length >= TOOL_GROUP_MIN}
-          <ToolGroup blocks={seg.blocks} open={openGroups.has(key)} onToggle={() => toggleGroup(key)} />
-        {:else}
-          {#each seg.blocks as b (b.uid)}
-            <div class:reveal={store.batchIds.has(b.uid)}>
-              <ToolBlock data={b} />
-            </div>
-          {/each}
-        {/if}
-      {:else if seg.b.kind === 'user'}
-        {@const ub = seg.b}
+      {#each rows as row, i (row.key)}
+      {#if row.kind === 'user'}
+        {@const ub = row.b}
         <div class:reveal={store.batchIds.has(ub.uid)} data-uid={ub.uid}>
           <MessageItem
             text={ub.text}
@@ -275,63 +287,93 @@
             onFork={ub.owner && ub.msgIdx !== undefined ? () => void store.forkFrom(ub.owner!, ub.msgIdx!) : undefined}
           />
         </div>
-      {:else if seg.b.kind === 'assistant'}
-        {@const ab = seg.b}
-        <div class:reveal={store.batchIds.has(ab.uid)} data-uid={ab.uid}>
-          <MessageItem
-            text={ab.text}
-            reasoning={ab.reasoning}
-            streaming={ab.streaming}
-            role="assistant"
-            onFork={ab.owner && ab.msgIdx !== undefined && !ab.streaming ? () => void store.forkFrom(ab.owner!, ab.msgIdx!) : undefined}
-          />
-        </div>
-      {:else if seg.b.kind === 'fork'}
-        <div class:reveal={store.batchIds.has(seg.b.uid)}>
-          <ForkCard fork={store.forks[seg.b.forkId]} />
-        </div>
-      {:else if seg.b.kind === 'decision'}
-        <div id={`decision-${seg.b.id}`} class:reveal={store.batchIds.has(seg.b.uid)}>
-          <DecisionCard data={seg.b} />
-        </div>
-      {:else if seg.b.kind === 'status'}
-        <div class:reveal={store.batchIds.has(seg.b.uid)}>
-          <StatusTagCard data={seg.b.data} raw={seg.b.text} />
-        </div>
-      {:else if seg.b.kind === 'resourcechange'}
-        <div class:reveal={store.batchIds.has(seg.b.uid)}>
-          <ResChangeCard items={seg.b.items} />
-        </div>
-      {:else if seg.b.kind === 'note'}
-        <div class="note" class:reveal={store.batchIds.has(seg.b.uid)}>
-          <span class="line"></span>
-          {seg.b.text}
-          <span class="line"></span>
-        </div>
-      {:else if seg.b.kind === 'imgload'}
-        <div class="imgload" class:reveal={store.batchIds.has(seg.b.uid)} title={seg.b.paths.join('\n')}>
-          {#each seg.b.paths as p (p)}
-            <img src={`/api/workspace/file?path=${encodeURIComponent(p)}`} alt={p} loading="lazy"
-              onclick={() => store.openFileAt(p)}
-              onerror={(e) => ((e.currentTarget as HTMLImageElement).style.display = 'none')}
-              title="点击打开文件（可编辑保存写回）" />
+      {:else}
+        <div class="grp" class:leader={row.kind === 'leader'}>
+          {#if row.kind === 'group'}
+            {@const live = i === rows.length - 1}
+            <span class="tag">
+              <EzAvatar size={48} run={live && store.busy} animate={live}>ez</EzAvatar>
+            </span>
+          {/if}
+          <div class="gbody">
+          {#each row.segs as seg}
+          {#if seg.type === 'tools'}
+            {@const key = seg.blocks[0].uid}
+            {#if seg.blocks.length >= TOOL_GROUP_MIN}
+              <ToolGroup blocks={seg.blocks} open={openGroups.has(key)} onToggle={() => toggleGroup(key)} />
+            {:else}
+              {#each seg.blocks as b (b.uid)}
+                <div class:reveal={store.batchIds.has(b.uid)}>
+                  <ToolBlock data={b} />
+                </div>
+              {/each}
+            {/if}
+          {:else if seg.b.kind === 'assistant'}
+            {@const ab = seg.b}
+            <div class:reveal={store.batchIds.has(ab.uid)}>
+              <MessageItem
+                text={ab.text}
+                reasoning={ab.reasoning}
+                streaming={ab.streaming}
+                role="assistant"
+                bare
+                onFork={ab.owner && ab.msgIdx !== undefined && !ab.streaming ? () => void store.forkFrom(ab.owner!, ab.msgIdx!) : undefined}
+              />
+            </div>
+          {:else if seg.b.kind === 'fork'}
+            <div class:reveal={store.batchIds.has(seg.b.uid)}>
+              <ForkCard fork={store.forks[seg.b.forkId]} />
+            </div>
+          {:else if seg.b.kind === 'decision'}
+            <div id={`decision-${seg.b.id}`} class:reveal={store.batchIds.has(seg.b.uid)}>
+              <DecisionCard data={seg.b} />
+            </div>
+          {:else if seg.b.kind === 'status'}
+            <div class:reveal={store.batchIds.has(seg.b.uid)}>
+              <StatusTagCard data={seg.b.data} raw={seg.b.text} />
+            </div>
+          {:else if seg.b.kind === 'resourcechange'}
+            <div class:reveal={store.batchIds.has(seg.b.uid)}>
+              <ResChangeCard items={seg.b.items} />
+            </div>
+          {:else if seg.b.kind === 'note'}
+            <div class="note" class:reveal={store.batchIds.has(seg.b.uid)}>
+              <span class="line"></span>
+              {seg.b.text}
+              <span class="line"></span>
+            </div>
+          {:else if seg.b.kind === 'imgload'}
+            <div class="imgload" class:reveal={store.batchIds.has(seg.b.uid)} title={seg.b.paths.join('\n')}>
+              {#each seg.b.paths as p (p)}
+                <img src={`/api/workspace/file?path=${encodeURIComponent(p)}`} alt={p} loading="lazy"
+                  onclick={() => store.openFileAt(p)}
+                  onerror={(e) => ((e.currentTarget as HTMLImageElement).style.display = 'none')}
+                  title="点击打开文件（可编辑保存写回）" />
+              {/each}
+              <span class="label">已加载上下文</span>
+            </div>
+          {:else if seg.b.kind === 'endtick'}
+            <div class="endtick" class:reveal={store.batchIds.has(seg.b.uid)} title={seg.b.title}>
+              <span class="dot" class:warn={seg.b.icon === '⚠'}>{seg.b.icon}</span>
+              <span class="rtext">{seg.b.title}</span>
+            </div>
+          {/if}
           {/each}
-          <span class="label">已加载上下文</span>
-        </div>
-      {:else if seg.b.kind === 'endtick'}
-        <div class="endtick" class:reveal={store.batchIds.has(seg.b.uid)} title={seg.b.title}>
-          <span class="dot" class:warn={seg.b.icon === '⚠'}>{seg.b.icon}</span>
-          <span class="rtext">{seg.b.title}</span>
+          </div>
         </div>
       {/if}
       {/each}
     {/if}
-    {#if thinking || store.lastTool}
-      <div class="thinking"><span class="tdot"></span>{store.lastTool ? `⚙ ${store.lastTool} 执行中…` : '模型输出中…'}</div>
+    {#if modelPhase || store.lastTool}
+      <div class="thinking"><span class="tdot"></span>{store.lastTool
+          ? `⚙ ${store.lastTool} 执行中…`
+          : modelPhase === 'gen'
+            ? '模型输出中…'
+            : '模型思考中…'}</div>
     {/if}
     {#if empty}
       <div class="empty">
-        <div class="mark"><Logo size={56} /></div>
+        <div class="mark"><EzAvatar size={56} random><Logo size={56} /></EzAvatar></div>
         <p>向 ezharness 发出第一条指令——它可全权操作本机。</p>
         {#if store.hasPrev}
           <p class="hint">↑ 下拉可查看上一话题</p>
@@ -471,6 +513,7 @@
     flex-direction: column;
     gap: 20px;
     min-height: 100%; /* 空状态时也撑满可视区，使欢迎语垂直居中 */
+    --av-size: 48px; /* 头像列宽：组头像与用户行占位共用 */
   }
   .pullind {
     display: flex;
@@ -583,13 +626,57 @@
     height: 1px;
     background: var(--line);
   }
+  /* 回复组：一个用户输入对应一个头像，组内过程块紧凑排列（间隙 7px）。
+  --proc-indent 是过程卡缩进基准：组内 0（对齐正文），未设处回落 40px
+  （ForkPanel 等旧上下文保持原缩进） */
+  .grp {
+    display: flex;
+    gap: 14px;
+    align-items: flex-start;
+  }
+  .grp .tag {
+    flex: none;
+    display: grid;
+    place-items: center;
+    width: var(--av-size);
+    height: var(--av-size);
+    margin-top: 1px;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    font-weight: 700;
+    border: 1px solid var(--line-strong);
+    border-radius: 10px;
+    background: var(--bg);
+    color: var(--fg);
+  }
+  /* 表情图上屏后去掉徽章底：头像直接露出（回退 ez 字样仍是徽章）。
+  img 来自子组件，:global 逃逸作用域才能命中 */
+  .grp .tag:has(> :global(img)) {
+    border-color: transparent;
+    background: transparent;
+  }
+  .gbody {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 7px;
+    padding-top: 2px;
+  }
+  .grp:not(.leader) .gbody {
+    --proc-indent: 0px;
+  }
+  /* 引导组：首 user 之前的系统记录，无头像平铺（缩进回落 40px 同旧观感） */
+  .grp.leader .gbody {
+    gap: 10px;
+  }
   /* 轮次收尾行：靠左紧凑「图标 + 结束原因」，宽约 30% 截断，悬浮看全文 */
   .endtick {
     display: flex;
     align-items: center;
     gap: 7px;
     max-width: 30%;
-    padding-left: 48px; /* 与消息文本起点对齐（头像 26 + gap 14 + 内边距 8） */
+    padding-left: calc(var(--proc-indent, 40px) + 8px);
     font-size: 11px;
     color: var(--faint);
     animation: float-in var(--dur-fast) var(--ease-out) both;
@@ -599,7 +686,7 @@
     display: flex;
     align-items: center;
     gap: 6px;
-    padding-left: 48px;
+    padding-left: calc(var(--proc-indent, 40px) + 8px);
     font-size: 11px;
     color: var(--faint);
     animation: float-in var(--dur-fast) var(--ease-out) both;

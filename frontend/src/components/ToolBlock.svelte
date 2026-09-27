@@ -86,7 +86,7 @@
 
 <style>
   .tool {
-    margin-left: 40px;
+    margin-left: var(--proc-indent, 40px);
     border: 1px solid var(--line);
     border-radius: 10px;
     overflow: hidden;
@@ -101,9 +101,9 @@
     width: 100%;
     border: none;
     background: transparent;
-    padding: 7px 12px;
+    padding: 5px 10px;
     font-family: var(--font-mono);
-    font-size: 12.5px;
+    font-size: 12px;
     text-align: left;
     transition: background var(--dur-fast) var(--ease-out);
   }

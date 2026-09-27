@@ -1,6 +1,7 @@
 package domain
 
 import (
+	"encoding/json"
 	"context"
 	"strings"
 	"testing"
@@ -125,5 +126,54 @@ func TestFinishRunMergesTrimmedArchive(t *testing.T) {
 			sb.WriteString(string(m.Role) + ":" + m.Content + " | ")
 		}
 		t.Fatalf("history wrong: %s", sb.String())
+	}
+}
+
+/* 流式快照回放：增量帧累积成 stream.snapshot 进回放缓存，model_end 落定后
+丢弃（切回分支/断线重连时 in-flight 内容靠它重建）。 */
+func TestStreamSnapshotReplay(t *testing.T) {
+	s := &Session{
+		subs:    map[chan []byte]struct{}{},
+		pending: map[string]Event{},
+		snapAcc: map[string]*StreamSnapshot{},
+		snapIdx: map[string]int{},
+	}
+	publish := func(typ string, data any) {
+		s.Publish(Event{Type: typ, Ts: time.Now().UnixMilli(), Data: Raw(data)})
+	}
+
+	publish("loop_start", "hi")
+	publish("model_chunk", "你")
+	publish("model_chunk", "好")
+	publish("reasoning_chunk", "想一想")
+	s.cur = &runState{} // 回放走 turnFrames 的前提是轮在进行中
+
+	var frame Event
+	found := false
+	for _, b := range s.ReplayFrames() {
+		var e Event
+		if json.Unmarshal(b, &e) == nil && e.Type == "stream.snapshot" {
+			frame, found = e, true
+		}
+	}
+	if !found {
+		t.Fatal("stream.snapshot must be in replay frames")
+	}
+	var snap StreamSnapshot
+	if err := json.Unmarshal(frame.Data, &snap); err != nil {
+		t.Fatal(err)
+	}
+	if snap.Content != "你好" || snap.Reasoning != "想一想" {
+		t.Fatalf("snapshot: %+v", snap)
+	}
+
+	// 构造期工具增量也进快照；model_end 后快照让位聚合帧
+	publish("tool_chunk", map[string]any{"index": 0, "nameDelta": "write_", "argsDelta": `{"path"`})
+	publish("model_end", ModelEndData{Content: "你好", Reasoning: "想一想"})
+	for _, b := range s.ReplayFrames() {
+		var e Event
+		if json.Unmarshal(b, &e) == nil && e.Type == "stream.snapshot" {
+			t.Fatal("model_end 后快照帧应丢弃")
+		}
 	}
 }

@@ -11,6 +11,7 @@ const fs = require('fs')
 const http = require('http')
 const { spawn } = require('child_process')
 const { startBrowserModule, overlayBrowser } = require('./browser')
+const { attachInspectMenu } = require('./inspect')
 
 let mainWindow = null
 let tray = null
@@ -218,7 +219,7 @@ function registerIpc() {
   ipcMain.on('ez:open-url', (_e, url) => {
     if (typeof url === 'string' && /^https?:\/\//.test(url)) shell.openExternal(url)
   })
-  /* 快应用子窗口：加载 core 同源页面，独立标题 */
+  /* 快应用子窗口：加载 core 同源页面，独立标题；右键可检查元素 */
   ipcMain.on('ez:open-app', (_e, url, title) => {
     if (typeof url !== 'string' || !url.startsWith('/')) return
     const win = new BrowserWindow({
@@ -227,6 +228,7 @@ function registerIpc() {
       title: title || 'ezharness',
       autoHideMenuBar: true,
     })
+    attachInspectMenu(win.webContents)
     win.loadURL(`${pageBase()}${url}`)
   })
   /* 抽屉工具弹出窗口：view → BrowserWindow。popoutState 是各工具最新

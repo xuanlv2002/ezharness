@@ -3,6 +3,8 @@
   import Timeline from './Timeline.svelte'
   import InputBar from './InputBar.svelte'
   import FindBar from './FindBar.svelte'
+  import TabBar from './TabBar.svelte'
+  import ChatEmpty from './ChatEmpty.svelte'
   import StatusCard from './StatusCard.svelte'
   import NoticePanel from './NoticePanel.svelte'
   import ForkPanel from './ForkPanel.svelte'
@@ -143,21 +145,26 @@
     <BranchPanel />
   </aside>
   <div class="main-col">
-    <Timeline />
-    <InputBar
-      {attachments}
-      fileRefs={fileRefs}
-      onRemove={removeAttachment}
-      onEditImage={(i) => {
-        const a = attachments[i]
-        if (a?.path) store.openFileAt(a.path)
-      }}
-      onAddFiles={(fs) => void addFiles(fs)}
-      onClearFiles={clearAttachments}
-      onRemoveFileRef={removeRef}
-      onOpenFileRef={(p) => store.openFileAt(p)}
-      onClearFileRefs={clearRefs}
-    />
+    <TabBar />
+    {#if store.activeId}
+      <Timeline />
+      <InputBar
+        {attachments}
+        fileRefs={fileRefs}
+        onRemove={removeAttachment}
+        onEditImage={(i) => {
+          const a = attachments[i]
+          if (a?.path) store.openFileAt(a.path)
+        }}
+        onAddFiles={(fs) => void addFiles(fs)}
+        onClearFiles={clearAttachments}
+        onRemoveFileRef={removeRef}
+        onOpenFileRef={(p) => store.openFileAt(p)}
+        onClearFileRefs={clearRefs}
+      />
+    {:else}
+      <ChatEmpty />
+    {/if}
   </div>
   <aside class="side">
     <StatusCard />

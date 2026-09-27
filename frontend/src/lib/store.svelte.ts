@@ -184,6 +184,10 @@ class AppStore {
      leafId = 当前叶 session ID（分身存档 owner、上翻游标起点） */
   activeId = $state('')
   leafId = $state('')
+  /* 打开的会话标签（rootId 身份；关闭仅摘除条目，会话与后台轮不受影响）；
+     空即空状态（activeId 同步为空）。drafts 是每标签输入框草稿 */
+  tabs = $state<{ rootId: string }[]>([])
+  drafts = $state<Record<string, string>>({})
   branches = $state<BranchView[]>([])
   blocks = $state<Block[]>([])
   forks = $state<Record<string, ForkState>>({})
@@ -271,11 +275,25 @@ class AppStore {
     this.branches = b.branches ?? []
     this.settings = b.settings
     this.status = b.status
+    this.tabs = b.sessionId ? [{ rootId: b.sessionId }] : []
     await this.loadHistory()
     this.unsub?.()
     this.unsub = subscribe(this.activeId, (ev) => this.apply(ev))
     this.refreshNotices()
-    setInterval(() => this.refreshNotices(), 3000)
+    setInterval(() => {
+      this.refreshNotices()
+      // 后台标签活跃时才拉分支列表（标签转点/待审批角标的数据源）
+      if (this.bgTabsBusy()) void this.refreshBranches()
+    }, 3000)
+  }
+
+  /* bgTabsBusy：任一非活动标签在跑或待审批（决定 3s 轮询要不要拉分支）。 */
+  private bgTabsBusy(): boolean {
+    return this.tabs.some((t) => {
+      if (t.rootId === this.activeId) return false
+      const b = this.branches.find((x) => x.id === t.rootId)
+      return !!b && !!(b.running || b.waiting)
+    })
   }
 
   async refreshStatus() {
@@ -297,10 +315,13 @@ class AppStore {
 
   private resubscribe() {
     this.unsub?.()
+    this.unsub = null
+    if (!this.activeId) return // 空状态不开 SSE（避免空 id 的请求）
     this.unsub = subscribe(this.activeId, (ev) => this.apply(ev))
   }
 
-  private async loadHistory() {
+  /* resetView 清空时间线与分支相关标志（切标签/关闭最后一个标签共用）。 */
+  private resetView() {
     this.blocks = []
     this.forks = {}
     this.activeForkId = ''
@@ -314,6 +335,14 @@ class AppStore {
     this.lastTool = ''
     this.live = null
     this.liveChanges = []
+    this.hasPrev = false
+    this.loadingPrev = false
+    this.batchIds = new Set()
+  }
+
+  private async loadHistory() {
+    this.resetView()
+    if (!this.activeId) return // 空状态：无会话可载
     try {
       const s = await api.getHistory(this.activeId)
       this.leafId = s.id
@@ -444,6 +473,10 @@ class AppStore {
           if (detail) out.push({ kind: 'endtick', uid: this.nuid(), icon: endIcon(detail), title: detail })
         } else if (m.content.includes('<context_trim')) {
           out.push({ kind: 'note', uid: this.nuid(), text: `✂️ ${trimText(m.content)}` })
+        } else if (m.content.includes('<loop_guard>')) {
+          // 循环护栏提醒：小字条呈现（标签体是人话文本）
+          const inner = m.content.replace(/^[\s\S]*?<loop_guard>|<\/loop_guard>[\s\S]*$/g, '').trim()
+          if (inner) out.push({ kind: 'note', uid: this.nuid(), text: `🛑 ${inner}` })
         } else if (!m.content.trim() && !m.images?.length) {
           // 空输入（纯附件轮，引用已由上一块独立呈现）：不渲染
         } else {
@@ -818,6 +851,63 @@ class AppStore {
     }
   }
 
+  /* openTab：已打开=激活；未打开=切换成功后登记（切换失败不落标签，
+     避免悬空条目——switchBranch 内部捕获不外抛，以 activeId 判成败）。 */
+  async openTab(rootId: string) {
+    if (rootId !== this.activeId) await this.switchBranch(rootId)
+    if (this.activeId === rootId && !this.tabs.some((t) => t.rootId === rootId)) {
+      this.tabs = [...this.tabs, { rootId }]
+    }
+  }
+
+  /* closeTab：关后台标签仅摘除；关活动标签激活右邻（退化左邻，浏览器
+     惯例）；最后一个 → 空状态（退订 SSE、清视图——会话本身不受影响，
+     侧栏列表与通知轮询照常）。 */
+  async closeTab(rootId: string) {
+    const i = this.tabs.findIndex((t) => t.rootId === rootId)
+    if (i < 0) return
+    this.tabs = this.tabs.filter((t) => t.rootId !== rootId)
+    delete this.drafts[rootId]
+    if (rootId !== this.activeId) return
+    const neighbor = this.tabs[i]?.rootId || this.tabs[i - 1]?.rootId || ''
+    if (neighbor) {
+      await this.switchBranch(neighbor)
+      return
+    }
+    this.unsub?.()
+    this.unsub = null
+    this.activeId = ''
+    this.leafId = ''
+    this.resetView()
+  }
+
+  /* closeOtherTabs：只保留指定标签，其余全关（活动标签被关则激活它）。 */
+  async closeOtherTabs(rootId: string) {
+    this.tabs = this.tabs.filter((t) => t.rootId === rootId)
+    for (const id of Object.keys(this.drafts)) {
+      if (id !== rootId) delete this.drafts[id]
+    }
+    if (this.activeId && this.activeId !== rootId) await this.switchBranch(rootId)
+  }
+
+  /* closeRightTabs：关掉指定标签右侧的全部标签；活动标签在其中则激活该标签。 */
+  async closeRightTabs(rootId: string) {
+    const i = this.tabs.findIndex((t) => t.rootId === rootId)
+    if (i < 0) return
+    const removed = this.tabs.slice(i + 1)
+    this.tabs = this.tabs.slice(0, i + 1)
+    for (const t of removed) delete this.drafts[t.rootId]
+    if (removed.some((t) => t.rootId === this.activeId)) await this.switchBranch(rootId)
+  }
+
+  /* newChatTab：开新线并落为新标签。 */
+  async newChatTab() {
+    await this.newBranch()
+    if (this.activeId && !this.tabs.some((t) => t.rootId === this.activeId)) {
+      this.tabs = [...this.tabs, { rootId: this.activeId }]
+    }
+  }
+
   /* 归档换代（分支列表行操作）：指定分支总结归档开新篇，线不变叶子换代。
      期间可自由切换/新建分支对话——锁只作用于被归档分支自身 */
   async compactTopic(rootId?: string) {
@@ -845,7 +935,8 @@ class AppStore {
     }
   }
 
-  /* 从任意消息分叉（Copy）：复制源会话 [0, msgIdx]（含选中消息）开新线 */
+  /* 从任意消息分叉（Copy）：复制源会话 [0, msgIdx]（含选中消息）开新线，
+     落为新标签 */
   async forkFrom(owner: string, msgIdx: number) {
     try {
       const r = await api.forkSession(owner, msgIdx + 1)
@@ -854,6 +945,9 @@ class AppStore {
       this.resubscribe()
       await this.refreshStatus()
       await this.refreshBranches()
+      if (!this.tabs.some((t) => t.rootId === this.activeId)) {
+        this.tabs = [...this.tabs, { rootId: this.activeId }]
+      }
     } catch (e) {
       this.lastStatus = `分叉失败：${(e as Error).message}`
     }
@@ -963,7 +1057,7 @@ class AppStore {
   打开抽屉定位，主时间线经 jumpMain 锚点由 ChatView 滚动。 */
   async jumpToNotice(n: NoticeData) {
     if (!n.target) return
-    if (n.rootId && n.rootId !== this.activeId) await this.switchBranch(n.rootId)
+    if (n.rootId && n.rootId !== this.activeId) await this.openTab(n.rootId)
     if (n.forkId) {
       this.openFork(n.forkId, n.id)
       return
@@ -980,6 +1074,15 @@ class AppStore {
   apply(ev: SseEvent) {
     this.tick++
     switch (ev.type) {
+      case 'loop.guard': {
+        // 循环护栏：时间线实时小字条（历史重建由 <loop_guard> 消息渲染，回放不重发）
+        const d = ev.data as { tool?: string; count?: number } | undefined
+        if (!ev.forkId) {
+          const tool = d?.tool ? `工具 ${d.tool} ` : '任务'
+          this.blocks.push({ kind: 'note', uid: this.nuid(), text: `🛑 ${tool}重复调用 ${d?.count ?? '?'} 次，已提醒模型停止重复；无效可停止本轮` })
+        }
+        break
+      }
       case 'replay.sync': {
         // SSE 建连首帧（后端权威运行态）：无运行轮时复位 busy（轮在断线
         // 窗口内结束会错过 turn_end 而卡"运行中"）；有运行轮时截断本地
@@ -1092,6 +1195,48 @@ class AppStore {
         if (!delta) break
         const bs = ev.forkId ? this.ensureFork(ev.forkId).blocks : this.blocks
         this.appendDelta(bs, delta, ev.type === 'model_chunk')
+        break
+      }
+      case 'stream.snapshot': {
+        /* 回放重建：in-flight 流的累积快照（只进回放缓存，实时订阅者收增量）。
+        正文/思考替换当前流式块（重连纠偏，之后的增量继续追加），构造期
+        工具块按快照重建 building 态（tool_start 到达时按名认领） */
+        const d = ev.data || {}
+        const bs = ev.forkId ? this.ensureFork(ev.forkId).blocks : this.blocks
+        if (d.content || d.reasoning) {
+          const last = bs[bs.length - 1]
+          if (last && last.kind === 'assistant' && last.streaming) {
+            last.text = d.content || ''
+            last.reasoning = d.reasoning || ''
+          } else {
+            bs.push({
+              kind: 'assistant',
+              uid: this.nuid(),
+              text: d.content || '',
+              reasoning: d.reasoning || '',
+              streaming: true,
+            })
+          }
+        }
+        for (const t of d.tools ?? []) {
+          const key = `b-${ev.forkId || 'm'}-${t.index ?? 0}`
+          const ex = bs.find((b) => b.kind === 'tool' && b.id === key && b.state === 'building')
+          if (ex && ex.kind === 'tool') {
+            ex.name = t.name || ''
+            ex.args = t.args || ''
+          } else {
+            bs.push({
+              kind: 'tool',
+              uid: this.nuid(),
+              id: key,
+              name: t.name || '',
+              args: t.args || '',
+              result: '',
+              err: '',
+              state: 'building',
+            })
+          }
+        }
         break
       }
       case 'model_end': {
@@ -1343,10 +1488,15 @@ class AppStore {
         this.pendingUserUid = 0
         this.pendingUserText = ''
         // 兜底收尾：取消路径引擎不发 model_end，流式块的打字光标须在此收掉；
-        // 残留 building 工具块（模型输出了调用但引擎未执行）同样标记完成
+        // 残留 building 工具块（模型输出了调用但引擎未执行）同样标记完成；
+        // running 工具块的 tool_end 若在慢消费丢帧窗口丢掉，这里补终态
+        // （否则转圈卡死——正常路径早已 done，不误伤）
         for (const bs of [this.blocks, ...Object.values(this.forks).map((f) => f.blocks)]) {
           for (const b of bs) {
-            if (b.kind === 'tool' && b.state === 'building') b.state = 'done'
+            if (b.kind === 'tool' && (b.state === 'building' || b.state === 'running')) {
+              if (b.state === 'running' && !b.result && !b.err) b.err = '已中断（本轮结束）'
+              b.state = 'done'
+            }
             if (b.kind === 'assistant' && b.streaming) b.streaming = false
           }
         }

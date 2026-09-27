@@ -40,7 +40,7 @@
 
   function switchTo(b: BranchView) {
     if (b.active || b.id === store.activeId) return
-    void store.switchBranch(b.id)
+    void store.openTab(b.id)
   }
 
   /* 时间分组：branches 已按 updatedAt 降序，顺序遍历切组即可 */
@@ -102,7 +102,7 @@
       </button>
     </div>
     <div class="list">
-      <button class="newbig" onclick={() => void store.newBranch()} title="开一条新分支（新话题）">
+      <button class="newbig" onclick={() => void store.newChatTab()} title="开一条新分支（新话题）">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
           <circle cx="12" cy="12" r="9" />
           <path d="M9 12h6M12 9v6" />

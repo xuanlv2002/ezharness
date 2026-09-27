@@ -95,7 +95,7 @@ flowchart LR
 | `<$supper_url>…</$supper_url>` | 模型输出（占位语法，system `<output>` 段有正误示例指引） | ✓（正文） | marked extension 实时解析 | 同左（同一渲染管线） |
 | ↳ 内容 `https://…` | 同上（外链） | ✓ | chip 点击经系统浏览器打开（复用外链拦截） | 同左 |
 | ↳ 内容 `term://<终端id>` | 同上（终端入口） | ✓ | chip 点击 openTermAt：拉开终端抽屉并定位（TerminalTab 消费 store.termFocus） | 同左 |
-| ↳ 内容 `app://<快应用名>` | 同上（快应用入口） | ✓ | chip 点击 POST /api/apps/open 开子窗 | 同左 |
+| ↳ 内容 `app://<快应用名>` | 同上（快应用入口） | ✓ | chip 点击 POST /api/apps/open 开子窗；带后端的应用顺带把后端终端拉进侧边栏 | 同左 |
 | ↳ 内容 `file://<绝对路径>` | 同上（文本文件入口） | ✓ | chip 点击 openFileAt（文本白名单门禁 textfile.ts）：拉开抽屉资源页打开该文件（ResourcePane 消费 store.fileFocus，按扩展名走 viewer/registry；文本保存 POST /api/workspace/save） | 同左 |
 | `<@toolArg>路径</@toolArg>` | 模型工具参数 | ✓（入史参数保持原文） | 工具卡显示原文 | 同左（展开只发生在执行侧） |
 
