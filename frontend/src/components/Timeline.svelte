@@ -56,25 +56,48 @@
     el.scrollTo({ top, behavior: 'smooth' })
   }
 
-  /* 连续工具段分组：≥ TOOL_GROUP_MIN 折成一条摘要（审批卡等非 tool 块打断分组） */
-  const TOOL_GROUP_MIN = 5
+  /* 行模型：user 块独立成行，其余块并入其后的回复组（一个用户输入只对
+  应一个头像）；首 user 之前的系统记录成引导组（无头像平铺）。组内连续
+  tool 段 ≥ TOOL_GROUP_MIN 折成一条摘要（审批卡等非 tool 块打断分组）。
+  组 key 用前置 user 块 uid——组内中段增删不换 key，流式与展开态不抖 */
+  const TOOL_GROUP_MIN = 2
   type ToolBlockB = Extract<Block, { kind: 'tool' }>
   type Seg = { type: 'one'; b: Block } | { type: 'tools'; blocks: ToolBlockB[] }
-  const segs = $derived.by(() => {
-    const out: Seg[] = []
-    let cur: ToolBlockB[] = []
-    const flush = () => {
-      if (cur.length) out.push({ type: 'tools', blocks: cur })
-      cur = []
-    }
-    for (const b of store.blocks) {
-      if (b.kind === 'tool') cur.push(b)
-      else {
-        flush()
-        out.push({ type: 'one', b })
+  type Row =
+    | { kind: 'leader'; key: 'L'; segs: Seg[] }
+    | { kind: 'user'; key: string; b: Extract<Block, { kind: 'user' }> }
+    | { kind: 'group'; key: string; segs: Seg[] }
+  const rows = $derived.by(() => {
+    const out: Row[] = []
+    let segs: Seg[] = []
+    let toolRun: ToolBlockB[] = []
+    let curKey = 'L'
+    const flushTools = () => {
+      if (toolRun.length) {
+        segs.push({ type: 'tools', blocks: toolRun })
+        toolRun = []
       }
     }
-    flush()
+    const flushGroup = () => {
+      flushTools()
+      if (!segs.length) return
+      if (curKey === 'L') out.push({ kind: 'leader', key: 'L', segs })
+      else out.push({ kind: 'group', key: 'g' + curKey, segs })
+      segs = []
+    }
+    for (const b of store.blocks) {
+      if (b.kind === 'user') {
+        flushGroup()
+        out.push({ kind: 'user', key: 'u' + b.uid, b })
+        curKey = String(b.uid)
+      } else if (b.kind === 'tool') {
+        toolRun.push(b)
+      } else {
+        flushTools()
+        segs.push({ type: 'one', b })
+      }
+    }
+    flushGroup()
     return out
   })
 
@@ -251,20 +274,9 @@
       </div>
     {/if}
     {#if !empty}
-      {#each segs as seg}
-      {#if seg.type === 'tools'}
-        {@const key = seg.blocks[0].uid}
-        {#if seg.blocks.length >= TOOL_GROUP_MIN}
-          <ToolGroup blocks={seg.blocks} open={openGroups.has(key)} onToggle={() => toggleGroup(key)} />
-        {:else}
-          {#each seg.blocks as b (b.uid)}
-            <div class:reveal={store.batchIds.has(b.uid)}>
-              <ToolBlock data={b} />
-            </div>
-          {/each}
-        {/if}
-      {:else if seg.b.kind === 'user'}
-        {@const ub = seg.b}
+      {#each rows as row (row.key)}
+      {#if row.kind === 'user'}
+        {@const ub = row.b}
         <div class:reveal={store.batchIds.has(ub.uid)} data-uid={ub.uid}>
           <MessageItem
             text={ub.text}
@@ -275,53 +287,74 @@
             onFork={ub.owner && ub.msgIdx !== undefined ? () => void store.forkFrom(ub.owner!, ub.msgIdx!) : undefined}
           />
         </div>
-      {:else if seg.b.kind === 'assistant'}
-        {@const ab = seg.b}
-        <div class:reveal={store.batchIds.has(ab.uid)} data-uid={ab.uid}>
-          <MessageItem
-            text={ab.text}
-            reasoning={ab.reasoning}
-            streaming={ab.streaming}
-            role="assistant"
-            onFork={ab.owner && ab.msgIdx !== undefined && !ab.streaming ? () => void store.forkFrom(ab.owner!, ab.msgIdx!) : undefined}
-          />
-        </div>
-      {:else if seg.b.kind === 'fork'}
-        <div class:reveal={store.batchIds.has(seg.b.uid)}>
-          <ForkCard fork={store.forks[seg.b.forkId]} />
-        </div>
-      {:else if seg.b.kind === 'decision'}
-        <div id={`decision-${seg.b.id}`} class:reveal={store.batchIds.has(seg.b.uid)}>
-          <DecisionCard data={seg.b} />
-        </div>
-      {:else if seg.b.kind === 'status'}
-        <div class:reveal={store.batchIds.has(seg.b.uid)}>
-          <StatusTagCard data={seg.b.data} raw={seg.b.text} />
-        </div>
-      {:else if seg.b.kind === 'resourcechange'}
-        <div class:reveal={store.batchIds.has(seg.b.uid)}>
-          <ResChangeCard items={seg.b.items} />
-        </div>
-      {:else if seg.b.kind === 'note'}
-        <div class="note" class:reveal={store.batchIds.has(seg.b.uid)}>
-          <span class="line"></span>
-          {seg.b.text}
-          <span class="line"></span>
-        </div>
-      {:else if seg.b.kind === 'imgload'}
-        <div class="imgload" class:reveal={store.batchIds.has(seg.b.uid)} title={seg.b.paths.join('\n')}>
-          {#each seg.b.paths as p (p)}
-            <img src={`/api/workspace/file?path=${encodeURIComponent(p)}`} alt={p} loading="lazy"
-              onclick={() => store.openFileAt(p)}
-              onerror={(e) => ((e.currentTarget as HTMLImageElement).style.display = 'none')}
-              title="点击打开文件（可编辑保存写回）" />
+      {:else}
+        <div class="grp" class:leader={row.kind === 'leader'}>
+          {#if row.kind === 'group'}<span class="tag">ez</span>{/if}
+          <div class="gbody">
+          {#each row.segs as seg}
+          {#if seg.type === 'tools'}
+            {@const key = seg.blocks[0].uid}
+            {#if seg.blocks.length >= TOOL_GROUP_MIN}
+              <ToolGroup blocks={seg.blocks} open={openGroups.has(key)} onToggle={() => toggleGroup(key)} />
+            {:else}
+              {#each seg.blocks as b (b.uid)}
+                <div class:reveal={store.batchIds.has(b.uid)}>
+                  <ToolBlock data={b} />
+                </div>
+              {/each}
+            {/if}
+          {:else if seg.b.kind === 'assistant'}
+            {@const ab = seg.b}
+            <div class:reveal={store.batchIds.has(ab.uid)}>
+              <MessageItem
+                text={ab.text}
+                reasoning={ab.reasoning}
+                streaming={ab.streaming}
+                role="assistant"
+                bare
+                onFork={ab.owner && ab.msgIdx !== undefined && !ab.streaming ? () => void store.forkFrom(ab.owner!, ab.msgIdx!) : undefined}
+              />
+            </div>
+          {:else if seg.b.kind === 'fork'}
+            <div class:reveal={store.batchIds.has(seg.b.uid)}>
+              <ForkCard fork={store.forks[seg.b.forkId]} />
+            </div>
+          {:else if seg.b.kind === 'decision'}
+            <div id={`decision-${seg.b.id}`} class:reveal={store.batchIds.has(seg.b.uid)}>
+              <DecisionCard data={seg.b} />
+            </div>
+          {:else if seg.b.kind === 'status'}
+            <div class:reveal={store.batchIds.has(seg.b.uid)}>
+              <StatusTagCard data={seg.b.data} raw={seg.b.text} />
+            </div>
+          {:else if seg.b.kind === 'resourcechange'}
+            <div class:reveal={store.batchIds.has(seg.b.uid)}>
+              <ResChangeCard items={seg.b.items} />
+            </div>
+          {:else if seg.b.kind === 'note'}
+            <div class="note" class:reveal={store.batchIds.has(seg.b.uid)}>
+              <span class="line"></span>
+              {seg.b.text}
+              <span class="line"></span>
+            </div>
+          {:else if seg.b.kind === 'imgload'}
+            <div class="imgload" class:reveal={store.batchIds.has(seg.b.uid)} title={seg.b.paths.join('\n')}>
+              {#each seg.b.paths as p (p)}
+                <img src={`/api/workspace/file?path=${encodeURIComponent(p)}`} alt={p} loading="lazy"
+                  onclick={() => store.openFileAt(p)}
+                  onerror={(e) => ((e.currentTarget as HTMLImageElement).style.display = 'none')}
+                  title="点击打开文件（可编辑保存写回）" />
+              {/each}
+              <span class="label">已加载上下文</span>
+            </div>
+          {:else if seg.b.kind === 'endtick'}
+            <div class="endtick" class:reveal={store.batchIds.has(seg.b.uid)} title={seg.b.title}>
+              <span class="dot" class:warn={seg.b.icon === '⚠'}>{seg.b.icon}</span>
+              <span class="rtext">{seg.b.title}</span>
+            </div>
+          {/if}
           {/each}
-          <span class="label">已加载上下文</span>
-        </div>
-      {:else if seg.b.kind === 'endtick'}
-        <div class="endtick" class:reveal={store.batchIds.has(seg.b.uid)} title={seg.b.title}>
-          <span class="dot" class:warn={seg.b.icon === '⚠'}>{seg.b.icon}</span>
-          <span class="rtext">{seg.b.title}</span>
+          </div>
         </div>
       {/if}
       {/each}
@@ -583,13 +616,51 @@
     height: 1px;
     background: var(--line);
   }
+  /* 回复组：一个用户输入对应一个头像，组内过程块紧凑排列（间隙 7px）。
+  --proc-indent 是过程卡缩进基准：组内 0（对齐正文），未设处回落 40px
+  （ForkPanel 等旧上下文保持原缩进） */
+  .grp {
+    display: flex;
+    gap: 14px;
+    align-items: flex-start;
+  }
+  .grp .tag {
+    flex: none;
+    display: grid;
+    place-items: center;
+    width: 26px;
+    height: 26px;
+    margin-top: 2px;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    font-weight: 700;
+    border: 1px solid var(--line-strong);
+    border-radius: 6px;
+    background: var(--bg);
+    color: var(--fg);
+  }
+  .gbody {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 7px;
+    padding-top: 2px;
+  }
+  .grp:not(.leader) .gbody {
+    --proc-indent: 0px;
+  }
+  /* 引导组：首 user 之前的系统记录，无头像平铺（缩进回落 40px 同旧观感） */
+  .grp.leader .gbody {
+    gap: 10px;
+  }
   /* 轮次收尾行：靠左紧凑「图标 + 结束原因」，宽约 30% 截断，悬浮看全文 */
   .endtick {
     display: flex;
     align-items: center;
     gap: 7px;
     max-width: 30%;
-    padding-left: 48px; /* 与消息文本起点对齐（头像 26 + gap 14 + 内边距 8） */
+    padding-left: calc(var(--proc-indent, 40px) + 8px);
     font-size: 11px;
     color: var(--faint);
     animation: float-in var(--dur-fast) var(--ease-out) both;
@@ -599,7 +670,7 @@
     display: flex;
     align-items: center;
     gap: 6px;
-    padding-left: 48px;
+    padding-left: calc(var(--proc-indent, 40px) + 8px);
     font-size: 11px;
     color: var(--faint);
     animation: float-in var(--dur-fast) var(--ease-out) both;

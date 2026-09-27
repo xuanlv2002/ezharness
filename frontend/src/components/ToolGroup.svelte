@@ -47,12 +47,12 @@
     align-items: center;
     gap: 8px;
     width: 100%;
-    margin-left: 40px;
+    margin-left: var(--proc-indent, 40px);
     border: 1px dashed var(--line-strong);
     border-radius: 10px;
     background: transparent;
-    padding: 7px 12px;
-    font-size: 12.5px;
+    padding: 5px 10px;
+    font-size: 12px;
     text-align: left;
     color: var(--fg);
     transition: background var(--dur-fast) var(--ease-out);
@@ -101,7 +101,7 @@
     color: var(--muted);
   }
   .fold {
-    margin-left: 40px;
+    margin-left: var(--proc-indent, 40px);
     align-self: flex-start;
     font-size: 11.5px;
     color: var(--faint);

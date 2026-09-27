@@ -184,6 +184,10 @@ class AppStore {
      leafId = 当前叶 session ID（分身存档 owner、上翻游标起点） */
   activeId = $state('')
   leafId = $state('')
+  /* 打开的会话标签（rootId 身份；关闭仅摘除条目，会话与后台轮不受影响）；
+     空即空状态（activeId 同步为空）。drafts 是每标签输入框草稿 */
+  tabs = $state<{ rootId: string }[]>([])
+  drafts = $state<Record<string, string>>({})
   branches = $state<BranchView[]>([])
   blocks = $state<Block[]>([])
   forks = $state<Record<string, ForkState>>({})
@@ -271,11 +275,25 @@ class AppStore {
     this.branches = b.branches ?? []
     this.settings = b.settings
     this.status = b.status
+    this.tabs = b.sessionId ? [{ rootId: b.sessionId }] : []
     await this.loadHistory()
     this.unsub?.()
     this.unsub = subscribe(this.activeId, (ev) => this.apply(ev))
     this.refreshNotices()
-    setInterval(() => this.refreshNotices(), 3000)
+    setInterval(() => {
+      this.refreshNotices()
+      // 后台标签活跃时才拉分支列表（标签转点/待审批角标的数据源）
+      if (this.bgTabsBusy()) void this.refreshBranches()
+    }, 3000)
+  }
+
+  /* bgTabsBusy：任一非活动标签在跑或待审批（决定 3s 轮询要不要拉分支）。 */
+  private bgTabsBusy(): boolean {
+    return this.tabs.some((t) => {
+      if (t.rootId === this.activeId) return false
+      const b = this.branches.find((x) => x.id === t.rootId)
+      return !!b && !!(b.running || b.waiting)
+    })
   }
 
   async refreshStatus() {
@@ -297,10 +315,13 @@ class AppStore {
 
   private resubscribe() {
     this.unsub?.()
+    this.unsub = null
+    if (!this.activeId) return // 空状态不开 SSE（避免空 id 的请求）
     this.unsub = subscribe(this.activeId, (ev) => this.apply(ev))
   }
 
-  private async loadHistory() {
+  /* resetView 清空时间线与分支相关标志（切标签/关闭最后一个标签共用）。 */
+  private resetView() {
     this.blocks = []
     this.forks = {}
     this.activeForkId = ''
@@ -314,6 +335,14 @@ class AppStore {
     this.lastTool = ''
     this.live = null
     this.liveChanges = []
+    this.hasPrev = false
+    this.loadingPrev = false
+    this.batchIds = new Set()
+  }
+
+  private async loadHistory() {
+    this.resetView()
+    if (!this.activeId) return // 空状态：无会话可载
     try {
       const s = await api.getHistory(this.activeId)
       this.leafId = s.id
@@ -822,6 +851,63 @@ class AppStore {
     }
   }
 
+  /* openTab：已打开=激活；未打开=切换成功后登记（切换失败不落标签，
+     避免悬空条目——switchBranch 内部捕获不外抛，以 activeId 判成败）。 */
+  async openTab(rootId: string) {
+    if (rootId !== this.activeId) await this.switchBranch(rootId)
+    if (this.activeId === rootId && !this.tabs.some((t) => t.rootId === rootId)) {
+      this.tabs = [...this.tabs, { rootId }]
+    }
+  }
+
+  /* closeTab：关后台标签仅摘除；关活动标签激活右邻（退化左邻，浏览器
+     惯例）；最后一个 → 空状态（退订 SSE、清视图——会话本身不受影响，
+     侧栏列表与通知轮询照常）。 */
+  async closeTab(rootId: string) {
+    const i = this.tabs.findIndex((t) => t.rootId === rootId)
+    if (i < 0) return
+    this.tabs = this.tabs.filter((t) => t.rootId !== rootId)
+    delete this.drafts[rootId]
+    if (rootId !== this.activeId) return
+    const neighbor = this.tabs[i]?.rootId || this.tabs[i - 1]?.rootId || ''
+    if (neighbor) {
+      await this.switchBranch(neighbor)
+      return
+    }
+    this.unsub?.()
+    this.unsub = null
+    this.activeId = ''
+    this.leafId = ''
+    this.resetView()
+  }
+
+  /* closeOtherTabs：只保留指定标签，其余全关（活动标签被关则激活它）。 */
+  async closeOtherTabs(rootId: string) {
+    this.tabs = this.tabs.filter((t) => t.rootId === rootId)
+    for (const id of Object.keys(this.drafts)) {
+      if (id !== rootId) delete this.drafts[id]
+    }
+    if (this.activeId && this.activeId !== rootId) await this.switchBranch(rootId)
+  }
+
+  /* closeRightTabs：关掉指定标签右侧的全部标签；活动标签在其中则激活该标签。 */
+  async closeRightTabs(rootId: string) {
+    const i = this.tabs.findIndex((t) => t.rootId === rootId)
+    if (i < 0) return
+    const removed = this.tabs.slice(i + 1)
+    this.tabs = this.tabs.slice(0, i + 1)
+    for (const t of removed) delete this.drafts[t.rootId]
+    if (removed.some((t) => t.rootId === this.activeId)) await this.switchBranch(rootId)
+  }
+
+  /* newChatTab：开新线并落为新标签。 */
+  async newChatTab() {
+    await this.newBranch()
+    if (this.activeId && !this.tabs.some((t) => t.rootId === this.activeId)) {
+      this.tabs = [...this.tabs, { rootId: this.activeId }]
+    }
+  }
+
   /* 归档换代（分支列表行操作）：指定分支总结归档开新篇，线不变叶子换代。
      期间可自由切换/新建分支对话——锁只作用于被归档分支自身 */
   async compactTopic(rootId?: string) {
@@ -849,7 +935,8 @@ class AppStore {
     }
   }
 
-  /* 从任意消息分叉（Copy）：复制源会话 [0, msgIdx]（含选中消息）开新线 */
+  /* 从任意消息分叉（Copy）：复制源会话 [0, msgIdx]（含选中消息）开新线，
+     落为新标签 */
   async forkFrom(owner: string, msgIdx: number) {
     try {
       const r = await api.forkSession(owner, msgIdx + 1)
@@ -858,6 +945,9 @@ class AppStore {
       this.resubscribe()
       await this.refreshStatus()
       await this.refreshBranches()
+      if (!this.tabs.some((t) => t.rootId === this.activeId)) {
+        this.tabs = [...this.tabs, { rootId: this.activeId }]
+      }
     } catch (e) {
       this.lastStatus = `分叉失败：${(e as Error).message}`
     }
@@ -967,7 +1057,7 @@ class AppStore {
   打开抽屉定位，主时间线经 jumpMain 锚点由 ChatView 滚动。 */
   async jumpToNotice(n: NoticeData) {
     if (!n.target) return
-    if (n.rootId && n.rootId !== this.activeId) await this.switchBranch(n.rootId)
+    if (n.rootId && n.rootId !== this.activeId) await this.openTab(n.rootId)
     if (n.forkId) {
       this.openFork(n.forkId, n.id)
       return

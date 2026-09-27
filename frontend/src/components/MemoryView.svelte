@@ -285,7 +285,7 @@
   async function switchLine(n: SessionNode) {
     if (!n.lineRoot) return
     try {
-      await store.switchBranch(n.lineRoot)
+      await store.openTab(n.lineRoot)
       onNavigate?.('chat')
     } catch (e) {
       message = `切换分支失败：${(e as Error).message}`

@@ -107,7 +107,7 @@
 
 <style>
   .card {
-    margin-left: 40px;
+    margin-left: var(--proc-indent, 40px);
     border: 1px solid var(--line-strong);
     border-radius: 12px;
     overflow: hidden;
@@ -121,7 +121,7 @@
     display: flex;
     align-items: center;
     gap: 10px;
-    padding: 8px 14px;
+    padding: 6px 12px;
     border-bottom: 1px solid var(--line);
     background: var(--bg-soft);
   }

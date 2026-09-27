@@ -13,6 +13,7 @@
     reasoning = '',
     streaming = false,
     role,
+    bare = false,
     onFork,
   }: {
     text: string
@@ -22,6 +23,7 @@
     reasoning?: string
     streaming?: boolean
     role: 'user' | 'assistant'
+    bare?: boolean /* 无头像形态：回复组内由组头提供唯一头像 */
     onFork?: () => void
   } = $props()
 
@@ -213,12 +215,12 @@
     {/if}
   </div>
 {:else}
-  <div class="assistant">
-    <span class="tag">ez</span>
+  <div class="assistant" class:bare>
+    {#if !bare}<span class="tag">ez</span>{/if}
     <div class="body">
       {#if reasoning}
         <details class="reasoning">
-          <summary>思考过程</summary>
+          <summary>思考 · {reasoning.length} 字</summary>
           {#if reasoningClipped}<div class="rclip">…（流式中，前文暂折叠，结束后展开全文）</div>{/if}
           <div class="reasoning-text">{reasoningView}</div>
         </details>
@@ -397,6 +399,9 @@
     flex: 1;
     padding-top: 3px;
   }
+  .assistant.bare .body {
+    padding-top: 0;
+  }
   .text {
     white-space: pre-wrap;
     word-break: break-word;
@@ -411,16 +416,17 @@
     animation: caret 1s steps(1) infinite;
   }
   .reasoning {
-    margin-bottom: 8px;
+    margin-bottom: 6px;
     border-left: 2px solid var(--line);
-    padding-left: 12px;
+    padding-left: 10px;
     color: var(--muted);
-    font-size: 13px;
+    font-size: 12.5px;
   }
   .reasoning summary {
     cursor: pointer;
     user-select: none;
-    font-size: 12px;
+    font-size: 11px;
+    font-variant-numeric: tabular-nums;
     letter-spacing: 0.02em;
   }
   .rclip {
