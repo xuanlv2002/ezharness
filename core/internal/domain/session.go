@@ -26,7 +26,7 @@ import (
 /* ErrBusy 表示会话当前有一轮运行未结束。 */
 var ErrBusy = errors.New("session busy")
 
-/* snapFlushBytes 是 in-flight 流快照帧的重序列化阈值（内容增量超过它才重写帧）。 */
+/* snapFlushBytes 是流式快照帧的重序列化增量阈值。 */
 const snapFlushBytes = 8192
 
 /* ErrNoAPIKey 表示 models.json 尚未配置 API Key（应用可启动，发消息被拒）。 */
@@ -80,7 +80,7 @@ type Session struct {
 	turnRefs    []hooks.RefFile            // 本轮引用（StartRun 存入：loop_start 帧附带供回放重建 chips）
 	snapAcc     map[string]*StreamSnapshot // forkID → in-flight 流累积快照（chunk 到达即累积）
 	snapIdx     map[string]int             // forkID → 快照帧在 turnFrames 的下标
-	snapFlushed map[string]int             // forkID → 快照帧上次序列化时的内容规模（节流用）
+	snapFlushed map[string]int             // forkID → 上次序列化时的内容规模
 }
 
 /* Attach 注入装配产物（service 层构造，领域持有引用）。 */
@@ -253,12 +253,7 @@ func (s *Session) StartRun(ctx context.Context, text string, refs []hooks.RefFil
 	return h, cancel, nil
 }
 
-/*
-FinishRun 结束当前轮：更新历史、清未决请求、释放占用。
-历史以 state 为准（含手动取消/出错轮）：引擎保证每个已入史的 tool_call
-都有结果消息，取消轮的部分输出也保留--sessionstore 落盘的与内存的
-必须一致，否则同进程续聊丢上下文（重启反而恢复）。
-*/
+/* FinishRun 结束当前轮：更新历史、清未决请求、释放占用。 */
 func (s *Session) FinishRun(state *types.LoopState, runErr error) {
 	s.mu.Lock()
 	if state != nil {
@@ -493,13 +488,7 @@ func (s *Session) trackStreamLocked(e Event) {
 	s.putSnapLocked(e, fork)
 }
 
-/*
-putSnapLocked 把当前快照写进 turnFrames（已有则原位替换）。序列化按
-内容增量节流（snapFlushBytes）：每个 chunk 全量重marshal 累积快照是
-O(文本长度²)，且全程压着 Publish 的扇出锁；首帧立即落，之后内容自上
-次序列化增长超过阈值才重写。节流只降低帧缓存更新频率，读取口
-（ReplayFrames）会强制 flush 到最新，断线重连拿到的仍是完整快照。
-*/
+/* putSnapLocked 把当前快照写进 turnFrames（按增量节流序列化）。 */
 func (s *Session) putSnapLocked(e Event, fork string) {
 	acc := s.snapAcc[fork]
 	if acc == nil || (acc.Content == "" && acc.Reasoning == "" && len(acc.Tools) == 0) {
@@ -515,7 +504,7 @@ func (s *Session) putSnapLocked(e Event, fork string) {
 	s.writeSnapLocked(e.Ts, fork, acc, size)
 }
 
-/* writeSnapLocked 序列化快照帧写入 turnFrames（原位替换或追加）。 */
+/* writeSnapLocked 序列化快照帧写入 turnFrames。 */
 func (s *Session) writeSnapLocked(ts int64, fork string, acc *StreamSnapshot, size int) {
 	frame := Event{Type: "stream.snapshot", Ts: ts, ForkID: fork, Data: Raw(*acc)}
 	b, err := json.Marshal(frame)
@@ -655,8 +644,7 @@ func (s *Session) ReplayFrames() [][]byte {
 		}
 		return out
 	}
-	// 回放前把 in-flight 快照强制 flush 到最新（绕过 putSnap 的节流）：
-	// 回放是断线重连/切回分支的唯一读取口，此处不新则节流丢的尾部永久不可见
+	// 回放前把 in-flight 快照强制 flush 到最新（绕过节流）
 	for fork, acc := range s.snapAcc {
 		if acc == nil || (acc.Content == "" && acc.Reasoning == "" && len(acc.Tools) == 0) {
 			continue
@@ -683,9 +671,7 @@ func (s *Session) clearPending(callID string) {
 /* ── Hub：设置、分支注册表与当前活动分支 ── */
 
 /*
-	Hub 管理应用级单例状态。Active 是当前分支；branches 按线根 ID 注册
-
-存活分支（阶段一线间并发：后台分支的轮继续跑，事件进各自 turnFrames）。
+Hub 管理应用级单例状态：active 是当前分支，branches 按线根 ID 注册存活分支。
 */
 type Hub struct {
 	mu        sync.Mutex
@@ -699,19 +685,14 @@ type Hub struct {
 	branches  map[string]*Session
 }
 
-/* ActiveSession 返回当前活动分支（持锁读：SetActive 并发切换下的无锁读是数据竞争）。 */
+/* ActiveSession 返回当前活动分支。 */
 func (h *Hub) ActiveSession() *Session {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	return h.active
 }
 
-/*
-	NewHub 创建领域根（空聚合）。
-
-配置记录的加载/落盘与活动会话恢复由 service.BootstrapHub 装配——
-领域层不读写配置文件。
-*/
+/* NewHub 创建领域根（空聚合；配置加载与恢复由 service.BootstrapHub 装配）。 */
 func NewHub() *Hub {
 	return &Hub{Fsys: osfs.OS{}, branches: map[string]*Session{}}
 }
@@ -760,12 +741,7 @@ func (h *Hub) Sessions() []*Session {
 	return out
 }
 
-/*
-BootstrapActive 恢复最近修改且未封存的存档，没有则新建（候选选择在
-hooks.LatestMainSnap：只认主库目录项，fork 存档不混入）。恢复的
-systemPrompt 不重新组装：快照里的 base/summary 直接注入 SysPrompt，
-记忆/skill/mcp 变更等到下个 session 才生效。
-*/
+/* BootstrapActive 恢复最近未封存的存档，没有则新建。 */
 func (h *Hub) BootstrapActive() *Session {
 	if snap := hooks.LatestMainSnap(context.Background(), h.Fsys); snap != nil {
 		s := h.newSession(snap.ID, snap.LineRoot, snap)
@@ -859,7 +835,7 @@ func (h *Hub) ApplyModels(m ModelsConfig) {
 	h.mu.Unlock()
 }
 
-/* ApplyUsage 累计一轮主模型用量到启用条目（输入/输出/缓存分开记），返回是否有条目变更（持久化由 service 层完成）。 */
+/* ApplyUsage 累计主模型用量到启用条目，返回是否有变更。 */
 func (h *Hub) ApplyUsage(u *types.Usage) bool {
 	if u == nil {
 		return false
@@ -873,7 +849,7 @@ func (h *Hub) ApplyUsage(u *types.Usage) bool {
 	return false
 }
 
-/* ApplyVisionUsage 累计图片识别（image_recognize）用量到识别槽启用条目，返回是否有条目变更（持久化由 service 层完成）。 */
+/* ApplyVisionUsage 累计图片识别用量到识别槽启用条目，返回是否有变更。 */
 func (h *Hub) ApplyVisionUsage(u *types.Usage) bool {
 	if u == nil {
 		return false

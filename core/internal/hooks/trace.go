@@ -1,17 +1,6 @@
 /*
-trace 是调用链记录 hook：session 的每次 turn / 模型调用 / 工具调用 /
-fork / compact 记为 otel 风格 span（traceId/spanId/parentId/时间戳/
-耗时/attrs），span 关闭即追加进 sessions/<id>/trace.jsonl（fork 写
-forks/ 子目录），供调用链排查看板消费（瀑布图、慢工具 TopN、token
-趋势）。会话消息行（kind=message）与 span 行同文件追加——回顾与
-上下文同源，档案只增不改。
-
-attrs 记输入输出的策略：新生成内容全记（turn 输入与最终回复、model
-输出、tool args），累积内容不记（消息行已在同一档案），超大内容截断
-（tool 结果 1KB、reasoning 2KB）。崩溃最多丢未闭合的 span。
-
-并发：主循环与 fork 并行共享 hook 实例，按 *LoopState 分桶管理打开
-的 span；OnToolStart/OnToolEnd 跨调用并发，全方法持锁。
+trace 是调用链记录 hook：turn/model/tool/fork/compact 记为 otel 风格
+span，关闭即追加进 trace.jsonl（fork 写 forks/ 子目录）。
 */
 package hooks
 
@@ -65,7 +54,7 @@ type Trace struct {
 	buckets map[*types.LoopState]*bucket
 }
 
-/* NewTrace 创建记录器（档案追加式：无需续读，落点由 store 决定）。 */
+/* NewTrace 创建记录器。 */
 func NewTrace(fsys AppendFS, store *Store, modelF func() string) *Trace {
 	t := &Trace{fsys: fsys, store: store, modelF: modelF, buckets: map[*types.LoopState]*bucket{}}
 	t.mu.Lock()
@@ -74,7 +63,7 @@ func NewTrace(fsys AppendFS, store *Store, modelF func() string) *Trace {
 	return t
 }
 
-/* SetTrace 切换 trace（compact 创建新 session 时）：后续 span 追加进新档案。 */
+/* SetTrace 切换 trace 落点。 */
 func (t *Trace) SetTrace(id string) {
 	if id == "" {
 		return
@@ -140,7 +129,6 @@ func (t *Trace) OnModelEnd(_ context.Context, state *types.LoopState) error {
 		}
 	}
 	t.closeLocked(sp, attrs)
-
 	return nil
 }
 
@@ -176,7 +164,7 @@ func (t *Trace) OnToolEnd(_ context.Context, state *types.LoopState, result *typ
 	return nil
 }
 
-/* OnEnd 关闭根 span（turn/fork）：记最终回复、停止原因、迭代数，flush。 */
+/* OnEnd 关闭根 span（turn/fork）。 */
 func (t *Trace) OnEnd(_ context.Context, state *types.LoopState) error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -212,13 +200,9 @@ func (t *Trace) EndSpan(sp *Span, attrs map[string]any) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.closeLocked(sp, attrs)
-
 }
 
-/*
-CloseRoot 提前关闭一个 Run 的根 span 并 flush（compact 换库前调用：
-旧 trace 里 turn 必须闭合落盘，SetTrace 后旧 span 指针不再可达）。
-*/
+/* CloseRoot 提前关闭一个 Run 的根 span（compact 换库前调用）。 */
 func (t *Trace) CloseRoot(state *types.LoopState, attrs map[string]any) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -232,10 +216,9 @@ func (t *Trace) CloseRoot(state *types.LoopState, attrs map[string]any) {
 	for _, sp := range b.tools {
 		t.closeLocked(sp, nil)
 	}
-
 }
 
-/* OpenRoot 为已有 Run 重开根 span（compact 工具路径：新 trace 承接本轮剩余迭代）。 */
+/* OpenRoot 为已有 Run 重开根 span。 */
 func (t *Trace) OpenRoot(state *types.LoopState, attrs map[string]any) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -303,7 +286,7 @@ func (t *Trace) closeLocked(sp *Span, attrs map[string]any) {
 	t.appendSpanLocked(sp)
 }
 
-/* appendSpanLocked 把已闭合的 span 追加进档案（fork span 落 forks/ 子目录）。 */
+/* appendSpanLocked 把已闭合的 span 追加进档案。 */
 func (t *Trace) appendSpanLocked(sp *Span) {
 	b, err := json.Marshal(sp)
 	if err != nil {
@@ -354,7 +337,7 @@ func linkForks(spans []Span) {
 	}
 }
 
-/* loadTraceFile 解析单个 trace.jsonl 的 span 行（跳过 kind=message 消息行）；无文件返回 nil。 */
+/* loadTraceFile 解析 trace.jsonl 的 span 行（跳过消息行）。 */
 func loadTraceFile(ctx context.Context, fsys fs.FileSystem, path string) []Span {
 	data, err := fsys.Read(ctx, path)
 	if err != nil {

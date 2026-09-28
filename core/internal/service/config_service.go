@@ -1,8 +1,4 @@
-/*
-配置用例：配置记录（models.json/settings.json/toolRules.json）的加载与
-落盘归 service 层——domain 是纯内存聚合，只在装配点（BootstrapHub）与
-变更用例（Update/用量累计）触盘。
-*/
+/* 配置记录（models/settings/toolRules）的加载与落盘用例。 */
 package service
 
 import (
@@ -16,7 +12,7 @@ import (
 	"ezharness/core/internal/osfs"
 )
 
-/* BootstrapHub 装配领域根：加载配置记录（缺失文件自动写默认值）、生命体征与话题索引，并恢复活动会话（main 每代调用）。 */
+/* BootstrapHub 装配领域根：加载配置与索引并恢复活动会话。 */
 func BootstrapHub(h *domain.Hub) {
 	ctx := context.Background()
 	if _, err := h.Fsys.Read(ctx, "models.json"); err != nil {
@@ -42,7 +38,7 @@ func BootstrapHub(h *domain.Hub) {
 	h.SetActive(h.BootstrapActive())
 }
 
-/* recordUsage 累计主模型用量并落盘 models.json（chat 每轮调用）。 */
+/* recordUsage 累计主模型用量并落盘。 */
 func recordUsage(h *domain.Hub, u *types.Usage) {
 	if h.ApplyUsage(u) {
 		_ = SaveModelsConfig(h.Fsys, h.ModelsSnapshot())

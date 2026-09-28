@@ -1,16 +1,7 @@
 /*
-sessionstore 将会话以文件夹布局持久化，内容与状态分离、全部只增不改：
-
-  - trace.jsonl：会话内容（user/assistant/tool/error 消息行，kind=
-    "message"）与调用链 span 行同文件追加——回顾与上下文同源。trim/
-    压缩是内存视图处理：盘上只追加 marker 行，已有行永不改写。
-
-  - session.json：会话状态（systemPrompt、工具清单、compact 链引用、
-    用量、归档位等），每轮覆盖写（原子写，小文件）。
-
-fork 子循环写 sessions/<主ID>/forks/<forkID>/ 下的同名两件（只存
-SeedLen 之后的增量）。ListMain 只认目录项——fork 归属主会话子目录，
-天然不混入恢复候选。
+sessionstore 将会话持久化为两件：trace.jsonl（消息行与调用链 span 行
+同文件追加，只增不改）+ session.json（会话状态，每轮原子覆盖写）。
+fork 写 forks/ 子目录，只存增量。
 */
 package hooks
 
@@ -37,7 +28,7 @@ import (
 /* SessionsDir 是会话根目录（工作目录相对）。 */
 const SessionsDir = "sessions"
 
-/* AppendFS 在 FileSystem 之上提供追加写（jsonl 只增档案的写入通道）。 */
+/* AppendFS 在 FileSystem 之上提供追加写。 */
 type AppendFS interface {
 	fs.FileSystem
 	Append(ctx context.Context, p string, data []byte) error
@@ -64,7 +55,7 @@ type SnapEdge struct {
 	ForkedFrom *ForkOrigin // fork 线的出处标签
 }
 
-/* SessionSnap 是一次会话的可持久化快照。Messages 不入 session.json——内容在 trace.jsonl 追加，LoadSnap 时合成。 */
+/* SessionSnap 是一次会话的快照（Messages 由 LoadSnap 从 trace.jsonl 合成）。 */
 type SessionSnap struct {
 	ID             string          `json:"id"`
 	CreatedAt      int64           `json:"createdAt"`
@@ -94,7 +85,7 @@ type SessionSnap struct {
 	Archived       bool            `json:"archived"` // compact 后上一世代封存，不作恢复候选
 }
 
-/* Store 实现 EndHook：每轮结束追加消息行并覆盖状态，SetID 切换会话。 */
+/* Store 实现 EndHook：轮末追加消息行并覆盖写状态。 */
 type Store struct {
 	fsys     AppendFS
 	mu       sync.Mutex
@@ -282,14 +273,8 @@ func (h *Store) OnStart(_ context.Context, _ *types.LoopState) error {
 }
 
 /*
-OnEnd 持久化本轮：消息行追加进 trace.jsonl，状态覆盖写 session.json；
-失败不阻断主流程（错误记入 Metadata）。
-
-追加边界的正确性：MergeFull(prev, state) 的输出恒等于 prev 的纯尾部
-追加（trim 截断把视图拆成 folded 与 tail 两段、相对顺序不变，marker
-尾插），故 full[len(prev):] 就是本轮新消息（含 trim marker——它也是
-追加行，此前内容永不改写）。fork 只存 SeedLen 之后的增量（fork 的
-prev 即已有增量）。
+OnEnd 持久化本轮：新消息追加进 trace.jsonl，状态覆盖写 session.json
+（MergeFull 输出恒等于 prev 的纯尾部追加，diff 尾部即本轮新增）。
 */
 func (h *Store) OnEnd(ctx context.Context, state *types.LoopState) error {
 	h.mu.Lock()
@@ -309,7 +294,7 @@ func (h *Store) OnEnd(ctx context.Context, state *types.LoopState) error {
 		msgs = msgs[state.SeedLen-1:]
 	}
 	if len(msgs) < len(prev) {
-		// 异常态（视图回缩）：宁可不追加也不改写已有行
+		// 视图回缩：不追加（不改写已有行）
 		msgs = prev
 		state.Metadata["sessionstore_error"] = "round shrank history; append skipped"
 	} else if len(msgs) > len(prev) {
@@ -412,7 +397,7 @@ func sanitizeMsgArgs(msgs []types.Message) {
 	}
 }
 
-/* msgLine 是 trace.jsonl 里的会话消息行：kind="message" 与调用链 span 行（kind=turn/model/tool/fork/compact/trim）同文件共存。 */
+/* msgLine 是 trace.jsonl 里的消息行（与 span 行以 kind 区分）。 */
 type msgLine struct {
 	Kind    string        `json:"kind"`
 	Message types.Message `json:"message"`
@@ -426,11 +411,7 @@ func tracePath(id, forkID string) string {
 	return SessionsDir + "/" + id + "/trace.jsonl"
 }
 
-/*
-AppendMessages 把消息行追加进 trace.jsonl（只增不改）。单条 marshal
-失败（非法工具参数）就地清洗重试——"状态即消息"优先于保真，一条坏
-消息不能丢整批。
-*/
+/* AppendMessages 把消息行追加进 trace.jsonl。 */
 func AppendMessages(ctx context.Context, fsys AppendFS, id, forkID string, msgs []types.Message) error {
 	var b bytes.Buffer
 	for i := range msgs {
@@ -451,7 +432,7 @@ func AppendMessages(ctx context.Context, fsys AppendFS, id, forkID string, msgs 
 	return fsys.Append(ctx, tracePath(id, forkID), b.Bytes())
 }
 
-/* LoadMessages 读回会话消息（trace.jsonl 的 message 行，保持追加序；无文件返回 nil）。 */
+/* LoadMessages 读回会话消息（无文件返回 nil）。 */
 func LoadMessages(ctx context.Context, fsys fs.FileSystem, id, forkID string) []types.Message {
 	data, err := fsys.Read(ctx, tracePath(id, forkID))
 	if err != nil {
@@ -652,11 +633,7 @@ func ListMain(ctx context.Context, fsys fs.FileSystem) ([]string, error) {
 	return ids, nil
 }
 
-/*
-LatestMainSnap 返回最近修改且未封存的主会话快照（启动恢复候选；无则
-nil）。按 session.json 的 mtime 排序——状态每轮覆盖写，mtime 即最近
-一轮落盘时间。IO 归本包（领域扩展负责落盘细节），domain 只调用。
-*/
+/* LatestMainSnap 返回最近修改且未封存的主会话快照（无则 nil）。 */
 func LatestMainSnap(ctx context.Context, fsys fs.FileSystem) *SessionSnap {
 	ids, _ := ListMain(ctx, fsys)
 	type cand struct {

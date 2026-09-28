@@ -9,8 +9,8 @@ server 的 health 报告同一值——前端轮询 health.boot 与之匹配即�
 package service
 
 import (
+	"ezharness/core/internal/osfs"
 	"fmt"
-	"io"
 	"net"
 	"os"
 	"path/filepath"
@@ -178,50 +178,5 @@ func MigrateData(src, dst string) error {
 			return err
 		}
 	}
-	return copyDir(filepath.Join(src, "sessions"), filepath.Join(dst, "sessions"))
-}
-
-/* copyDir 递归拷贝目录（已存在的文件跳过）。 */
-func copyDir(src, dst string) error {
-	items, err := os.ReadDir(src)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil
-		}
-		return err
-	}
-	if err := os.MkdirAll(dst, 0o755); err != nil {
-		return err
-	}
-	for _, it := range items {
-		s, d := filepath.Join(src, it.Name()), filepath.Join(dst, it.Name())
-		if it.IsDir() {
-			if err := copyDir(s, d); err != nil {
-				return err
-			}
-			continue
-		}
-		if _, err := os.Stat(d); err == nil {
-			continue
-		}
-		if err := copyFile(s, d); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func copyFile(src, dst string) error {
-	in, err := os.Open(src)
-	if err != nil {
-		return err
-	}
-	defer in.Close()
-	out, err := os.Create(dst)
-	if err != nil {
-		return err
-	}
-	defer out.Close()
-	_, err = io.Copy(out, in)
-	return err
+	return osfs.CopyDir(filepath.Join(src, "sessions"), filepath.Join(dst, "sessions"), false)
 }

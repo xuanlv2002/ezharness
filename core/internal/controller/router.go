@@ -30,10 +30,8 @@ type Controllers struct {
 }
 
 /*
-	NewRouter 装配 gin engine 与全部路由。dist 非 nil 时服务前端静态资源。
-
-token 是本代 API 访问令牌（进程级常量，换代沿用）：desktop 壳经
-EZHARNESS_TOKEN 注入，web 直跑由 main 生成并打印在启动日志。
+NewRouter 装配 gin engine 与全部路由。dist 非 nil 时服务前端静态资源；
+token 是 API 访问令牌（进程级常量，换代沿用）。
 */
 func NewRouter(c Controllers, dist fs.FS, token string) *gin.Engine {
 	r := gin.New()
@@ -121,17 +119,7 @@ func NewRouter(c Controllers, dist fs.FS, token string) *gin.Engine {
 	return r
 }
 
-/*
-authRequired 校验 API 令牌，防本机接口被外部页面/局域网直接调用：
-
-  - X-EZ-Token 头或 ?token= query 与令牌恒定时间相等（渲染层 fetch 统一
-    注入头；EventSource/WebSocket 不能带头，走 query）
-  - Origin/Referer 与请求 Host 同源放行——core 伺服的快应用页面拿不到
-    token，同源头是它们的通道（跨站请求 Origin 不匹配即拒，CSRF 与
-    DNS rebinding 同被挡住）
-
-非浏览器调用方（脚本/curl）须带 token。
-*/
+/* authRequired 校验 API 令牌：头/query 恒定时间比较，同源（Origin/Referer）放行。 */
 func authRequired(token string) gin.HandlerFunc {
 	return func(g *gin.Context) {
 		present := g.GetHeader("X-EZ-Token")
@@ -146,7 +134,7 @@ func authRequired(token string) gin.HandlerFunc {
 	}
 }
 
-/* sameOrigin 判定浏览器同源页面发起的请求（Origin 优先，GET 无 Origin 时看 Referer）。 */
+/* sameOrigin 判定请求是否来自同源页面（Origin 优先，GET 看 Referer）。 */
 func sameOrigin(g *gin.Context) bool {
 	for _, h := range []string{"Origin", "Referer"} {
 		v := g.GetHeader(h)

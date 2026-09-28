@@ -615,7 +615,7 @@ function delay(ms) {
 
 function connectBridge() {
   if (bridge) return
-  /* token 进 query 过 core 鉴权（壳启动 core 时注入同一 EZHARNESS_TOKEN） */
+  /* token 进 query 过 core 鉴权。 */
   const token = encodeURIComponent(process.env.EZHARNESS_TOKEN || '')
   const ws = new WebSocket(`ws://127.0.0.1:${corePort}/api/browser/bridge?token=${token}`)
   bridge = ws

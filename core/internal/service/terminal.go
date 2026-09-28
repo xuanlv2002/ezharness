@@ -444,10 +444,7 @@ func isRawControl(cmd string) bool {
 }
 
 /*
-	writeAI 是 AI 侧写入:记录 lastCmd 与最近终端,不做用户输入聚合
-
-(避免 agent_status 自反馈)。PTY 写在 sess.mu 之外:readPump 要同一把锁
-才能排空输出,持锁写一旦写满 PTY 缓冲就是双向互等死锁。
+	writeAI 是 AI 侧写入（锁外写 PTY，避免与 readPump 互等）。
 */
 func (s *TerminalService) writeAI(sess *TermSession, lastCmd string, b []byte) {
 	s.mu.Lock()
@@ -627,11 +624,7 @@ func (s *TerminalService) remove(sess *TermSession) {
 	s.broadcast(TermFrame{Type: "terminals", Sessions: s.List()})
 }
 
-/*
-	UserInput 是用户手敲输入(WS 路径):写入 PTY 即完成。
-
-按 id 精确查找(WS 帧必须带 id,不走 AI 最近终端兜底)。锁外写,理由同 writeAI。
-*/
+/* UserInput 是用户手敲输入(WS 路径,按 id 精确查找)。 */
 func (s *TerminalService) UserInput(id string, b []byte) error {
 	sess, ok := s.get(id)
 	if !ok {

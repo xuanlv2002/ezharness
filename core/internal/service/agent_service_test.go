@@ -75,8 +75,7 @@ func TestMatchRuleListDotBoundary(t *testing.T) {
 	}
 }
 
-// 终端命令包含即命中：词中、引号包裹、前缀拼接、组合命令都拦得住
-// （contain 语义：宁误拦不漏拦——"rmdir" 含 "rm" 也算命中）。
+// 终端命令包含即命中（contain 语义：宁误拦不漏拦）。
 func TestMatchRuleListCommandContains(t *testing.T) {
 	mk := func(cmd string) json.RawMessage {
 		b, _ := json.Marshal(map[string]string{"command": cmd})

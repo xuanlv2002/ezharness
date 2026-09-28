@@ -1,12 +1,4 @@
-/*
-配置记录（数据目录）：
-  - ModelConfig（models.json）：模型端点与凭证，与 mcp.json 对称，
-    结构随数据建模独立演进。
-  - Settings（settings.json）：harness 行为设置——系统提示追加、
-    话题轮换水位、shell。
-
-本包只承载结构与默认值（领域知识）；加载与落盘在 service 层。
-*/
+/* 配置记录的结构与默认值（加载与落盘在 service 层）。 */
 package domain
 
 /*

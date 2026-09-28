@@ -1,9 +1,4 @@
-/*
-toolRules.json（数据目录）：工具审批策略（安全模块，四档 + 名单）。
-与 settings.json 分离：安全域自成一档，改策略不触碰行为设置；结构对齐
-models.json/mcp.json（独立文件、缺失回落内置默认）。本包只承载结构与
-默认值；加载与落盘在 service 层。
-*/
+/* 工具审批策略的结构与默认值（加载与落盘在 service 层）。 */
 package domain
 
 /* Level 是审批策略档位。 */

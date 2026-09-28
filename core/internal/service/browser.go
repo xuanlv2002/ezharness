@@ -252,9 +252,12 @@ func (s *BrowserService) ScrollBrowser(ctx context.Context, tabID, direction str
 	return reply.Result, nil
 }
 
-/* ReadBrowser 读页面内容:mode=text 返回正文,mode=links 返回链接清单。
+/*
+	ReadBrowser 读页面内容:mode=text 返回正文,mode=links 返回链接清单。
+
 timeoutMs 透传 desktop——页面仍在加载时先等收尾(默认 8000ms)再读,
-免读到半页;桥等待上限随之放宽(超时+10s 余量给正文提取)。 */
+免读到半页;桥等待上限随之放宽(超时+10s 余量给正文提取)。
+*/
 func (s *BrowserService) ReadBrowser(ctx context.Context, tabID, mode string, chars, timeoutMs int) (string, error) {
 	if chars <= 0 {
 		chars = 4000

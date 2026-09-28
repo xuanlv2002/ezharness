@@ -1,8 +1,4 @@
-/*
-WorkspaceService：工作目录文件的读写用例（附件 chips 预览源、file://
-编辑器保存、画板二进制写回）。文件系统操作归本层——controller 只做
-绑定、校验与响应。
-*/
+/* WorkspaceService：工作目录文件的读写用例。 */
 package service
 
 import (
@@ -25,7 +21,7 @@ func NewWorkspaceService(fsys osfs.OS, hub *domain.Hub) *WorkspaceService {
 	return &WorkspaceService{Fsys: fsys, Hub: hub}
 }
 
-/* OpenFile 打开文件并取属性（预览/HEAD 通道：调用方负责关闭与写出）。 */
+/* OpenFile 打开文件并取属性。 */
 func (w *WorkspaceService) OpenFile(abs string) (*os.File, os.FileInfo, error) {
 	f, err := os.Open(abs)
 	if err != nil {
@@ -39,7 +35,7 @@ func (w *WorkspaceService) OpenFile(abs string) (*os.File, os.FileInfo, error) {
 	return f, info, nil
 }
 
-/* StatTarget 检查写回目标存在且是文件（画板原地保存的前提）。 */
+/* StatTarget 检查写回目标存在且是文件。 */
 func (w *WorkspaceService) StatTarget(abs string) error {
 	info, err := os.Stat(abs)
 	if err != nil || info.IsDir() {
@@ -58,7 +54,7 @@ func (w *WorkspaceService) WriteBin(ctx context.Context, abs string, data []byte
 	return w.Fsys.Write(ctx, abs, data)
 }
 
-/* Path 绝对化前端提交的路径（正斜杠风格 → 本机绝对路径）。 */
+/* Path 绝对化前端提交的路径。 */
 func (w *WorkspaceService) Path(p string) (string, error) {
 	return filepath.Abs(filepath.FromSlash(p))
 }

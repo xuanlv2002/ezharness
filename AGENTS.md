@@ -120,7 +120,6 @@ hook 是 ezloop 引擎的横向扩展点（接口见 ezloop `hook/hook.go`：`On
 | `archive.go` `ArchiveSession`（函数，非 hook） | — | 归档换代（沉淀式，长期记忆导向）：先 `distill.go` 沉淀步（**单次模型调用**：全量旧文 user/soul/project.md/各 project-*.md + 会话 → `===段名===` 分段输出各文件新全文，段名 `user`/`soul`/`project.md`/`project:<id>`（id 经 slug 规范化，非法丢弃），代码解析后覆盖写回，UNCHANGED 跳过；失败静默）→ 精炼交接摘要 → 封旧 session → 开新代；由 `service/topic_service.go` 调用（手动 Compact 唯一生产路径，workDir 作 projectId 线索传入） |
 | `summarize.go`（函数） | — | trim 与 archive 共用的总结器 |
 | `topics.go` `Topics` | — | `topics.json` 分支线索引管理（非 hook） |
-| `memory.go` `Memory`、`recall.go` `Recall` | — | **已定义但未接线**（无 `NewMemory`/`NewRecall` 调用点）。长期记忆实际由 `buildSystemBase` 的 `<memory>` 段注入；`recall_topic` 未注册 |
 
 同时接入的 ezloop hook：`approve`（人审）、`askuser`（`ask_user` 工具）、`contextfix`（修补孤立 tool 消息对）、`filetools`（read_file/write_file/edit_file/terminal——**terminal 有总超时**：默认 10 分钟、`timeout_s` 可调上限 1 小时，超时杀树、已产出输出+`[超时…后终止]`标记按正常结果回传，模型据此换 term_* 或加时重跑）、`skilltool`（`load_skill`）、`task`（分身）、`offload`（大结果卸载，`WithSkip(ask_user, task, load_skill)` + `WithReplayTool("read_file")`）、`mcp`（`service/mcp.go` 的 `NewMcpHook` 注入系统级 router——全局单例连接池，全部 session 与页面/API/快应用 `POST /api/mcp/call` 冷启动直调共用；hook OnEnd 不关连接，生命周期归 `app.mcpRouter`）。
 

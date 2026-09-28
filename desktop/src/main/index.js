@@ -19,8 +19,7 @@ let tray = null
 let coreProc = null
 let quitting = false
 let corePort = 5260
-/* API 令牌：每次启动随机生成，经 env 注入 core（core 只认它）；
-   页面经 URL query 带入（前端读后转存 sessionStorage 并清地址栏） */
+/* API 令牌：每次启动随机生成，env 注入 core、URL query 带入页面。 */
 const coreToken = crypto.randomBytes(18).toString('hex')
 let findBrowserPopout = () => null // registerIpc 注入：当前浏览器页的独立窗口（无则 null）
 
@@ -30,12 +29,12 @@ function pageBase() {
   return process.env.EZHARNESS_DEV_URL || `http://127.0.0.1:${corePort}`
 }
 
-/* 带令牌的页面地址：窗口加载用（token 进 query，页面侧自取） */
+/* 带令牌的页面地址。 */
 function pageUrl(suffix) {
   return `${pageBase()}${suffix.includes('?') ? '&' : '?'}token=${coreToken}`
 }
 
-/* coreFetch 主进程访问 core API（设置读写等），统一带头 */
+/* coreFetch 主进程访问 core API，统一带头。 */
 function coreFetch(pathname, opts = {}) {
   return fetch(`http://127.0.0.1:${corePort}${pathname}`, {
     ...opts,
@@ -43,9 +42,7 @@ function coreFetch(pathname, opts = {}) {
   })
 }
 
-/* killCore 结束 core 及其全部子进程（terminal 的 cmd.exe、MCP stdio
-   server 都继承 core 的隐藏控制台，不树杀会被孤儿化留在系统里）。
-   Windows 用 taskkill /T；其余平台 core 无进程组，直接 kill 只及 core 自身。 */
+/* killCore 结束 core 及其全部子进程（Windows 用 taskkill /T 树杀）。 */
 function killCore() {
   if (!coreProc || coreProc.killed) return
   if (process.platform === 'win32') {
@@ -55,12 +52,7 @@ function killCore() {
   }
 }
 
-/* guardWebContents 导航守卫：窗口只许停留在 core origin（URL 解析比
-   origin，前缀字符串会被端口前缀骗过：127.0.0.1:5260 匹配 127.0.0.1:52601）。
-   程序化导航（location.assign、表单 target、meta-refresh）绕得过渲染层
-   的点击拦截，一旦离开 core origin，preload 挂着的 window.ez 就交给
-   了外部页面——这是守卫必须挂在 will-navigate 上的原因。外部目标转
-   系统浏览器打开。 */
+/* guardWebContents 导航守卫：只许停留在 core origin，外部目标转系统浏览器。 */
 function guardWebContents(wc) {
   const coreOrigin = () => new URL(pageBase()).origin
   wc.on('will-navigate', (e, url) => {

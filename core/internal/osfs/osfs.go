@@ -11,6 +11,7 @@ package osfs
 import (
 	"context"
 	"fmt"
+	stdfs "io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -37,7 +38,7 @@ func (o OS) Read(_ context.Context, p string) ([]byte, error) {
 	return os.ReadFile(abs1(p))
 }
 
-/* Write 原子写文件（tmp+rename，自动建目录）：中途崩溃不留半文件。 */
+/* Write 原子写文件（tmp+rename，自动建目录）。 */
 func (o OS) Write(_ context.Context, p string, data []byte) error {
 	target := abs1(p)
 	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
@@ -50,7 +51,7 @@ func (o OS) Write(_ context.Context, p string, data []byte) error {
 	return os.Rename(tmp, target)
 }
 
-/* Append 追加写（自动建目录）：jsonl 档案的只增不改写入通道。 */
+/* Append 追加写（自动建目录）。 */
 func (o OS) Append(_ context.Context, p string, data []byte) error {
 	target := abs1(p)
 	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
@@ -99,4 +100,54 @@ func (o OS) Edit(ctx context.Context, p, oldText, newText string) (int, error) {
 		return 0, fmt.Errorf("osfs: old_text not found in %s", p)
 	}
 	return n, o.Write(ctx, p, []byte(strings.ReplaceAll(string(data), oldText, newText)))
+}
+
+/* CopyDir 拷贝目录树（已存在的文件按 overwrite 覆盖或跳过；源目录不存在是空操作）。 */
+func CopyDir(src, dst string, overwrite bool) error {
+	return filepath.WalkDir(src, func(p string, d stdfs.DirEntry, err error) error {
+		if err != nil {
+			if os.IsNotExist(err) {
+				return nil
+			}
+			return err
+		}
+		target := filepath.Join(dst, mustRel(src, p))
+		if d.IsDir() {
+			return os.MkdirAll(target, 0o755)
+		}
+		if !overwrite {
+			if _, serr := os.Stat(target); serr == nil {
+				return nil
+			}
+		}
+		return copyFile(p, target)
+	})
+}
+
+/* mustRel 求相对路径（失败回退到文件名，拷贝不因此失败）。 */
+func mustRel(base, p string) string {
+	rel, err := filepath.Rel(base, p)
+	if err != nil {
+		return filepath.Base(p)
+	}
+	return rel
+}
+
+/* copyFile 覆盖式单文件拷贝。 */
+func copyFile(src, dst string) error {
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer in.Close()
+	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+		return err
+	}
+	out, err := os.Create(dst) // 存在即截断覆盖
+	if err != nil {
+		return err
+	}
+	defer out.Close()
+	_, err = out.ReadFrom(in)
+	return err
 }

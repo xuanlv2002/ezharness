@@ -37,9 +37,6 @@ var (
 /* SetEnabled 开关模型输入打印（设置页「调试模式」与启动环境变量共用）。 */
 func SetEnabled(on bool) { enabled.Store(on) }
 
-/* Enabled 报告当前是否打印模型输入。 */
-func Enabled() bool { return enabled.Load() }
-
 /* Warp 返回模型输入打印装饰器。 */
 func Warp() warp.ModelHandler {
 	return func(_ event.Emitter, p provider.ModelProvider) provider.ModelProvider {

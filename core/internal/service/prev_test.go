@@ -25,8 +25,7 @@ func chdirTemp(t *testing.T) {
 	t.Cleanup(func() { _ = os.Chdir(old) })
 }
 
-
-/* newTestHub 构造装配完配置与话题索引的 Hub（NewHub 是空聚合）。 */
+/* newTestHub 构造装配完成的 Hub。 */
 func newTestHub() *domain.Hub {
 	h := domain.NewHub()
 	BootstrapHub(h)

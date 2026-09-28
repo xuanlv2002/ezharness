@@ -8,7 +8,6 @@ health.boot 与 restart 响应的 boot 匹配来判断新服务已就绪。
 package main
 
 import (
-	"io"
 	"log"
 	"net"
 	"net/http"
@@ -20,6 +19,7 @@ import (
 
 	"ezharness/core/internal/config"
 	"ezharness/core/internal/domain"
+	"ezharness/core/internal/osfs"
 	"ezharness/core/internal/service"
 
 	"github.com/xuanlv2002/ezloop/ext/hook/mcp"
@@ -28,13 +28,13 @@ import (
 type app struct {
 	mu        sync.Mutex
 	cfg       config.Config
-	token     string                 // API 访问令牌（进程级常量，换代沿用）
-	hub       *domain.Hub             // 当前代领域根（换代重建；退出/换代收尾用）
-	srv       *http.Server            // 当前代 HTTP 服务
+	token     string                   // API 访问令牌（进程级常量，换代沿用）
+	hub       *domain.Hub              // 当前代领域根（换代重建；退出/换代收尾用）
+	srv       *http.Server             // 当前代 HTTP 服务
 	term      *service.TerminalService // 当前代共享终端（换代重建；收尾杀全部 shell）
-	browser   *service.BrowserService // 共享浏览器桥（端无关，跨代复用；真实浏览器在 desktop 壳）
-	mcpRouter *mcp.Router             // 系统级 MCP router（全局唯一：agent hook 与页面/API 共用连接池，跨代复用）
-	boot      atomic.Int64            // 服务代际（换代重启递增，跨代共享）
+	browser   *service.BrowserService  // 共享浏览器桥（端无关，跨代复用；真实浏览器在 desktop 壳）
+	mcpRouter *mcp.Router              // 系统级 MCP router（全局唯一：agent hook 与页面/API 共用连接池，跨代复用）
+	boot      atomic.Int64             // 服务代际（换代重启递增，跨代共享）
 }
 
 /* setTerm 记录当前代共享终端（buildRouter 装配时调用）。 */
@@ -175,44 +175,5 @@ func syncDrained(dataDir, activeID string) {
 			_ = os.WriteFile(filepath.Join(dataDir, f), data, 0o644)
 		}
 	}
-	_ = forceCopyDir(filepath.Join(cwd, "sessions", activeID), filepath.Join(dataDir, "sessions", activeID))
-}
-
-/* forceCopyDir 递归拷贝目录，已存在文件覆盖（收尾数据以旧目录为准）。 */
-func forceCopyDir(src, dst string) error {
-	items, err := os.ReadDir(src)
-	if err != nil {
-		return err
-	}
-	if err := os.MkdirAll(dst, 0o755); err != nil {
-		return err
-	}
-	for _, it := range items {
-		s, d := filepath.Join(src, it.Name()), filepath.Join(dst, it.Name())
-		if it.IsDir() {
-			if err := forceCopyDir(s, d); err != nil {
-				return err
-			}
-			continue
-		}
-		if err := copyFileOverwrite(s, d); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func copyFileOverwrite(src, dst string) error {
-	in, err := os.Open(src)
-	if err != nil {
-		return err
-	}
-	defer in.Close()
-	out, err := os.Create(dst) // 存在即截断覆盖
-	if err != nil {
-		return err
-	}
-	defer out.Close()
-	_, err = io.Copy(out, in)
-	return err
+	_ = osfs.CopyDir(filepath.Join(cwd, "sessions", activeID), filepath.Join(dataDir, "sessions", activeID), true)
 }

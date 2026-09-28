@@ -61,8 +61,7 @@ func main() {
 	// modeldump 输出恒进日志（写不写由开关决定，开关随设置/换代在 buildRouter 推导）
 	modeldump.Out = logWriter
 
-	/* API 令牌：desktop 壳经 EZHARNESS_TOKEN 注入；web 直跑自生成并
-	打印带 token 的入口 URL（每代请求都要带，见 controller.authRequired） */
+	/* API 令牌：desktop 经 EZHARNESS_TOKEN 注入；web 直跑自生成并打印入口 URL。 */
 	token := os.Getenv("EZHARNESS_TOKEN")
 	if token == "" {
 		b := make([]byte, 18)
