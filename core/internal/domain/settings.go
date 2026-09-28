@@ -1,20 +1,5 @@
-/*
-配置记录（数据目录）：
-  - ModelConfig（models.json）：模型端点与凭证，与 mcp.json 对称，
-    结构随数据建模独立演进。
-  - Settings（settings.json）：harness 行为设置——系统提示追加、
-    话题轮换水位、shell。
-
-持久化到工作目录（进程 cwd 即数据目录）。
-*/
+/* 配置记录的结构与默认值（加载与落盘在 service 层）。 */
 package domain
-
-import (
-	"context"
-	"encoding/json"
-
-	"github.com/xuanlv2002/ezloop/ext/fs"
-)
 
 /*
 ModelEntry 是一个模型条目；ModelsConfig 是模型四槽记录（models.json）：
@@ -63,28 +48,6 @@ func DefaultModelsConfig() ModelsConfig {
 	}
 }
 
-/* LoadModelsConfig 读 models.json，缺失或损坏回落默认值。 */
-func LoadModelsConfig(fsys fs.FileSystem) ModelsConfig {
-	data, err := fsys.Read(context.Background(), "models.json")
-	if err != nil {
-		return DefaultModelsConfig()
-	}
-	var mc ModelsConfig
-	if json.Unmarshal(data, &mc) == nil && (len(mc.Main)+len(mc.Vision)+len(mc.Image)+len(mc.Audio)) > 0 {
-		return mc
-	}
-	return DefaultModelsConfig()
-}
-
-/* SaveModelsConfig 落盘模型四槽。 */
-func SaveModelsConfig(fsys fs.FileSystem, m ModelsConfig) error {
-	data, err := json.MarshalIndent(m, "", "  ")
-	if err != nil {
-		return err
-	}
-	return fsys.Write(context.Background(), "models.json", data)
-}
-
 /* ActiveMain 返回主模型槽的生效条目（enabled 优先，否则首条；空槽 nil）。 */
 func (m ModelsConfig) ActiveMain() *ModelEntry {
 	for i := range m.Main {
@@ -120,61 +83,4 @@ func DefaultSettings() Settings {
 		TrimPercent: 75,
 		CloseToTray: false,
 	}
-}
-
-/* LoadSettings 读 settings.json，缺失回落默认值。 */
-func LoadSettings(fsys fs.FileSystem) Settings {
-	out := DefaultSettings()
-	data, err := fsys.Read(context.Background(), "settings.json")
-	if err != nil {
-		return out
-	}
-	var s struct {
-		SystemExtra    string   `json:"systemExtra"`
-		TrimPercent    *int     `json:"trimPercent"` // 指针：区分未提交与显式 0（禁用）
-		WorkDir        string   `json:"workDir"`
-		CloseToTray    *bool    `json:"closeToTray"`
-		DisabledSkills []string `json:"disabledSkills"`
-		MaxIterations  *int     `json:"maxIterations"`
-		DebugMode      *bool    `json:"debugMode"`
-	}
-	if json.Unmarshal(data, &s) != nil {
-		return out
-	}
-	out.SystemExtra = s.SystemExtra
-	out.WorkDir = s.WorkDir
-	if s.CloseToTray != nil {
-		out.CloseToTray = *s.CloseToTray
-	}
-	if s.TrimPercent != nil {
-		out.TrimPercent = clamp(*s.TrimPercent, 0, 100)
-	}
-	out.DisabledSkills = s.DisabledSkills
-	if s.MaxIterations != nil {
-		out.MaxIterations = clamp(*s.MaxIterations, 0, 128)
-	}
-	if s.DebugMode != nil {
-		out.DebugMode = *s.DebugMode
-	}
-	return out
-}
-
-/* clamp 限值到 [lo, hi]。 */
-func clamp(v, lo, hi int) int {
-	if v < lo {
-		return lo
-	}
-	if v > hi {
-		return hi
-	}
-	return v
-}
-
-/* SaveSettings 落盘行为设置。 */
-func SaveSettings(fsys fs.FileSystem, s Settings) error {
-	data, err := json.MarshalIndent(s, "", "  ")
-	if err != nil {
-		return err
-	}
-	return fsys.Write(context.Background(), "settings.json", data)
 }

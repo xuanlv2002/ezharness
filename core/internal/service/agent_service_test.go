@@ -75,6 +75,33 @@ func TestMatchRuleListDotBoundary(t *testing.T) {
 	}
 }
 
+// 终端命令包含即命中（contain 语义：宁误拦不漏拦）。
+func TestMatchRuleListCommandContains(t *testing.T) {
+	mk := func(cmd string) json.RawMessage {
+		b, _ := json.Marshal(map[string]string{"command": cmd})
+		return b
+	}
+	cases := []struct {
+		list []string
+		cmd  string
+		want bool
+		desc string
+	}{
+		{[]string{"rm"}, "rm -rf /", true, "前缀命令命中"},
+		{[]string{"rm"}, "echo rm", true, "词中包含命中"},
+		{[]string{"rm"}, `del "rm"`, true, "引号包裹命中"},
+		{[]string{"format"}, "format.com", true, "拼接后缀命中"},
+		{[]string{"rm"}, "rmdir x", true, "词干包含也命中（contain 语义）"},
+		{[]string{"git status"}, "cd /d && git status", true, "组合命令命中"},
+		{[]string{"git status"}, "git log", false, "无名单词不命中"},
+	}
+	for _, c := range cases {
+		if got := matchRuleList(c.list, "term_send", mk(c.cmd)); got != c.want {
+			t.Errorf("%s: got %v want %v", c.desc, got, c.want)
+		}
+	}
+}
+
 // 启停链路：enabled=false 的 server 不进 Router 名单（mcp_list 查不到、无法调用）。
 func TestBuildServersEnabledFilter(t *testing.T) {
 	off := false

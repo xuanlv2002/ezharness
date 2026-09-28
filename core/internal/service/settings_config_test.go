@@ -1,9 +1,11 @@
-package domain
+package service
 
 import (
+	"context"
 	"slices"
 	"testing"
 
+	"ezharness/core/internal/domain"
 	"ezharness/core/internal/osfs"
 )
 
@@ -12,7 +14,7 @@ func TestSettingsRoundTrip(t *testing.T) {
 	t.Chdir(t.TempDir())
 	fsys := osfs.OS{}
 
-	st := DefaultSettings()
+	st := domain.DefaultSettings()
 	st.SystemExtra = "追加段"
 	st.TrimPercent = 40
 	st.WorkDir = "ws"
@@ -20,11 +22,11 @@ func TestSettingsRoundTrip(t *testing.T) {
 	st.DisabledSkills = []string{"pdf", "csv"}
 	st.MaxIterations = 100
 	st.DebugMode = true
-	if err := SaveSettings(fsys, st); err != nil {
+	if err := SaveSettings(context.Background(), fsys, st); err != nil {
 		t.Fatal(err)
 	}
 
-	got := LoadSettings(fsys)
+	got := LoadSettings(context.Background(), fsys)
 	if got.SystemExtra != "追加段" || got.TrimPercent != 40 || got.WorkDir != "ws" || !got.CloseToTray {
 		t.Fatalf("基础字段: %+v", got)
 	}
@@ -41,8 +43,8 @@ func TestSettingsRoundTrip(t *testing.T) {
 	// 越界值落盘后按上限读回
 	st.MaxIterations = 999
 	st.TrimPercent = 999
-	_ = SaveSettings(fsys, st)
-	if got = LoadSettings(fsys); got.MaxIterations != 128 || got.TrimPercent != 100 {
+	_ = SaveSettings(context.Background(), fsys, st)
+	if got = LoadSettings(context.Background(), fsys); got.MaxIterations != 128 || got.TrimPercent != 100 {
 		t.Fatalf("越界未收敛: %+v", got)
 	}
 }
@@ -50,7 +52,7 @@ func TestSettingsRoundTrip(t *testing.T) {
 /* 无 settings.json 的目录读取出厂值。 */
 func TestSettingsDefaults(t *testing.T) {
 	t.Chdir(t.TempDir())
-	got := LoadSettings(osfs.OS{})
+	got := LoadSettings(context.Background(), osfs.OS{})
 	if got.SystemExtra != "" || got.TrimPercent != 75 || got.CloseToTray ||
 		got.MaxIterations != 0 || got.DebugMode || len(got.DisabledSkills) != 0 {
 		t.Fatalf("缺失文件应回落默认: %+v", got)

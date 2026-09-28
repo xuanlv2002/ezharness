@@ -29,7 +29,7 @@ func (c *SettingsController) UpdateSettings(g *gin.Context) {
 		g.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	if err := c.Settings.Update(st); err != nil {
+	if err := c.Settings.Update(g.Request.Context(), st); err != nil {
 		if err.Error() == "model and baseUrl required" {
 			g.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return
@@ -52,7 +52,7 @@ func (c *SettingsController) UpdateModels(g *gin.Context) {
 		g.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	if err := c.Settings.UpdateModels(m); err != nil {
+	if err := c.Settings.UpdateModels(g.Request.Context(), m); err != nil {
 		g.JSON(http.StatusConflict, gin.H{"error": err.Error()})
 		return
 	}
@@ -73,7 +73,7 @@ func (c *SettingsController) UpdateSecurity(g *gin.Context) {
 		g.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	if err := c.Settings.UpdateSecurity(body.Rules); err != nil {
+	if err := c.Settings.UpdateSecurity(g.Request.Context(), body.Rules); err != nil {
 		g.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
@@ -82,12 +82,12 @@ func (c *SettingsController) UpdateSecurity(g *gin.Context) {
 
 /* GetMemoryConfig GET /api/memory/config（记忆页三文件夹数据）。 */
 func (c *SettingsController) GetMemoryConfig(g *gin.Context) {
-	g.JSON(http.StatusOK, c.Memory.Config())
+	g.JSON(http.StatusOK, c.Memory.Config(g.Request.Context()))
 }
 
 /* GetMemory GET /api/memory。 */
 func (c *SettingsController) GetMemory(g *gin.Context) {
-	g.JSON(http.StatusOK, gin.H{"content": c.Memory.GetMemory()})
+	g.JSON(http.StatusOK, gin.H{"content": c.Memory.GetMemory(g.Request.Context())})
 }
 
 /* SaveMemory POST /api/memory。 */
@@ -99,7 +99,7 @@ func (c *SettingsController) SaveMemory(g *gin.Context) {
 		g.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	if err := c.Memory.SaveMemory(body.Content); err != nil {
+	if err := c.Memory.SaveMemory(g.Request.Context(), body.Content); err != nil {
 		g.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
@@ -120,7 +120,7 @@ func (c *SettingsController) CreateSkill(g *gin.Context) {
 		g.JSON(http.StatusBadRequest, gin.H{"error": "data 不是有效的 base64"})
 		return
 	}
-	if err := c.Memory.CreateSkill(data); err != nil {
+	if err := c.Memory.CreateSkill(g.Request.Context(), data); err != nil {
 		g.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
@@ -129,7 +129,7 @@ func (c *SettingsController) CreateSkill(g *gin.Context) {
 
 /* DeleteSkill DELETE /api/memory/skills/:id。 */
 func (c *SettingsController) DeleteSkill(g *gin.Context) {
-	if err := c.Memory.DeleteSkill(g.Param("id")); err != nil {
+	if err := c.Memory.DeleteSkill(g.Request.Context(), g.Param("id")); err != nil {
 		g.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
@@ -145,7 +145,7 @@ func (c *SettingsController) ToggleSkill(g *gin.Context) {
 		g.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	if err := c.Memory.ToggleSkill(g.Param("id"), body.Enabled); err != nil {
+	if err := c.Memory.ToggleSkill(g.Request.Context(), g.Param("id"), body.Enabled); err != nil {
 		g.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}

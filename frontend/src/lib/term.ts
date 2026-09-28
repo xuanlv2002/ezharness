@@ -5,6 +5,8 @@ hello/terminals 帧同步会话清单(含 AI 新建的),data 帧分发输出字�
 退避重连,重连后 hello 快照恢复屏幕。模块单例,看板 keep-alive 常驻。
 */
 
+import { authUrl } from './auth'
+
 export type TermInfo = {
   id: string
   name: string
@@ -47,7 +49,7 @@ class TerminalManager {
       this.timer = undefined
     }
     const proto = location.protocol === 'https:' ? 'wss:' : 'ws:'
-    const ws = new WebSocket(`${proto}//${location.host}/api/terminal/ws`)
+    const ws = new WebSocket(authUrl(`${proto}//${location.host}/api/terminal/ws`))
     this.ws = ws
     ws.onopen = () => {
       this.retry = 0

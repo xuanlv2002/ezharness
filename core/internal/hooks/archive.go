@@ -10,7 +10,6 @@ package hooks
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"path/filepath"
 	"strings"
@@ -60,16 +59,14 @@ func ArchiveSession(ctx context.Context, p provider.ModelProvider, fsys fs.FileS
 		return CompactInfo{}, err
 	}
 
-	// 旧库封存：空闲触发，文件已是全量最新（含 trim 档案），只翻 Archived 位
+	// 旧库封存：只翻 Archived 位（内容档案已是最新）
 	old, err := LoadSnap(ctx, fsys, oldID)
 	if err != nil {
 		return CompactInfo{}, err
 	}
 	old.Archived = true
-	if data, merr := json.MarshalIndent(old, "", "  "); merr == nil {
-		if werr := fsys.Write(ctx, SessionsDir+"/"+oldID+"/session.json", data); werr != nil {
-			return CompactInfo{}, werr
-		}
+	if err := SaveSnap(ctx, fsys, old); err != nil {
+		return CompactInfo{}, err
 	}
 
 	prevPath := SessionsDir + "/" + oldID
@@ -83,7 +80,7 @@ func ArchiveSession(ctx context.Context, p provider.ModelProvider, fsys fs.FileS
 		base = b
 	}
 	summaryBlock := "<compact-summary>\n上一会话已归档：原始记录在 " + prevPath +
-		"/session.json（可读取全文）；值得长期保留的用户信息与工作习惯已沉淀进长期记忆" +
+		"/trace.jsonl（可读取全文）；值得长期保留的用户信息与工作习惯已沉淀进长期记忆" +
 		"（user.md/soul.md 随上下文常驻，见 <memory> 段；项目记忆索引在 project.md）。\n" +
 		"本会话开始前的交接摘要：\n" + summaryText + "\n</compact-summary>"
 
@@ -108,10 +105,8 @@ func ArchiveSession(ctx context.Context, p provider.ModelProvider, fsys fs.FileS
 		StartedAt:      now,
 		EndedAt:        now,
 	}
-	if data, merr := json.MarshalIndent(initSnap, "", "  "); merr == nil {
-		if werr := fsys.Write(ctx, SessionsDir+"/"+newID+"/session.json", data); werr != nil {
-			return CompactInfo{}, werr
-		}
+	if err := SaveSnap(ctx, fsys, &initSnap); err != nil {
+		return CompactInfo{}, err
 	}
 
 	sess.SetID(newID) // 用量/折叠档案/边清零，lineRoot 保留（换代不换线）

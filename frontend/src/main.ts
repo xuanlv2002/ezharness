@@ -2,6 +2,9 @@ import { mount } from 'svelte'
 import './app.css'
 import App from './App.svelte'
 import { isDesktop } from './lib/desktop'
+import { initToken } from './lib/auth'
+
+initToken()
 
 /* 启动横幅：isometric1 等轴测 3D 字体，逐行青→紫渐变（ez 系列 logo 同款色系） */
 const LOGO = [

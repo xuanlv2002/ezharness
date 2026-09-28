@@ -1,7 +1,8 @@
 /*
 	WorkspaceController：工作目录文件预览与文本保存（附件 chips 缩略图、
 
-文件查看源、supper_url file:// 编辑器）。
+文件查看源、supper_url file:// 编辑器）。只做绑定、校验与响应——
+文件系统操作在 WorkspaceService。
 */
 package controller
 
@@ -11,18 +12,16 @@ import (
 	"mime"
 	"mime/multipart"
 	"net/http"
-	"os"
 	"path/filepath"
 
 	"github.com/gin-gonic/gin"
 
-	"ezharness/core/internal/domain"
 	"ezharness/core/internal/service"
 )
 
 /* WorkspaceController 工作目录文件服务（读预览 + 文本写保存）。 */
 type WorkspaceController struct {
-	Hub *domain.Hub
+	Svc *service.WorkspaceService
 }
 
 /*
@@ -30,22 +29,17 @@ File GET /api/workspace/file?path=<绝对路径>：按绝对路径输出文件
 （inline 预览）。不做路径白名单——本机文件都可读。
 */
 func (c *WorkspaceController) File(g *gin.Context) {
-	abs, err := filepath.Abs(filepath.FromSlash(g.Query("path")))
+	abs, err := c.Svc.Path(g.Query("path"))
 	if err != nil {
 		g.JSON(http.StatusBadRequest, gin.H{"error": "invalid path"})
 		return
 	}
-	f, err := os.Open(abs)
+	f, info, err := c.Svc.OpenFile(abs)
 	if err != nil {
 		g.JSON(http.StatusNotFound, gin.H{"error": "file not found"})
 		return
 	}
 	defer f.Close()
-	info, err := f.Stat()
-	if err != nil || info.IsDir() {
-		g.JSON(http.StatusNotFound, gin.H{"error": "file not found"})
-		return
-	}
 	ct := mime.TypeByExtension(filepath.Ext(abs))
 	if ct == "" {
 		buf := make([]byte, 512)
@@ -90,16 +84,12 @@ func (c *WorkspaceController) Save(g *gin.Context) {
 		g.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": "content too large"})
 		return
 	}
-	abs, err := filepath.Abs(filepath.FromSlash(req.Path))
+	abs, err := c.Svc.Path(req.Path)
 	if err != nil {
 		g.JSON(http.StatusBadRequest, gin.H{"error": "invalid path"})
 		return
 	}
-	if info, err := os.Stat(abs); err == nil && info.IsDir() {
-		g.JSON(http.StatusBadRequest, gin.H{"error": "is a directory"})
-		return
-	}
-	if err := c.Hub.Fsys.Write(g.Request.Context(), abs, []byte(req.Content)); err != nil {
+	if err := c.Svc.WriteText(g.Request.Context(), abs, req.Content); err != nil {
 		g.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
@@ -136,7 +126,7 @@ func (c *WorkspaceController) Stash(g *gin.Context) {
 		g.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	paths, err := service.StashFiles(g.Request.Context(), c.Hub, inputs)
+	paths, err := service.StashFiles(g.Request.Context(), c.Svc.Hub, inputs)
 	if err != nil {
 		g.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -164,12 +154,12 @@ func (c *WorkspaceController) SaveBin(g *gin.Context) {
 		g.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": "文件过大（不超过 20MB）"})
 		return
 	}
-	abs, err := filepath.Abs(filepath.FromSlash(path))
+	abs, err := c.Svc.Path(path)
 	if err != nil {
 		g.JSON(http.StatusBadRequest, gin.H{"error": "invalid path"})
 		return
 	}
-	if info, err := os.Stat(abs); err != nil || info.IsDir() {
+	if err := c.Svc.StatTarget(abs); err != nil {
 		g.JSON(http.StatusBadRequest, gin.H{"error": "target not found"})
 		return
 	}
@@ -184,7 +174,7 @@ func (c *WorkspaceController) SaveBin(g *gin.Context) {
 		g.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	if err := c.Hub.Fsys.Write(g.Request.Context(), abs, data); err != nil {
+	if err := c.Svc.WriteBin(g.Request.Context(), abs, data); err != nil {
 		g.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}

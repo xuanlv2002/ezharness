@@ -162,9 +162,12 @@ func renderStatus(d StatusData) string {
 	return b.String()
 }
 
-/* namesOrNone 清单渲染为顿号连接（空给"（无）"；压平换行防伪造行——
+/*
+	namesOrNone 清单渲染为顿号连接（空给"（无）"；压平换行防伪造行——
+
 条目格式"name（补充段）[id]"与补充段长度由构造侧 service 包控制，尾部
-id 不能在这里截断）。 */
+id 不能在这里截断）。
+*/
 func namesOrNone(names []string) string {
 	if len(names) == 0 {
 		return "（无）"

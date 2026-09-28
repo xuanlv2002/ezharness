@@ -25,6 +25,10 @@ func (m memFS) Write(_ context.Context, p string, data []byte) error {
 	m[p] = append([]byte(nil), data...)
 	return nil
 }
+func (m memFS) Append(_ context.Context, p string, data []byte) error {
+	m[p] = append(m[p], data...)
+	return nil
+}
 func (m memFS) List(_ context.Context, dir string) ([]fs.Entry, error) {
 	prefix := strings.TrimSuffix(dir, "/") + "/"
 	seen := map[string]fs.Entry{}

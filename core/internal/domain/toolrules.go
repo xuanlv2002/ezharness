@@ -1,16 +1,5 @@
-/*
-toolRules.json（数据目录）：工具审批策略（安全模块，四档 + 名单）。
-与 settings.json 分离：安全域自成一档，改策略不触碰行为设置；结构对齐
-models.json/mcp.json（独立文件、缺失回落内置默认）。
-*/
+/* 工具审批策略的结构与默认值（加载与落盘在 service 层）。 */
 package domain
-
-import (
-	"context"
-	"encoding/json"
-
-	"github.com/xuanlv2002/ezloop/ext/fs"
-)
 
 /* Level 是审批策略档位。 */
 type Level string
@@ -64,26 +53,4 @@ func DefaultToolRules() []ToolRule {
 		{Tool: "load_skill", Level: LevelAuto},
 		{Tool: "mcp.*", Level: LevelAsk},
 	}
-}
-
-/* LoadToolRules 读 toolRules.json；缺失或空档回落内置默认。 */
-func LoadToolRules(fsys fs.FileSystem) []ToolRule {
-	data, err := fsys.Read(context.Background(), "toolRules.json")
-	if err != nil {
-		return DefaultToolRules()
-	}
-	var rules []ToolRule
-	if json.Unmarshal(data, &rules) != nil || len(rules) == 0 {
-		return DefaultToolRules()
-	}
-	return rules
-}
-
-/* SaveToolRules 落盘审批策略。 */
-func SaveToolRules(fsys fs.FileSystem, rules []ToolRule) error {
-	data, err := json.MarshalIndent(rules, "", "  ")
-	if err != nil {
-		return err
-	}
-	return fsys.Write(context.Background(), "toolRules.json", data)
 }

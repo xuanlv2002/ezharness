@@ -8,7 +8,6 @@ health.boot 与 restart 响应的 boot 匹配来判断新服务已就绪。
 package main
 
 import (
-	"io"
 	"log"
 	"net"
 	"net/http"
@@ -20,6 +19,7 @@ import (
 
 	"ezharness/core/internal/config"
 	"ezharness/core/internal/domain"
+	"ezharness/core/internal/osfs"
 	"ezharness/core/internal/service"
 
 	"github.com/xuanlv2002/ezloop/ext/hook/mcp"
@@ -28,12 +28,13 @@ import (
 type app struct {
 	mu        sync.Mutex
 	cfg       config.Config
-	hub       *domain.Hub             // 当前代领域根（换代重建；退出/换代收尾用）
-	srv       *http.Server            // 当前代 HTTP 服务
+	token     string                   // API 访问令牌（进程级常量，换代沿用）
+	hub       *domain.Hub              // 当前代领域根（换代重建；退出/换代收尾用）
+	srv       *http.Server             // 当前代 HTTP 服务
 	term      *service.TerminalService // 当前代共享终端（换代重建；收尾杀全部 shell）
-	browser   *service.BrowserService // 共享浏览器桥（端无关，跨代复用；真实浏览器在 desktop 壳）
-	mcpRouter *mcp.Router             // 系统级 MCP router（全局唯一：agent hook 与页面/API 共用连接池，跨代复用）
-	boot      atomic.Int64            // 服务代际（换代重启递增，跨代共享）
+	browser   *service.BrowserService  // 共享浏览器桥（端无关，跨代复用；真实浏览器在 desktop 壳）
+	mcpRouter *mcp.Router              // 系统级 MCP router（全局唯一：agent hook 与页面/API 共用连接池，跨代复用）
+	boot      atomic.Int64             // 服务代际（换代重启递增，跨代共享）
 }
 
 /* setTerm 记录当前代共享终端（buildRouter 装配时调用）。 */
@@ -44,14 +45,14 @@ func (a *app) setTerm(t *service.TerminalService) {
 }
 
 /* newApp 创建应用并切到数据目录（进程 cwd 即数据根）。 */
-func newApp(c config.Config) (*app, error) {
+func newApp(c config.Config, token string) (*app, error) {
 	if err := os.MkdirAll(c.DataDir, 0o755); err != nil {
 		return nil, err
 	}
 	if err := os.Chdir(c.DataDir); err != nil {
 		return nil, err
 	}
-	return &app{cfg: c}, nil
+	return &app{cfg: c, token: token}, nil
 }
 
 /* start 启动第一代 server（端口占用失败即退出）。 */
@@ -90,7 +91,7 @@ func (a *app) restart(port int, listen, dataDir string, ln net.Listener) {
 	a.mu.Unlock()
 	a.shutdownGeneration()
 	if hub != nil {
-		syncDrained(dataDir, hub.Active.ID)
+		syncDrained(dataDir, hub.ActiveSession().ID)
 	}
 	if err := os.MkdirAll(dataDir, 0o755); err == nil {
 		_ = os.Chdir(dataDir)
@@ -112,8 +113,11 @@ func (a *app) restart(port int, listen, dataDir string, ln net.Listener) {
 	go func() { _ = srv.Serve(ln) }()
 }
 
-/* stop 关停当前代并释放系统级资源（MCP 连接池；托盘退出/关窗/进程信号时），幂等。
-换代走 restart，router 不在此路径释放（跨代常驻）。 */
+/*
+	stop 关停当前代并释放系统级资源（MCP 连接池；托盘退出/关窗/进程信号时），幂等。
+
+换代走 restart，router 不在此路径释放（跨代常驻）。
+*/
 func (a *app) stop() {
 	a.shutdownGeneration()
 	a.mu.Lock()
@@ -142,10 +146,13 @@ func (a *app) shutdownGeneration() {
 		term.Shutdown(3 * time.Second) // 换代=换数据目录:杀全部终端 shell
 	}
 	if hub != nil {
-		hub.Active.Shutdown(5 * time.Second)
+		active := hub.ActiveSession()
+		if active != nil {
+			active.Shutdown(5 * time.Second)
+		}
 		// 后台分支的运行轮同样只在 OnEnd 落盘：逐个收尾，不等待直接退出会丢轮
 		for _, s := range hub.Sessions() {
-			if s != hub.Active {
+			if s != active {
 				s.Shutdown(5 * time.Second)
 			}
 		}
@@ -168,47 +175,12 @@ func syncDrained(dataDir, activeID string) {
 	}
 	for _, f := range []string{"stats.json", "topics.json"} {
 		if data, err := os.ReadFile(filepath.Join(cwd, f)); err == nil {
-			_ = os.WriteFile(filepath.Join(dataDir, f), data, 0o644)
-		}
-	}
-	_ = forceCopyDir(filepath.Join(cwd, "sessions", activeID), filepath.Join(dataDir, "sessions", activeID))
-}
-
-/* forceCopyDir 递归拷贝目录，已存在文件覆盖（收尾数据以旧目录为准）。 */
-func forceCopyDir(src, dst string) error {
-	items, err := os.ReadDir(src)
-	if err != nil {
-		return err
-	}
-	if err := os.MkdirAll(dst, 0o755); err != nil {
-		return err
-	}
-	for _, it := range items {
-		s, d := filepath.Join(src, it.Name()), filepath.Join(dst, it.Name())
-		if it.IsDir() {
-			if err := forceCopyDir(s, d); err != nil {
-				return err
+			if wErr := os.WriteFile(filepath.Join(dataDir, f), data, 0o644); wErr != nil {
+				log.Printf("换代同步 %s 失败: %v", f, wErr)
 			}
-			continue
-		}
-		if err := copyFileOverwrite(s, d); err != nil {
-			return err
 		}
 	}
-	return nil
-}
-
-func copyFileOverwrite(src, dst string) error {
-	in, err := os.Open(src)
-	if err != nil {
-		return err
+	if err := osfs.CopyDir(filepath.Join(cwd, "sessions", activeID), filepath.Join(dataDir, "sessions", activeID), true); err != nil {
+		log.Printf("换代同步活动会话失败（%s）: %v", activeID, err)
 	}
-	defer in.Close()
-	out, err := os.Create(dst) // 存在即截断覆盖
-	if err != nil {
-		return err
-	}
-	defer out.Close()
-	_, err = io.Copy(out, in)
-	return err
 }

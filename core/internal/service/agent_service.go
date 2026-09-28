@@ -16,6 +16,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"slices"
@@ -25,13 +26,13 @@ import (
 	"ezharness/core/internal/config"
 
 	"github.com/xuanlv2002/ezloop/core"
+	"github.com/xuanlv2002/ezloop/ext/fs"
 	"github.com/xuanlv2002/ezloop/ext/hook/approve"
 	"github.com/xuanlv2002/ezloop/ext/hook/askuser"
 	"github.com/xuanlv2002/ezloop/ext/hook/contextfix"
 	"github.com/xuanlv2002/ezloop/ext/hook/filetools"
 	"github.com/xuanlv2002/ezloop/ext/hook/mcp"
 	"github.com/xuanlv2002/ezloop/ext/hook/offload"
-	"github.com/xuanlv2002/ezloop/ext/fs"
 	"github.com/xuanlv2002/ezloop/ext/hook/skill"
 	"github.com/xuanlv2002/ezloop/ext/hook/skilltool"
 	"github.com/xuanlv2002/ezloop/ext/hook/task"
@@ -45,8 +46,8 @@ import (
 	"github.com/xuanlv2002/ezloop/types"
 	"github.com/xuanlv2002/ezloop/warp"
 
-	"ezharness/core/internal/domain"
 	"ezharness/core/internal/builtinskill"
+	"ezharness/core/internal/domain"
 	"ezharness/core/internal/hooks"
 	"ezharness/core/internal/osfs"
 	"ezharness/core/internal/tools"
@@ -251,8 +252,8 @@ func (a *AgentService) Assemble(s *domain.Session, st domain.Settings) {
 		core.WithToolWarp(toolarg.Warp(s.Fsys), limit.Warp(4), safetool.Warp()),
 		core.WithTools(agentTools...),
 		core.WithHooks(
-			sys,       // startHooks 首位：system base 唯一来源；后续 hook 在其 OnStart 里追加 tool-guide 说明段
-			traceHook, // toolStart 首位：task/ask_user/load_skill 等 OnToolStart 内干活的 hook 返回 Skip 会短路后续 hook，观测层必须排在它们前面才有 span
+			sys,                  // startHooks 首位：system base 唯一来源；后续 hook 在其 OnStart 里追加 tool-guide 说明段
+			traceHook,            // toolStart 首位：task/ask_user/load_skill 等 OnToolStart 内干活的 hook 返回 Skip 会短路后续 hook，观测层必须排在它们前面才有 span
 			hooks.NewLoopGuard(), // 循环护栏：trace 后、Skip 型 hook 前——被拒后反复重试同样计数；重复触发 <loop_guard> 提醒（不拦调用）
 			contextfix.New(),
 			filetools.New(s.Fsys, filetools.WithWorkDir(ResolveWorkDir(st.WorkDir)), filetools.WithImageHandler(readImage)),
@@ -263,7 +264,7 @@ func (a *AgentService) Assemble(s *domain.Session, st domain.Settings) {
 			approver,
 			asker,
 			task.New(),
-			NewMcpHook(s.Fsys, a.McpRouter),
+			NewMcpHook(context.Background(), s.Fsys, a.McpRouter),
 			offload.New(s.Fsys, offload.WithSkip(askuser.ToolName, task.ToolName, skilltool.ToolName), offload.WithReplayTool("read_file"),
 				offload.WithAbs(func(p string) string { // 提示给绝对路径：模型不知道 FS 挂载基准，按工作目录拼相对路径必错
 					if abs, err := filepath.Abs(p); err == nil {
@@ -340,7 +341,13 @@ func (a *AgentService) RecognizeImage(ctx context.Context, path, question string
 	if err != nil {
 		return "", err
 	}
-	a.Hub.RecordVisionUsage(&resp.Usage)
+	{
+		if a.Hub.ApplyVisionUsage(&resp.Usage) {
+			if err := SaveModelsConfig(context.Background(), a.Hub.Fsys, a.Hub.ModelsSnapshot()); err != nil {
+				log.Printf("视觉用量落盘失败: %v", err)
+			}
+		}
+	}
 	return resp.Content, nil
 }
 
@@ -351,7 +358,7 @@ func (a *AgentService) RecognizeImage(ctx context.Context, path, question string
 仍返回 ErrBusy 保持前端提示语义。
 */
 func (a *AgentService) Reassemble(st domain.Settings) error {
-	if a.Hub.Active.Busy() {
+	if a.Hub.ActiveSession().Busy() {
 		return domain.ErrBusy
 	}
 	for _, s := range a.Hub.Sessions() {
@@ -433,20 +440,22 @@ func listCapable(tool string) bool {
 }
 
 /*
-	matchRuleList 判定工具调用是否命中名单：终端系匹配命令（相等或词
+	matchRuleList 判定工具调用是否命中名单：终端系匹配命令（包含即命中
 
-边界前缀）、mcp 匹配 server 或 server.tool（点边界）。
+——命令文本任意位置出现名单词都算，拼接/转义绕不过）、mcp 匹配
+server 或 server.tool（点边界）。
 */
 func matchRuleList(list []string, ruleTool string, args json.RawMessage) bool {
 	key := ""
-	switch ruleTool {
-	case "terminal", "term_start", "term_send": // 共享终端执行与独立进程命令共用命令词匹配
+	term := ruleTool == "terminal" || ruleTool == "term_start" || ruleTool == "term_send"
+	switch {
+	case term: // 共享终端执行与独立进程命令共用命令词匹配
 		var a struct {
 			Command string `json:"command"`
 		}
 		_ = json.Unmarshal(args, &a)
 		key = a.Command
-	case "mcp.*":
+	case ruleTool == "mcp.*":
 		var a struct {
 			Server string `json:"server"`
 			Tool   string `json:"tool"`
@@ -461,11 +470,11 @@ func matchRuleList(list []string, ruleTool string, args json.RawMessage) bool {
 		return false
 	}
 	for _, e := range list {
+		if term && strings.Contains(key, e) {
+			return true // 命令文本包含即命中
+		}
 		if key == e {
 			return true
-		}
-		if (ruleTool == "terminal" || ruleTool == "term_start" || ruleTool == "term_send") && strings.HasPrefix(key, e+" ") {
-			return true // 命令词边界
 		}
 		if ruleTool == "mcp.*" && strings.HasPrefix(key, e+".") {
 			return true // server 前缀放行整站（点边界：time 不误命中 timeX）
@@ -656,7 +665,7 @@ func briefSeg(s string, max int) string {
 
 /* mcpListLines 返回启用 server 的"名: 描述"清单。 */
 func mcpListLines(fsys osfs.OS) []string {
-	f := loadMcpFileOrNil(fsys)
+	f := loadMcpFileOrNil(context.Background(), fsys)
 	if f == nil {
 		return nil
 	}
@@ -675,7 +684,7 @@ func mcpListLines(fsys osfs.OS) []string {
 
 /* mcpStatusList 返回 MCP 清单（remind 变更基线与 available 清单用）。 */
 func mcpStatusList(fsys osfs.OS) []hooks.StatusMcp {
-	f := loadMcpFileOrNil(fsys)
+	f := loadMcpFileOrNil(context.Background(), fsys)
 	if f == nil {
 		return nil
 	}

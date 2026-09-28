@@ -18,6 +18,9 @@ tools/hooks 为领域扩展，osfs/config 为基础设施。main 只做装配。
 package main
 
 import (
+	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"flag"
 	"fmt"
 	"log"
@@ -59,7 +62,19 @@ func main() {
 	// modeldump 输出恒进日志（写不写由开关决定，开关随设置/换代在 buildRouter 推导）
 	modeldump.Out = logWriter
 
-	a, err := newApp(c)
+	/* API 令牌：desktop 经 EZHARNESS_TOKEN 注入；web 直跑自生成并打印入口 URL。 */
+	token := os.Getenv("EZHARNESS_TOKEN")
+	if token == "" {
+		b := make([]byte, 18)
+		if _, err := rand.Read(b); err != nil {
+			log.Fatal(err)
+		}
+		token = hex.EncodeToString(b)
+		url := fmt.Sprintf("http://127.0.0.1:%d/?token=%s", c.Port, token)
+		log.Printf("web 入口（含 token，勿外传）：%s", url)
+	}
+
+	a, err := newApp(c, token)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -78,6 +93,7 @@ func main() {
 /* buildRouter 装配一代完整的 controller/service/domain 栈（重启换代时重建）。 */
 func (a *app) buildRouter() *gin.Engine {
 	hub := domain.NewHub()
+	service.BootstrapHub(hub) // 配置加载/落盘与活动会话恢复归 service 层
 	a.mu.Lock()
 	a.hub = hub
 	a.mu.Unlock()
@@ -98,13 +114,13 @@ func (a *app) buildRouter() *gin.Engine {
 	// 系统级 MCP router(全局唯一):agent 的 mcp hook 与页面/API 调用共用
 	// 同一连接池,跨代复用;换代可能切数据目录,按当代 mcp.json 重载列表
 	if a.mcpRouter == nil {
-		a.mcpRouter = service.NewMcpRouter(hub.Fsys)
+		a.mcpRouter = service.NewMcpRouter(context.Background(), hub.Fsys)
 	} else {
-		service.SyncMcpServers(a.mcpRouter, hub.Fsys)
+		service.SyncMcpServers(context.Background(), a.mcpRouter, hub.Fsys)
 	}
 
 	agents := &service.AgentService{Hub: hub, Term: termSvc, Browser: a.browser, McpRouter: a.mcpRouter}
-	agents.Assemble(hub.Active, hub.SettingsSnapshot())
+	agents.Assemble(hub.ActiveSession(), hub.SettingsSnapshot())
 
 	appSvc := &service.AppService{
 		Cfg:       a.snapshot,
@@ -124,7 +140,7 @@ func (a *app) buildRouter() *gin.Engine {
 		App:       &controller.AppController{Svc: appSvc},
 		Terminal:  &controller.TerminalController{Svc: termSvc},
 		Browser:   &controller.BrowserController{Svc: a.browser},
-		Workspace: &controller.WorkspaceController{Hub: hub},
+		Workspace: &controller.WorkspaceController{Svc: service.NewWorkspaceService(hub.Fsys, hub)},
 	}
-	return controller.NewRouter(controllers, distFS())
+	return controller.NewRouter(controllers, distFS(), a.token)
 }

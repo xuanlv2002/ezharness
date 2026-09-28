@@ -14,9 +14,12 @@ import (
 	"github.com/xuanlv2002/ezloop/types"
 )
 
-/* TermIO 是共享终端服务的能力面(service.TerminalService 实现)。
+/*
+	TermIO 是共享终端服务的能力面(service.TerminalService 实现)。
+
 ctx 透传本轮上下文:用户停止时打断在途的等静默等待。
-返回统一为 termResult JSON:id/name/desc/origin/exited/lastCmd/output/note。 */
+返回统一为 termResult JSON:id/name/desc/origin/exited/lastCmd/output/note。
+*/
 type TermIO interface {
 	/* StartTerm 新建终端(name 必填,desc 可选),可选立即运行命令并等静默返回输出 */
 	StartTerm(ctx context.Context, name, desc, command string, quietMs, timeoutMs int) (string, error)

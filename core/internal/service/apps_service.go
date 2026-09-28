@@ -72,8 +72,7 @@ type appInfo struct {
 var titleRe = regexp.MustCompile(`(?i)<title[^>]*>([^<]*)</title>`)
 
 /* List 扫描 apps/ 下的快应用（声明缺失、损坏或入口越界的目录跳过）。 */
-func (s *AppsService) List() []AppEntry {
-	ctx := context.Background()
+func (s *AppsService) List(ctx context.Context) []AppEntry {
 	var out []AppEntry
 	entries, err := s.Fsys.List(ctx, AppsDir)
 	if err != nil {
@@ -102,8 +101,7 @@ Launch 启动快应用：返回前端入口路径，需要后端时把 backend �
 以应用目录为 cwd 的终端。同名后端已在跑（同来源且未退出的会话）就复用它，
 不重复起——判定自清理，会话关闭或 shell 退出即无匹配。
 */
-func (s *AppsService) Launch(name string) (AppView, error) {
-	ctx := context.Background()
+func (s *AppsService) Launch(ctx context.Context, name string) (AppView, error) {
 	a, err := s.load(ctx, name)
 	if err != nil {
 		return AppView{}, err

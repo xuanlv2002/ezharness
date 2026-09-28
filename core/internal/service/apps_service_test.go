@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"errors"
 	"os"
 	"path/filepath"
@@ -58,7 +59,7 @@ func TestAppsList(t *testing.T) {
 	_ = os.WriteFile("apps/loose.html", []byte("<html></html>"), 0o644) // 平铺文件不是应用
 
 	got := map[string]AppEntry{}
-	for _, e := range (&AppsService{Fsys: osfs.OS{}}).List() {
+	for _, e := range (&AppsService{Fsys: osfs.OS{}}).List(context.Background()) {
 		got[e.Name] = e
 	}
 	if len(got) != 3 {
@@ -85,7 +86,7 @@ func TestAppsLaunch(t *testing.T) {
 	term := &fakeTerm{}
 	svc := &AppsService{Fsys: osfs.OS{}, Term: term}
 
-	v, err := svc.Launch("plain")
+	v, err := svc.Launch(context.Background(), "plain")
 	if err != nil || v.Path != "/apps/plain/index.html" || v.TermID != "" || v.Kind != KindStatic {
 		t.Fatalf("plain: %+v %v", v, err)
 	}
@@ -93,7 +94,7 @@ func TestAppsLaunch(t *testing.T) {
 		t.Fatalf("纯前端不该起终端: %+v", term.calls)
 	}
 
-	v, err = svc.Launch("svc")
+	v, err = svc.Launch(context.Background(), "svc")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -112,12 +113,12 @@ func TestAppsLaunch(t *testing.T) {
 	}
 
 	// 同名后端已在跑：复用会话，不重复起
-	if v, err = svc.Launch("svc"); err != nil || v.TermID != "t1" || len(term.calls) != 1 {
+	if v, err = svc.Launch(context.Background(), "svc"); err != nil || v.TermID != "t1" || len(term.calls) != 1 {
 		t.Fatalf("reuse: %+v %v calls=%d", v, err, len(term.calls))
 	}
 	// shell 退出后会话作废，重开一个
 	term.sessions[0].Exited = true
-	if _, err = svc.Launch("svc"); err != nil || len(term.calls) != 2 {
+	if _, err = svc.Launch(context.Background(), "svc"); err != nil || len(term.calls) != 2 {
 		t.Fatalf("restart after exit: %v calls=%d", err, len(term.calls))
 	}
 }
@@ -130,11 +131,11 @@ func TestAppsLaunchErrors(t *testing.T) {
 	svc := &AppsService{Fsys: osfs.OS{}, Term: &fakeTerm{}}
 
 	for _, name := range []string{"", "nope", "..", "../x", "a/b", `a\b`} {
-		if _, err := svc.Launch(name); !errors.Is(err, ErrAppNotFound) {
+		if _, err := svc.Launch(context.Background(), name); !errors.Is(err, ErrAppNotFound) {
 			t.Fatalf("Launch(%q) = %v; want ErrAppNotFound", name, err)
 		}
 	}
-	if _, err := svc.Launch("broken"); err == nil || errors.Is(err, ErrAppNotFound) {
+	if _, err := svc.Launch(context.Background(), "broken"); err == nil || errors.Is(err, ErrAppNotFound) {
 		t.Fatalf("损坏的声明要给出原因: %v", err)
 	}
 }
@@ -144,7 +145,7 @@ func TestAppsLaunchWithoutTerminal(t *testing.T) {
 	t.Chdir(t.TempDir())
 	_ = os.MkdirAll("apps", 0o755)
 	makeApp(t, "svc", `{"backend":"python probe.py"}`, "index.html", "<html></html>")
-	if _, err := (&AppsService{Fsys: osfs.OS{}}).Launch("svc"); err == nil {
+	if _, err := (&AppsService{Fsys: osfs.OS{}}).Launch(context.Background(), "svc"); err == nil {
 		t.Fatal("Term 为空必须报错")
 	}
 }

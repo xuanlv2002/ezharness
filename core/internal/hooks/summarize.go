@@ -1,7 +1,7 @@
 /*
 summarize 是共享的摘要基础：trim（上下文折叠）与 archive（话题归档）
 两条路径复用，仅 prompt 不同。不走 summary.Summarize（内置 30s 超时是
-给 EndHook 防挂死设计的），这里用独立 2 分钟预算——大上下文摘要本就
+给 EndHook 防挂死设计的），这里用独立 5 分钟预算——大上下文摘要本就
 慢，被 30s 卡死会让每次整理都失败。
 */
 package hooks
@@ -16,8 +16,11 @@ import (
 	"github.com/xuanlv2002/ezloop/types"
 )
 
+/* 模型摘要调用等待上限（summarize 与 distill 共用）。 */
+const modelSummaryTimeout = 5 * time.Minute
+
 func summarizeMsgs(ctx context.Context, p provider.ModelProvider, prompt string, msgs []types.Message) (string, error) {
-	ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+	ctx, cancel := context.WithTimeout(ctx, modelSummaryTimeout)
 	defer cancel()
 	var b strings.Builder
 	for _, m := range msgs {

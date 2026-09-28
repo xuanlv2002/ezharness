@@ -31,18 +31,18 @@ type BootstrapData struct {
 }
 
 /* Bootstrap 汇总启动数据。 */
-func (s *SessionService) Bootstrap() BootstrapData {
-	sess := s.Hub.Active
+func (s *SessionService) Bootstrap(ctx context.Context) BootstrapData {
+	sess := s.Hub.ActiveSession()
 	st := s.Hub.SettingsSnapshot()
 	p := st.TrimPercent
 	w := st.WorkDir
-	memData, memErr := s.Hub.Fsys.Read(context.Background(), hooks.HarnessMd)
+	memData, memErr := s.Hub.Fsys.Read(ctx, hooks.HarnessMd)
 	return BootstrapData{
 		SessionID:    sess.RootID,
 		LeafID:       sess.ID,
 		Branches:     buildBranchViews(s.Hub),
 		Settings:     SettingsView{SystemExtra: st.SystemExtra, TrimPercent: &p, WorkDir: &w},
-		Status:       s.Snapshot(),
+		Status:       s.Snapshot(ctx),
 		MemoryExists: memErr == nil && len(strings.TrimSpace(string(memData))) > 0,
 	}
 }
@@ -83,8 +83,8 @@ type Status struct {
 }
 
 /* Snapshot 汇总活动会话状态。 */
-func (s *SessionService) Snapshot() Status {
-	sess := s.Hub.Active
+func (s *SessionService) Snapshot(ctx context.Context) Status {
+	sess := s.Hub.ActiveSession()
 	w := sess.Wired()
 	var tools []string
 	if w != nil {
@@ -93,7 +93,7 @@ func (s *SessionService) Snapshot() Status {
 	if tools == nil {
 		tools = []string{}
 	}
-	mcp := McpNames(s.Hub.Fsys)
+	mcp := McpNames(ctx, s.Hub.Fsys)
 	if mcp == nil {
 		mcp = []string{}
 	}
@@ -104,7 +104,7 @@ func (s *SessionService) Snapshot() Status {
 	}
 	ctxTokens, ctxWindow := sess.Sess.CtxInfo()
 	skills := []string{}
-	if entries, err := skill.LoadDir(context.Background(), s.Hub.Fsys, hooks.SkillsDir); err == nil {
+	if entries, err := skill.LoadDir(ctx, s.Hub.Fsys, hooks.SkillsDir); err == nil {
 		disabled := s.Hub.SettingsSnapshot().DisabledSkills
 		for _, e := range entries {
 			if slices.Contains(disabled, hooks.SkillDirOf(e.Path)) {
@@ -139,7 +139,7 @@ func (s *SessionService) Snapshot() Status {
 }
 
 /* History 返回指定分支的当前历史（rootID 路由；未知分支返回空数据）。 */
-func (s *SessionService) History(rootID string) HistoryData {
+func (s *SessionService) History(ctx context.Context, rootID string) HistoryData {
 	sess := s.Hub.SessionOf(rootID)
 	if sess == nil {
 		return HistoryData{}
@@ -159,11 +159,11 @@ func (s *SessionService) History(rootID string) HistoryData {
 		Messages:   hooks.StripSystem(sess.History()),
 		TargetID:   edge.TargetID,
 		SeedKind:   edge.SeedKind,
-		CanPrev:    s.canPrev(context.Background(), sess.ID),
+		CanPrev:    s.canPrev(ctx, sess.ID),
 		ForkedFrom: edge.ForkedFrom,
 	}
-	h.Decisions = hooks.LoadDecisions(context.Background(), sess.Fsys, h.ID)
-	h.Forks = hooks.ListForks(context.Background(), sess.Fsys, h.ID)
+	h.Decisions = hooks.LoadDecisions(ctx, sess.Fsys, h.ID)
+	h.Forks = hooks.ListForks(ctx, sess.Fsys, h.ID)
 	return h
 }
 

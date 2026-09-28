@@ -4,8 +4,10 @@ controller 包是表现层：gin handler 只做绑定、校验与响应，业务
 package controller
 
 import (
+	"crypto/subtle"
 	"io/fs"
 	"net/http"
+	"net/url"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -27,16 +29,23 @@ type Controllers struct {
 	Workspace *WorkspaceController
 }
 
-/* NewRouter 装配 gin engine 与全部路由。dist 非 nil 时服务前端静态资源。 */
-func NewRouter(c Controllers, dist fs.FS) *gin.Engine {
+/*
+NewRouter 装配 gin engine 与全部路由。dist 非 nil 时服务前端静态资源；
+token 是 API 访问令牌（进程级常量，换代沿用）。
+*/
+func NewRouter(c Controllers, dist fs.FS, token string) *gin.Engine {
 	r := gin.New()
 	r.Use(gin.Logger(), gin.Recovery())
 
-	api := r.Group("/api")
+	api := r.Group("/api", authRequired(token))
 	{
 		api.GET("/app/health", c.App.Health)
 		api.GET("/app/config", c.App.Config)
 		api.POST("/app/restart", c.App.Restart)
+		/* 当前访问令牌：设置页展示/复制用（能过鉴权者才可见）。 */
+		api.GET("/app/token", func(g *gin.Context) {
+			g.JSON(http.StatusOK, gin.H{"token": token})
+		})
 
 		api.GET("/bootstrap", c.Session.Bootstrap)
 		api.GET("/status", c.Session.Status)
@@ -112,6 +121,36 @@ func NewRouter(c Controllers, dist fs.FS) *gin.Engine {
 		http.FileServer(appsFS).ServeHTTP(g.Writer, g.Request)
 	})
 	return r
+}
+
+/* authRequired 校验 API 令牌：头/query 恒定时间比较，同源（Origin/Referer）放行。 */
+func authRequired(token string) gin.HandlerFunc {
+	return func(g *gin.Context) {
+		present := g.GetHeader("X-EZ-Token")
+		if present == "" {
+			present = g.Query("token")
+		}
+		if subtle.ConstantTimeCompare([]byte(present), []byte(token)) == 1 || sameOrigin(g) {
+			g.Next()
+			return
+		}
+		g.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+	}
+}
+
+/* sameOrigin 判定请求是否来自同源页面（Origin 优先，GET 看 Referer）。 */
+func sameOrigin(g *gin.Context) bool {
+	for _, h := range []string{"Origin", "Referer"} {
+		v := g.GetHeader(h)
+		if v == "" {
+			continue
+		}
+		u, err := url.Parse(v)
+		if err == nil && u.Host == g.Request.Host {
+			return true
+		}
+	}
+	return false
 }
 
 /* serveStatic 服务 SPA：静态资源 + 非 /api 路径回退 index.html。 */

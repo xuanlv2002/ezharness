@@ -8,7 +8,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"os"
 	"path/filepath"
 	"sort"
 	"sync"
@@ -26,6 +25,9 @@ import (
 
 /* ErrBusy 表示会话当前有一轮运行未结束。 */
 var ErrBusy = errors.New("session busy")
+
+/* snapFlushBytes 是流式快照帧的重序列化增量阈值。 */
+const snapFlushBytes = 8192
 
 /* ErrNoAPIKey 表示 models.json 尚未配置 API Key（应用可启动，发消息被拒）。 */
 var ErrNoAPIKey = errors.New("未配置 API Key，请在设置中填写")
@@ -64,20 +66,21 @@ type Session struct {
 	Sess   *hooks.Store
 	Topics *hooks.Topics
 
-	mu         sync.Mutex
-	history    []types.Message
-	archiving  bool // 归档进行中（摘要最长 2 分钟）：锁发消息/切分支/二次归档
-	cur        *runState
-	subs       map[chan []byte]struct{}
-	pending    map[string]Event
-	ctxTokens  int
-	wired      *Wiring
-	snap       *hooks.SessionSnap // bootstrap 恢复的快照（Assemble 读取；nil = 新建）
-	sysP       *hooks.SysPrompt   // system 来源（Assemble 创建；resume/compact 热更）
-	turnFrames [][]byte           // 本轮聚合帧缓存（刷新回放重建时间线；轮开始清空）
-	turnRefs   []hooks.RefFile    // 本轮引用（StartRun 存入：loop_start 帧附带供回放重建 chips）
-	snapAcc    map[string]*StreamSnapshot // forkID → in-flight 流累积快照（chunk 到达即累积）
-	snapIdx    map[string]int             // forkID → 快照帧在 turnFrames 的下标
+	mu          sync.Mutex
+	history     []types.Message
+	archiving   bool // 归档进行中（摘要最长 2 分钟）：锁发消息/切分支/二次归档
+	cur         *runState
+	subs        map[chan []byte]struct{}
+	pending     map[string]Event
+	ctxTokens   int
+	wired       *Wiring
+	snap        *hooks.SessionSnap         // bootstrap 恢复的快照（Assemble 读取；nil = 新建）
+	sysP        *hooks.SysPrompt           // system 来源（Assemble 创建；resume/compact 热更）
+	turnFrames  [][]byte                   // 本轮聚合帧缓存（刷新回放重建时间线；轮开始清空）
+	turnRefs    []hooks.RefFile            // 本轮引用（StartRun 存入：loop_start 帧附带供回放重建 chips）
+	snapAcc     map[string]*StreamSnapshot // forkID → in-flight 流累积快照（chunk 到达即累积）
+	snapIdx     map[string]int             // forkID → 快照帧在 turnFrames 的下标
+	snapFlushed map[string]int             // forkID → 上次序列化时的内容规模
 }
 
 /* Attach 注入装配产物（service 层构造，领域持有引用）。 */
@@ -245,16 +248,12 @@ func (s *Session) StartRun(ctx context.Context, text string, refs []hooks.RefFil
 	s.turnFrames = nil
 	s.snapAcc = map[string]*StreamSnapshot{}
 	s.snapIdx = map[string]int{}
+	s.snapFlushed = map[string]int{}
 	s.mu.Unlock()
 	return h, cancel, nil
 }
 
-/*
-FinishRun 结束当前轮：更新历史、清未决请求、释放占用。
-历史以 state 为准（含手动取消/出错轮）：引擎保证每个已入史的 tool_call
-都有结果消息，取消轮的部分输出也保留--sessionstore 落盘的与内存的
-必须一致，否则同进程续聊丢上下文（重启反而恢复）。
-*/
+/* FinishRun 结束当前轮：更新历史、清未决请求、释放占用。 */
 func (s *Session) FinishRun(state *types.LoopState, runErr error) {
 	s.mu.Lock()
 	if state != nil {
@@ -489,17 +488,30 @@ func (s *Session) trackStreamLocked(e Event) {
 	s.putSnapLocked(e, fork)
 }
 
-/* putSnapLocked 把当前快照写进 turnFrames（已有则原位替换）。 */
+/* putSnapLocked 把当前快照写进 turnFrames（按增量节流序列化）。 */
 func (s *Session) putSnapLocked(e Event, fork string) {
 	acc := s.snapAcc[fork]
 	if acc == nil || (acc.Content == "" && acc.Reasoning == "" && len(acc.Tools) == 0) {
 		return
 	}
-	frame := Event{Type: "stream.snapshot", Ts: e.Ts, ForkID: fork, Data: Raw(*acc)}
+	size := len(acc.Content) + len(acc.Reasoning)
+	for _, t := range acc.Tools {
+		size += len(t.Name) + len(t.Args)
+	}
+	if _, ok := s.snapIdx[fork]; ok && size-s.snapFlushed[fork] < snapFlushBytes {
+		return // 已有帧且增量未到阈值：跳过本轮序列化
+	}
+	s.writeSnapLocked(e.Ts, fork, acc, size)
+}
+
+/* writeSnapLocked 序列化快照帧写入 turnFrames。 */
+func (s *Session) writeSnapLocked(ts int64, fork string, acc *StreamSnapshot, size int) {
+	frame := Event{Type: "stream.snapshot", Ts: ts, ForkID: fork, Data: Raw(*acc)}
 	b, err := json.Marshal(frame)
 	if err != nil {
 		return
 	}
+	s.snapFlushed[fork] = size
 	if i, ok := s.snapIdx[fork]; ok && i < len(s.turnFrames) {
 		s.turnFrames[i] = b
 		return
@@ -511,6 +523,7 @@ func (s *Session) putSnapLocked(e Event, fork string) {
 /* dropSnapLocked 丢弃该流的快照帧并修正其余下标。 */
 func (s *Session) dropSnapLocked(fork string) {
 	delete(s.snapAcc, fork)
+	delete(s.snapFlushed, fork)
 	i, ok := s.snapIdx[fork]
 	if !ok {
 		return
@@ -631,6 +644,19 @@ func (s *Session) ReplayFrames() [][]byte {
 		}
 		return out
 	}
+	// 回放前把 in-flight 快照强制 flush 到最新（绕过节流）
+	for fork, acc := range s.snapAcc {
+		if acc == nil || (acc.Content == "" && acc.Reasoning == "" && len(acc.Tools) == 0) {
+			continue
+		}
+		size := len(acc.Content) + len(acc.Reasoning)
+		for _, t := range acc.Tools {
+			size += len(t.Name) + len(t.Args)
+		}
+		if _, ok := s.snapIdx[fork]; !ok || size != s.snapFlushed[fork] {
+			s.writeSnapLocked(time.Now().UnixMilli(), fork, acc, size)
+		}
+	}
 	out := make([][]byte, 0, len(s.turnFrames))
 	return append(out, s.turnFrames...) // 未决请求帧也在其中（request 是聚合帧）
 }
@@ -645,9 +671,7 @@ func (s *Session) clearPending(callID string) {
 /* ── Hub：设置、分支注册表与当前活动分支 ── */
 
 /*
-	Hub 管理应用级单例状态。Active 是当前分支；branches 按线根 ID 注册
-
-存活分支（阶段一线间并发：后台分支的轮继续跑，事件进各自 turnFrames）。
+Hub 管理应用级单例状态：active 是当前分支，branches 按线根 ID 注册存活分支。
 */
 type Hub struct {
 	mu        sync.Mutex
@@ -657,40 +681,20 @@ type Hub struct {
 	ToolRules []ToolRule
 	Stats     *Stats
 	Topics    *hooks.Topics
-	Active    *Session
+	active    *Session
 	branches  map[string]*Session
 }
 
-/*
-	NewHub 创建领域根：加载配置记录（缺失文件自动创建默认）与累计生命体征，
+/* ActiveSession 返回当前活动分支。 */
+func (h *Hub) ActiveSession() *Session {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.active
+}
 
-并恢复活动会话。
-*/
+/* NewHub 创建领域根（空聚合；配置加载与恢复由 service.BootstrapHub 装配）。 */
 func NewHub() *Hub {
-	h := &Hub{Fsys: osfs.OS{}, branches: map[string]*Session{}}
-	ctx := context.Background()
-	if _, err := h.Fsys.Read(ctx, "models.json"); err != nil {
-		h.Models = DefaultModelsConfig()
-		_ = SaveModelsConfig(h.Fsys, h.Models)
-	} else {
-		h.Models = LoadModelsConfig(h.Fsys)
-	}
-	if _, err := h.Fsys.Read(ctx, "settings.json"); err != nil {
-		h.Settings = DefaultSettings()
-		_ = SaveSettings(h.Fsys, h.Settings)
-	} else {
-		h.Settings = LoadSettings(h.Fsys)
-	}
-	if _, err := h.Fsys.Read(ctx, "toolRules.json"); err != nil {
-		h.ToolRules = DefaultToolRules()
-		_ = SaveToolRules(h.Fsys, h.ToolRules)
-	} else {
-		h.ToolRules = LoadToolRules(h.Fsys)
-	}
-	h.Stats = NewStats(h.Fsys)
-	h.Topics = hooks.NewTopics(h.Fsys)
-	h.Active = h.bootstrap()
-	return h
+	return &Hub{Fsys: osfs.OS{}, branches: map[string]*Session{}}
 }
 
 /* SessionOf 按线根 ID 取存活分支（nil = 未加载）。 */
@@ -714,7 +718,7 @@ func (h *Hub) Register(s *Session) {
 func (h *Hub) Unregister(rootID string) bool {
 	h.mu.Lock()
 	delete(h.branches, rootID)
-	active := h.Active
+	active := h.active
 	h.mu.Unlock()
 	return active != nil && active.RootID == rootID
 }
@@ -722,7 +726,7 @@ func (h *Hub) Unregister(rootID string) bool {
 /* SetActive 切换当前分支（不取消旧分支运行中的轮）。 */
 func (h *Hub) SetActive(s *Session) {
 	h.mu.Lock()
-	h.Active = s
+	h.active = s
 	h.mu.Unlock()
 }
 
@@ -737,32 +741,10 @@ func (h *Hub) Sessions() []*Session {
 	return out
 }
 
-/*
-bootstrap 恢复最近修改且未封存的存档，没有则新建（ListMain 只认
-目录项，fork 存档不混入候选）。恢复的 systemPrompt 不重新组装：
-快照里的 base/summary 直接注入 SysPrompt，记忆/skill/mcp 变更等到
-下个 session 才生效。
-*/
-func (h *Hub) bootstrap() *Session {
-	ctx := context.Background()
-	ids, _ := hooks.ListMain(ctx, h.Fsys)
-	type cand struct {
-		id string
-		mt int64
-	}
-	cands := make([]cand, 0, len(ids))
-	for _, id := range ids {
-		if fi, err := os.Stat(filepath.Join(hooks.SessionsDir, id, "session.json")); err == nil {
-			cands = append(cands, cand{id, fi.ModTime().UnixMilli()})
-		}
-	}
-	sort.Slice(cands, func(i, j int) bool { return cands[i].mt > cands[j].mt })
-	for _, c := range cands {
-		snap, err := hooks.LoadSnap(ctx, h.Fsys, c.id)
-		if err != nil || snap.Archived {
-			continue
-		}
-		s := h.newSession(c.id, snap.LineRoot, snap)
+/* BootstrapActive 恢复最近未封存的存档，没有则新建。 */
+func (h *Hub) BootstrapActive() *Session {
+	if snap := hooks.LatestMainSnap(context.Background(), h.Fsys); snap != nil {
+		s := h.newSession(snap.ID, snap.LineRoot, snap)
 		s.restoreFrom(snap)
 		h.Register(s)
 		return s
@@ -823,16 +805,17 @@ func (h *Hub) newSession(id string, rootID string, snap *hooks.SessionSnap) *Ses
 		rootID = id // 新线：自成一根
 	}
 	s := &Session{
-		ID:      id,
-		RootID:  rootID,
-		Fsys:    h.Fsys,
-		Sess:    hooks.NewStore(h.Fsys, id),
-		Topics:  h.Topics,
-		snap:    snap,
-		subs:    map[chan []byte]struct{}{},
-		pending: map[string]Event{},
-		snapAcc: map[string]*StreamSnapshot{},
-		snapIdx: map[string]int{},
+		ID:          id,
+		RootID:      rootID,
+		Fsys:        h.Fsys,
+		Sess:        hooks.NewStore(h.Fsys, id),
+		Topics:      h.Topics,
+		snap:        snap,
+		subs:        map[chan []byte]struct{}{},
+		pending:     map[string]Event{},
+		snapAcc:     map[string]*StreamSnapshot{},
+		snapIdx:     map[string]int{},
+		snapFlushed: map[string]int{},
 	}
 	s.Sess.SetLineRoot(rootID)
 	return s
@@ -852,35 +835,34 @@ func (h *Hub) ApplyModels(m ModelsConfig) {
 	h.mu.Unlock()
 }
 
-/* RecordUsage 累计一轮主模型用量到启用条目并落盘（输入/输出/缓存分开记）。 */
-func (h *Hub) RecordUsage(u *types.Usage) {
+/* ApplyUsage 累计主模型用量到启用条目，返回是否有变更。 */
+func (h *Hub) ApplyUsage(u *types.Usage) bool {
 	if u == nil {
-		return
+		return false
 	}
 	h.mu.Lock()
+	defer h.mu.Unlock()
 	if e := h.Models.ActiveMain(); e != nil {
 		accumulateUsage(e, u)
+		return true
 	}
-	models := h.Models
-	h.mu.Unlock()
-	_ = SaveModelsConfig(h.Fsys, models)
+	return false
 }
 
-/* RecordVisionUsage 累计图片识别（image_recognize）用量到识别槽启用条目并落盘。 */
-func (h *Hub) RecordVisionUsage(u *types.Usage) {
+/* ApplyVisionUsage 累计图片识别用量到识别槽启用条目，返回是否有变更。 */
+func (h *Hub) ApplyVisionUsage(u *types.Usage) bool {
 	if u == nil {
-		return
+		return false
 	}
 	h.mu.Lock()
+	defer h.mu.Unlock()
 	for i := range h.Models.Vision {
 		if h.Models.Vision[i].Enabled {
 			accumulateUsage(&h.Models.Vision[i], u)
-			break
+			return true
 		}
 	}
-	models := h.Models
-	h.mu.Unlock()
-	_ = SaveModelsConfig(h.Fsys, models)
+	return false
 }
 
 /* accumulateUsage 把一份用量按输入/输出/缓存累进条目。 */

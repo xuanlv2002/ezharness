@@ -17,7 +17,7 @@ type AppsController struct {
 
 /* List GET /api/apps。 */
 func (c *AppsController) List(g *gin.Context) {
-	g.JSON(http.StatusOK, gin.H{"apps": c.Svc.List()})
+	g.JSON(http.StatusOK, gin.H{"apps": c.Svc.List(g.Request.Context())})
 }
 
 /*
@@ -34,7 +34,7 @@ func (c *AppsController) Open(g *gin.Context) {
 		g.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	view, err := c.Svc.Launch(req.Name)
+	view, err := c.Svc.Launch(g.Request.Context(), req.Name)
 	if errors.Is(err, service.ErrAppNotFound) {
 		g.JSON(http.StatusNotFound, gin.H{"error": "app not found"})
 		return

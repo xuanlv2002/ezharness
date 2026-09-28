@@ -32,10 +32,6 @@ type StatsView struct {
 	Turns     int   `json:"turns"`
 }
 
-func (s *Stats) viewLocked() StatsView {
-	return StatsView{FirstSeen: s.firstSeen.UnixMilli(), Turns: s.turns}
-}
-
 type statsFileLayout struct {
 	FirstSeen int64       `json:"firstSeen"` // UnixMilli
 	Turns     int         `json:"turns"`

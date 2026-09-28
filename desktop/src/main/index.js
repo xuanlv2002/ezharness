@@ -9,6 +9,7 @@ const { app, BrowserWindow, Tray, Menu, ipcMain, shell, nativeImage } = require(
 const path = require('path')
 const fs = require('fs')
 const http = require('http')
+const crypto = require('crypto')
 const { spawn } = require('child_process')
 const { startBrowserModule, overlayBrowser } = require('./browser')
 const { attachInspectMenu } = require('./inspect')
@@ -18,12 +19,64 @@ let tray = null
 let coreProc = null
 let quitting = false
 let corePort = 5260
+/* API 令牌：每次启动随机生成，env 注入 core、URL query 带入页面。 */
+const coreToken = crypto.randomBytes(18).toString('hex')
 let findBrowserPopout = () => null // registerIpc 注入：当前浏览器页的独立窗口（无则 null）
 
 /* 页面基地址：开发模式（EZHARNESS_DEV_URL=vite dev server）走热更页面
    （其 /api 代理到 core），生产模式直接用 core 伺服的内嵌页面 */
 function pageBase() {
   return process.env.EZHARNESS_DEV_URL || `http://127.0.0.1:${corePort}`
+}
+
+/* 带令牌的页面地址。 */
+function pageUrl(suffix) {
+  return `${pageBase()}${suffix}${suffix.includes('?') ? '&' : '?'}token=${coreToken}`
+}
+
+/* coreFetch 主进程访问 core API，统一带头。 */
+function coreFetch(pathname, opts = {}) {
+  return fetch(`http://127.0.0.1:${corePort}${pathname}`, {
+    ...opts,
+    headers: { 'Content-Type': 'application/json', 'X-EZ-Token': coreToken, ...(opts.headers || {}) },
+  })
+}
+
+/* killCore 结束 core 及其全部子进程（Windows 用 taskkill /T 树杀）。 */
+function killCore() {
+  if (!coreProc || coreProc.killed) return
+  if (process.platform === 'win32') {
+    spawn('taskkill', ['/PID', String(coreProc.pid), '/T', '/F'], { windowsHide: true })
+  } else {
+    coreProc.kill('SIGKILL')
+  }
+}
+
+/* guardWebContents 导航守卫：只许停留在 core origin，外部目标转系统浏览器。 */
+function guardWebContents(wc) {
+  const coreOrigin = () => new URL(pageBase()).origin
+  wc.on('will-navigate', (e, url) => {
+    let same = false
+    try {
+      same = new URL(url).origin === coreOrigin()
+    } catch {
+      /* 非法 URL 一律拦 */
+    }
+    if (same) return
+    e.preventDefault()
+    if (/^https?:\/\//.test(url)) shell.openExternal(url)
+  })
+  wc.setWindowOpenHandler(({ url }) => {
+    let same = false
+    try {
+      same = new URL(url).origin === coreOrigin()
+    } catch {
+      /* 非法 URL 一律拒 */
+    }
+    if (same) return { action: 'allow' }
+    if (/^https?:\/\//.test(url)) shell.openExternal(url)
+    return { action: 'deny' }
+  })
 }
 
 /* core exe 所在目录：打包后在 resources/；开发模式在仓库根 bin/ */
@@ -67,7 +120,10 @@ function startCore() {
      控制台程序（terminal 的 cmd.exe、taskkill、MCP server）继承该控制台，否则
      Windows 会给每个子进程新开一个可见控制台，黑框一闪。stdio 仍走 inherit，
      dev 下 core 日志照常出现在启动它的控制台里 */
-  coreProc = spawn(exe, args, { cwd: configDir(), stdio: 'inherit', windowsHide: true })
+  coreProc = spawn(exe, args, {
+    cwd: configDir(), stdio: 'inherit', windowsHide: true,
+    env: { ...process.env, EZHARNESS_TOKEN: coreToken },
+  })
   coreProc.on('exit', () => {
     if (!quitting) {
       console.error('core 进程退出，桌面壳随之退出')
@@ -79,7 +135,10 @@ function startCore() {
   return new Promise((resolve, reject) => {
     const tick = () => {
       if (quitting) return reject(new Error('quitting'))
-      const req = http.get({ host: '127.0.0.1', port: corePort, path: '/api/app/health', timeout: 1500 }, (res) => {
+      const req = http.get({
+        host: '127.0.0.1', port: corePort, path: '/api/app/health', timeout: 1500,
+        headers: { 'X-EZ-Token': coreToken },
+      }, (res) => {
         res.resume()
         resolve()
       })
@@ -112,7 +171,8 @@ function createMainWindow() {
       preload: path.join(__dirname, '../preload/index.js'),
     },
   })
-  mainWindow.loadURL(`${pageBase()}/?desktop=1`)
+  mainWindow.loadURL(pageUrl('/?desktop=1'))
+  guardWebContents(mainWindow.webContents)
   mainWindow.once('ready-to-show', () => mainWindow.show())
   /* 系统级关闭（Alt+F4/任务栏 X）拦截：与标题栏 X 同一条询问流程 */
   mainWindow.on('close', (e) => {
@@ -126,7 +186,7 @@ function createMainWindow() {
 /* coreSettings 读/写 core 的用户设置（关闭到托盘等） */
 async function coreSettings() {
   try {
-    const res = await fetch(`http://127.0.0.1:${corePort}/api/settings`)
+    const res = await coreFetch('/api/settings')
     return await res.json()
   } catch {
     return {}
@@ -134,11 +194,7 @@ async function coreSettings() {
 }
 async function saveCloseToTray(value) {
   try {
-    await fetch(`http://127.0.0.1:${corePort}/api/settings`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ closeToTray: value }),
-    })
+    await coreFetch('/api/settings', { method: 'POST', body: JSON.stringify({ closeToTray: value }) })
   } catch {
     /* core 不可达时保持现状 */
   }
@@ -166,7 +222,7 @@ async function handleCloseRequest() {
 
 function quitApp() {
   quitting = true
-  if (coreProc) coreProc.kill()
+  killCore()
   app.quit()
 }
 
@@ -229,7 +285,8 @@ function registerIpc() {
       autoHideMenuBar: true,
     })
     attachInspectMenu(win.webContents)
-    win.loadURL(`${pageBase()}${url}`)
+    win.loadURL(pageUrl(url))
+    guardWebContents(win.webContents)
   })
   /* 抽屉工具弹出窗口：view → BrowserWindow。popoutState 是各工具最新
      的 pane 状态快照（file 弹出时由弹窗持续上报），关窗回流给主窗口。 */
@@ -254,7 +311,8 @@ function registerIpc() {
       },
       ...at,
     })
-    win.loadURL(`${pageBase()}/?desktop=1&popout=${view}`)
+    win.loadURL(pageUrl(`/?desktop=1&popout=${view}`))
+    guardWebContents(win.webContents)
     return win
   }
 
@@ -316,13 +374,13 @@ app.whenReady().then(async () => {
   createMainWindow()
   createTray()
   registerIpc()
-  startBrowserModule({ corePort, getParentWindow: () => mainWindow, findBrowserOwner: () => findBrowserPopout() })
-})
+  startBrowserModule({ corePort, token: coreToken, getParentWindow: () => mainWindow, findBrowserOwner: () => findBrowserPopout() })
+}).catch((err) => console.error('启动失败:', err))
 
 /* 托盘常驻：全部窗口关闭不退出（退出只走托盘菜单/关闭确认） */
 app.on('window-all-closed', () => {})
 
 app.on('before-quit', () => {
   quitting = true
-  if (coreProc) coreProc.kill()
+  killCore()
 })

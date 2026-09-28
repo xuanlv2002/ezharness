@@ -25,6 +25,13 @@ func chdirTemp(t *testing.T) {
 	t.Cleanup(func() { _ = os.Chdir(old) })
 }
 
+/* newTestHub 构造装配完成的 Hub。 */
+func newTestHub() *domain.Hub {
+	h := domain.NewHub()
+	BootstrapHub(h)
+	return h
+}
+
 func newMsg(s string) types.Message {
 	return types.Message{Role: types.RoleUser, Content: s}
 }
@@ -35,7 +42,7 @@ gen2、gen1，gen1 之上无内容（204）。复现"只能翻到第二个会话
 */
 func TestPrevChainToRoot(t *testing.T) {
 	chdirTemp(t)
-	svc := &SessionService{Hub: domain.NewHub()}
+	svc := &SessionService{Hub: newTestHub()}
 	ctx := context.Background()
 	fsys := osfs.OS{}
 
@@ -45,6 +52,9 @@ func TestPrevChainToRoot(t *testing.T) {
 			snap.Messages = append(snap.Messages, newMsg(m))
 		}
 		if err := hooks.SaveSnap(ctx, fsys, snap); err != nil {
+			t.Fatal(err)
+		}
+		if err := hooks.AppendMessages(ctx, fsys, id, "", snap.Messages); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -89,12 +99,17 @@ fk1(fork→src1) + src1(compress→gen1) 时 Prev(fk1) 返回 gen1 内容；
 */
 func TestPrevForkContinues(t *testing.T) {
 	chdirTemp(t)
-	svc := &SessionService{Hub: domain.NewHub()}
+	svc := &SessionService{Hub: newTestHub()}
 	ctx := context.Background()
 	fsys := osfs.OS{}
 	save := func(snap *hooks.SessionSnap) {
 		if err := hooks.SaveSnap(ctx, fsys, snap); err != nil {
 			t.Fatal(err)
+		}
+		if len(snap.Messages) > 0 {
+			if err := hooks.AppendMessages(ctx, fsys, snap.ID, "", snap.Messages); err != nil {
+				t.Fatal(err)
+			}
 		}
 	}
 	save(&hooks.SessionSnap{ID: "gen1", SeedKind: "new", Messages: []types.Message{newMsg("gen1-msg")}})
@@ -144,6 +159,9 @@ func TestForkAnchorAlignment(t *testing.T) {
 	if err := hooks.SaveSnap(ctx, fsys, src); err != nil {
 		t.Fatal(err)
 	}
+	if err := hooks.AppendMessages(ctx, fsys, "s1", "", src.Messages); err != nil {
+		t.Fatal(err)
+	}
 
 	// 内存 history 含 system 首条——History() 剥掉后 msgIdx 基准与盘上一致
 	hist := append([]types.Message{{Role: types.RoleSystem, Content: "sys"}}, src.Messages...)
@@ -152,7 +170,7 @@ func TestForkAnchorAlignment(t *testing.T) {
 	}
 
 	// 点 q2（无 system 基准 mi=2 → anchor=3）：复制 [q1,A1,q2]，不含 A2
-	hub := domain.NewHub()
+	hub := newTestHub()
 	ts := &TopicService{Hub: hub, Agents: &AgentService{Hub: hub}}
 	s, err := ts.Fork(ctx, "s1", 3)
 	if err != nil {
