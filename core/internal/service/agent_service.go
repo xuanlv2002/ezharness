@@ -433,20 +433,22 @@ func listCapable(tool string) bool {
 }
 
 /*
-	matchRuleList 判定工具调用是否命中名单：终端系匹配命令（相等或词
+	matchRuleList 判定工具调用是否命中名单：终端系匹配命令（包含即命中
 
-边界前缀）、mcp 匹配 server 或 server.tool（点边界）。
+——命令文本任意位置出现名单词都算，拼接/转义绕不过）、mcp 匹配
+server 或 server.tool（点边界）。
 */
 func matchRuleList(list []string, ruleTool string, args json.RawMessage) bool {
 	key := ""
-	switch ruleTool {
-	case "terminal", "term_start", "term_send": // 共享终端执行与独立进程命令共用命令词匹配
+	term := ruleTool == "terminal" || ruleTool == "term_start" || ruleTool == "term_send"
+	switch {
+	case term: // 共享终端执行与独立进程命令共用命令词匹配
 		var a struct {
 			Command string `json:"command"`
 		}
 		_ = json.Unmarshal(args, &a)
 		key = a.Command
-	case "mcp.*":
+	case ruleTool == "mcp.*":
 		var a struct {
 			Server string `json:"server"`
 			Tool   string `json:"tool"`
@@ -461,11 +463,11 @@ func matchRuleList(list []string, ruleTool string, args json.RawMessage) bool {
 		return false
 	}
 	for _, e := range list {
+		if term && strings.Contains(key, e) {
+			return true // 命令文本包含即命中
+		}
 		if key == e {
 			return true
-		}
-		if (ruleTool == "terminal" || ruleTool == "term_start" || ruleTool == "term_send") && strings.HasPrefix(key, e+" ") {
-			return true // 命令词边界
 		}
 		if ruleTool == "mcp.*" && strings.HasPrefix(key, e+".") {
 			return true // server 前缀放行整站（点边界：time 不误命中 timeX）
