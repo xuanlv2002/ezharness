@@ -451,6 +451,8 @@ export const api = {
 
   appConfig: () => fetch('/api/app/config').then(json<AppConfig>),
 
+  appToken: () => fetch('/api/app/token').then(json<{ token: string }>),
+
   appRestart: (req: { port?: number; listen?: string; dataDir?: string }) =>
     post<{ url: string; boot: number }>('/api/app/restart', req),
 

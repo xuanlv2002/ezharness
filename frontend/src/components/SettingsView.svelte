@@ -34,6 +34,10 @@
   let debugMode = $state(false)
   let savingDebug = $state(false)
 
+  /* API 访问令牌（外部客户端 curl 等用；展示 + 复制） */
+  let apiToken = $state('')
+  let tokenCopied = $state(false)
+
   /* 单轮最大迭代次数（模型工具循环上限；0 = 默认 64，上限 128，随 Reassemble 生效） */
   let iters = $state<number | ''>('')
   let origIters = $state<number | null>(null)
@@ -64,7 +68,20 @@
     } catch {
       /* 上下文配置加载失败不阻塞页面 */
     }
+    api.appToken().then((r) => (apiToken = r.token)).catch(() => {})
   })
+
+  /* 复制令牌：clipboard 失败（非安全上下文等）时选中文本让用户 Ctrl+C。 */
+  async function copyToken(input: HTMLInputElement) {
+    if (!apiToken) return
+    try {
+      await navigator.clipboard.writeText(apiToken)
+      tokenCopied = true
+      setTimeout(() => (tokenCopied = false), 1500)
+    } catch {
+      input.select()
+    }
+  }
 
   async function saveTray(v: boolean) {
     savingTray = true
@@ -208,6 +225,15 @@
     {#if restartErr}
       <p class="err">{restartErr}</p>
     {/if}
+    <label class="field">
+      <span>API 访问令牌（外部客户端请求带 X-EZ-Token 头或 ?token=；本机页面同源免带）</span>
+      <span class="tokenRow">
+        <input type="text" bind:value={apiToken} readonly placeholder="加载中…" />
+        <button onclick={(e) => copyToken((e.currentTarget as HTMLButtonElement).previousElementSibling as HTMLInputElement)}>
+          {tokenCopied ? '已复制' : '复制'}
+        </button>
+      </span>
+    </label>
   </section>
 
   <section>
@@ -413,6 +439,16 @@
     gap: 5px;
     font-size: 12px;
     color: var(--muted);
+  }
+  .tokenRow {
+    display: flex;
+    gap: 8px;
+    align-items: stretch;
+  }
+  .tokenRow input {
+    flex: 1;
+    min-width: 0;
+    user-select: text;
   }
   input,
   select,

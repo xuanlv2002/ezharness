@@ -42,6 +42,10 @@ func NewRouter(c Controllers, dist fs.FS, token string) *gin.Engine {
 		api.GET("/app/health", c.App.Health)
 		api.GET("/app/config", c.App.Config)
 		api.POST("/app/restart", c.App.Restart)
+		/* 当前访问令牌：设置页展示/复制用（能过鉴权者才可见）。 */
+		api.GET("/app/token", func(g *gin.Context) {
+			g.JSON(http.StatusOK, gin.H{"token": token})
+		})
 
 		api.GET("/bootstrap", c.Session.Bootstrap)
 		api.GET("/status", c.Session.Status)
