@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte'
   import { api, type AppConfig } from '../lib/api'
+  import { getToken } from '../lib/auth'
 
   /* 设置页 = 应用结构配置（服务端）+ 上下文管理 + 数据/配置文件路径。 */
   let cfg = $state<AppConfig | null>(null)
@@ -161,9 +162,10 @@
           if (h.boot === res.boot) {
             if (res.url === location.origin) location.reload()
             else {
-              // 换端口跳转：桌面窗口的标题栏靠 ?desktop=1 渲染，跳转目标需补上
+              // 换端口跳转：桌面标题栏靠 ?desktop=1 渲染、鉴权靠 token，跳转目标都补上
               const desktop = new URLSearchParams(location.search).has('desktop')
-              location.assign(desktop ? `${res.url}/?desktop=1` : res.url)
+              const t = getToken()
+              location.assign(`${res.url}/?${desktop ? 'desktop=1&' : ''}token=${encodeURIComponent(t)}`)
             }
             return
           }

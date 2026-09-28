@@ -9,6 +9,7 @@ const { app, BrowserWindow, Tray, Menu, ipcMain, shell, nativeImage } = require(
 const path = require('path')
 const fs = require('fs')
 const http = require('http')
+const crypto = require('crypto')
 const { spawn } = require('child_process')
 const { startBrowserModule, overlayBrowser } = require('./browser')
 const { attachInspectMenu } = require('./inspect')
@@ -18,12 +19,28 @@ let tray = null
 let coreProc = null
 let quitting = false
 let corePort = 5260
+/* API 令牌：每次启动随机生成，经 env 注入 core（core 只认它）；
+   页面经 URL query 带入（前端读后转存 sessionStorage 并清地址栏） */
+const coreToken = crypto.randomBytes(18).toString('hex')
 let findBrowserPopout = () => null // registerIpc 注入：当前浏览器页的独立窗口（无则 null）
 
 /* 页面基地址：开发模式（EZHARNESS_DEV_URL=vite dev server）走热更页面
    （其 /api 代理到 core），生产模式直接用 core 伺服的内嵌页面 */
 function pageBase() {
   return process.env.EZHARNESS_DEV_URL || `http://127.0.0.1:${corePort}`
+}
+
+/* 带令牌的页面地址：窗口加载用（token 进 query，页面侧自取） */
+function pageUrl(suffix) {
+  return `${pageBase()}${suffix.includes('?') ? '&' : '?'}token=${coreToken}`
+}
+
+/* coreFetch 主进程访问 core API（设置读写等），统一带头 */
+function coreFetch(pathname, opts = {}) {
+  return fetch(`http://127.0.0.1:${corePort}${pathname}`, {
+    ...opts,
+    headers: { 'Content-Type': 'application/json', 'X-EZ-Token': coreToken, ...(opts.headers || {}) },
+  })
 }
 
 /* core exe 所在目录：打包后在 resources/；开发模式在仓库根 bin/ */
@@ -67,7 +84,10 @@ function startCore() {
      控制台程序（terminal 的 cmd.exe、taskkill、MCP server）继承该控制台，否则
      Windows 会给每个子进程新开一个可见控制台，黑框一闪。stdio 仍走 inherit，
      dev 下 core 日志照常出现在启动它的控制台里 */
-  coreProc = spawn(exe, args, { cwd: configDir(), stdio: 'inherit', windowsHide: true })
+  coreProc = spawn(exe, args, {
+    cwd: configDir(), stdio: 'inherit', windowsHide: true,
+    env: { ...process.env, EZHARNESS_TOKEN: coreToken },
+  })
   coreProc.on('exit', () => {
     if (!quitting) {
       console.error('core 进程退出，桌面壳随之退出')
@@ -79,7 +99,10 @@ function startCore() {
   return new Promise((resolve, reject) => {
     const tick = () => {
       if (quitting) return reject(new Error('quitting'))
-      const req = http.get({ host: '127.0.0.1', port: corePort, path: '/api/app/health', timeout: 1500 }, (res) => {
+      const req = http.get({
+        host: '127.0.0.1', port: corePort, path: '/api/app/health', timeout: 1500,
+        headers: { 'X-EZ-Token': coreToken },
+      }, (res) => {
         res.resume()
         resolve()
       })
@@ -112,7 +135,7 @@ function createMainWindow() {
       preload: path.join(__dirname, '../preload/index.js'),
     },
   })
-  mainWindow.loadURL(`${pageBase()}/?desktop=1`)
+  mainWindow.loadURL(pageUrl('/?desktop=1'))
   mainWindow.once('ready-to-show', () => mainWindow.show())
   /* 系统级关闭（Alt+F4/任务栏 X）拦截：与标题栏 X 同一条询问流程 */
   mainWindow.on('close', (e) => {
@@ -126,7 +149,7 @@ function createMainWindow() {
 /* coreSettings 读/写 core 的用户设置（关闭到托盘等） */
 async function coreSettings() {
   try {
-    const res = await fetch(`http://127.0.0.1:${corePort}/api/settings`)
+    const res = await coreFetch('/api/settings')
     return await res.json()
   } catch {
     return {}
@@ -134,11 +157,7 @@ async function coreSettings() {
 }
 async function saveCloseToTray(value) {
   try {
-    await fetch(`http://127.0.0.1:${corePort}/api/settings`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ closeToTray: value }),
-    })
+    await coreFetch('/api/settings', { method: 'POST', body: JSON.stringify({ closeToTray: value }) })
   } catch {
     /* core 不可达时保持现状 */
   }
@@ -229,7 +248,7 @@ function registerIpc() {
       autoHideMenuBar: true,
     })
     attachInspectMenu(win.webContents)
-    win.loadURL(`${pageBase()}${url}`)
+    win.loadURL(pageUrl(url))
   })
   /* 抽屉工具弹出窗口：view → BrowserWindow。popoutState 是各工具最新
      的 pane 状态快照（file 弹出时由弹窗持续上报），关窗回流给主窗口。 */
@@ -254,7 +273,7 @@ function registerIpc() {
       },
       ...at,
     })
-    win.loadURL(`${pageBase()}/?desktop=1&popout=${view}`)
+    win.loadURL(pageUrl(`/?desktop=1&popout=${view}`))
     return win
   }
 

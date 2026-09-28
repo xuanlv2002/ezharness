@@ -18,6 +18,8 @@ tools/hooks 为领域扩展，osfs/config 为基础设施。main 只做装配。
 package main
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"flag"
 	"fmt"
 	"log"
@@ -59,7 +61,20 @@ func main() {
 	// modeldump 输出恒进日志（写不写由开关决定，开关随设置/换代在 buildRouter 推导）
 	modeldump.Out = logWriter
 
-	a, err := newApp(c)
+	/* API 令牌：desktop 壳经 EZHARNESS_TOKEN 注入；web 直跑自生成并
+	打印带 token 的入口 URL（每代请求都要带，见 controller.authRequired） */
+	token := os.Getenv("EZHARNESS_TOKEN")
+	if token == "" {
+		b := make([]byte, 18)
+		if _, err := rand.Read(b); err != nil {
+			log.Fatal(err)
+		}
+		token = hex.EncodeToString(b)
+		url := fmt.Sprintf("http://127.0.0.1:%d/?token=%s", c.Port, token)
+		log.Printf("web 入口（含 token，勿外传）：%s", url)
+	}
+
+	a, err := newApp(c, token)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -126,5 +141,5 @@ func (a *app) buildRouter() *gin.Engine {
 		Browser:   &controller.BrowserController{Svc: a.browser},
 		Workspace: &controller.WorkspaceController{Hub: hub},
 	}
-	return controller.NewRouter(controllers, distFS())
+	return controller.NewRouter(controllers, distFS(), a.token)
 }

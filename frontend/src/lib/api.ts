@@ -1,4 +1,5 @@
 /* API 封装：REST + SSE。v0.2：bootstrap 模式（会话对用户隐藏）。 */
+import { authUrl } from './auth'
 
 /* 人机决策持久化记录（后端 hooks.DecisionRecord 的 JSON 形状） */
 export interface DecisionRecord {
@@ -461,7 +462,7 @@ window 级单连接：HMR/重复订阅先关旧连接，防泄漏挤占同域连
 export function subscribe(id: string, onEvent: (ev: SseEvent) => void): () => void {
   const w = window as unknown as { __ezSSE?: EventSource }
   w.__ezSSE?.close()
-  const es = new EventSource(`/api/sessions/${id}/events`)
+  const es = new EventSource(authUrl(`/api/sessions/${id}/events`))
   w.__ezSSE = es
   es.onmessage = (m) => {
     try {

@@ -4,8 +4,10 @@ controller 包是表现层：gin handler 只做绑定、校验与响应，业务
 package controller
 
 import (
+	"crypto/subtle"
 	"io/fs"
 	"net/http"
+	"net/url"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -27,12 +29,14 @@ type Controllers struct {
 	Workspace *WorkspaceController
 }
 
-/* NewRouter 装配 gin engine 与全部路由。dist 非 nil 时服务前端静态资源。 */
-func NewRouter(c Controllers, dist fs.FS) *gin.Engine {
+/* NewRouter 装配 gin engine 与全部路由。dist 非 nil 时服务前端静态资源。
+token 是本代 API 访问令牌（进程级常量，换代沿用）：desktop 壳经
+EZHARNESS_TOKEN 注入，web 直跑由 main 生成并打印在启动日志。 */
+func NewRouter(c Controllers, dist fs.FS, token string) *gin.Engine {
 	r := gin.New()
 	r.Use(gin.Logger(), gin.Recovery())
 
-	api := r.Group("/api")
+	api := r.Group("/api", authRequired(token))
 	{
 		api.GET("/app/health", c.App.Health)
 		api.GET("/app/config", c.App.Config)
@@ -112,6 +116,46 @@ func NewRouter(c Controllers, dist fs.FS) *gin.Engine {
 		http.FileServer(appsFS).ServeHTTP(g.Writer, g.Request)
 	})
 	return r
+}
+
+/*
+authRequired 校验 API 令牌，防本机接口被外部页面/局域网直接调用：
+
+  - X-EZ-Token 头或 ?token= query 与令牌恒定时间相等（渲染层 fetch 统一
+    注入头；EventSource/WebSocket 不能带头，走 query）
+  - Origin/Referer 与请求 Host 同源放行——core 伺服的快应用页面拿不到
+    token，同源头是它们的通道（跨站请求 Origin 不匹配即拒，CSRF 与
+    DNS rebinding 同被挡住）
+
+非浏览器调用方（脚本/curl）须带 token。
+*/
+func authRequired(token string) gin.HandlerFunc {
+	return func(g *gin.Context) {
+		present := g.GetHeader("X-EZ-Token")
+		if present == "" {
+			present = g.Query("token")
+		}
+		if subtle.ConstantTimeCompare([]byte(present), []byte(token)) == 1 || sameOrigin(g) {
+			g.Next()
+			return
+		}
+		g.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+	}
+}
+
+/* sameOrigin 判定浏览器同源页面发起的请求（Origin 优先，GET 无 Origin 时看 Referer）。 */
+func sameOrigin(g *gin.Context) bool {
+	for _, h := range []string{"Origin", "Referer"} {
+		v := g.GetHeader(h)
+		if v == "" {
+			continue
+		}
+		u, err := url.Parse(v)
+		if err == nil && u.Host == g.Request.Host {
+			return true
+		}
+	}
+	return false
 }
 
 /* serveStatic 服务 SPA：静态资源 + 非 /api 路径回退 index.html。 */

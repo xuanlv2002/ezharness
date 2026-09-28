@@ -28,6 +28,7 @@ import (
 type app struct {
 	mu        sync.Mutex
 	cfg       config.Config
+	token     string                 // API 访问令牌（进程级常量，换代沿用）
 	hub       *domain.Hub             // 当前代领域根（换代重建；退出/换代收尾用）
 	srv       *http.Server            // 当前代 HTTP 服务
 	term      *service.TerminalService // 当前代共享终端（换代重建；收尾杀全部 shell）
@@ -44,14 +45,14 @@ func (a *app) setTerm(t *service.TerminalService) {
 }
 
 /* newApp 创建应用并切到数据目录（进程 cwd 即数据根）。 */
-func newApp(c config.Config) (*app, error) {
+func newApp(c config.Config, token string) (*app, error) {
 	if err := os.MkdirAll(c.DataDir, 0o755); err != nil {
 		return nil, err
 	}
 	if err := os.Chdir(c.DataDir); err != nil {
 		return nil, err
 	}
-	return &app{cfg: c}, nil
+	return &app{cfg: c, token: token}, nil
 }
 
 /* start 启动第一代 server（端口占用失败即退出）。 */
