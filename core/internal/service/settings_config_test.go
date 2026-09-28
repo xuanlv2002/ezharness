@@ -1,9 +1,10 @@
-package domain
+package service
 
 import (
 	"slices"
 	"testing"
 
+	"ezharness/core/internal/domain"
 	"ezharness/core/internal/osfs"
 )
 
@@ -12,7 +13,7 @@ func TestSettingsRoundTrip(t *testing.T) {
 	t.Chdir(t.TempDir())
 	fsys := osfs.OS{}
 
-	st := DefaultSettings()
+	st := domain.DefaultSettings()
 	st.SystemExtra = "追加段"
 	st.TrimPercent = 40
 	st.WorkDir = "ws"

@@ -20,10 +20,10 @@ const (
 	MemoryDir   = "memory"
 	LongtermDir = "memory/longterm"
 	SkillsDir   = "memory/skills"
-	HarnessMd   = LongtermDir + "/harness.md"        // 记忆入口：树说明 + 读写纪律（常驻）
-	UserMd      = LongtermDir + "/user.md"           // 用户个人信息（常驻）
-	SoulMd      = LongtermDir + "/soul.md"           // agent 工作习惯（常驻）
-	ProjectMd   = LongtermDir + "/project.md"        // 项目记忆索引（常驻）
+	HarnessMd   = LongtermDir + "/harness.md" // 记忆入口：树说明 + 读写纪律（常驻）
+	UserMd      = LongtermDir + "/user.md"    // 用户个人信息（常驻）
+	SoulMd      = LongtermDir + "/soul.md"    // agent 工作习惯（常驻）
+	ProjectMd   = LongtermDir + "/project.md" // 项目记忆索引（常驻）
 )
 
 /*

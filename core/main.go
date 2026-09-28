@@ -93,6 +93,7 @@ func main() {
 /* buildRouter 装配一代完整的 controller/service/domain 栈（重启换代时重建）。 */
 func (a *app) buildRouter() *gin.Engine {
 	hub := domain.NewHub()
+	service.BootstrapHub(hub) // 配置加载/落盘与活动会话恢复归 service 层
 	a.mu.Lock()
 	a.hub = hub
 	a.mu.Unlock()
@@ -139,7 +140,7 @@ func (a *app) buildRouter() *gin.Engine {
 		App:       &controller.AppController{Svc: appSvc},
 		Terminal:  &controller.TerminalController{Svc: termSvc},
 		Browser:   &controller.BrowserController{Svc: a.browser},
-		Workspace: &controller.WorkspaceController{Hub: hub},
+		Workspace: &controller.WorkspaceController{Svc: service.NewWorkspaceService(hub.Fsys, hub)},
 	}
 	return controller.NewRouter(controllers, distFS(), a.token)
 }

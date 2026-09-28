@@ -88,7 +88,7 @@ func (c *ChatService) Send(rootID, text string, refs []hooks.RefFile) error {
 		s.FinishRun(state, waitErr)
 		cancel() // 释放 turnCtx（决策 select 的 Done 依赖）
 		c.Hub.Stats.AddTurn(usage)
-		c.Hub.RecordUsage(usage) // 主模型条目用量累计
+		recordUsage(c.Hub, usage) // 主模型条目用量累计并落盘
 		// 轮末刷新线（叶子/活动时间/规模）；未命名线按本代首条真实 user 命名
 		if entry, ok := c.Hub.Topics.Get(s.RootID); ok {
 			msgs := s.History()

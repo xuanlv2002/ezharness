@@ -29,9 +29,12 @@ type Controllers struct {
 	Workspace *WorkspaceController
 }
 
-/* NewRouter 装配 gin engine 与全部路由。dist 非 nil 时服务前端静态资源。
+/*
+	NewRouter 装配 gin engine 与全部路由。dist 非 nil 时服务前端静态资源。
+
 token 是本代 API 访问令牌（进程级常量，换代沿用）：desktop 壳经
-EZHARNESS_TOKEN 注入，web 直跑由 main 生成并打印在启动日志。 */
+EZHARNESS_TOKEN 注入，web 直跑由 main 生成并打印在启动日志。
+*/
 func NewRouter(c Controllers, dist fs.FS, token string) *gin.Engine {
 	r := gin.New()
 	r.Use(gin.Logger(), gin.Recovery())

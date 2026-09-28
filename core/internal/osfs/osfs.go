@@ -37,13 +37,35 @@ func (o OS) Read(_ context.Context, p string) ([]byte, error) {
 	return os.ReadFile(abs1(p))
 }
 
-/* Write 写文件（自动建目录）。 */
+/* Write 原子写文件（tmp+rename，自动建目录）：中途崩溃不留半文件。 */
 func (o OS) Write(_ context.Context, p string, data []byte) error {
 	target := abs1(p)
 	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
 		return err
 	}
-	return os.WriteFile(target, data, 0o644)
+	tmp := target + ".tmp"
+	if err := os.WriteFile(tmp, data, 0o644); err != nil {
+		return err
+	}
+	return os.Rename(tmp, target)
+}
+
+/* Append 追加写（自动建目录）：jsonl 档案的只增不改写入通道。 */
+func (o OS) Append(_ context.Context, p string, data []byte) error {
+	target := abs1(p)
+	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+		return err
+	}
+	f, err := os.OpenFile(target, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		return err
+	}
+	_, werr := f.Write(data)
+	cerr := f.Close()
+	if werr != nil {
+		return werr
+	}
+	return cerr
 }
 
 /* List 列目录。 */

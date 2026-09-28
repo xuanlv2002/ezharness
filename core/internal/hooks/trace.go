@@ -1,14 +1,14 @@
 /*
 trace 是调用链记录 hook：session 的每次 turn / 模型调用 / 工具调用 /
 fork / compact 记为 otel 风格 span（traceId/spanId/parentId/时间戳/
-耗时/attrs），落盘 sessions/<id>/trace.jsonl（fork 写 forks/ 子目录），
-供调用链排查看板消费（瀑布图、慢工具 TopN、token 趋势）。
+耗时/attrs），span 关闭即追加进 sessions/<id>/trace.jsonl（fork 写
+forks/ 子目录），供调用链排查看板消费（瀑布图、慢工具 TopN、token
+趋势）。会话消息行（kind=message）与 span 行同文件追加——回顾与
+上下文同源，档案只增不改。
 
 attrs 记输入输出的策略：新生成内容全记（turn 输入与最终回复、model
-输出、tool args），累积内容不记（model 输入=session.json 已有），
-超大内容截断（tool 结果 1KB、reasoning 2KB）。写入策略：内存累积 +
-flush 全量重写（span 量百级，避免半行损坏）；模型调用结束即 flush，
-崩溃最多丢当前迭代的未闭合 span。
+输出、tool args），累积内容不记（消息行已在同一档案），超大内容截断
+（tool 结果 1KB、reasoning 2KB）。崩溃最多丢未闭合的 span。
 
 并发：主循环与 fork 并行共享 hook 实例，按 *LoopState 分桶管理打开
 的 span；OnToolStart/OnToolEnd 跨调用并发，全方法持锁。
@@ -56,27 +56,25 @@ type bucket struct {
 
 /* Trace 实现全生命周期调用链记录。 */
 type Trace struct {
-	fsys   fs.FileSystem
+	fsys   AppendFS
 	store  *Store
 	modelF func() string
 
 	mu      sync.Mutex
 	id      string
-	spans   []*Span
 	buckets map[*types.LoopState]*bucket
 }
 
-/* NewTrace 创建记录器并续读当前会话已有的 trace.jsonl。 */
-func NewTrace(fsys fs.FileSystem, store *Store, modelF func() string) *Trace {
+/* NewTrace 创建记录器（档案追加式：无需续读，落点由 store 决定）。 */
+func NewTrace(fsys AppendFS, store *Store, modelF func() string) *Trace {
 	t := &Trace{fsys: fsys, store: store, modelF: modelF, buckets: map[*types.LoopState]*bucket{}}
 	t.mu.Lock()
 	t.id = store.ID()
-	t.spans = t.loadLocked(t.id)
 	t.mu.Unlock()
 	return t
 }
 
-/* SetTrace 切换 trace（compact 创建新 session 时）：旧 trace 封存，新 trace 续读。 */
+/* SetTrace 切换 trace（compact 创建新 session 时）：后续 span 追加进新档案。 */
 func (t *Trace) SetTrace(id string) {
 	if id == "" {
 		return
@@ -86,9 +84,7 @@ func (t *Trace) SetTrace(id string) {
 	if id == t.id {
 		return
 	}
-	t.flushLocked()
 	t.id = id
-	t.spans = t.loadLocked(id)
 }
 
 func (t *Trace) Name() string { return "trace" }
@@ -144,7 +140,7 @@ func (t *Trace) OnModelEnd(_ context.Context, state *types.LoopState) error {
 		}
 	}
 	t.closeLocked(sp, attrs)
-	t.flushLocked()
+
 	return nil
 }
 
@@ -198,7 +194,7 @@ func (t *Trace) OnEnd(_ context.Context, state *types.LoopState) error {
 	for _, sp := range b.tools {
 		t.closeLocked(sp, nil)
 	}
-	t.flushLocked()
+
 	return nil
 }
 
@@ -216,7 +212,7 @@ func (t *Trace) EndSpan(sp *Span, attrs map[string]any) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.closeLocked(sp, attrs)
-	t.flushLocked()
+
 }
 
 /*
@@ -236,7 +232,7 @@ func (t *Trace) CloseRoot(state *types.LoopState, attrs map[string]any) {
 	for _, sp := range b.tools {
 		t.closeLocked(sp, nil)
 	}
-	t.flushLocked()
+
 }
 
 /* OpenRoot 为已有 Run 重开根 span（compact 工具路径：新 trace 承接本轮剩余迭代）。 */
@@ -289,7 +285,6 @@ func (t *Trace) openLocked(name, kind, parent string, state *types.LoopState, at
 		ForkID:    state.ForkID,
 		Attrs:     attrs,
 	}
-	t.spans = append(t.spans, sp)
 	return sp
 }
 
@@ -305,40 +300,16 @@ func (t *Trace) closeLocked(sp *Span, attrs map[string]any) {
 		}
 		sp.Attrs[k] = v
 	}
+	t.appendSpanLocked(sp)
 }
 
-/* flushLocked 全量重写：主 trace 与各 fork trace 分流落盘。 */
-func (t *Trace) flushLocked() {
-	if len(t.spans) == 0 {
+/* appendSpanLocked 把已闭合的 span 追加进档案（fork span 落 forks/ 子目录）。 */
+func (t *Trace) appendSpanLocked(sp *Span) {
+	b, err := json.Marshal(sp)
+	if err != nil {
 		return
 	}
-	var main bytes.Buffer
-	forks := map[string]*bytes.Buffer{}
-	for _, sp := range t.spans {
-		b, err := json.Marshal(sp)
-		if err != nil {
-			continue
-		}
-		if sp.ForkID == "" {
-			main.Write(b)
-			main.WriteByte('\n')
-		} else {
-			fb := forks[sp.ForkID]
-			if fb == nil {
-				fb = &bytes.Buffer{}
-				forks[sp.ForkID] = fb
-			}
-			fb.Write(b)
-			fb.WriteByte('\n')
-		}
-	}
-	ctx := context.Background()
-	if main.Len() > 0 {
-		_ = t.fsys.Write(ctx, SessionsDir+"/"+t.id+"/trace.jsonl", main.Bytes())
-	}
-	for fid, fb := range forks {
-		_ = t.fsys.Write(ctx, SessionsDir+"/"+t.id+"/forks/"+fid+"/trace.jsonl", fb.Bytes())
-	}
+	_ = t.fsys.Append(context.Background(), tracePath(t.id, sp.ForkID), append(b, '\n'))
 }
 
 /*
@@ -383,7 +354,7 @@ func linkForks(spans []Span) {
 	}
 }
 
-/* loadTraceFile 解析单个 trace.jsonl；无文件返回 nil。 */
+/* loadTraceFile 解析单个 trace.jsonl 的 span 行（跳过 kind=message 消息行）；无文件返回 nil。 */
 func loadTraceFile(ctx context.Context, fsys fs.FileSystem, path string) []Span {
 	data, err := fsys.Read(ctx, path)
 	if err != nil {
@@ -394,20 +365,16 @@ func loadTraceFile(ctx context.Context, fsys fs.FileSystem, path string) []Span 
 		if len(bytes.TrimSpace(line)) == 0 {
 			continue
 		}
+		var probe struct {
+			Kind string `json:"kind"`
+		}
+		if json.Unmarshal(line, &probe) != nil || probe.Kind == "message" {
+			continue
+		}
 		var sp Span
 		if json.Unmarshal(line, &sp) == nil {
 			out = append(out, sp)
 		}
-	}
-	return out
-}
-
-/* loadLocked 续读已有 trace（旧 span 只读保序，新 span 追加）。 */
-func (t *Trace) loadLocked(id string) []*Span {
-	loaded := LoadTrace(context.Background(), t.fsys, id)
-	out := make([]*Span, 0, len(loaded))
-	for i := range loaded {
-		out = append(out, &loaded[i])
 	}
 	return out
 }

@@ -8,7 +8,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"os"
 	"path/filepath"
 	"sort"
 	"sync"
@@ -708,35 +707,13 @@ func (h *Hub) ActiveSession() *Session {
 }
 
 /*
-	NewHub 创建领域根：加载配置记录（缺失文件自动创建默认）与累计生命体征，
+	NewHub 创建领域根（空聚合）。
 
-并恢复活动会话。
+配置记录的加载/落盘与活动会话恢复由 service.BootstrapHub 装配——
+领域层不读写配置文件。
 */
 func NewHub() *Hub {
-	h := &Hub{Fsys: osfs.OS{}, branches: map[string]*Session{}}
-	ctx := context.Background()
-	if _, err := h.Fsys.Read(ctx, "models.json"); err != nil {
-		h.Models = DefaultModelsConfig()
-		_ = SaveModelsConfig(h.Fsys, h.Models)
-	} else {
-		h.Models = LoadModelsConfig(h.Fsys)
-	}
-	if _, err := h.Fsys.Read(ctx, "settings.json"); err != nil {
-		h.Settings = DefaultSettings()
-		_ = SaveSettings(h.Fsys, h.Settings)
-	} else {
-		h.Settings = LoadSettings(h.Fsys)
-	}
-	if _, err := h.Fsys.Read(ctx, "toolRules.json"); err != nil {
-		h.ToolRules = DefaultToolRules()
-		_ = SaveToolRules(h.Fsys, h.ToolRules)
-	} else {
-		h.ToolRules = LoadToolRules(h.Fsys)
-	}
-	h.Stats = NewStats(h.Fsys)
-	h.Topics = hooks.NewTopics(h.Fsys)
-	h.active = h.bootstrap()
-	return h
+	return &Hub{Fsys: osfs.OS{}, branches: map[string]*Session{}}
 }
 
 /* SessionOf 按线根 ID 取存活分支（nil = 未加载）。 */
@@ -784,31 +761,14 @@ func (h *Hub) Sessions() []*Session {
 }
 
 /*
-bootstrap 恢复最近修改且未封存的存档，没有则新建（ListMain 只认
-目录项，fork 存档不混入候选）。恢复的 systemPrompt 不重新组装：
-快照里的 base/summary 直接注入 SysPrompt，记忆/skill/mcp 变更等到
-下个 session 才生效。
+BootstrapActive 恢复最近修改且未封存的存档，没有则新建（候选选择在
+hooks.LatestMainSnap：只认主库目录项，fork 存档不混入）。恢复的
+systemPrompt 不重新组装：快照里的 base/summary 直接注入 SysPrompt，
+记忆/skill/mcp 变更等到下个 session 才生效。
 */
-func (h *Hub) bootstrap() *Session {
-	ctx := context.Background()
-	ids, _ := hooks.ListMain(ctx, h.Fsys)
-	type cand struct {
-		id string
-		mt int64
-	}
-	cands := make([]cand, 0, len(ids))
-	for _, id := range ids {
-		if fi, err := os.Stat(filepath.Join(hooks.SessionsDir, id, "session.json")); err == nil {
-			cands = append(cands, cand{id, fi.ModTime().UnixMilli()})
-		}
-	}
-	sort.Slice(cands, func(i, j int) bool { return cands[i].mt > cands[j].mt })
-	for _, c := range cands {
-		snap, err := hooks.LoadSnap(ctx, h.Fsys, c.id)
-		if err != nil || snap.Archived {
-			continue
-		}
-		s := h.newSession(c.id, snap.LineRoot, snap)
+func (h *Hub) BootstrapActive() *Session {
+	if snap := hooks.LatestMainSnap(context.Background(), h.Fsys); snap != nil {
+		s := h.newSession(snap.ID, snap.LineRoot, snap)
 		s.restoreFrom(snap)
 		h.Register(s)
 		return s
@@ -899,35 +859,34 @@ func (h *Hub) ApplyModels(m ModelsConfig) {
 	h.mu.Unlock()
 }
 
-/* RecordUsage 累计一轮主模型用量到启用条目并落盘（输入/输出/缓存分开记）。 */
-func (h *Hub) RecordUsage(u *types.Usage) {
+/* ApplyUsage 累计一轮主模型用量到启用条目（输入/输出/缓存分开记），返回是否有条目变更（持久化由 service 层完成）。 */
+func (h *Hub) ApplyUsage(u *types.Usage) bool {
 	if u == nil {
-		return
+		return false
 	}
 	h.mu.Lock()
+	defer h.mu.Unlock()
 	if e := h.Models.ActiveMain(); e != nil {
 		accumulateUsage(e, u)
+		return true
 	}
-	models := h.Models
-	h.mu.Unlock()
-	_ = SaveModelsConfig(h.Fsys, models)
+	return false
 }
 
-/* RecordVisionUsage 累计图片识别（image_recognize）用量到识别槽启用条目并落盘。 */
-func (h *Hub) RecordVisionUsage(u *types.Usage) {
+/* ApplyVisionUsage 累计图片识别（image_recognize）用量到识别槽启用条目，返回是否有条目变更（持久化由 service 层完成）。 */
+func (h *Hub) ApplyVisionUsage(u *types.Usage) bool {
 	if u == nil {
-		return
+		return false
 	}
 	h.mu.Lock()
+	defer h.mu.Unlock()
 	for i := range h.Models.Vision {
 		if h.Models.Vision[i].Enabled {
 			accumulateUsage(&h.Models.Vision[i], u)
-			break
+			return true
 		}
 	}
-	models := h.Models
-	h.mu.Unlock()
-	_ = SaveModelsConfig(h.Fsys, models)
+	return false
 }
 
 /* accumulateUsage 把一份用量按输入/输出/缓存累进条目。 */

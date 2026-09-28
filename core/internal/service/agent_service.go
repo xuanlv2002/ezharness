@@ -25,13 +25,13 @@ import (
 	"ezharness/core/internal/config"
 
 	"github.com/xuanlv2002/ezloop/core"
+	"github.com/xuanlv2002/ezloop/ext/fs"
 	"github.com/xuanlv2002/ezloop/ext/hook/approve"
 	"github.com/xuanlv2002/ezloop/ext/hook/askuser"
 	"github.com/xuanlv2002/ezloop/ext/hook/contextfix"
 	"github.com/xuanlv2002/ezloop/ext/hook/filetools"
 	"github.com/xuanlv2002/ezloop/ext/hook/mcp"
 	"github.com/xuanlv2002/ezloop/ext/hook/offload"
-	"github.com/xuanlv2002/ezloop/ext/fs"
 	"github.com/xuanlv2002/ezloop/ext/hook/skill"
 	"github.com/xuanlv2002/ezloop/ext/hook/skilltool"
 	"github.com/xuanlv2002/ezloop/ext/hook/task"
@@ -45,8 +45,8 @@ import (
 	"github.com/xuanlv2002/ezloop/types"
 	"github.com/xuanlv2002/ezloop/warp"
 
-	"ezharness/core/internal/domain"
 	"ezharness/core/internal/builtinskill"
+	"ezharness/core/internal/domain"
 	"ezharness/core/internal/hooks"
 	"ezharness/core/internal/osfs"
 	"ezharness/core/internal/tools"
@@ -251,8 +251,8 @@ func (a *AgentService) Assemble(s *domain.Session, st domain.Settings) {
 		core.WithToolWarp(toolarg.Warp(s.Fsys), limit.Warp(4), safetool.Warp()),
 		core.WithTools(agentTools...),
 		core.WithHooks(
-			sys,       // startHooks 首位：system base 唯一来源；后续 hook 在其 OnStart 里追加 tool-guide 说明段
-			traceHook, // toolStart 首位：task/ask_user/load_skill 等 OnToolStart 内干活的 hook 返回 Skip 会短路后续 hook，观测层必须排在它们前面才有 span
+			sys,                  // startHooks 首位：system base 唯一来源；后续 hook 在其 OnStart 里追加 tool-guide 说明段
+			traceHook,            // toolStart 首位：task/ask_user/load_skill 等 OnToolStart 内干活的 hook 返回 Skip 会短路后续 hook，观测层必须排在它们前面才有 span
 			hooks.NewLoopGuard(), // 循环护栏：trace 后、Skip 型 hook 前——被拒后反复重试同样计数；重复触发 <loop_guard> 提醒（不拦调用）
 			contextfix.New(),
 			filetools.New(s.Fsys, filetools.WithWorkDir(ResolveWorkDir(st.WorkDir)), filetools.WithImageHandler(readImage)),
@@ -340,7 +340,11 @@ func (a *AgentService) RecognizeImage(ctx context.Context, path, question string
 	if err != nil {
 		return "", err
 	}
-	a.Hub.RecordVisionUsage(&resp.Usage)
+	{
+		if a.Hub.ApplyVisionUsage(&resp.Usage) {
+			_ = SaveModelsConfig(a.Hub.Fsys, a.Hub.ModelsSnapshot())
+		}
+	}
 	return resp.Content, nil
 }
 

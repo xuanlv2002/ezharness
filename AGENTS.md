@@ -114,8 +114,8 @@ hook 是 ezloop 引擎的横向扩展点（接口见 ezloop `hook/hook.go`：`On
 | `reference_file.go` `RefFileHook` | `OnStart` | 本轮有附件/文件引用时，在用户输入前插 `<reference_file>` 结构化消息 |
 | `trim.go` `Trim` | `OnStart` `OnLoop` `OnToolStart` | 注册 `trim_context` 工具；回边水位整理：就地折叠早期消息为四节结构化摘要（已完成/正在做/待办/关键事实，`normalizeStructuredSummary` 兜底）+ 重写 `sessions/<id>/progress.md` + 插 `<context_trim>` 标记（同一 session 内，连续性导向） |
 | `guard.go` `Guard` | `OnToolEnd` | 窗口余量兜底：offload 豁免名单（read_file 等）的大结果放不下时也卸载 |
-| `sessionstore.go` `Store` | `OnStart` `OnEnd` | 轮末把历史与 system 快照写 `sessions/<id>/session.json` |
-| `trace.go` `Trace` | 全部 | 跨度记录 → `trace.jsonl` |
+| `sessionstore.go` `Store` | `OnStart` `OnEnd` | 轮末把新消息**追加**进 `sessions/<id>/trace.jsonl`（kind=message 行），状态覆盖写 `session.json` |
+| `trace.go` `Trace` | 全部 | 跨度记录 → `trace.jsonl`（span 关闭即追加，与消息行同文件） |
 | `loopguard.go` `LoopGuard` | `OnToolStart` `OnEnd` | 循环护栏：同一工具同参数反复调用达 4 次插一条 `<loop_guard>` 提醒（模型自省 + 时间线用户可见），只提醒不拦截、每组合仅一次；排在 Skip 型 hook 之前，被拒后重试同样计数 |
 | `archive.go` `ArchiveSession`（函数，非 hook） | — | 归档换代（沉淀式，长期记忆导向）：先 `distill.go` 沉淀步（**单次模型调用**：全量旧文 user/soul/project.md/各 project-*.md + 会话 → `===段名===` 分段输出各文件新全文，段名 `user`/`soul`/`project.md`/`project:<id>`（id 经 slug 规范化，非法丢弃），代码解析后覆盖写回，UNCHANGED 跳过；失败静默）→ 精炼交接摘要 → 封旧 session → 开新代；由 `service/topic_service.go` 调用（手动 Compact 唯一生产路径，workDir 作 projectId 线索传入） |
 | `summarize.go`（函数） | — | trim 与 archive 共用的总结器 |
@@ -131,9 +131,9 @@ hook 是 ezloop 引擎的横向扩展点（接口见 ezloop `hook/hook.go`：`On
 **一份逐条标注的完整上下文（system 十段各自的来源 + 每轮标签的生成者与插入条件）见 `docs/md/context.md`**——改文案、标签或插入位置前先对那一份。
 
 **system 段** — `agent_service.go` 的 `buildSystemBase`（约 460 行）。段序：人格（含总纲句）→ `SystemExtra`（设置页）→ `<workspace>`（三个可写位置 + 行为规则——路径只给写入目标，读取向全部规则化防诱导）→ `<memory>`（记忆树常驻：`harness.md` 入口/读写纪律 + `user.md` + `soul.md` + `project.md` 索引，`hooks.EnsureHarnessMd`；`project-<名>.md` 详情按需读）→ `<skills>`（builtinskill + `skill.LoadDir`，按 `DisabledSkills` 过滤）→ `<mcp>` → `<action>`（行动准则：技能匹配/计划审批/工具选择/并行分身/交付与连续性）→ `<output>`（输出规范：`<$supper_url>` 正误示例、`<@toolArg>`、回复风格——弱模型抄示例）。
-每 session **只组装一次**：存 `Session.sysP`（`domain/session.go` 的 `SetSysP`/`SysPromptRef`）并落进 `session.json` 快照（`sessionstore.go`）；改了记忆/skill/MCP 要下个 session 才进 system，期间由 `<resource_change>` 告知模型。归档换代时热换。
+每 session **只组装一次**：存 `Session.sysP`（`domain/session.go` 的 `SetSysP`/`SysPromptRef`）并落进 `session.json` 状态（`sessionstore.go`）；改了记忆/skill/MCP 要下个 session 才进 system，期间由 `<resource_change>` 告知模型。归档换代时热换。
 
-**历史** — `Session.history`（`domain/session.go`），落盘 `sessions/<id>/session.json`。`StartRun` 把 `modelViewLocked(history)` 交给引擎；ModelView 从**最后一个 `<context_trim>` 标记**起（折叠掉的旧档只留在存档里）。`FinishRun`：本轮有折叠 → `hooks.MergeFull(history, state)`，否则整轮替换。`Store.OnEnd` 对磁盘快照做同样的合并。
+**历史** — `Session.history`（`domain/session.go`），追加落盘 `sessions/<id>/trace.jsonl`（`kind=message` 行，只增不改；trim 折叠是内存视图处理，盘上仅追加 marker 行）。`StartRun` 把 `modelViewLocked(history)` 交给引擎；ModelView 从**最后一个 `<context_trim>` 标记**起（折叠掉的旧档只留在存档里）。`FinishRun`：本轮有折叠 → `hooks.MergeFull(history, state)`，否则整轮替换。`Store.OnEnd` 对盘上消息做同样的合并后**只追加新增尾部**（MergeFull 输出恒等于纯尾部追加）。
 **trim** = 同一 session 内就地折叠（`hooks/trim.go`）；**compact/归档** = 换代新 session + 摘要（`hooks/archive.go`）——这两件事的边界别混。
 
 **每轮注入的标记记录**（都是 `role=user` 的消息，随轮末落盘；前端从历史重建时间线，所以落盘与否很关键）：
@@ -220,7 +220,8 @@ warp 是 ezloop 的**纵向**装饰器（与横向的 hook 并列），包住单
 | `apps/<名>/` | **快应用**：`app.quick` 声明（协议见 `internal/quickapp`）+ `entry` 前端 + 可选 `backend` 命令。含 `app.quick` 的目录才算应用；前端由 `/apps/*` 静态同源伺服，点启动＝开窗＋（有 backend 时）在共享终端里把后端跑起来（Origin `快应用·<名>`，同名在跑则复用不重起） |
 | `memory/longterm/` | 长期记忆树：`harness.md`（入口：树说明+读写纪律）、`user.md`/`soul.md`/`project.md` 索引——四者常驻进 system；`project-<名>.md` 项目详情按需读 |
 | `memory/skills/<名>/` | 技能（`SKILL.md` + `scripts/`） |
-| `sessions/<id>/session.json` | 会话历史（含图片消息的 base64 本体） |
+| `sessions/<id>/trace.jsonl` | 会话内容档案：消息行（`kind=message`，含图片 base64）与调用链 span 行同文件追加——回顾与上下文同源 |
+| `sessions/<id>/session.json` | 会话状态（systemPrompt/工具清单/compact 链引用/用量/归档位），每轮原子覆盖写 |
 | `.ezloop/offload/` | 大工具结果的卸载区（模型按需读回；提示给绝对路径——offload 的 `WithAbs` 按 cwd 渲染，相对路径会被模型按工作目录拼错） |
 | `logs/core-YYYYMMDD.log` | 进程日志（log/gin/modeldump，按天滚动保留 7 天） |
 | `settings.json` `models.json` `mcp.json` `topics.json` `stats.json` `toolRules.json` | 应用配置与索引 |
@@ -243,7 +244,7 @@ warp 是 ezloop 的**纵向**装饰器（与横向的 hook 并列），包住单
 **④ 点发送**
 `store.send` → `api.send` → `POST /api/sessions/:id/messages`，body = `{text, files:[{name,path}], refs:[{path, items}]}`。
 后端 `ChatController.SendMessage` 逐个 `checkPath`（转绝对路径 + 存在性校验）→ 合成 `[]hooks.RefFile` → `Session.StartRun(..., WithRefFiles(refs))`。
-`hooks/reference_file.go` 的 `OnStart` 在本轮用户输入前插一条 `role=user` 的 `<reference_file>{hint, refs:[{path, items:[{sel,note,from,to}]}]}</reference_file>` 记录——**文件本体不进上下文**，只给路径与（可选、截断的）片段文本，模型需要内容时自己 `read_file`。该记录随本轮落盘 `sessions/<id>/session.json`，前端 `buildBlocks` 按同一标签重建引用 chips。
+`hooks/reference_file.go` 的 `OnStart` 在本轮用户输入前插一条 `role=user` 的 `<reference_file>{hint, refs:[{path, items:[{sel,note,from,to}]}]}</reference_file>` 记录——**文件本体不进上下文**，只给路径与（可选、截断的）片段文本，模型需要内容时自己 `read_file`。该记录随本轮追加进 `sessions/<id>/trace.jsonl`，前端 `buildBlocks` 按同一标签重建引用 chips。
 
 **唯一的例外是图片**：工具产出 `<image_loaded path="…"/>` 标记（read_file 读图、`service/browser.go` 截图），由 ezloop `filetools` 的 `OnLoop` **按路径读盘**转成带 base64 的 `role=user` 图片消息（无视觉模型由 `visionguard` 剥图）。所以图片是"进上下文"的，文本永远只是引用。
 
@@ -257,7 +258,7 @@ warp 是 ezloop 的**纵向**装饰器（与横向的 hook 并列），包住单
 
 ### 5.1 损坏的工具参数会静默炸掉落盘与续聊（2026-09 事故）
 
-**现象**：超长思考后模型流式输出的 `write_file` 参数损坏（乱码/截断），随后①该轮 `session.json` 没落盘（切页面/重启直接丢上下文）；②之后每轮发送都立刻失败（openai 协议把非法 `Arguments` 原样字符串发给上游 → 400）。
+**现象**：超长思考后模型流式输出的 `write_file` 参数损坏（乱码/截断），随后①该轮消息没落盘进 `trace.jsonl`（切页面/重启直接丢上下文）；②之后每轮发送都立刻失败（openai 协议把非法 `Arguments` 原样字符串发给上游 → 400）。
 
 **根因链**：三个 provider 的流式累积收尾（anthropic/openai/openairesponses）都直接 `json.RawMessage(c.args)` 不校验；非法字节进了 `state.Messages` 的 `ToolCall.Args` 后：`sessionstore` 的 `json.MarshalIndent` 失败（只记 `Metadata`，静默丢轮）；openai 请求侧 `string(tc.Args)` 把垃圾重发上游。
 

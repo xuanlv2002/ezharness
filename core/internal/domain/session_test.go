@@ -1,8 +1,8 @@
 package domain
 
 import (
-	"encoding/json"
 	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 	"time"
@@ -129,14 +129,17 @@ func TestFinishRunMergesTrimmedArchive(t *testing.T) {
 	}
 }
 
-/* 流式快照回放：增量帧累积成 stream.snapshot 进回放缓存，model_end 落定后
-丢弃（切回分支/断线重连时 in-flight 内容靠它重建）。 */
+/*
+	流式快照回放：增量帧累积成 stream.snapshot 进回放缓存，model_end 落定后
+
+丢弃（切回分支/断线重连时 in-flight 内容靠它重建）。
+*/
 func TestStreamSnapshotReplay(t *testing.T) {
 	s := &Session{
-		subs:    map[chan []byte]struct{}{},
-		pending: map[string]Event{},
-		snapAcc: map[string]*StreamSnapshot{},
-		snapIdx: map[string]int{},
+		subs:        map[chan []byte]struct{}{},
+		pending:     map[string]Event{},
+		snapAcc:     map[string]*StreamSnapshot{},
+		snapIdx:     map[string]int{},
 		snapFlushed: map[string]int{},
 	}
 	publish := func(typ string, data any) {

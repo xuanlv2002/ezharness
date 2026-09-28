@@ -39,12 +39,12 @@ type bridgeReply struct {
 
 /* BrowserService 是浏览器桥(单连接:新 desktop 连接顶替旧连接)。 */
 type BrowserService struct {
-	mu        sync.Mutex
-	writeMu   sync.Mutex // WS 单写者
-	seq       int64
-	conn      *websocket.Conn
-	pending   map[int64]chan bridgeReply
-	shotDir   string
+	mu         sync.Mutex
+	writeMu    sync.Mutex // WS 单写者
+	seq        int64
+	conn       *websocket.Conn
+	pending    map[int64]chan bridgeReply
+	shotDir    string
 	seesImages func() bool
 }
 

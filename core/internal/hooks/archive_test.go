@@ -31,6 +31,9 @@ func TestArchiveSession(t *testing.T) {
 	if err := SaveSnap(ctx, fsys, oldSnap); err != nil {
 		t.Fatal(err)
 	}
+	if err := AppendMessages(ctx, fsys, "old-session", "", oldSnap.Messages); err != nil {
+		t.Fatal(err)
+	}
 
 	view := []types.Message{
 		{Role: types.RoleUser, Content: "<context_trim>\n摘要：早期已整理\n</context_trim>"},

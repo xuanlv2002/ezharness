@@ -28,8 +28,8 @@ import (
 	"time"
 
 	"github.com/xuanlv2002/ezloop/event"
-	ezhook "github.com/xuanlv2002/ezloop/hook"
 	"github.com/xuanlv2002/ezloop/ext/fs"
+	ezhook "github.com/xuanlv2002/ezloop/hook"
 	"github.com/xuanlv2002/ezloop/provider"
 	"github.com/xuanlv2002/ezloop/types"
 )
@@ -74,8 +74,8 @@ const trimFoldedKey = "trim_folded"
 type Trim struct {
 	provider  provider.ModelProvider
 	trace     *Trace
-	threshold int // 水位阈值（prompt tokens），<=0 禁用自动整理
-	window    int // 模型窗口（提示展示水位比例用）
+	threshold int           // 水位阈值（prompt tokens），<=0 禁用自动整理
+	window    int           // 模型窗口（提示展示水位比例用）
 	fsys      fs.FileSystem // 可空：进度档案 progress.md 落盘前提
 	sessionID func() string // 可空：实时会话 ID（<session> 块同源）
 
@@ -259,7 +259,7 @@ func (t *Trim) writeProgress(ctx context.Context, summary string) error {
 	var b strings.Builder
 	b.WriteString("# 任务进度（会话 " + id + "，上下文整理时自动重写）\n\n")
 	b.WriteString("- 最近整理：" + time.Now().Format("2006-01-02 15:04") + "\n")
-	b.WriteString("- 原始对话全文：" + SessionsDir + "/" + id + "/session.json\n\n")
+	b.WriteString("- 原始对话全文：" + SessionsDir + "/" + id + "/trace.jsonl\n\n")
 	b.WriteString(summary + "\n")
 	return t.fsys.Write(ctx, SessionsDir+"/"+id+"/progress.md", []byte(b.String()))
 }

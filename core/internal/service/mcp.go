@@ -274,8 +274,11 @@ func SyncMcpServers(r *mcp.Router, fsys fs.FileSystem) {
 	r.ReplaceServers(buildServers(loadMcpFileOrNil(fsys)))
 }
 
-/* NewMcpHook 注入全局 router 构造 mcp hook（连接生命周期归 router，hook 只使用）。
-OnLoop Reload 兜底手改 mcp.json 的热加载；禁用项不装配。 */
+/*
+	NewMcpHook 注入全局 router 构造 mcp hook（连接生命周期归 router，hook 只使用）。
+
+OnLoop Reload 兜底手改 mcp.json 的热加载；禁用项不装配。
+*/
 func NewMcpHook(fsys fs.FileSystem, router *mcp.Router) *mcp.Hook {
 	return mcp.NewHookWithRouter(router, func(context.Context) ([]mcp.ServerConfig, error) {
 		return buildServers(loadMcpFileOrNil(fsys)), nil

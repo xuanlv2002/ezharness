@@ -89,10 +89,10 @@ func TestDistillToMemory(t *testing.T) {
 func TestProjectSlug(t *testing.T) {
 	cases := map[string]string{
 		"  Ezharness Core ": "ezharness-core",
-		"My_Proj v2":       "my-proj-v2",
-		"数据/中心":           "数据中心",
-		"---a--b---":       "a-b",
-		"":                 "",
+		"My_Proj v2":        "my-proj-v2",
+		"数据/中心":             "数据中心",
+		"---a--b---":        "a-b",
+		"":                  "",
 	}
 	for in, want := range cases {
 		if got := projectSlug(in); got != want {
@@ -118,7 +118,7 @@ func TestTrimWritesProgress(t *testing.T) {
 	if !strings.Contains(progress, "会话 s9") || !strings.Contains(progress, "【关键事实】") {
 		t.Fatalf("progress.md wrong: %q", progress)
 	}
-	if !strings.Contains(progress, SessionsDir+"/s9/session.json") {
+	if !strings.Contains(progress, SessionsDir+"/s9/trace.jsonl") {
 		t.Fatalf("progress.md must reference archive path: %q", progress)
 	}
 	marker := state.Messages[len(state.Messages)-1].Content

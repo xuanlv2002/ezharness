@@ -1,9 +1,16 @@
 /*
-sessionstore 将会话以文件夹布局持久化：sessions/<id>/session.json 是
-可恢复快照（消息历史、固定 systemPrompt、工具清单、compact 链引用），
-fork 子循环写 sessions/<主ID>/forks/<forkID>/session.json（剥离 seed
-只存增量）。ListMain 只认目录项——fork 归属主会话子目录，天然不混入
-恢复候选。
+sessionstore 将会话以文件夹布局持久化，内容与状态分离、全部只增不改：
+
+  - trace.jsonl：会话内容（user/assistant/tool/error 消息行，kind=
+    "message"）与调用链 span 行同文件追加——回顾与上下文同源。trim/
+    压缩是内存视图处理：盘上只追加 marker 行，已有行永不改写。
+
+  - session.json：会话状态（systemPrompt、工具清单、compact 链引用、
+    用量、归档位等），每轮覆盖写（原子写，小文件）。
+
+fork 子循环写 sessions/<主ID>/forks/<forkID>/ 下的同名两件（只存
+SeedLen 之后的增量）。ListMain 只认目录项——fork 归属主会话子目录，
+天然不混入恢复候选。
 */
 package hooks
 
@@ -14,6 +21,8 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -27,6 +36,12 @@ import (
 
 /* SessionsDir 是会话根目录（工作目录相对）。 */
 const SessionsDir = "sessions"
+
+/* AppendFS 在 FileSystem 之上提供追加写（jsonl 只增档案的写入通道）。 */
+type AppendFS interface {
+	fs.FileSystem
+	Append(ctx context.Context, p string, data []byte) error
+}
 
 /* ResSnapshot 是 agent_status 的变更对比快照（skill/mcp 基线）。 */
 type ResSnapshot struct {
@@ -49,13 +64,13 @@ type SnapEdge struct {
 	ForkedFrom *ForkOrigin // fork 线的出处标签
 }
 
-/* SessionSnap 是一次会话的可持久化快照。 */
+/* SessionSnap 是一次会话的可持久化快照。Messages 不入 session.json——内容在 trace.jsonl 追加，LoadSnap 时合成。 */
 type SessionSnap struct {
 	ID             string          `json:"id"`
 	CreatedAt      int64           `json:"createdAt"`
 	Title          string          `json:"title,omitempty"` // session 自己的名称（本代首条 user；与线标题独立）
 	Input          string          `json:"input,omitempty"`
-	Messages       []types.Message `json:"messages"`               // 剥离 system（systemPrompt 单独 pin）
+	Messages       []types.Message `json:"-"`                      // 运行时合成：trace.jsonl 消息行（剥 system）
 	SystemPrompt   string          `json:"systemPrompt"`           // 渲染后完整 system（恢复零逻辑）
 	SystemBase     string          `json:"systemBase"`             // 基础段（人格+记忆+skill/mcp 列表）
 	SummaryBlock   string          `json:"summaryBlock,omitempty"` // compact 摘要段
@@ -79,9 +94,9 @@ type SessionSnap struct {
 	Archived       bool            `json:"archived"` // compact 后上一世代封存，不作恢复候选
 }
 
-/* Store 实现 EndHook：每轮结束落盘快照，SetID 切换会话。 */
+/* Store 实现 EndHook：每轮结束追加消息行并覆盖状态，SetID 切换会话。 */
 type Store struct {
-	fsys     fs.FileSystem
+	fsys     AppendFS
 	mu       sync.Mutex
 	id       string
 	title    string     // session 自己的名称（与线标题独立：线=分支身份，session=世代名）
@@ -99,7 +114,7 @@ type Store struct {
 }
 
 /* NewStore 创建存储 hook。id 为空自动生成。 */
-func NewStore(fsys fs.FileSystem, id string) *Store {
+func NewStore(fsys AppendFS, id string) *Store {
 	if id == "" {
 		id = NewSessionID()
 	}
@@ -267,9 +282,14 @@ func (h *Store) OnStart(_ context.Context, _ *types.LoopState) error {
 }
 
 /*
-OnEnd 持久化快照；失败不阻断主流程（错误记入 Metadata）。
-fork 写主会话 forks/ 子目录，SeedLen 越界 clamp 全存（fork 内 compact
-就地截断后 SeedLen 语义重置，剥离逻辑不得越界崩溃）。
+OnEnd 持久化本轮：消息行追加进 trace.jsonl，状态覆盖写 session.json；
+失败不阻断主流程（错误记入 Metadata）。
+
+追加边界的正确性：MergeFull(prev, state) 的输出恒等于 prev 的纯尾部
+追加（trim 截断把视图拆成 folded 与 tail 两段、相对顺序不变，marker
+尾插），故 full[len(prev):] 就是本轮新消息（含 trim marker——它也是
+追加行，此前内容永不改写）。fork 只存 SeedLen 之后的增量（fork 的
+prev 即已有增量）。
 */
 func (h *Store) OnEnd(ctx context.Context, state *types.LoopState) error {
 	h.mu.Lock()
@@ -280,23 +300,22 @@ func (h *Store) OnEnd(ctx context.Context, state *types.LoopState) error {
 	h.mu.Unlock()
 
 	fork := state.ForkID != ""
-	// trim 追加式档案：全量 = 盘上已有（上轮末）MergeFull 本轮折叠段与当前消息
-	// ——跨轮覆盖不丢早期档案（marker 前的部分从未进过本轮视图）
-	full := state.Messages
-	target := id
-	if fork {
-		target = state.ForkID
-	}
-	if old, err := LoadSnap(ctx, h.fsys, target); err == nil {
-		full = MergeFull(old.Messages, state)
-	} else if folded := FoldedOf(state); len(folded) > 0 {
-		full = MergeFull(nil, state)
-	}
+	prev := LoadMessages(ctx, h.fsys, id, state.ForkID)
+	full := MergeFull(prev, state)
 	msgs := StripSystem(full)
 	if fork && state.SeedLen > 0 && state.SeedLen <= len(msgs) {
 		// SeedLen 含 system（fork.go 语义），stripSystem 后数组少 1：
 		// 起点 -1 才不会把 seed 后首条（任务 input / trim marker）剥掉
 		msgs = msgs[state.SeedLen-1:]
+	}
+	if len(msgs) < len(prev) {
+		// 异常态（视图回缩）：宁可不追加也不改写已有行
+		msgs = prev
+		state.Metadata["sessionstore_error"] = "round shrank history; append skipped"
+	} else if len(msgs) > len(prev) {
+		if err := AppendMessages(ctx, h.fsys, id, state.ForkID, msgs[len(prev):]); err != nil {
+			state.Metadata["sessionstore_error"] = err.Error()
+		}
 	}
 
 	// session 名称：已命名沿用；未命名（归档新代起步）按本代首条真实
@@ -360,12 +379,12 @@ func (h *Store) OnEnd(ctx context.Context, state *types.LoopState) error {
 		out.ID = state.ForkID
 	}
 
+	// 状态覆盖写（Messages 不入 json）：marshal 失败时清洗消息里非法
+	// RawMessage 重试一次——"状态即消息"优先于保真
+	out.Messages = nil
 	data, err := json.MarshalIndent(out, "", "  ")
 	if err != nil {
-		// 兜底：非法 json.RawMessage（如损坏的工具参数）会让整份快照 marshal
-		// 失败而静默丢轮。清洗 Args 后重试一次——"状态即消息"优先于保真。
 		sanitizeMsgArgs(msgs)
-		out.Messages = msgs
 		data, err = json.MarshalIndent(out, "", "  ")
 	}
 	if err != nil {
@@ -391,6 +410,70 @@ func sanitizeMsgArgs(msgs []types.Message) {
 			}
 		}
 	}
+}
+
+/* msgLine 是 trace.jsonl 里的会话消息行：kind="message" 与调用链 span 行（kind=turn/model/tool/fork/compact/trim）同文件共存。 */
+type msgLine struct {
+	Kind    string        `json:"kind"`
+	Message types.Message `json:"message"`
+}
+
+/* tracePath 是会话内容档案路径（fork 增量在 forks/ 子目录）。 */
+func tracePath(id, forkID string) string {
+	if forkID != "" {
+		return SessionsDir + "/" + id + "/forks/" + forkID + "/trace.jsonl"
+	}
+	return SessionsDir + "/" + id + "/trace.jsonl"
+}
+
+/*
+AppendMessages 把消息行追加进 trace.jsonl（只增不改）。单条 marshal
+失败（非法工具参数）就地清洗重试——"状态即消息"优先于保真，一条坏
+消息不能丢整批。
+*/
+func AppendMessages(ctx context.Context, fsys AppendFS, id, forkID string, msgs []types.Message) error {
+	var b bytes.Buffer
+	for i := range msgs {
+		line, err := json.Marshal(msgLine{Kind: "message", Message: msgs[i]})
+		if err != nil {
+			sanitizeMsgArgs(msgs[i : i+1])
+			line, err = json.Marshal(msgLine{Kind: "message", Message: msgs[i]})
+			if err != nil {
+				continue
+			}
+		}
+		b.Write(line)
+		b.WriteByte('\n')
+	}
+	if b.Len() == 0 {
+		return nil
+	}
+	return fsys.Append(ctx, tracePath(id, forkID), b.Bytes())
+}
+
+/* LoadMessages 读回会话消息（trace.jsonl 的 message 行，保持追加序；无文件返回 nil）。 */
+func LoadMessages(ctx context.Context, fsys fs.FileSystem, id, forkID string) []types.Message {
+	data, err := fsys.Read(ctx, tracePath(id, forkID))
+	if err != nil {
+		return nil
+	}
+	var out []types.Message
+	for _, line := range bytes.Split(data, []byte("\n")) {
+		if len(bytes.TrimSpace(line)) == 0 {
+			continue
+		}
+		var probe struct {
+			Kind string `json:"kind"`
+		}
+		if json.Unmarshal(line, &probe) != nil || probe.Kind != "message" {
+			continue
+		}
+		var ml msgLine
+		if json.Unmarshal(line, &ml) == nil {
+			out = append(out, ml.Message)
+		}
+	}
+	return out
 }
 
 /* toolNames 从注册表提取本轮全部工具名。 */
@@ -434,13 +517,12 @@ type DecisionRecord struct {
 }
 
 /* AppendDecision 追加决策记录（sessions/<id>/decisions.jsonl，失败静默）。 */
-func AppendDecision(ctx context.Context, fsys fs.FileSystem, id string, r DecisionRecord) {
+func AppendDecision(ctx context.Context, fsys AppendFS, id string, r DecisionRecord) {
 	if r.CallID == "" || id == "" {
 		return
 	}
 	data, _ := json.Marshal(r)
-	prev, _ := fsys.Read(ctx, SessionsDir+"/"+id+"/decisions.jsonl")
-	_ = fsys.Write(ctx, SessionsDir+"/"+id+"/decisions.jsonl", append(prev, append(data, '\n')...))
+	_ = fsys.Append(ctx, SessionsDir+"/"+id+"/decisions.jsonl", append(data, '\n'))
 }
 
 /* LoadDecisions 读回会话的全部决策记录（无文件返回 nil）。 */
@@ -462,7 +544,7 @@ func LoadDecisions(ctx context.Context, fsys fs.FileSystem, id string) []Decisio
 	return out
 }
 
-/* LoadSnap 读取指定会话快照（sessions/<id>/session.json）。 */
+/* LoadSnap 读取指定会话快照：session.json 状态 + trace.jsonl 消息行合成。 */
 func LoadSnap(ctx context.Context, fsys fs.FileSystem, id string) (*SessionSnap, error) {
 	data, err := fsys.Read(ctx, SessionsDir+"/"+id+"/session.json")
 	if err != nil {
@@ -472,10 +554,11 @@ func LoadSnap(ctx context.Context, fsys fs.FileSystem, id string) (*SessionSnap,
 	if err := json.Unmarshal(data, &s); err != nil {
 		return nil, fmt.Errorf("sessionstore: decode %s: %w", id, err)
 	}
+	s.Messages = LoadMessages(ctx, fsys, id, "")
 	return &s, nil
 }
 
-/* SaveSnap 写回会话快照（sessions/<snap.ID>/session.json，失败返回 error）。 */
+/* SaveSnap 写回会话状态（sessions/<snap.ID>/session.json；Messages 在 trace.jsonl，不在此写）。 */
 func SaveSnap(ctx context.Context, fsys fs.FileSystem, s *SessionSnap) error {
 	data, err := json.MarshalIndent(s, "", "  ")
 	if err != nil {
@@ -527,7 +610,7 @@ func ListForks(ctx context.Context, fsys fs.FileSystem, id string) []ForkSummary
 	return out
 }
 
-/* LoadFork 读取 fork 分身快照（sessions/<id>/forks/<fid>/session.json）。 */
+/* LoadFork 读取 fork 分身快照（状态 + forks/ 子目录的增量消息行）。 */
 func LoadFork(ctx context.Context, fsys fs.FileSystem, id, fid string) (*SessionSnap, error) {
 	if fid == "" || strings.Contains(fid, "/") || strings.Contains(fid, "\\") || strings.Contains(fid, "..") {
 		return nil, fmt.Errorf("sessionstore: bad fork id %q", fid)
@@ -540,6 +623,7 @@ func LoadFork(ctx context.Context, fsys fs.FileSystem, id, fid string) (*Session
 	if err := json.Unmarshal(data, &s); err != nil {
 		return nil, fmt.Errorf("sessionstore: decode fork %s/%s: %w", id, fid, err)
 	}
+	s.Messages = LoadMessages(ctx, fsys, id, fid)
 	return &s, nil
 }
 
@@ -566,4 +650,32 @@ func ListMain(ctx context.Context, fsys fs.FileSystem) ([]string, error) {
 		}
 	}
 	return ids, nil
+}
+
+/*
+LatestMainSnap 返回最近修改且未封存的主会话快照（启动恢复候选；无则
+nil）。按 session.json 的 mtime 排序——状态每轮覆盖写，mtime 即最近
+一轮落盘时间。IO 归本包（领域扩展负责落盘细节），domain 只调用。
+*/
+func LatestMainSnap(ctx context.Context, fsys fs.FileSystem) *SessionSnap {
+	ids, _ := ListMain(ctx, fsys)
+	type cand struct {
+		id string
+		mt int64
+	}
+	cands := make([]cand, 0, len(ids))
+	for _, id := range ids {
+		if fi, err := os.Stat(filepath.Join(SessionsDir, id, "session.json")); err == nil {
+			cands = append(cands, cand{id, fi.ModTime().UnixMilli()})
+		}
+	}
+	sort.Slice(cands, func(i, j int) bool { return cands[i].mt > cands[j].mt })
+	for _, c := range cands {
+		snap, err := LoadSnap(ctx, fsys, c.id)
+		if err != nil || snap.Archived {
+			continue
+		}
+		return snap
+	}
+	return nil
 }

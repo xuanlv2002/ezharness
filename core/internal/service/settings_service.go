@@ -86,7 +86,7 @@ func (s *SettingsService) Update(v SettingsView) error {
 			}
 		}
 	}
-	if err := domain.SaveSettings(s.Hub.Fsys, st); err != nil {
+	if err := SaveSettings(s.Hub.Fsys, st); err != nil {
 		return err
 	}
 	s.Hub.ApplySettings(st)
@@ -148,7 +148,7 @@ func (s *SettingsService) UpdateModels(m domain.ModelsConfig) error {
 			return fmt.Errorf("%s 槽至多启用一个模型", slot)
 		}
 	}
-	if err := domain.SaveModelsConfig(s.Hub.Fsys, normalizeModels(m)); err != nil {
+	if err := SaveModelsConfig(s.Hub.Fsys, normalizeModels(m)); err != nil {
 		return err
 	}
 	s.Hub.ApplyModels(m)
@@ -190,7 +190,7 @@ func (s *SettingsService) UpdateSecurity(rules []domain.ToolRule) error {
 			return errors.New("task 只支持 审批/免审（分身继承主 agent 策略）")
 		}
 	}
-	if err := domain.SaveToolRules(s.Hub.Fsys, rules); err != nil {
+	if err := SaveToolRules(s.Hub.Fsys, rules); err != nil {
 		return err
 	}
 	s.Hub.ApplyToolRules(rules)
@@ -354,7 +354,7 @@ func (m *MemoryService) ToggleSkill(id string, enabled bool) error {
 	default:
 		return nil
 	}
-	if err := domain.SaveSettings(m.Hub.Fsys, st); err != nil {
+	if err := SaveSettings(m.Hub.Fsys, st); err != nil {
 		return err
 	}
 	m.Hub.ApplySettings(st)
@@ -378,7 +378,7 @@ func (m *MemoryService) DeleteSkill(id string) error {
 	}
 	if st := m.Hub.SettingsSnapshot(); slices.Contains(st.DisabledSkills, id) {
 		st.DisabledSkills = slices.DeleteFunc(st.DisabledSkills, func(s string) bool { return s == id })
-		if err := domain.SaveSettings(m.Hub.Fsys, st); err != nil {
+		if err := SaveSettings(m.Hub.Fsys, st); err != nil {
 			return err
 		}
 		m.Hub.ApplySettings(st)
