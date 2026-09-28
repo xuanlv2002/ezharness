@@ -1,0 +1,1565 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ezharness · 架构深度文档</title>
+<style>
+  :root {
+    --bg: #05070d;
+    --bg-soft: #0a101d;
+    --panel: #0b1322;
+    --sidebar: #04060c;
+    --sidebar-hover: #0e1830;
+    --text: #e8edf6;
+    --muted: #8b98b0;
+    --accent: #7dd3fc;
+    --accent-deep: #38bdf8;
+    --border: #16213a;
+    --border-soft: #1c2942;
+    --code-bg: #070d1a;
+    --code-text: #dbe4f0;
+    --hook: #fbbf24;
+    --model: #00add8;
+    --tool: #34d399;
+    --asm: #a78bfa;
+    --white: #ffffff;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html { scroll-behavior: smooth; }
+  body {
+    font-family: -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+    color: var(--text); background: var(--bg); line-height: 1.75;
+  }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  ::selection { background: rgba(56,189,248,.3); }
+
+  /* ─── 左侧导航 ─── */
+  nav {
+    position: fixed; top: 0; left: 0; bottom: 0; width: 268px; z-index: 50;
+    background: rgba(4,6,12,.92); backdrop-filter: blur(12px);
+    color: #cbd5e1; padding: 28px 0; overflow-y: auto;
+    border-right: 1px solid var(--border);
+  }
+  .brand { padding: 0 24px 20px; border-bottom: 1px solid var(--border); }
+  .brand .logo-mini { display: flex; align-items: center; gap: 12px; }
+  .brand h1 {
+    color: var(--white); font-size: 24px; letter-spacing: 1px; font-weight: 300;
+  }
+  .brand h1 b { font-weight: 700; }
+  .brand p { font-size: 12.5px; color: var(--muted); margin-top: 2px; }
+  .nav-group { margin-top: 18px; }
+  .nav-group .label {
+    font-size: 11.5px; letter-spacing: 2px; color: #4b5a75;
+    padding: 8px 24px 4px; text-transform: uppercase;
+  }
+  nav a.item {
+    display: block; padding: 7px 24px; color: #94a3b8; font-size: 14px;
+    border-left: 3px solid transparent; transition: all .15s;
+  }
+  nav a.item:hover { background: var(--sidebar-hover); color: var(--white); text-decoration: none; }
+  nav a.item.active {
+    background: var(--sidebar-hover); color: var(--accent);
+    border-left-color: var(--accent);
+  }
+  nav a.sub {
+    display: block; padding: 4px 24px 4px 44px; color: #64748b; font-size: 12.8px;
+    border-left: 3px solid transparent; transition: all .15s;
+  }
+  nav a.sub:hover { color: var(--accent); text-decoration: none; }
+  .nav-footer {
+    margin-top: 28px; padding: 16px 24px 0; border-top: 1px solid var(--border);
+    font-size: 12.5px; color: var(--muted);
+  }
+  .nav-footer a { color: #94a3b8; }
+
+  /* ─── 右侧内容 ─── */
+  main {
+    max-width: 960px;
+    margin-left: max(268px, calc(268px + (100% - 1228px) / 2));
+    margin-right: auto;
+    padding: 72px 56px 96px;
+  }
+  section { margin-bottom: 88px; scroll-margin-top: 24px; }
+  h2 {
+    font-size: 26px; padding-bottom: 12px; border-bottom: 1px solid var(--border);
+    margin-bottom: 8px; display: flex; align-items: baseline; gap: 12px;
+    color: var(--white); font-weight: 650;
+  }
+  h2 .no {
+    color: var(--accent); font-size: 15px; font-weight: 700; letter-spacing: 1px;
+  }
+  h3 { font-size: 18.5px; margin: 34px 0 12px; color: var(--white); font-weight: 600; }
+  h4 { font-size: 15.5px; margin: 22px 0 8px; color: #d7e1f0; font-weight: 600; }
+  section .ext h3 { margin-top: 18px; }
+  p { margin: 10px 0; color: #c4cede; }
+  .sub { color: var(--muted); font-size: 14.5px; margin-bottom: 22px; }
+  ul, ol { padding-left: 24px; margin: 10px 0; color: #c4cede; }
+  li { margin: 5px 0; }
+  li::marker { color: var(--accent); }
+  strong { color: var(--white); }
+  code.inline {
+    background: rgba(56,189,248,.12); color: var(--accent);
+    padding: 1.5px 7px; border-radius: 5px;
+    font-family: Consolas, "JetBrains Mono", monospace; font-size: 87%;
+  }
+
+  /* ─── HERO ─── */
+  .hero {
+    position: relative; margin-left: 268px;
+    min-height: 100vh;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    text-align: center; overflow: hidden; padding: 60px 30px 90px;
+    background: radial-gradient(ellipse 900px 520px at 50% 30%, rgba(14,42,66,.55), transparent 70%);
+    border-bottom: 1px solid var(--border);
+  }
+  #particles { position: absolute; inset: 0; width: 100%; height: 100%; }
+  .hero-inner { position: relative; z-index: 2; display: flex; flex-direction: column; align-items: center; }
+  .hero .logo-lg { width: 170px; height: 170px; margin-bottom: 6px; filter: drop-shadow(0 0 32px rgba(56,189,248,.35)); }
+  .hero .slogan {
+    font-size: 14px; letter-spacing: 6px; color: #bfe7f8; margin: 18px 0 4px;
+    font-weight: 500; text-indent: 6px;
+  }
+  .hero h1 {
+    font-size: 54px; letter-spacing: 3px; line-height: 1.12; color: var(--white);
+    font-weight: 300;
+  }
+  .hero h1 b { font-weight: 750; }
+  .hero .tagline { font-size: 16.5px; color: #a9b7cc; margin-top: 12px; }
+  .hero .tagline b { color: var(--white); }
+  .hero-cards {
+    display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin-top: 40px;
+    width: min(820px, 100%);
+  }
+  .hero-cards .card {
+    background: rgba(255,255,255,.035); border: 1px solid rgba(255,255,255,.09);
+    border-radius: 14px; padding: 16px 15px 13px; backdrop-filter: blur(6px);
+    transition: all .25s; text-align: left;
+  }
+  .hero-cards .card:hover {
+    background: rgba(56,189,248,.07); border-color: rgba(56,189,248,.35);
+    transform: translateY(-3px);
+  }
+  .card .ico { width: 22px; height: 22px; color: var(--accent); display: block; }
+  .card .t { font-weight: 600; font-size: 14.5px; margin-top: 6px; color: var(--white); }
+  .card .d { font-size: 12.5px; color: var(--muted); line-height: 1.55; margin-top: 3px; }
+  .scroll-hint {
+    position: absolute; bottom: 26px; left: 50%; transform: translateX(-50%);
+    color: #5b6b87; font-size: 12px; letter-spacing: 3px; z-index: 2;
+    animation: floaty 2.6s ease-in-out infinite;
+  }
+  @keyframes floaty { 0%,100% { transform: translate(-50%,0); } 50% { transform: translate(-50%,7px); } }
+
+  /* ─── 代码块 ─── */
+  .codeblock {
+    background: var(--code-bg); border: 1px solid var(--border-soft); border-radius: 10px;
+    margin: 16px 0 22px; overflow: hidden;
+  }
+  .codeblock .bar {
+    display: flex; align-items: center; gap: 8px;
+    padding: 9px 16px; background: rgba(255,255,255,.025);
+    border-bottom: 1px solid rgba(255,255,255,.06);
+  }
+  .codeblock .bar .dot { width: 11px; height: 11px; border-radius: 50%; }
+  .dot.r { background: #f87171; } .dot.y { background: #fbbf24; } .dot.g { background: #34d399; }
+  .codeblock .bar .name {
+    margin-left: 6px; color: #7c8db0; font-size: 12.5px;
+    font-family: Consolas, monospace;
+  }
+  .codeblock pre {
+    padding: 16px 20px; overflow-x: auto; font-size: 13.5px; line-height: 1.72;
+    color: var(--code-text); font-family: Consolas, "JetBrains Mono", monospace;
+  }
+  pre .k { color: #c792ea; }
+  pre .s { color: #c3e88d; }
+  pre .c { color: #5c6f94; font-style: italic; }
+  pre .f { color: #82aaff; }
+  pre .t { color: #ffcb6b; }
+  pre .n { color: #f78c6c; }
+
+  /* ─── 消息栈（上下文记录展示） ─── */
+  .msg-stack { display: flex; flex-direction: column; gap: 7px; margin: 16px 0 22px; }
+  .msg { display: flex; border: 1px solid var(--border-soft); border-radius: 9px; overflow: hidden; background: var(--code-bg); }
+  .msg .who {
+    flex: 0 0 104px; display: flex; align-items: center; justify-content: center;
+    font-size: 10.5px; font-weight: 700; letter-spacing: .5px;
+    font-family: Consolas, monospace; border-right: 1px solid var(--border-soft);
+    text-align: center; line-height: 1.35; padding: 8px 4px;
+  }
+  .msg .who.system    { background: rgba(167,139,250,.13); color: #c4b5fd; }
+  .msg .who.user      { background: rgba(56,189,248,.13);  color: #7dd3fc; }
+  .msg .who.assistant { background: rgba(52,211,153,.13);  color: #6ee7b7; }
+  .msg .who.tool      { background: rgba(251,191,36,.13);  color: #fcd34d; }
+  .msg .who.inject    { background: rgba(248,113,113,.10); color: #fca5a5; }
+  .msg pre {
+    flex: 1; padding: 10px 16px; margin: 0; font-size: 12.8px; line-height: 1.65;
+    color: var(--code-text); font-family: Consolas, "JetBrains Mono", monospace;
+    white-space: pre-wrap; word-break: break-word; overflow-x: auto;
+  }
+  .msg pre .dim { color: #5c6f94; }
+  .msg pre .hl  { color: #fcd34d; }
+
+  /* ─── 表格 ─── */
+  table { width: 100%; border-collapse: collapse; margin: 14px 0 24px; font-size: 14.5px; }
+  th {
+    text-align: left; padding: 10px 14px; background: rgba(255,255,255,.035);
+    border-bottom: 1px solid var(--border-soft); font-size: 13px; color: #9fb0c8;
+    letter-spacing: .5px;
+  }
+  td { padding: 9px 14px; border-bottom: 1px solid var(--border); vertical-align: top; color: #c4cede; }
+  tr:hover td { background: rgba(56,189,248,.045); }
+  td code, th code {
+    font-family: Consolas, monospace; font-size: 87%;
+    background: rgba(56,189,248,.12); color: var(--accent);
+    padding: 1px 6px; border-radius: 5px;
+  }
+
+  /* ─── 原则卡片 ─── */
+  .principles { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; margin: 22px 0; }
+  .principles .p {
+    border: 1px solid var(--border-soft); border-radius: 12px; padding: 18px;
+    background: linear-gradient(180deg, rgba(255,255,255,.03), rgba(255,255,255,.008));
+  }
+  .p .num {
+    display: inline-flex; width: 26px; height: 26px; border-radius: 8px;
+    align-items: center; justify-content: center;
+    background: rgba(56,189,248,.14); color: var(--accent);
+    font-weight: 700; font-size: 13.5px;
+  }
+  .p .t { font-weight: 600; margin: 10px 0 6px; font-size: 15.5px; color: var(--white); }
+  .p .d { font-size: 13.5px; color: var(--muted); line-height: 1.65; }
+
+  /* ─── 提示框 ─── */
+  .tip {
+    border-left: 4px solid var(--accent-deep);
+    background: rgba(56,189,248,.07); border-radius: 0 10px 10px 0;
+    padding: 12px 18px; margin: 18px 0; font-size: 14px; color: #c8dced;
+  }
+  .tip b { color: var(--accent); }
+  .tip.warn { border-left-color: var(--hook); background: rgba(251,191,36,.07); color: #e8dcc0; }
+  .tip.warn b { color: var(--hook); }
+
+  /* ─── mermaid 架构图 ─── */
+  .diagram-card {
+    border: 1px solid var(--border-soft); border-radius: 14px; padding: 16px 8px 4px;
+    background: var(--bg-soft); margin: 18px 0 10px; overflow-x: auto;
+  }
+  .diagram-card svg { max-width: 100%; height: auto; display: block; margin: 0 auto; }
+  .diagram-cap { text-align: center; font-size: 13px; color: var(--muted); padding: 10px 0 12px; }
+
+  /* ─── 小节扩展面板 ─── */
+  .ext {
+    border: 1px solid var(--border-soft); border-radius: 12px; padding: 4px 22px 8px;
+    margin: 16px 0; background: var(--panel);
+  }
+  .ext h3 { margin-top: 18px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .badge {
+    font-size: 11px; font-weight: 700; letter-spacing: 1px; padding: 2.5px 9px;
+    border-radius: 999px; text-transform: uppercase;
+  }
+  .badge.model { background: rgba(0,173,216,.16); color: #67e0f9; }
+  .badge.tool   { background: rgba(52,211,153,.14); color: #6ee7b7; }
+  .badge.hook   { background: rgba(251,191,36,.13); color: #fcd34d; }
+  .badge.warp   { background: rgba(167,139,250,.15); color: #c4b5fd; }
+  .badge.base   { background: rgba(255,255,255,.08); color: #cbd5e1; }
+  .badge.ezh    { background: rgba(56,189,248,.14); color: #7dd3fc; }
+  .badge.ezl    { background: rgba(52,211,153,.14); color: #6ee7b7; }
+  .meta-row { display: flex; flex-wrap: wrap; gap: 8px 14px; font-size: 13px; color: var(--muted); margin: 6px 0 4px; }
+  .meta-row b { color: #d7e1f0; font-weight: 600; }
+
+  footer {
+    margin-left: max(268px, calc(268px + (100% - 1228px) / 2));
+    margin-right: auto;
+    padding: 26px 56px; border-top: 1px solid var(--border);
+    color: var(--muted); font-size: 13.5px; text-align: center;
+  }
+
+  @media (max-width: 1228px) {
+    nav { display: none; }
+    main, footer {
+      margin-left: 0; margin-right: 0; padding-left: 22px; padding-right: 22px;
+    }
+    .hero { margin-left: 0; padding: 50px 22px 80px; min-height: 100vh; }
+    .hero h1 { font-size: 42px; }
+    .hero-cards { grid-template-columns: 1fr; }
+    .principles { grid-template-columns: 1fr; }
+    .msg .who { flex-basis: 76px; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    html { scroll-behavior: auto; }
+    .scroll-hint { animation: none; }
+  }
+</style>
+</head>
+<body>
+
+<nav id="nav">
+  <div class="brand">
+    <div class="logo-mini">
+      <img src="avatar.png" width="40" height="40" alt="">
+      <h1><b>ez</b>harness</h1>
+    </div>
+    <p>架构深度文档 · 开发基础</p>
+  </div>
+  <div class="nav-group">
+    <div class="label">第一章 · 系统整体架构</div>
+    <a class="item" href="#ch-arch">总览与分层</a>
+    <a class="sub" href="#arch-repos">双仓库分界</a>
+    <a class="sub" href="#arch-layers">分层总图</a>
+    <a class="sub" href="#arch-channels">三通道通信</a>
+    <a class="sub" href="#arch-data">数据目录</a>
+    <a class="sub" href="#arch-lifecycle">生命周期与换代</a>
+  </div>
+  <div class="nav-group">
+    <div class="label">第二章 · session 树</div>
+    <a class="item" href="#ch-tree">概念与演进</a>
+    <a class="sub" href="#tree-concepts">核心概念</a>
+    <a class="sub" href="#tree-diagram">树形结构图</a>
+    <a class="sub" href="#tree-memdisk">内存与磁盘</a>
+    <a class="sub" href="#tree-evolve">compact / fork / 归档</a>
+    <a class="sub" href="#tree-recover">恢复与不变量</a>
+  </div>
+  <div class="nav-group">
+    <div class="label">第三章 · 上下文全动作</div>
+    <a class="item" href="#ch-ctx">hook 与消息全景</a>
+    <a class="sub" href="#ctx-timeline">一轮 chat 时序</a>
+    <a class="sub" href="#ctx-engine">引擎入史时序</a>
+    <a class="sub" href="#ctx-system">system prompt</a>
+    <a class="sub" href="#ctx-hooks">16 个 hook 详解</a>
+    <a class="sub" href="#ctx-msgs">注入消息全表</a>
+    <a class="sub" href="#ctx-scenes">场景演练</a>
+    <a class="sub" href="#ctx-warp">warp 双链</a>
+    <a class="sub" href="#ctx-tags">tag 契约速查</a>
+  </div>
+  <div class="nav-group">
+    <div class="label">产品视角</div>
+    <a class="item" href="#ch-interaction">人机交互设计</a>
+    <a class="item" href="#appendix">深读文档索引</a>
+  </div>
+  <div class="nav-footer">
+    <a href="index.html">← 文档主页</a> ·
+    <a href="https://github.com/xuanlv2002/ezharness" target="_blank">GitHub</a> ·
+    <a href="https://github.com/xuanlv2002/ezloop" target="_blank">ezloop</a>
+  </div>
+</nav>
+
+<!-- ═══════════════ HERO ═══════════════ -->
+<div class="hero">
+  <canvas id="particles"></canvas>
+  <div class="hero-inner">
+    <img class="logo-lg" src="avatar.webp" alt="ezharness">
+
+    <div class="slogan">简 单 ，交 给 用 户 。</div>
+    <h1><b>ez</b>harness</h1>
+    <div class="tagline"><b>系统架构 · session 树 · 上下文全动作</b> —— 每条消息从哪来、何时插入、长什么样，全部在此</div>
+
+    <div class="hero-cards">
+      <div class="card">
+        <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><line x1="17.5" y1="14" x2="17.5" y2="21"/><line x1="14" y1="17.5" x2="21" y2="17.5"/></svg>
+        <div class="t">第一章 · 系统整体架构</div><div class="d">双仓库分界、三层结构（desktop 壳 × core sidecar × 前端）、三通道通信、数据目录与换代生命周期</div>
+      </div>
+      <div class="card">
+        <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="12" r="3"/><line x1="8.2" y1="7.4" x2="15.8" y2="10.8"/><line x1="8.2" y1="16.6" x2="15.8" y2="13.2"/></svg>
+        <div class="t">第二章 · session 树</div><div class="d">线与世代、compact 换代、fork 分叉、内存↔磁盘同源、恢复流程与跨轮不变量</div>
+      </div>
+      <div class="card">
+        <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/><path d="M8 9h8"/><path d="M8 13h6"/></svg>
+        <div class="t">第三章 · 上下文全动作</div><div class="d">一轮 chat 的完整时序、16 个 hook 逐一详解、8 种注入消息的确切格式与场景演练</div>
+      </div>
+    </div>
+  </div>
+  <div class="scroll-hint">▼ SCROLL</div>
+</div>
+
+<main>
+
+  <!-- ═══════════════ 01 系统整体架构 ═══════════════ -->
+  <section id="ch-arch">
+    <h2><span class="no">第一章</span>系统整体架构</h2>
+    <p class="sub">ezharness = 基于 <b>ezloop 引擎</b>的桌面 agent harness。启动即对本机全权（文件不限目录 + 原生 shell）。三层结构：<b>desktop</b>（Electron 壳：窗口 / 托盘 / 内嵌浏览器）拉起 <b>core</b>（Go sidecar，gin 三层 MVC + 内嵌前端）伺服 <b>frontend</b>（端无关页面，单入口 SPA）；core 也可直接运行——浏览器访问同一份页面（浏览器控制等桌面专属能力自动降级）。</p>
+
+    <h3 id="arch-repos">1.1 双仓库：引擎 × 宿主</h3>
+    <table>
+      <tr><th style="width:110px">仓库</th><th>角色</th></tr>
+      <tr>
+        <td><b>ezloop</b><br><code>../ezloop</code> 本地 replace</td>
+        <td><b>agent 引擎</b>：core 循环（loop / agent / fork）、provider 三协议（anthropic / openai / responses）、hook / warp 扩展点、ext 通用组件（filetools · skilltool · mcp · approve · askuser · task · offload · contextfix）</td>
+      </tr>
+      <tr>
+        <td><b>ezharness</b><br>本仓库</td>
+        <td><b>宿主应用</b>：装配（选 hook、传参数）+ 产品域（会话树 / 设置 / 终端 / 快应用 / 前端）+ 自有 hooks（remind / trim / sessionstore / sysprompt / reference_file / guard / trace）</td>
+      </tr>
+    </table>
+    <div class="tip">
+      <b>hook 分界判据：</b>依赖 session 域状态（Store / 资源基线 / 落盘）的 hook 留 ezharness（remind · trim · sessionstore…）；
+      纯工具组件下沉 ezloop（filetools · skilltool · mcp · approve…）。skill/mcp 的<b>变更检测</b>因此归 remind——若长在 skilltool/mcp 自己身上，它们就耦合了 session 基线，无法成为 ezloop 公共组件。
+      开发期 go.mod <code class="inline">replace</code> 指向本地 ezloop；发布前升版本、移除 replace。
+    </div>
+
+    <h3 id="arch-layers">1.2 分层总图</h3>
+    <div class="diagram-card">
+<pre class="mermaid">
+flowchart TB
+    UI["🖥 前端 SPA（Svelte 5 runes）&lt;br/&gt;store.svelte · api.ts · term.ts"]:::ui
+
+    subgraph shell["core 装配 · core/main.go / app.go"]
+        CFG["config · ezharness.json（应用根）&lt;br/&gt;chdir 数据目录 · 换代 restart · boot 代际"]:::layer
+    end
+
+    subgraph EZH["ezharness 宿主 · 装配 + 产品域"]
+        C["controller 表现层&lt;br/&gt;10 组 gin handler"]:::layer
+        S["service 用例层&lt;br/&gt;Chat / Session / Topic / Settings / Terminal / Agent…"]:::layer
+        D["domain · Session 聚合 + Hub&lt;br/&gt;零 HTTP 依赖"]:::layer
+        H["internal/hooks（宿主侧）&lt;br/&gt;sysprompt · remind · trim · sessionstore&lt;br/&gt;reference_file · guard · trace"]:::layer
+        TL["internal/tools&lt;br/&gt;save_app · term_* · image_recognize"]:::layer
+        WP["internal/warp&lt;br/&gt;modeldump · visionguard · toolarg"]:::layer
+    end
+
+    subgraph EZL["ezloop 引擎 · 本地 replace"]
+        CORE["core · loop / agent / fork"]:::engine
+        EXT["ext 组件 · filetools · skilltool · mcp&lt;br/&gt;approve · askuser · task · offload · contextfix"]:::engine
+        PROV["provider · anthropic / openai / responses"]:::engine
+    end
+
+    DISK[("数据目录 = 进程 cwd&lt;br/&gt;sessions/ · memory/ · workspace/ · apps/")]
+
+    UI -- "HTTP REST（用例）" --> C
+    UI -- "SSE /events（对话事件流）" --> C
+    UI -- "WS /terminal/ws（共享终端）" --> C
+    C --> S --> D
+    D --> H
+    S --> TL
+    D --> WP
+    H --> EZL
+    WP --> PROV
+    CORE --> PROV
+    CORE -.-&gt;|hook 调用| H
+    H --> DISK
+
+    classDef ui fill:#0b1322,stroke:#33496e,color:#c4cede
+    classDef layer fill:#072331,stroke:#00add8,color:#9be5f7
+    classDef engine fill:#07281b,stroke:#34d399,color:#a7f3d0
+    style shell fill:#0a101d,stroke:#33496e,stroke-dasharray:6 4
+    style EZH fill:#0a101d,stroke:#00add8,stroke-dasharray:6 4
+    style EZL fill:#0a101d,stroke:#34d399,stroke-dasharray:6 4
+</pre>
+    </div>
+    <div class="diagram-cap">分层链路：controller（表现）→ service（用例）→ domain（会话聚合与事件）；tools / hooks 为领域扩展，osfs / config 为基础设施，main 只做装配。</div>
+
+    <h3>1.3 三层结构：desktop 壳 × core sidecar × 前端页面</h3>
+    <div class="diagram-card">
+<pre class="mermaid">
+flowchart TB
+    subgraph DESK["desktop/ · ezharness.exe · Electron 壳"]
+        MW["主窗口 / 托盘 / 快应用子窗&lt;br/&gt;无边框主窗（前端 TitleBar 自绘）"]:::role
+        BW["内嵌浏览器窗口&lt;br/&gt;WebContentsView 标签页（desktop 资产）"]:::role
+    end
+
+    subgraph COREP["core/ · ezharness-core.exe · Go sidecar"]
+        G["gin server&lt;br/&gt;前端页面 · /api/* · SSE 事件流 · /apps/*"]:::layer
+        A["agent 引擎&lt;br/&gt;ezloop core · 随会话装配"]:::engine2
+    end
+
+    UI["🖥 前端页面 · Svelte 单入口 SPA&lt;br/&gt;主窗 / 抽屉弹窗 / 浏览器抽屉同一份页面"]:::ui
+    BR["🌐 浏览器（web 端形态）"]:::misc
+
+    DESK -. "spawn + health 轮询&lt;br/&gt;退出随壳 kill" .-> COREP
+    MW -- "loadURL 同源页面" --> G
+    BW -- "承载 SPA 的浏览器抽屉/弹窗&lt;br/&gt;（标签条/地址栏 UI，?popout=browser）" --> G
+    BW -. "browser_* 工具&lt;br/&gt;WS 桥 /api/browser/bridge" .-> G
+    BR --> G
+    G --> A
+
+    classDef role fill:#072331,stroke:#00add8,color:#9be5f7
+    classDef layer fill:#072331,stroke:#00add8,color:#9be5f7
+    classDef engine2 fill:#07281b,stroke:#34d399,color:#a7f3d0
+    classDef ui fill:#0b1322,stroke:#33496e,color:#c4cede
+    classDef misc fill:#0b1322,stroke:#33496e,color:#c4cede
+    style DESK fill:#0a101d,stroke:#33496e,stroke-dasharray:6 4
+    style COREP fill:#0a101d,stroke:#00add8,stroke-dasharray:6 4
+</pre>
+    </div>
+    <div class="diagram-cap">桌面壳 spawn core sidecar，健康就绪后开窗加载 core 伺服的页面（同源访问，前端 API 零适配）；业务全在 core，desktop 只做壳与桌面资产。共享浏览器是 desktop 的资产：core 的 browser_* 工具经 WS 桥转发到壳的 WebContentsView 执行器，桥未连接（web 端访问）时工具报「仅桌面端可用」。</div>
+
+    <h3 id="arch-channels">1.4 前后端三通道</h3>
+    <table>
+      <tr><th>通道</th><th>端点</th><th>承担</th></tr>
+      <tr>
+        <td><b>HTTP REST</b></td>
+        <td><code>127.0.0.1:5260</code>（可配）</td>
+        <td>全部用例操作：会话 / 设置 / 模型 / 分支 / mcp / apps / 工作目录文件预览。错误形态 <code>400: {"error":"xx"}</code></td>
+      </tr>
+      <tr>
+        <td><b>SSE</b></td>
+        <td><code>GET /api/sessions/:id/events</code></td>
+        <td>对话事件流（<code>{type, ts, iter, forkId?, data?}</code> 帧）。建连重放整轮聚合帧（断线恢复），首帧 <code>replay.sync</code> 权威复位 busy</td>
+      </tr>
+      <tr>
+        <td><b>WS</b></td>
+        <td><code>GET /api/terminal/ws</code></td>
+        <td>共享终端：单连接多路复用全部终端（帧带 id 路由），hello 帧带各终端快照，重连即恢复</td>
+      </tr>
+      <tr>
+        <td><b>WS</b></td>
+        <td><code>GET /api/browser/bridge</code></td>
+        <td>共享浏览器桥：desktop 壳连入，<code>browser_*</code> 工具以 JSON-RPC 转发到壳的 WebContentsView 执行器；桥未连接时工具报「仅桌面端可用」</td>
+      </tr>
+    </table>
+    <p class="sub">全部 <code class="inline">/api/*</code> 经鉴权中间件：<code class="inline">X-EZ-Token</code> 头或 <code class="inline">?token=</code>（设置页可查看复制；desktop 每次启动随机生成注入 core 与页面，web 直跑模式打印在启动 URL）；<b>同源页面（前端与 /apps/* 快应用）Origin/Referer 与 Host 匹配即放行</b>——快应用调 MCP 等 API 无需感知 token。</p>
+    <p class="sub">前端手写 fetch 层（端无关，无桌面绑定）；core 经 <code class="inline">go:embed</code> 内嵌前端产物（dist 缺失则 go build 直接报错）；桌面壳经 preload IPC 暴露 <code class="inline">window.ez</code>（窗口控制 / 浏览器窗口），web 端无此对象即自动降级。</p>
+
+    <h3 id="arch-data">1.5 数据目录布局</h3>
+    <p class="sub">应用根 = exe 所在目录（<code class="inline">config.Root()</code> 锚定，不受 chdir 影响）；进程 cwd = 数据目录（启动时 chdir），ezloop 各 hook 的相对路径存储自动落此。</p>
+    <div class="codeblock">
+      <div class="bar"><span class="dot r"></span><span class="dot y"></span><span class="dot g"></span><span class="name">数据目录（进程 cwd）</span></div>
+<pre>D:\ezharness\                  <span class="c"># 应用根 = exe 所在目录（portable 绿色版经 --root 锚定到 exe 旁）</span>
+├─ ezharness.exe              <span class="c"># desktop 壳（安装版/绿色版；core 内嵌于其 resources\）</span>
+├─ ezharness.json              <span class="c"># 端口 / 监听 / dataDir / 窗口尺寸（结构配置）</span>
+└─ data\                       <span class="c"># 数据目录（dataDir 空 = 应用根下 data/）</span>
+   ├─ settings.json            <span class="c"># WorkDir / TrimPercent / MaxIterations / DisabledSkills</span>
+   ├─ models.json              <span class="c"># 模型四槽 main/vision/image/audio + 用量累计</span>
+   ├─ toolRules.json           <span class="c"># 工具审批四档策略</span>
+   ├─ topics.json              <span class="c"># 分支（线）索引</span>
+   ├─ stats.json               <span class="c"># 跨会话生命体征</span>
+   ├─ mcp.json                 <span class="c"># MCP server 配置（热加载）</span>
+   ├─ sessions\&lt;id&gt;\            <span class="c"># session.json（状态）· trace.jsonl（消息行+span，追加式）· progress.md · decisions.jsonl · forks/</span>
+   ├─ memory\longterm\         <span class="c"># harness.md 索引 + 记忆文件 user/soul/project.md</span>
+   ├─ memory\skills\           <span class="c"># 技能库 SKILL.md + scripts/</span>
+   ├─ apps\                    <span class="c"># 快应用 html（save_app 生成，静态服务 /apps/*）</span>
+   ├─ workspace\tmp\           <span class="c"># 上传附件暂存（base64 不入上下文）</span>
+   └─ .ezloop\offload\         <span class="c"># 大工具结果卸载区</span></pre>
+    </div>
+    <p class="sub">system prompt 的 <code class="inline">&lt;workspace&gt;</code> 段只把<b>三个可写位置</b>（workspace / memory/longterm / memory/skills，绝对路径）告知模型，其余目录行为规则化不诱导翻阅——详见第三章 system 组装；压缩与归档的记忆方案见 <code class="inline">docs/md/compaction.md</code>。</p>
+
+    <h3 id="arch-lifecycle">1.6 应用生命周期</h3>
+    <div class="codeblock">
+      <div class="bar"><span class="dot r"></span><span class="dot y"></span><span class="dot g"></span><span class="name">startup</span></div>
+<pre>desktop 壳（ezharness.exe · Electron 主进程）
+ ├─ 读 ezharness.json         <span class="c"># 应用根（portable 用 PORTABLE_EXECUTABLE_DIR）</span>
+ ├─ spawn ezharness-core.exe  <span class="c"># core 退出 → 壳随之退出</span>
+ └─ health 轮询就绪           <span class="c"># /api/app/health（30s 超时）→ 主窗 loadURL core 地址</span>
+
+core（ezharness-core.exe · Go sidecar）
+ ├─ config.Load()             <span class="c"># 读应用根 ezharness.json（缺失建默认；--root 可覆盖根）</span>
+ ├─ newApp(cfg)               <span class="c"># MkdirAll → os.Chdir(数据目录)</span>
+ ├─ a.start()                 <span class="c"># net.Listen 预占端口 → buildRouter() → srv.Serve</span>
+ └─ 信号等待（Interrupt/SIGTERM）→ stop()</pre>
+    </div>
+    <ul>
+      <li><b>buildRouter 换代重建</b>：<code class="inline">domain.NewHub()</code>（含 bootstrap 恢复）→ TerminalService → AgentService.Assemble → 全部 controller。设置页改端口 / 数据目录触发<b>换代</b>：shutdownGeneration（杀终端 shell → 取消运行轮并等落盘 → 关 server）→ syncDrained → chdir → buildRouter；<code class="inline">boot</code> 代际计数跨代共享，前端据此判断新服务就绪</li>
+      <li><b>退出顺序</b>同理：轮内历史只在 OnEnd 落盘，不等落盘直接退出会丢整轮；SSE 长连直接 <code class="inline">srv.Close()</code>（优雅 Shutdown 会拖满超时）</li>
+    </ul>
+
+    <h3>1.7 开发与发布</h3>
+    <div class="codeblock">
+      <div class="bar"><span class="dot r"></span><span class="dot y"></span><span class="dot g"></span><span class="name">script</span></div>
+<pre>script\version.yaml        <span class="c"># 版本单源：frontend 页脚 ezharness-v&lt;version&gt; · desktop 打包版本（release.bat 同步）</span>
+script\dev.bat             <span class="c"># 调试：前端构建 + core 编译（bin\）→ npm run start 前台跑 Electron（无打包）</span>
+script\release.bat         <span class="c"># 发布打包：三段链 + NSIS → release\v&lt;version&gt;\ 安装包 + 绿色版</span></pre>
+    </div>
+    <ul>
+      <li>构建链：前端 vite build（单入口 SPA）→ 拷 <code class="inline">frontend/dist → core/web/dist</code> → <code class="inline">go build</code> 出 <code class="inline">bin\ezharness-core.exe</code> → electron-builder（extraResources 内嵌 core，产物直出 <code class="inline">release\v&lt;version&gt;\</code>）；dev.bat 只走前两段后直接跑壳，release.bat 走完整链打包</li>
+      <li>验证链：<code class="inline">cd core &amp;&amp; go build ./... &amp;&amp; go vet ./...</code> + <code class="inline">cd frontend &amp;&amp; npm run build</code>；desktop 主进程 JS 用 <code class="inline">node --check</code> 过一遍</li>
+      <li><code class="inline">go run ./core</code> 会把 exe 放临时目录导致 config 找不到应用根——验证须 <code class="inline">go build -o xxx.exe ./core</code> 后在配置所在目录运行</li>
+    </ul>
+  </section>
+
+  <!-- ═══════════════ 02 session 树 ═══════════════ -->
+  <section id="ch-tree">
+    <h2><span class="no">第二章</span>session 树</h2>
+    <p class="sub">一条 session = 一次会话聚合：内存运行时（domain.Session）+ 磁盘存档（sessions/&lt;id&gt;/session.json）。多个 session 世代构成 <b>session 树</b>（线 → compact 换代链 → fork 分叉），用户在"分支"（线）粒度上切换对话。</p>
+
+    <h3 id="tree-concepts">2.1 核心概念</h3>
+    <table>
+      <tr><th>概念</th><th>含义</th></tr>
+      <tr><td><b>session 世代</b></td><td>一次 compact 归档产生一个新世代；每世代一个 <code>&lt;id&gt;</code>，各自有存档目录</td></tr>
+      <tr><td><b>ID（叶）</b></td><td>当前叶世代 ID，compact 换代随之更新</td></tr>
+      <tr><td><b>RootID（线根）</b></td><td>所属分支的稳定身份——Hub.branches 注册表键、前端路由、API <code>:id</code> 参数全用它；<b>换代不换线</b></td></tr>
+      <tr><td><b>线（branch/topic）</b></td><td>同一 RootID 下的世代链 + 侧栏条目（topics.json 的 TopicEntry）</td></tr>
+    </table>
+
+    <h3 id="tree-diagram">2.2 树形结构图</h3>
+    <div class="diagram-card">
+<pre class="mermaid">
+flowchart TD
+    subgraph line1["线 root-1（TopicEntry：ID=root-1，LeafID=gen-3）"]
+        gen1["gen-1 世代&lt;br/&gt;Archived=true 封存"]:::gen -- "compact（用户手动）&lt;br/&gt;摘要归档 + PrevSession 边" --> gen2["gen-2 世代&lt;br/&gt;Archived=true"]:::gen
+        gen2 -- "compact" --> gen3["gen-3 当前叶&lt;br/&gt;（Active，ID 随换代更新）"]:::leaf
+    end
+
+    gen1 -. "fork@anchor&lt;br/&gt;携带 0,anchor 完整副本" .-> line2root
+
+    subgraph line2["线 root-2（Kind=fork，自成新根）"]
+        line2root["root-2 世代 0&lt;br/&gt;标题 = 锚点消息内容"]:::fork
+    end
+
+    taskFork["轮内 task 分身（ForkID ≠ ''）&lt;br/&gt;并行子循环 · 增量存 forks/&lt;fid&gt;/&lt;br/&gt;不开线，answer 汇回主循环"]:::task
+
+    gen3 -. "task 工具" .-> taskFork
+    prev["上翻链：PrevSession&lt;br/&gt;（前端懒加载旧世代全文）"]:::note
+    gen2 --- prev
+
+    classDef gen fill:#072331,stroke:#00add8,color:#9be5f7
+    classDef leaf fill:#0b2e40,stroke:#38bdf8,color:#bae6fd
+    classDef fork fill:#1d1636,stroke:#a78bfa,color:#ddd3fc
+    classDef task fill:#07281b,stroke:#34d399,color:#a7f3d0
+    classDef note fill:#0b1322,stroke:#33496e,color:#8b98b0
+</pre>
+    </div>
+    <div class="diagram-cap">线内 compact 换代链（换代不换线名）；fork@anchor 复制前缀开新线；task 分身不开线，answer 汇回主循环。</div>
+
+    <h3 id="tree-memdisk">2.3 内存 ↔ 磁盘：同源两份</h3>
+    <div class="diagram-card">
+<pre class="mermaid">
+flowchart LR
+    subgraph mem["内存 · domain.Session"]
+        HIST["history []Message&lt;br/&gt;全量（含 marker 前档案）"]:::m
+        VIEW["modelView()&lt;br/&gt;= 最后 context_trim marker 之后"]:::m
+        WIRED["wiring：Agent / Provider&lt;br/&gt;ApproveCh / AnswerCh / Trace"]:::m
+    end
+    subgraph disk["磁盘 sessions/&lt;id&gt;/"]
+        SNAP["session.json（状态）&lt;br/&gt;SystemPrompt / Snapshot 基线&lt;br/&gt;Edge / Usage / Archived…"]:::d
+        TRC["trace.jsonl&lt;br/&gt;消息行 + span（追加式）"]:::d
+        DEC["decisions.jsonl"]:::d
+        FK["forks/&lt;fid&gt;/session.json"]:::d
+    end
+    HIST -- "sessionstore.OnEnd 每轮落盘：&lt;br/&gt;新增消息追加 trace.jsonl；&lt;br/&gt;状态覆盖写 session.json" --> SNAP
+    SNAP -- "bootstrap restoreFrom&lt;br/&gt;（history / 基线 / 水位 / LineRoot）" --> HIST
+    WIRED -.-> TRC
+
+    classDef m fill:#072331,stroke:#00add8,color:#9be5f7
+    classDef d fill:#0b1322,stroke:#33496e,color:#c4cede
+    style mem fill:#0a101d,stroke:#00add8,stroke-dasharray:6 4
+    style disk fill:#0a101d,stroke:#33496e,stroke-dasharray:6 4
+</pre>
+    </div>
+
+    <h4>SessionSnap 关键字段</h4>
+    <table>
+      <tr><th>字段</th><th>作用</th></tr>
+      <tr><td><code>Messages</code>（json:"-"）</td><td>不落 session.json——消息以追加行存 trace.jsonl（LoadMessages 读回合成）</td></tr>
+      <tr><td><code>SystemPrompt / SystemBase / SummaryBlock</code></td><td>渲染后完整 system（恢复零逻辑）/ 基础段（人格+记忆+清单）/ compact 摘要段</td></tr>
+      <tr><td><code>PrevSession / CompactSummary</code></td><td>compress 边：上一世代 ID 与摘要（前端上翻链）</td></tr>
+      <tr><td><code>TargetID / Anchor / SeedKind / ForkedFrom</code></td><td>SnapEdge（创建时写死）：向上边目标 / fork 复制的前缀长度 / new·fork·compress / 分叉出处</td></tr>
+      <tr><td><code>LineRoot</code></td><td>所属线根（冗余存档，链操作 O(1)；换代 SetID 不清它）</td></tr>
+      <tr><td><code>Snapshot *ResSnapshot</code></td><td>资源基线 {Skills, Mcps, Terms}——remind 变更段的对比基准，重启不重复报</td></tr>
+      <tr><td><code>LastOutputAt / Usage / CtxTokens / CtxWindow</code></td><td>"距上次输出" / 本代用量 / 水位恢复</td></tr>
+      <tr><td><code>Title / Archived</code></td><td>世代名（本代首条 user）/ compact 后封存位（不再作恢复候选）</td></tr>
+    </table>
+    <p class="sub"><b>落盘时机 = OnEnd 每轮结束</b>（sessionstore 是 hooks 数组最后一位；失败不阻断，错误记日志）。落盘为<b>增量追加</b>：盘上消息（LoadMessages 合并主 trace 与 fork 增量）→ <code class="inline">MergeFull(prev, state)</code> 求全量 → stripSystem → fork 剥 seed → 只把 <code class="inline">msgs[len(prev):]</code> 追加进 trace.jsonl（trim 折叠不重写盘上档案）；session.json 只写状态（原子覆盖）。</p>
+
+    <h3 id="tree-evolve">2.4 session 树的三种演进</h3>
+
+    <div class="ext">
+      <h3>compact 换代 <span class="badge base">仅用户手动</span></h3>
+      <p class="sub">沉淀式归档：先把值得长期保留的内容合并进记忆文件，再精炼交接摘要封存旧库、新库带摘要继续。<code class="inline">POST /api/topics/compact</code></p>
+      <div class="codeblock">
+        <div class="bar"><span class="dot r"></span><span class="dot y"></span><span class="dot g"></span><span class="name">compact-flow</span></div>
+<pre>BeginArchive 占锁（沉淀+摘要各 5 分钟；锁发消息/切分支/二次归档）
+→ ① distillToMemory（沉淀步，失败静默）：会话 view + user/soul/project 三文件现内容
+   → 模型合并重写（去重/纠偏/每文件 ≤30 行，UNCHANGED 段跳写）→ 整体覆盖写回
+→ ② summarizeMsgs（交接摘要：总体目标/未完成与下一步/关键决定/交付物/待办，300 字内）
+→ 旧库翻 Archived=true 封存
+→ sys.Set(base, summaryBlock)        <span class="c"># 新 system 两段生效</span>
+→ 新库初始快照先落盘（空 messages + compress 边——任一时刻重启新库都可恢复）
+→ SetID(newID)（清基线/用量，LineRoot 留）→ SetPrev → topics.UpdateLeaf（换代不换线名）
+→ RotateTo（内存换代：清历史/水位）→ Publish session.compact</pre>
+      </div>
+      <div class="tip"><b>与 trim 的分工：</b>trim 是<b>接力棒</b>（模型侧：水位自动 + trim_context 主动，四节结构化摘要 + progress.md，就地截断不换库）；compact 是<b>总结沉淀</b>（用户侧：固定三记忆文件合并重写 + 精炼交接摘要换代）。详见 docs/md/compaction.md。</div>
+    </div>
+
+    <div class="ext">
+      <h3>fork 分叉 <span class="badge base">copy 语义</span></h3>
+      <p class="sub"><code class="inline">POST /api/sessions/:id/fork</code> body {anchor}——锚点消息序号（含选中消息）。</p>
+      <ul>
+        <li>源是"未产生新消息的 fork"时沿 fork 边上溯到实际内容源（空叉链折叠）</li>
+        <li>新 session <b>体内携带 [0, anchor] 完整副本</b>（快照隔离；system / 水位承源）→ topics.Add(Kind:"fork") → LoadBranch + SetActive</li>
+        <li>fork 线标题 = 锚点消息内容（TitleFromMsg）；有自己的首条新增 user 后显式切换</li>
+        <li>命名规则：new 线 = 首条真实 user（FirstUserTitle 跳过 agent_status / resource_change / end_reason / trim marker 等系统注入，40 字截断）；世代名 = 本代首条 user，命名后固定</li>
+      </ul>
+    </div>
+
+    <div class="ext">
+      <h3>归档 <span class="badge base">预留</span></h3>
+      <p class="sub"><code class="inline">POST /sessions/:id/archive</code>——仅翻 snap.Archived 位；活动分支当前叶或运行中拒绝（标记会被下次落盘覆盖）。归档世代继续聊走 fork@tip。</p>
+    </div>
+
+    <div class="tip">
+      <b>三种「分叉」勿混淆：</b>① <b>fork 分叉</b>（copy 语义，复制前缀开新线）；② <b>task 分身</b>（轮内子循环，事件带 ForkID，存档在 forks/ 只存增量，前端分身抽屉展示）；
+      ③ <b>compact 换代</b>（归档封存，同线换叶）。
+    </div>
+
+    <h3 id="tree-recover">2.5 生命周期与恢复</h3>
+    <div class="codeblock">
+      <div class="bar"><span class="dot r"></span><span class="dot y"></span><span class="dot g"></span><span class="name">lifecycle</span></div>
+<pre>创建：newSession（rootID 空 → 自成一根）→ Assemble（装配 wiring；snap 有则还原 SysPrompt）
+     ├─ 新线：首条发言时 topics.Add（延迟建索引防空线粉尘）
+     └─ fork：创建即 Add
+
+运行：StartRun ⇄ FinishRun 每轮；sessionstore.OnEnd 落盘
+
+恢复（NewHub → bootstrap）：
+     ListMain 列目录项（排除 -task-）→ mtime 降序 → LoadSnap 逐个
+     → 跳过 Archived → root = snap.LineRoot（空则 RootOf 沿边上溯兜底）
+     → newSession + restoreFrom + Register；第一个（最近未封存）为 Active
+     restoreFrom 还原：history / Title / ResSnap 基线 / LastOutputAt / Usage / 水位
+     （CtxTokens 缺省从历史尾部 agent_status 兜底 LastCtxTokens）/ LineRoot / Edge
+     systemPrompt 不重组：快照 base / summary 直接注入（记忆/skill/mcp 变更等下个 session）
+
+切换：Switch 按索引 LeafID 现读快照（按需恢复）；SetActive 不取消旧分支运行轮（后台跑完）</pre>
+    </div>
+
+    <h3>2.6 视图三层与跨轮不变量</h3>
+    <table>
+      <tr><th>视图</th><th>定义</th><th>谁消费</th></tr>
+      <tr><td><b>history（全量）</b></td><td>内存与磁盘的全量消息（含 trim marker 前的档案段）</td><td>落盘 / 时间线渲染 / fork 副本</td></tr>
+      <tr><td><b>modelView()</b></td><td>最后 <code>&lt;context_trim&gt;</code> marker 之后（ViewStart 回溯 kept 属性）；system 由 sysprompt hook 每轮重注</td><td>StartRun → WithHistory → 模型</td></tr>
+      <tr><td><b>请求副本</b></td><td>visionguard 对 modelView 剥图后的副本（<b>只改请求，历史不动</b>）</td><td>无视觉模型的实际 API 请求</td></tr>
+    </table>
+    <div class="tip warn">
+      <b>一致性不变量：</b>sessionstore 落盘的与内存 history 必须一致，否则同进程续聊丢上下文（重启反而恢复）。
+      FinishRun：<code>s.history = state.Messages</code>（trim 轮内截断过则 MergeFull = 盘上档案前缀 + 折叠段 + 本轮消息）；
+      <b>ViewStart 是 modelView / MergeFull / 落盘三处共用的同一套判断</b>——"marker 前档案从未进过本轮视图的必须保留，跨轮覆盖不丢档"。历史以引擎 state 为准（含取消/出错轮；每个已入史 tool_call 必有结果消息）。
+    </div>
+  </section>
+
+  <!-- ═══════════════ 03 上下文全动作 ═══════════════ -->
+  <section id="ch-ctx">
+    <h2><span class="no">第三章</span>上下文全动作</h2>
+    <p class="sub">一个 session / 分支的上下文（模型看到的消息序列）由<b>引擎 + 16 个 hook + 2 条 warp 链</b>共同塑造。本章逐一回答：每个组件在<b>什么时机触发</b>、<b>何时插入消息</b>、插入的<b>内容长什么样</b>。</p>
+
+    <h3 id="ctx-timeline">3.1 一轮 chat 的完整时序</h3>
+    <div class="diagram-card">
+<pre class="mermaid">
+sequenceDiagram
+    autonumber
+    participant FE as 前端
+    participant CS as ChatService/Session
+    participant E as ezloop 引擎
+    participant HK as hooks（startHooks/endHooks）
+    participant P as Provider（模型 warp 链）
+    participant T as 工具（工具 warp 链）
+
+    FE-&gt;&gt;CS: POST /messages {text, files}
+    CS-&gt;&gt;CS: 附件落盘 workspace/tmp/（base64 不入上下文）
+    CS-&gt;&gt;E: RunAsync(WithHistory(modelView), WithUploadFiles)
+
+    E-&gt;&gt;E: AppendMessage(input)  ← 用户输入入史
+    E-&gt;&gt;HK: startHooks[].OnStart（按序）
+    Note over HK: sys(system) → trace(观测层，须在会 Skip 短路的 hook 之前)&lt;br/&gt;→ loopguard(护栏) → contextfix(修理) → filetools(注册工具) → skilltool&lt;br/&gt;→ remind(变更段 resource_change? + 快照段 agent_status) → reference_file(路径告知?)&lt;br/&gt;→ approver/asker/task/mcp(注册) → offload/guard/trim/sessionstore(就位)
+
+    loop 迭代（≤MaxIterations）
+        E-&gt;&gt;P: 模型调用
+        Note over P: modeldump(打印) → modelretry(退避)&lt;br/&gt;→ visionguard(无视觉剥图) → 真实 API
+        P--&gt;&gt;E: 流式响应 / tool_calls
+        E-&gt;&gt;FE: SSE model_chunk / tool_chunk …
+        alt 有工具调用
+            E-&gt;&gt;HK: OnToolStart（approve 审批 / skilltool·asker·task·trim 拦截，可 Skip）
+            E-&gt;&gt;T: toolarg(参数展开) → limit(并发) → safetool → 工具本体
+            T--&gt;&gt;E: 结果
+            E-&gt;&gt;HK: OnToolEnd（offload 卸载 → guard 兜底 → trace）
+            E-&gt;&gt;HK: OnLoop（filetools 图片标记→图片消息+事件 → trim 水位 → mcp 热加载）
+        else 纯文本
+            E--&gt;&gt;E: break
+        end
+    end
+
+    E-&gt;&gt;HK: endHooks[].OnEnd
+    Note over HK: remind(LastOutputAt + end_reason) → trace&lt;br/&gt;→ sessionstore 落盘（MergeFull）
+    CS--&gt;&gt;FE: SSE turn_end（stopReason/usage）
+</pre>
+    </div>
+    <div class="diagram-cap">装配顺序即执行顺序：startHooks 数组一次、每轮迭代内的模型/工具调用、endHooks 收尾落盘。</div>
+
+    <h3 id="ctx-engine">3.2 引擎时序基石：消息何时入史</h3>
+    <p class="sub">以下 6 条是理解一切 hook 行为的前提（来自 ezloop core/loop.go，是文档易错点）：</p>
+    <table>
+      <tr><th style="width:230px">时刻</th><th>引擎动作</th></tr>
+      <tr><td><b>Run 开始</b></td><td>构造 LoopState → 应用 RunOption（WithHistory 把 modelView 放进来；WithUploadFiles 写 Metadata）→ 发 <code>loop_start</code> 事件</td></tr>
+      <tr><td><b>① input 先入史</b></td><td>用户输入 <code>AppendMessage(user)</code> ——<b>先于 startHooks</b>。因此 startHooks 运行时末条必为本轮 input，remind / reference_file 都靠"插在末条 user 之前"定位轮首</td></tr>
+      <tr><td><b>② startHooks 后跑</b></td><td>16 个 hook 的 OnStart 按装配序执行：system 注入（sysprompt，ezharness 不用引擎的 systemPrompt 字段）、历史修理、工具注册、轮首消息插入都发生在「system, [history], input」已就位的序列上</td></tr>
+      <tr><td><b>③ assistant 入史</b></td><td>每次模型响应完成（含 ToolCalls）→ assistant 消息入史 → 发 <code>model_end</code></td></tr>
+      <tr><td><b>④ tool 消息批末入史</b></td><td><b>不是即时入史</b>：同批全部调用执行完后，严格按调用顺序统一写入（Skip 短路的调用也占位）。补全规则：未执行的补 <code>"not executed: &lt;name&gt;"</code>；hook Skip 无文案时引擎默认 <code>"skipped by tool-start hook: &lt;name&gt;"</code></td></tr>
+      <tr><td><b>⑤ OnLoop 回边</b></td><td>工具批入史后 → 下次模型调用前。此刻本轮全部工具结果已按序在史、消息序列协议完整——filetools 在这里插图片消息、trim 在这里截断（引擎串行区，无并发竞争）</td></tr>
+      <tr><td><b>⑥ OnEnd 收尾</b></td><td>defer 语义：成功 / 失败 / 取消 / panic 恢复路径都跑（<code>context.WithoutCancel</code>）→ 发 <code>loop_end</code>。sessionstore 落盘在最后</td></tr>
+    </table>
+    <div class="tip">
+      <b>fork（task 分身）的差异：</b>浅拷贝 Agent 后 <code>startHooks = nil</code>（组装期 hook 不重跑，防重复注入）、<code>systemPrompt = ""</code>（seed 已含完整 system）、<code>toolWarps = nil</code>（传入工具已带主循环 warp 壳）；
+      <b>继承全部运行期 hook</b>（OnModel* / OnToolStart / OnToolEnd / OnLoop / OnEnd）——审批照拦、session 照存。子 state 设 <code>ForkID</code>（如 <code>task-1</code>）与 <code>SeedLen</code>。
+    </div>
+
+    <h3 id="ctx-system">3.3 system prompt：三段式 + 运行时追加</h3>
+    <p class="sub"><b>每 session 组装一次并固定</b>（重启从快照还原不重组；skill / mcp / 记忆变更等下个 session 生效，过渡期靠 agent_status 告知模型）。sysprompt hook 是 system 的唯一来源，必须在 startHooks 首位。</p>
+    <table>
+      <tr><th>段</th><th>内容</th><th>时机</th></tr>
+      <tr><td><b>base</b></td><td>人格 + SystemExtra（设置页）+ <code>&lt;workspace&gt;</code> 三个可写位置与行为规则 + <code>&lt;memory&gt;</code>（记忆结构 + harness.md 索引全文）+ <code>&lt;skills&gt;</code> 清单? + <code>&lt;mcp&gt;</code> 清单? + <code>&lt;action&gt;</code> 行动准则 + <code>&lt;output&gt;</code> 输出规范（supper_url 正误示例）</td><td>session 创建时一次</td></tr>
+      <tr><td><b>identity</b></td><td><code>&lt;session&gt;</code> 会话 ID + 存档与进度档案绝对路径（trim 折叠后的回忆入口 + 恢复现场）；render 时求值——换代后 ID 永远正确</td><td>每轮 render 实时</td></tr>
+      <tr><td><b>summary</b></td><td>compact 摘要段（换代时注入 / 热更）</td><td>compact 时</td></tr>
+    </table>
+    <p class="sub">此外各 hook 的 OnStart 会向 system 追加说明段（幂等）：filetools 的 <b>系统环境段</b>（GOOS + shell 语法提示）与 5 个 <b>&lt;tool-guide&gt;</b>（approve 审批 / ask_user 提问 / task 分身 / mcp_router / load_skill / trim_context）。</p>
+    <div class="codeblock">
+      <div class="bar"><span class="dot r"></span><span class="dot y"></span><span class="dot g"></span><span class="name">system 结构示例（拼装后）</span></div>
+<pre><span class="c">你是 ezharness——一个持续陪伴用户的设备级 agent，可全权操作本机文件与命令。能用工具就用工具，回答简洁。……（SystemExtra）</span>
+
+<span class="t">&lt;workspace&gt;</span>
+<span class="c"># 工作区：三个可写位置（下列均为完整绝对路径，直接使用，不要自行拼接）</span>
+# D:/ezharness/data/workspace      工作目录，草稿/脚本/命令产物一律放这里；tmp/ 附件暂存（read_file 读，图片自动进上下文）
+# D:/ezharness/data/memory/longterm   长期记忆：harness.md 索引（已注入），user/soul/project 三个记忆文件；归档时系统自动合并更新
+# D:/ezharness/data/memory/skills     技能库：每技能一个子目录，新建后下个 session 进清单
+<span class="c"># 行为规则（不需要记路径）：技能/MCP 清单以 &lt;skills&gt;/&lt;mcp&gt; 段为准不读目录发现；快应用由 save_app 生成；</span>
+<span class="c"># 存档与进度档案见 &lt;session&gt; 块，历史会话不主动翻阅；超长工具结果按提示 read_file 取回；配置文件不改写……</span>
+<span class="t">&lt;/workspace&gt;</span>
+
+<span class="t">&lt;memory&gt;</span>
+<span class="c"># 长期记忆……- 索引 …/longterm/harness.md：长期记忆入口，全文见下方……</span>
+<span class="c"># - 记忆文件 …/longterm/{user,soul,project}.md：用户信息/工作习惯/项目索引，不进上下文，归档时自动合并……</span>
+<span class="c"># 索引 harness.md 全文</span>
+（harness.md 全文）
+<span class="t">&lt;/memory&gt;</span>
+
+<span class="t">&lt;skills&gt;</span>（本清单由系统运行时生成……使用前先调用 load_skill 获取完整指令与脚本路径）
+- 技能名: 描述
+<span class="t">&lt;/skills&gt;</span>
+
+<span class="t">&lt;mcp&gt;</span>（经 mcp_router 工具调用，先用 mcp_list/tool_list 发现服务与工具）
+- server名: 描述
+<span class="c">（同源页面直调：fetch('/api/mcp/call'，POST {"server","tool","args"}；构建可观测页面等快应用时把 MCP 工具当本地接口直接用，同源免 token）</span>
+<span class="t">&lt;/mcp&gt;</span>
+
+<span class="t">&lt;action&gt;</span>
+<span class="c"># 行动准则：1 接任务先匹配技能；2 多步/有风险先 ask_user 提交计划获批；3 工具选择（terminal / term_* / browser_*）；</span>
+<span class="c"># 4 MCP 先发现再调用；5 独立子任务交 task 分身（描述自包含，无依赖并行）；6 交付入口用 &lt;$supper_url&gt;，整理后从进度档案恢复现场……</span>
+<span class="t">&lt;/action&gt;</span>
+
+<span class="t">&lt;output&gt;</span>
+<span class="c"># 输出规范：&lt;$supper_url&gt; 整段闭合、标签紧贴地址、地址内无空格文字（正确示例×5 + 错误示例×3）；</span>
+<span class="c"># &lt;@toolArg&gt;绝对路径&lt;/@toolArg&gt; 执行时展开为文件内容；回复风格：结论先行……</span>
+<span class="t">&lt;/output&gt;</span>
+
+<span class="t">&lt;session&gt;</span>
+当前会话 ID：a1b2c3d4
+本会话存档：D:/ezharness/data/sessions/a1b2c3d4/session.json
+（这是本会话的完整历史档案：上下文整理折叠掉的早期对话仍完整保留在此文件中，需要回忆细节时读取它。）
+进度档案：D:/ezharness/data/sessions/a1b2c3d4/progress.md
+（每次上下文整理自动重写：已完成/正在做/待办/关键事实。恢复任务现场或阶段性节点先读写它。）
+<span class="t">&lt;/session&gt;</span>
+
+<span class="c">（compact 摘要段，仅换代会话有：存档路径 + 沉淀去向说明 + 交接摘要）</span>
+
+<span class="c">——以下为各 hook OnStart 每轮幂等追加——</span>
+# 系统环境
+当前操作系统：windows（terminal 工具用系统原生 shell 执行，Windows 请写 cmd 语法 dir/type/findstr，类 Unix 请写 POSIX 语法 ls/cat/grep）
+
+<span class="t">&lt;tool-guide&gt;</span>审批：写操作等有副作用的工具调用会先请用户批准再执行，等待是正常流程，不躲避审批变相绕行；被拒先读理由——调整方案/澄清/停手……&lt;/tool-guide&gt;
+<span class="t">&lt;tool-guide&gt;</span>ask_user：缺少必要信息、需要澄清或确认方向时向用户提问，不替用户假设关键参数；options 给候选；问题具体到一句话能答……&lt;/tool-guide&gt;
+<span class="t">&lt;tool-guide&gt;</span>task：可并行、相互独立、或会产生大量中间输出的子任务交分身隔离执行，主上下文只留结论；描述自包含；同批无依赖并行发……&lt;/tool-guide&gt;
+<span class="t">&lt;tool-guide&gt;</span>mcp_router：访问外部能力的统一入口。两步：mcp_list 看清单、tool_list 拉参数 schema，再 tool_call——不凭记忆猜……&lt;/tool-guide&gt;
+<span class="t">&lt;tool-guide&gt;</span>load_skill：接任务的第一个动作是对照技能清单，命中就先加载（全文+脚本路径）后严格按指引执行；改过技能要重新加载……&lt;/tool-guide&gt;
+<span class="t">&lt;tool-guide&gt;</span>trim_context：把早期对话就地折叠为结构化摘要（已完成/正在做/待办/关键事实），并写入进度档案 progress.md……&lt;/tool-guide&gt;</pre>
+    </div>
+
+    <h3 id="ctx-hooks">3.4 hook 全景表（16 个，装配序即执行序）</h3>
+    <table>
+      <tr><th>#</th><th>hook</th><th>来源</th><th>hook 点</th><th>职责一句话</th></tr>
+      <tr><td>1</td><td><b>sysprompt</b></td><td><span class="badge ezh">ezharness</span></td><td>OnStart（必须首位）</td><td>system 唯一来源：base + identity + summary</td></tr>
+      <tr><td>2</td><td><b>trace</b></td><td><span class="badge ezh">ezharness</span></td><td>OnModel* / OnTool* / OnEnd</td><td>otel 风格调用链（trace.jsonl）；toolStart 队列必须最前，否则被 Skip 短路的调用无 span</td></tr>
+      <tr><td>3</td><td><b>loopguard</b></td><td><span class="badge ezh">ezharness</span></td><td>OnToolStart</td><td>循环护栏：被拒后反复重试同样计数，重复触发 &lt;loop_guard&gt; 提醒（不拦调用）</td></tr>
+      <tr><td>4</td><td><b>contextfix</b></td><td><span class="badge ezl">ezloop</span></td><td>OnStart</td><td>修理残缺历史（孤儿 tool_call / tool 结果）</td></tr>
+      <tr><td>5</td><td><b>filetools</b></td><td><span class="badge ezl">ezloop</span></td><td>OnStart + OnLoop</td><td>注册 read/write/edit/terminal + OS 环境段；OnLoop 图片标记→图片消息</td></tr>
+      <tr><td>6</td><td><b>skilltool</b></td><td><span class="badge ezl">ezloop</span></td><td>OnStart</td><td>注册 load_skill（工具 Invoke 闭环：渲染 SKILL.md 全文 + 目录树）</td></tr>
+      <tr><td>7</td><td><b>remind</b></td><td><span class="badge ezh">ezharness</span></td><td>OnStart + OnEnd</td><td>系统提醒三段：变更段 / 快照段 / 收尾段（见 3.5 详解）</td></tr>
+      <tr><td>8</td><td><b>reference_file</b></td><td><span class="badge ezh">ezharness</span></td><td>OnStart</td><td>带引用轮次插 &lt;reference_file&gt;（附件=路径；标注=路径+片段行号+备注），无引用零消息</td></tr>
+      <tr><td>9</td><td><b>approve</b></td><td><span class="badge ezl">ezloop</span></td><td>OnStart + OnToolStart</td><td>人机审批：规则匹配挂起等决策，拒绝即 Skip</td></tr>
+      <tr><td>10</td><td><b>askuser</b></td><td><span class="badge ezl">ezloop</span></td><td>OnStart + OnToolStart</td><td>ask_user：模型向用户提问，阻塞等回答</td></tr>
+      <tr><td>11</td><td><b>task</b></td><td><span class="badge ezl">ezloop</span></td><td>OnStart + OnToolStart</td><td>task：fork 分身子循环，answer 汇回</td></tr>
+      <tr><td>12</td><td><b>mcp</b></td><td><span class="badge ezl">ezloop</span> 包装</td><td>OnStart + OnLoop + OnEnd</td><td>注册 mcp_router；配置热加载</td></tr>
+      <tr><td>13</td><td><b>offload</b></td><td><span class="badge ezl">ezloop</span></td><td>OnToolEnd</td><td>&gt;4096 字节工具结果卸载 .ezloop/offload/</td></tr>
+      <tr><td>14</td><td><b>guard</b></td><td><span class="badge ezh">ezharness</span></td><td>OnToolEnd</td><td>窗口余量兜底：豁免名单的大结果放不下时强制卸载</td></tr>
+      <tr><td>15</td><td><b>trim</b></td><td><span class="badge ezh">ezharness</span></td><td>OnLoop + OnToolStart</td><td>上下文整理：水位自动 + trim_context 主动</td></tr>
+      <tr><td>16</td><td><b>sessionstore</b></td><td><span class="badge ezh">ezharness</span></td><td>OnStart + OnEnd（最后）</td><td>持久化：MergeFull 落 session.json</td></tr>
+    </table>
+    <p class="sub">ezloop 引擎的 7 个扩展点：<code class="inline">OnStart</code>（Run 组装期一次）· <code class="inline">OnModelStart / OnModelEnd</code>（每次模型调用前后）· <code class="inline">OnToolStart</code>（可短路：Proceed / Skip(result) / Abort）· <code class="inline">OnToolEnd</code>（结果入史前可改写）· <code class="inline">OnLoop</code>（迭代回边）· <code class="inline">OnEnd</code>（defer 语义）。并发契约：除 OnToolStart / OnToolEnd 在同轮多工具调用间并发外，其余 hook 点引擎串行；<code class="inline">LoopState.Metadata</code> 是 Run 内跨 hook 共享通道。</p>
+    <h3 id="ctx-hooks-detail">3.5 逐 hook 详解</h3>
+    <p class="sub">每个面板：触发时机 → 动作 → 对上下文的影响 → <b>确切的消息示例</b>（与源码格式化字符串一字不差）。</p>
+
+    <div class="ext">
+      <h3>1 · sysprompt <span class="badge hook">hook</span> <span class="badge ezh">ezharness</span></h3>
+      <div class="meta-row"><span><b>hook 点：</b>OnStart（必须首位——先有 system，后续 hook 才能追加 tool-guide）</span><span><b>触发：</b>每次 Run 开始</span></div>
+      <p><b>动作：</b>消息序列缺 system 时在最前注入当前 prompt；已存在则原地重写（全程唯一一条）。替代引擎的 <code class="inline">WithSystemPrompt</code>——compact 需要运行中换 system，agent 构建后只读是引擎契约。</p>
+      <p><b>上下文影响：</b>system = base + identity（render 时实时求值）+ summary 三段拼接；完整结构与示例见 3.3。fork 不重跑（seed 已含 system）。</p>
+    </div>
+
+    <div class="ext">
+      <h3>2 · trace <span class="badge hook">hook</span> <span class="badge ezh">ezharness</span></h3>
+      <div class="meta-row"><span><b>hook 点：</b>OnStart / OnModelStart / OnModelEnd / OnToolStart / OnToolEnd / OnEnd</span><span><b>触发：</b>全程观测</span></div>
+      <p><b>位置有语义：必须在 toolStart 队列最前</b>——approve / askuser / task / skilltool 在 OnToolStart 里返回 Skip 会短路后续 hook，观测层排在它们之后，这些调用（含 task 分身）就留不下 span。</p>
+      <p><b>动作：</b>otel 风格 span 调用链（turn / model / tool / fork / compact），span <b>关闭即追加</b>进 <code class="inline">sessions/&lt;id&gt;/trace.jsonl</code>（与消息行同文件：每行 JSON 的 kind 字段区分 span 与 message；fork 子循环落 <code class="inline">forks/&lt;fid&gt;/trace.jsonl</code>）；读取时合并两份并把 fork 根挂到发起它的 <code class="inline">tool.task</code> span 下（跨文件没有可对上的字段，按开始时间序号配对）。<b>不碰消息、不碰 lastOutputAt</b>——纯观测，前端「调用链」页画瀑布图。</p>
+    </div>
+
+    <div class="ext">
+      <h3>3 · loopguard <span class="badge hook">hook</span> <span class="badge ezh">ezharness</span></h3>
+      <div class="meta-row"><span><b>hook 点：</b>OnToolStart</span><span><b>触发：</b>每个工具调用前（装配在 trace 后、Skip 型 hook 前）</span></div>
+      <p><b>动作：</b>同一工具被拒（审批拒绝 / 策略 Skip）后反复重试同样调用即计数；重复触发插一条 <code class="inline">&lt;loop_guard&gt;</code> 提醒消息劝阻，<b>不拦调用</b>（模型仍有最终决定权）。排在 Skip 型 hook 之前，保证被短路路径也计入。</p>
+    </div>
+
+    <div class="ext">
+      <h3>4 · contextfix <span class="badge hook">hook</span> <span class="badge ezl">ezloop</span></h3>
+      <div class="meta-row"><span><b>hook 点：</b>OnStart</span><span><b>触发：</b>每轮，input 入史之后</span></div>
+      <p><b>动作：</b>双向修理 state.Messages，保证发给 API 的序列协议完整（残缺会被 API 直接拒绝）：</p>
+      <ul>
+        <li><b>补缺</b>：assistant 发起的 tool_call 缺对应结果 → 在该 assistant 后补一条 tool 消息，占位文案 <code class="inline">(missing tool result)</code></li>
+        <li><b>删孤</b>：tool 消息的 ToolCallID 没有任何 assistant 发起过（孤儿结果）→ 整条删除</li>
+      </ul>
+      <div class="msg-stack">
+        <div class="msg"><div class="who assistant">assistant</div><pre>[tool_use read_file  call_x7]</pre></div>
+        <div class="msg"><div class="who tool">tool</div><pre><span class="hl">(missing tool result)</span>   <span class="dim">← 上轮取消/崩溃留下的残缺，contextfix 补齐</span></pre></div>
+      </div>
+    </div>
+
+    <div class="ext">
+      <h3>5 · filetools <span class="badge hook">hook</span> <span class="badge ezl">ezloop</span></h3>
+      <div class="meta-row"><span><b>hook 点：</b>OnStart + OnLoop</span><span><b>触发：</b>轮首注册 / 每次迭代回边</span></div>
+      <p><b>OnStart：</b>注册 read_file / write_file / edit_file / terminal 四工具（ezharness 经 <code class="inline">WithImageHandler</code> 注入图片分支裁决）+ system 追加「# 系统环境」段（GOOS + shell 语法提示）。</p>
+      <h4>read_file 遇到图片（魔数判定 jpeg/png/gif/webp）</h4>
+      <table>
+        <tr><th>情形</th><th>工具返回（tool 消息内容）</th></tr>
+        <tr><td>主模型开视觉</td><td><code>&lt;image_loaded path="C:/…/img.png"/&gt;</code> ——机器标记，<b>保留不改写</b>，前端工具卡原文显示</td></tr>
+        <tr><td>超 8MiB</td><td><code>[图片 X 大小 N 字节，超出 8388608 字节上限，无法加载进上下文；请改用文件路径引用或外部识别工具]</code></td></tr>
+        <tr><td>无视觉·识别槽开</td><td><code>[当前模型无多模态能力，无法读取图片 X；可调用 image_recognize 工具识别]</code></td></tr>
+        <tr><td>无视觉·识别槽关</td><td><code>[当前模型无多模态能力，无法读取图片 X；如需识别图片请在设置·模型启用图片识别槽]</code></td></tr>
+      </table>
+      <h4>OnLoop：标记 → 持久化图片消息（核心机制）</h4>
+      <p><b>时机：</b>工具批完成后、下次模型调用前。从消息尾部向前回扫本轮 tool 消息至第一条 assistant 止（批边界天然划定，免状态），扫描其中的 <code class="inline">&lt;image_loaded path="…"/&gt;</code> 标记——<b>已入史的 tool 结果不改写</b>，标记只是批末转换的信号。读盘成功（≤8MiB + 魔数有效）的合并为<b>一条</b> user 消息插在批内最后一条 tool 之后：</p>
+      <div class="msg-stack">
+        <div class="msg"><div class="who assistant">assistant</div><pre>我来看看这两张截图</pre></div>
+        <div class="msg"><div class="who tool">tool</div><pre>&lt;image_loaded path="D:/…/tmp/att-1694-a.png"/&gt;</pre></div>
+        <div class="msg"><div class="who tool">tool</div><pre>&lt;image_loaded path="D:/…/tmp/att-1694-b.png"/&gt;</pre></div>
+        <div class="msg"><div class="who inject">user · 注入</div><pre><span class="hl">&lt;image_loaded&gt;</span>
+D:/…/tmp/att-1694-a.png
+D:/…/tmp/att-1694-b.png
+<span class="hl">&lt;/image_loaded&gt;</span>          <span class="dim">← 消息 Images 字段带两张图的 base64（全协议通用通道）</span></pre></div>
+      </div>
+      <p class="sub">同时发 SSE 事件 <code class="inline">filetools.image_loaded</code>（data = 路径数组），前端据此实时渲染缩略图行——事件在 OnLoop 发而非 tool_end，因为"加载进上下文"发生在此刻。</p>
+    </div>
+
+    <div class="ext">
+      <h3>6 · skilltool <span class="badge hook">hook</span> <span class="badge ezl">ezloop</span></h3>
+      <div class="meta-row"><span><b>hook 点：</b>OnStart + OnToolStart</span><span><b>触发：</b>轮首注册 / 模型调用 load_skill 时</span></div>
+      <p><b>OnStart：</b>注册 load_skill 壳工具 + system 追加 tool-guide（"接任务先扫技能清单，命中就加载后按其指引执行"）。技能身份用<b>目录名</b>（skill.DirOf），frontmatter name 仅作显示。</p>
+      <p><b>工具 Invoke 闭环</b>：调用时实时列技能（按 disabled 名单过滤），命中 → 返回渲染结果（SKILL.md 全文 + 目录树；免 offload 豁免——指令集是后续行动依据，卸载再回读纯浪费）；未命中 → <code class="inline">skill "X" 不存在。可用技能：a, b, c</code></p>
+      <div class="msg-stack">
+        <div class="msg"><div class="who tool">tool</div><pre><span class="hl"># skill: release-publish</span>
+路径: D:/…/memory/skills/release-publish/SKILL.md
+目录内容:
+release-publish/
+├─ SKILL.md
+└─ scripts/
+   └─ do-release.bat
+脚本可用 bash 执行、资料可用 read_file 读取（路径相对工作目录）。
+--- SKILL.md ---
+（SKILL.md 全文）</pre></div>
+      </div>
+    </div>
+
+    <div class="ext">
+      <h3>7 · remind <span class="badge hook">hook</span> <span class="badge ezh">ezharness</span></h3>
+      <div class="meta-row"><span><b>hook 点：</b>OnStart + OnEnd</span><span><b>触发：</b>轮首（变更段? + 快照段）/ 轮末（收尾段）</span></div>
+      <p>系统→模型的<b>全部单向旁路提醒</b>归这一个 hook，内部分三段独立成模块。变更检测留在此处的分界判据见 1.1。</p>
+
+      <h4>变更段（OnStart，有变化才插——零噪音）</h4>
+      <p>对比 session 资源基线 <code class="inline">ResSnapshot{Skills, Mcps}</code>（持久化随 session，重启不重复报）。<b>首轮只建基线不 diff</b>（新建/迁移不算变更）。条目为中文完整短语（模型与前端变更卡同源）：</p>
+      <table>
+        <tr><th>操作</th><th>条目文案</th></tr>
+        <tr><td>启用新技能</td><td><code>新增技能 release-publish</code></td></tr>
+        <tr><td>禁用/删除技能</td><td><code>移除技能 release-publish</code></td></tr>
+        <tr><td>mcp.json 加 server</td><td><code>新增MCP 服务 time</code></td></tr>
+        <tr><td>mcp.json 删 server</td><td><code>移除MCP 服务 time</code></td></tr>
+      </table>
+      <p><b>有变化才</b>插一条 user 消息（位于 agent_status 前、本轮 input 前）+ 发 <code class="inline">resource.change</code> 事件：</p>
+      <div class="msg-stack">
+        <div class="msg"><div class="who inject">user · 注入</div><pre><span class="hl">&lt;resource_change&gt;</span>
+（系统检测到的本轮资源变更，非用户发言，无需回应，无需回溯处理）
+- 新增技能 release-publish
+变更后完整清单（技能与 MCP 服务以此为准，不要读取 memory/skills 目录或 mcp.json 来发现技能与服务）：
+available_skill: release-publish - 把当前分支发布为 release
+available_mcp: context7 - 查询库文档
+<span class="hl">&lt;/resource_change&gt;</span></pre></div>
+      </div>
+      <p class="dim">available_ 清单行是给模型的即时资源发现（前端变更卡不展示，只渲染 <code class="inline">- </code> 变更条目行）。</p>
+
+      <h4>快照段（OnStart，每轮一条）</h4>
+      <p>水位/时间快照，插在本轮 input 前（无变更段时它就是轮首第一条）+ 发 <code class="inline">status.snapshot</code> 事件（前端右上角水位条）：</p>
+      <div class="msg-stack">
+        <div class="msg"><div class="who inject">user · 注入</div><pre><span class="hl">&lt;agent_status&gt;</span>
+当前时间：2026-09-08 14:30
+上下文水位：45210 / 200000 tokens           <span class="dim">← CtxWindow&gt;0 才有此行</span>
+当前运行中终端：build、deploy                    <span class="dim">← 有运行中终端才有（每轮现查）</span>
+开启中浏览器标签：文档站（docs.example.com）   <span class="dim">← 同上</span>
+距上次输出：37 分钟                           <span class="dim">← LastOutputAt 有记录才有</span>
+<span class="hl">&lt;/agent_status&gt;</span></pre></div>
+      </div>
+      <p class="sub">水位超窗口 70% 时追加：<code>（已超窗口 70%，建议调用 trim_context 整理上下文）</code>——注意「整理上下文」四字是前端历史重建的识别关键词（硬契约）。</p>
+
+      <h4>收尾段（OnEnd）</h4>
+      <p>先无条件记录 LastOutputAt（下轮"距上次输出"用，fork 也记）；ForkID ≠ "" 直接返回（分身历史只存增量不记收尾）；主循环追加轮末收尾（位于消息序列<b>尾部</b>）：</p>
+      <div class="msg-stack">
+        <div class="msg"><div class="who inject">user · 注入</div><pre><span class="hl">&lt;end_reason&gt;</span>
+（系统自动记录的轮次收尾信息，非用户发言，无需回应）
+运行轮次：3
+运行时长：1 分 24 秒
+结束时间：2026-09-08 14:31:24
+结束原因：正常结束                              <span class="dim">← 手动停止/达到迭代上限/策略中止/执行出错</span>
+错误详情：…                                   <span class="dim">← 仅出错轮有（压平单行、300 字截断）</span>
+话题压缩：本轮结束时上下文水位达到阈值，上一会话已压缩归档并开启新会话，…  <span class="dim">← 仅 compact 轮有</span>
+<span class="hl">&lt;/end_reason&gt;</span></pre></div>
+      </div>
+    </div>
+
+    <div class="ext">
+      <h3>8 · reference_file <span class="badge hook">hook</span> <span class="badge ezh">ezharness</span></h3>
+      <div class="meta-row"><span><b>hook 点：</b>OnStart</span><span><b>触发：</b>仅带引用的轮次（无引用零开销）</span></div>
+      <p><b>动作：</b>引用统一为路径：附件先落盘 <code class="inline">workspace/tmp/att-&lt;ts&gt;-&lt;序号&gt;-&lt;净化名&gt;</code>（base64 不入上下文），文件页标注带 <code class="inline">sel/note/from/to</code>；路径经 <code class="inline">WithRefFiles</code> 写入 LoopState.Metadata，hook 在本轮 input 前插一条记录（agent_status 之后、input 之前），<b>标签体是纯 JSON 载荷</b>（前端 <code class="inline">JSON.parse</code> 重建 chips）。一切皆资源：文件本体不进上下文，模型按需 read_file 读真身——图片仍会经 filetools OnLoop 转成图片消息直接进上下文。</p>
+      <div class="msg-stack">
+        <div class="msg"><div class="who inject">user · 注入</div><pre><span class="hl">&lt;reference_file&gt;</span>
+{"hint":"用户本轮引用了以下本地文件，可用 read_file 读取","refs":[{"path":"D:/…/workspace/tmp/att-1694165400-1-报错截图.png"},{"path":"D:/…/src/main.ts","items":[{"sel":"timeout: 300","note":"这里太短了","from":118,"to":131}]}]}
+<span class="hl">&lt;/reference_file&gt;</span></pre></div>
+        <div class="msg"><div class="who user">user</div><pre>看下这两个文件，帮我定位问题</pre></div>
+      </div>
+    </div>
+
+    <div class="ext">
+      <h3>9 · approve <span class="badge hook">hook</span> <span class="badge ezl">ezloop</span></h3>
+      <div class="meta-row"><span><b>hook 点：</b>OnStart + OnToolStart</span><span><b>触发：</b>轮首 tool-guide / 每个需审批的工具调用</span></div>
+      <p><b>判定（ezharness 闭包注入 needsApprove）：</b>ask_user / load_skill / trim_context 恒免审；mcp_router 的 mcp_list / tool_list 只读免审，tool_call 按 server.server.tool 名单走四档（ask / black / white / auto）；未知工具默认审批。运行时读设置快照，改策略即时生效。</p>
+      <p><b>拦截流程：</b>发 <code class="inline">approve.request</code> 事件（data = ToolCall，前端时间线出决策卡）→ goroutine 阻塞在 channel 上等决策（引擎无感知）→ 批准 Proceed / 拒绝 Skip。</p>
+      <div class="msg-stack">
+        <div class="msg"><div class="who assistant">assistant</div><pre>[tool_use terminal  call_q2]  command: "del /s build"]</pre></div>
+        <div class="msg"><div class="who tool">tool</div><pre><span class="hl">denied by user: 不要动 build 目录</span>   <span class="dim">← 拒绝理由原样成为工具结果，模型据此调整方案</span></pre></div>
+      </div>
+    </div>
+
+    <div class="ext">
+      <h3>10 · askuser <span class="badge hook">hook</span> <span class="badge ezl">ezloop</span></h3>
+      <div class="meta-row"><span><b>hook 点：</b>OnStart + OnToolStart</span><span><b>触发：</b>轮首注册 / 模型调用 ask_user 时</span></div>
+      <p><b>拦截流程：</b>发 <code class="inline">askuser.request</code> 事件（Args.question / Args.options，前端出提问卡可点选）→ 阻塞等 <code class="inline">Answer{CallID, Input}</code> → 用户的回答<b>原样</b>作为工具结果入史（Skip 通道）：</p>
+      <div class="msg-stack">
+        <div class="msg"><div class="who assistant">assistant</div><pre>[tool_use ask_user]  question: "删哪条线？"  options: ["旧测试线","演示线"]</pre></div>
+        <div class="msg"><div class="who tool">tool</div><pre>旧测试线                                 <span class="dim">← 用户回答即结果；空回答为 (user gave no input)</span></pre></div>
+      </div>
+    </div>
+    <div class="ext">
+      <h3>11 · task <span class="badge hook">hook</span> <span class="badge ezl">ezloop</span></h3>
+      <div class="meta-row"><span><b>hook 点：</b>OnStart + OnToolStart</span><span><b>触发：</b>轮首注册 / 模型调用 task 时</span></div>
+      <p><b>拦截流程：</b>单层检查（子循环内再调 task → <code>task: nested fork is not allowed (single level)</code>；空描述 → <code>task: empty task description</code>）→ <code class="inline">agent.Fork</code> 开分身子循环：<b>独立 LoopState</b>（ForkID 如 <code>task-1</code>）、seed = 截至本轮 assistant 之前且剔除触发指令那条 user 的快照、工具集剔除 task 自身、startHooks 不重跑（见 3.2 fork 差异）。</p>
+      <p>子循环 input 加自包含前缀（分身看不到本轮对话之外的语境）：</p>
+      <div class="codeblock">
+        <div class="bar"><span class="dot r"></span><span class="dot y"></span><span class="dot g"></span><span class="name">分身 input 前缀</span></div>
+<pre>以下是你独立负责的子任务，请完成它；你的最后一条回复将作为结果直接交付，须自包含、简洁：
+
+（模型给的 task 描述）</pre>
+      </div>
+      <p><b>answer 汇回主循环：</b>取子循环<b>最后一条 assistant 的 Content</b> 作为 Skip 结果（即 task 的工具结果）；异常附加后缀——无输出 <code>(subtask completed with no output)</code>、迭代耗尽 <code>[subtask reached max iterations, result may be incomplete]</code>、中止 <code>[subtask stopped: aborted]</code>；子循环出错不终止主循环 <code>task failed: …</code>。子循环 Usage 累加回父 state。事件 <code class="inline">task.start / task.end</code> 带 forkId（前端进分身抽屉，不入主线）；增量存档 <code class="inline">sessions/&lt;id&gt;/forks/&lt;fid&gt;/session.json</code>（剥离 seed）。</p>
+    </div>
+
+    <div class="ext">
+      <h3>12 · mcp <span class="badge hook">hook</span> <span class="badge ezl">ezloop（ezharness 包装）</span></h3>
+      <div class="meta-row"><span><b>hook 点：</b>OnStart + OnLoop + OnEnd</span><span><b>触发：</b>轮首注册 / 每次回边热加载 / 轮末关连接</span></div>
+      <p><b>动作：</b>注册唯一工具 <code class="inline">mcp_router</code>（三 action：mcp_list 列 server · tool_list 列某 server 工具+schema（ACL 过滤）· tool_call 调用；错误统一 JSON <code class="inline">{"error":…,"hint":…}</code>）。OnLoop <code class="inline">cfg.Reload</code> 热加载 mcp.json 变更（即时生效）；OnEnd 关闭连接。审批语义见 hook 7。</p>
+    </div>
+
+    <div class="ext">
+      <h3>13 · offload <span class="badge hook">hook</span> <span class="badge ezl">ezloop</span></h3>
+      <div class="meta-row"><span><b>hook 点：</b>OnToolEnd</span><span><b>触发：</b>每个工具结果入史前</span></div>
+      <p><b>动作：</b>结果超 4096 字节 → 全文写 <code class="inline">.ezloop/offload/&lt;工具名&gt;-&lt;sha256 前 6&gt;.txt</code> → 结果改写为「头部 512 字节 + 卸载说明」。豁免名单：ask_user / task / load_skill（人机与指令结果）；read_file 是 ReplayTool（说明文案不同）。写入失败降级透传原文。</p>
+      <div class="msg-stack">
+        <div class="msg"><div class="who tool">tool</div><pre>（前 512 字节原文）
+<span class="hl">[输出共 83210 字节，超出 4096 字节阈值，已卸载到 .ezloop/offload/terminal-a1b2c3d4e5.txt，可使用 tool read_file 进行全量内容回放]</span></pre></div>
+      </div>
+    </div>
+
+    <div class="ext">
+      <h3>14 · guard <span class="badge hook">hook</span> <span class="badge ezh">ezharness</span></h3>
+      <div class="meta-row"><span><b>hook 点：</b>OnToolEnd（装配在 offload 之后）</span><span><b>触发：</b>每个工具结果（offload 改写后的最终 Content）</span></div>
+      <p><b>动作：</b>窗口余量<b>动态</b>兜底——估算「当前历史 tokens（provider 精确值 + 末次响应后追加消息按 1.2 字符/token 补估）+ 本次结果」，放不下则卸载同目录。专堵 offload 豁免漏网（如 read_file 读单行超长文件）。写入失败时<b>硬截断丢弃尾部</b>——此处不能像 offload 降级透传，透传即撑爆上下文，保会话优先于保内容。</p>
+      <div class="msg-stack">
+        <div class="msg"><div class="who tool">tool</div><pre>（前 512 字符原文）
+<span class="hl">[输出共 96000 字符，当前上下文约 195000/200000 tokens，余量放不下完整结果，已卸载到 .ezloop/offload/read_file-9f8e7d.txt；如需查看请用 read_file 按行分段读取（offset/limit），勿整文件回放]</span></pre></div>
+      </div>
+    </div>
+
+    <div class="ext">
+      <h3>15 · trim <span class="badge hook">hook</span> <span class="badge ezh">ezharness</span></h3>
+      <div class="meta-row"><span><b>hook 点：</b>OnStart + OnToolStart + OnLoop</span><span><b>触发：</b>两条路径，统一在 OnLoop 串行区执行</span></div>
+      <p><b>路径一（水位自动）：</b>每次迭代回边检查 PromptTokens &gt; 窗口 × TrimPercent%（默认 75，0 禁用），先发 <code class="inline">session.trimming</code> 事件（"上下文水位 156000 / 200000 tokens（78%），达到阈值，正在整理…"）。</p>
+      <p><b>路径二（模型主动）：</b>模型调 <code class="inline">trim_context</code> → OnToolStart 只登记 pending（并发回调区不写 state），Skip 安抚模型继续任务：</p>
+      <div class="msg-stack">
+        <div class="msg"><div class="who tool">tool</div><pre><span class="hl">已安排整理：本批工具调用完成后立即折叠早期上下文，请继续当前任务，不要重述将被折叠的过程细节。</span></pre></div>
+      </div>
+      <p><b>执行（OnLoop，本批工具结果已全部按序入史——消息序列协议完整）：</b>摘要折叠段（独立 2 分钟预算，prompt："保留关键事实/已达成决定/未完成待办/近期文件操作，200 字以内"）→ 截断为 <code class="inline">[head, tail, marker]</code>：head = system（fork 则完整 seed）；tail = 末 4 条（孤儿 tool 前移保证配对完整）；marker 尾插。折叠段挂 Metadata（追加式档案），立即生效——下次模型调用即新上下文。发 <code class="inline">session.trim</code> 事件 {tokens, folded, kept, fork}。</p>
+      <div class="msg-stack">
+        <div class="msg"><div class="who system">system</div><pre>（不动）</pre></div>
+        <div class="msg"><div class="who user">user × N</div><pre>（保留的末 4 条近期消息，含配对完整的 assistant/tool）</pre></div>
+        <div class="msg"><div class="who inject">user · 注入</div><pre><span class="hl">&lt;context_trim kept="4"&gt;</span>
+（系统自动整理，非用户发言，无需回应）
+此前的早期对话已折叠出模型上下文，整理结果已写入进度档案 sessions/…/progress.md（路径见 <session> 块）。当前任务衔接摘要：
+【已完成】导出方案已定（CSV、/api/export），exporter.py 草稿已写入 workspace
+【正在做】导出接口联调
+【待办】订单明细列对齐
+【关键事实】用户要求含订单明细；草稿在 workspace/exporter.py
+<span class="hl">&lt;/context_trim&gt;</span></pre></div>
+      </div>
+      <p class="sub"><b>kept 属性是视图起点回溯的依据</b>：ViewStart（marker 的 kept 回溯 + clamp 到上一 marker）是 modelView / MergeFull / 落盘三处共用的同一套判断——"marker 前档案从未进过本轮视图的必须保留，跨轮覆盖不丢档"（见 2.6）。</p>
+    </div>
+
+
+    <div class="ext">
+      <h3>16 · sessionstore <span class="badge hook">hook</span> <span class="badge ezh">ezharness</span></h3>
+      <div class="meta-row"><span><b>hook 点：</b>OnStart + OnEnd（数组最后一位）</span><span><b>触发：</b>轮首就位 / 每轮结束</span></div>
+      <p><b>动作（OnEnd 落盘）：</b>盘上旧全量 <code class="inline">MergeFull(old.Messages, state)</code>（trim 轮：盘上档案前缀 + 本轮折叠段 + 本轮消息）→ stripSystem → fork 剥 seed → 写 <code class="inline">sessions/&lt;id&gt;/session.json</code> + 基线 + 用量。失败不阻断（错误记 Metadata）。内存与磁盘同源的关键：<b>必须排在 remind 之后</b>（end_reason 已入史）——见 2.6 不变量。</p>
+    </div>
+
+    <h3 id="ctx-msgs">3.6 上下文注入消息全表</h3>
+    <p class="sub">模型视角的全部消息类型（8 种注入 + 3 种基本）。所有注入均为 <b>role=user</b>（全协议通用），用包裹标签自我说明。</p>
+    <table>
+      <tr><th>消息</th><th>生成者</th><th>插入时机</th><th>条件</th></tr>
+      <tr><td><code>system</code></td><td>sysprompt + 各 hook 追加</td><td>每轮首位（重注入）</td><td>恒有</td></tr>
+      <tr><td><code>&lt;context_trim&gt;</code></td><td>trim</td><td>整理时尾插</td><td>水位达阈 / 模型主动</td></tr>
+      <tr><td><code>&lt;resource_change&gt;</code></td><td>remind 变更段</td><td>轮首、agent_status 前</td><td><b>有变更才插</b>（附 available 清单）</td></tr>
+      <tr><td><code>&lt;agent_status&gt;</code></td><td>remind 快照段</td><td>轮首、reference_file 前</td><td>每轮</td></tr>
+      <tr><td><code>&lt;reference_file&gt;</code></td><td>reference_file</td><td>本轮 input 前</td><td><b>有引用才插</b>（纯 JSON 载荷）</td></tr>
+      <tr><td><code>&lt;loop_guard&gt;</code></td><td>loopguard</td><td>被拒调用重试时</td><td><b>重复触发才插</b>（提醒不拦截）</td></tr>
+      <tr><td><b>用户真实输入</b></td><td>引擎</td><td>轮首入史（startHooks 前）</td><td>每轮</td></tr>
+      <tr><td><code>&lt;image_loaded&gt;</code> 包裹</td><td>filetools OnLoop</td><td>工具批末、最后一条 tool 后</td><td><b>读图才插</b>（Images 带 base64）</td></tr>
+      <tr><td>assistant</td><td>模型</td><td>每次响应完成</td><td>迭代内</td></tr>
+      <tr><td>tool</td><td>引擎（批末按序）</td><td>工具批执行完</td><td>迭代内</td></tr>
+      <tr><td><code>&lt;end_reason&gt;</code></td><td>remind 收尾段</td><td>序列尾部</td><td>每轮末</td></tr>
+    </table>
+    <h3 id="ctx-scenes">3.7 场景演练：进行了 xx 操作后，消息长这样</h3>
+    <p class="sub">四个典型场景的<b>完整消息序列</b>（模型实际看到的顺序，逐条对应 3.6 全表）。</p>
+
+    <h4>场景 A · 普通一轮（无附件、无变更）</h4>
+    <div class="msg-stack">
+      <div class="msg"><div class="who system">system</div><pre>（base + identity + summary? + 环境段 + tool-guides）</pre></div>
+      <div class="msg"><div class="who user">user × N</div><pre>（此前轮次的消息……）</pre></div>
+      <div class="msg"><div class="who inject">user · 注入</div><pre>&lt;agent_status&gt;\n当前时间：2026-09-08 14:30\n上下文水位：45210 / 200000 tokens\n&lt;/agent_status&gt;</pre></div>
+      <div class="msg"><div class="who user">user</div><pre>工作目录里有哪些文件？</pre></div>
+      <div class="msg"><div class="who assistant">assistant</div><pre>[tool_use terminal]  command: "dir /b"</pre></div>
+      <div class="msg"><div class="who tool">tool</div><pre>apps\nmemory\nworkspace\n…</pre></div>
+      <div class="msg"><div class="who assistant">assistant</div><pre>工作目录下有 apps、memory、workspace 三个目录……</pre></div>
+      <div class="msg"><div class="who inject">user · 注入</div><pre>&lt;end_reason&gt;\n（系统自动记录的轮次收尾信息，非用户发言，无需回应）\n运行轮次：2\n运行时长：8 秒\n结束时间：…\n结束原因：正常结束\n&lt;/end_reason&gt;</pre></div>
+    </div>
+
+    <h4>场景 B · 带附件 + 读图（消息类型最全的一轮）</h4>
+    <p class="sub">用户上传两张截图 + 一个日志文件，问"帮我定位问题"。</p>
+    <div class="msg-stack">
+      <div class="msg"><div class="who system">system</div><pre>（……）</pre></div>
+      <div class="msg"><div class="who user">user × N</div><pre>（历史……）</pre></div>
+      <div class="msg"><div class="who inject">user · 注入</div><pre>&lt;reference_file&gt;\n{"hint":"用户本轮引用了以下本地文件，可用 read_file 读取","refs":[\n  {"path":"…/tmp/att-1694165400-1-报错截图.png"},\n  {"path":"…/tmp/att-1694165400-2-界面异常.png"},\n  {"path":"…/tmp/att-1694165400-3-错误日志.txt"}]}\n&lt;/reference_file&gt;</pre></div>
+      <div class="msg"><div class="who inject">user · 注入</div><pre>&lt;agent_status&gt;…&lt;/agent_status&gt;</pre></div>
+      <div class="msg"><div class="who user">user</div><pre>看下这几个文件，帮我定位问题</pre></div>
+      <div class="msg"><div class="who assistant">assistant</div><pre>[tool_use read_file ×3]  path: …/报错截图.png / …/界面异常.png / …/错误日志.txt</pre></div>
+      <div class="msg"><div class="who tool">tool</div><pre>&lt;image_loaded path="…/att-1694165400-1-报错截图.png"/&gt;</pre></div>
+      <div class="msg"><div class="who tool">tool</div><pre>&lt;image_loaded path="…/att-1694165400-2-界面异常.png"/&gt;</pre></div>
+      <div class="msg"><div class="who tool">tool</div><pre>Traceback (most recent call last):\n  File "main.py", line 88…\nValueError: invalid literal…</pre></div>
+      <div class="msg"><div class="who inject">user · 注入</div><pre><span class="hl">&lt;image_loaded&gt;</span>\n…/att-1694165400-1-报错截图.png\n…/att-1694165400-2-界面异常.png\n<span class="hl">&lt;/image_loaded&gt;</span>   <span class="dim">← 批末一条合并图片消息，Images 带两张 base64；文本日志正常返回原文</span></pre></div>
+      <div class="msg"><div class="who assistant">assistant</div><pre>两张截图显示列表页空白，日志第 88 行在解析分页参数——根因是页码参数未做空值防御……</pre></div>
+      <div class="msg"><div class="who inject">user · 注入</div><pre>&lt;end_reason&gt;…运行轮次：2…结束原因：正常结束…&lt;/end_reason&gt;</pre></div>
+    </div>
+
+    <h4>场景 C · 技能启停后的下一轮</h4>
+    <p class="sub">上一轮结束后：用户在设置里启用了技能 release-publish，然后让模型发版。变更段只在<b>下一个拥有它的轮次</b>出现一次，再下轮消失（基线已推进）。</p>
+    <div class="msg-stack">
+      <div class="msg"><div class="who inject">user · 注入</div><pre><span class="hl">&lt;resource_change&gt;</span>\n（系统检测到的本轮资源变更，非用户发言，无需回应，无需回溯处理）\n- 新增技能 release-publish\n变更后完整清单（技能与 MCP 服务以此为准，不要读取 memory/skills 目录或 mcp.json 来发现技能与服务）：\navailable_skill: release-publish - 把当前分支发布为 release\n<span class="hl">&lt;/resource_change&gt;</span></pre></div>
+      <div class="msg"><div class="who inject">user · 注入</div><pre>&lt;agent_status&gt;…&lt;/agent_status&gt;</pre></div>
+      <div class="msg"><div class="who user">user</div><pre>构建刚跑完，帮我按流程发个版本</pre></div>
+      <div class="msg"><div class="who assistant">assistant</div><pre>好，先加载发布技能 [tool_use load_skill]  name: "release-publish"</pre></div>
+      <div class="msg"><div class="who tool">tool</div><pre># skill: release-publish\n路径: …\n--- SKILL.md ---\n（全文）</pre></div>
+      <div class="msg"><div class="who assistant">assistant</div><pre>（按技能指引执行发布流程……）</pre></div>
+    </div>
+
+    <h4>场景 D · 水位达阈的 trim 轮</h4>
+    <p class="sub">长任务进行中，OnLoop 检查水位 156000/200000（78% &gt; 75% 阈值）→ 发 <code class="inline">session.trimming</code> 事件 → 就地折叠。下图为整理后的消息序列（<b>立即生效</b>，下次模型调用即新上下文）：</p>
+    <div class="msg-stack">
+      <div class="msg"><div class="who system">system</div><pre>（不动）</pre></div>
+      <div class="msg"><div class="who user">user × 4</div><pre>（保留的末 4 条：孤儿 tool 已前移配对，协议完整）</pre></div>
+      <div class="msg"><div class="who inject">user · 注入</div><pre><span class="hl">&lt;context_trim kept="4"&gt;</span>\n（系统自动整理，非用户发言，无需回应）\n此前的早期对话已折叠出模型上下文，整理结果已写入进度档案 sessions/…/progress.md。当前任务衔接摘要：\n【已完成】…\n【正在做】…\n【待办】…\n【关键事实】…\n<span class="hl">&lt;/context_trim&gt;</span></pre></div>
+    </div>
+    <p class="sub">会话身份不变（不换库不切线）；被折叠的早期消息进入 Metadata 折叠段，sessionstore 落盘时经 MergeFull 合成全量——前端时间线上整理位置仍可见（note 分割线），只是模型视图不再包含。</p>
+
+    <h3 id="ctx-warp">3.8 warp 双链（先注册 = 外层）</h3>
+    <div class="diagram-card">
+<pre class="mermaid">
+flowchart LR
+    subgraph 模型链
+        MD["modeldump&lt;br/&gt;调试打印（最外，重试不重打）"]:::m --> MR["modelretry&lt;br/&gt;指数退避（流式已出 chunk 不重试）"]:::m --> VG["visionguard&lt;br/&gt;无视觉剥请求图"]:::m --> API["provider 真实 API"]:::m
+    end
+</pre>
+    </div>
+    <div class="diagram-card">
+<pre class="mermaid">
+flowchart LR
+    subgraph 工具链
+        TA["toolarg&lt;br/&gt;&lt;@toolArg&gt; 执行前展开"]:::t --> LM["limit(4)&lt;br/&gt;同轮并发上限"]:::t --> ST["safetool&lt;br/&gt;panic 恢复为 error"]:::t --> TOOL["工具本体"]:::t
+    end
+</pre>
+    </div>
+    <table>
+      <tr><th>warp</th><th>行为</th><th>关键细节</th></tr>
+      <tr><td><b>modeldump</b></td><td>全量输入打印</td><td>打印前副本截断（每字段 48 字符 + <code>…(N chars)</code>），头部附 img-chars 统计——防止 base64 刷屏日志</td></tr>
+      <tr><td><b>modelretry</b></td><td>指数退避重试</td><td>流式已出 chunk 不重试（前端已有半截输出）；<b>模型层错误必须在 provider 装饰器处理</b>——引擎在模型节点失败即终止，hook 拦不到</td></tr>
+      <tr><td><b>visionguard</b></td><td>无视觉模型剥图</td><td>每次实际请求（含 retry）剥请求视图里全部 user Images，<code>&lt;image_loaded&gt;</code> 开标签注入 <code>omitted="当前模型可能已切换，不支持图片输入"</code>——<b>只改请求副本，落盘历史不动</b>，换回多模态图片自动恢复</td></tr>
+      <tr><td><b>toolarg</b></td><td>参数语法糖</td><td>两遍遍历（收集验证 → 展开替换）；<b>入史参数保持原文</b>（时间线所见即模型所说），展开只发生在执行侧；单文件上限 200000 字符</td></tr>
+      <tr><td><b>limit(4)</b></td><td>并发闸</td><td>同批工具调用的信号量</td></tr>
+      <tr><td><b>safetool</b></td><td>panic 恢复</td><td>工具 panic 转为 error 结果，不炸整轮</td></tr>
+    </table>
+    <p class="sub">warp 实例 per-Run 独立（fork 复刻 warp 链，分身输入同样可见）。</p>
+
+    <h3 id="ctx-tags">3.9 特殊 tag 契约速查（前后端硬契约）</h3>
+    <table>
+      <tr><th>tag</th><th>生成者</th><th>模型可见</th><th>前端实时路径</th><th>前端历史路径</th></tr>
+      <tr><td><code>&lt;agent_status&gt;</code></td><td>remind 快照段</td><td>✓</td><td>status.snapshot 事件</td><td>关键词「整理上下文」识别进时间线</td></tr>
+      <tr><td><code>&lt;resource_change&gt;</code></td><td>remind 变更段</td><td>✓</td><td>resource.change 事件</td><td>标签 + <code>- </code> 行（变更卡；available_ 行只给模型）</td></tr>
+      <tr><td><code>&lt;reference_file&gt;</code></td><td>reference_file</td><td>✓</td><td>发送时本地 push user 块</td><td>解析 JSON 载荷 → files/fileRefs chips</td></tr>
+      <tr><td><code>&lt;image_loaded&gt;</code> 包裹</td><td>filetools OnLoop</td><td>✓（Images base64）</td><td>filetools.image_loaded 事件</td><td>标签体 + m.images</td></tr>
+      <tr><td><code>&lt;image_loaded path=…/&gt;</code> 自闭合</td><td>read_file 工具结果</td><td>✓（保留不改写）</td><td>工具卡结果原文</td><td>同左（不解析）</td></tr>
+      <tr><td><code>&lt;end_reason&gt;</code></td><td>remind 收尾段</td><td>✓</td><td>turn_end 合成 endtick</td><td>正则提取字段</td></tr>
+      <tr><td><code>&lt;context_trim kept="N"&gt;</code></td><td>trim</td><td>✓</td><td>session.trim 事件（note 块）</td><td>标签 → note 分割线（【已完成】锚点截 160 字；同内容落 progress.md）</td></tr>
+      <tr><td><code>&lt;$supper_url&gt;…</code></td><td>模型输出占位语法</td><td>✓（正文）</td><td>marked extension 实时解析：https:// 外链 / term://终端id 拉开终端抽屉定位 / app://快应用名 开子窗 / browser://标签id 聚焦共享浏览器窗口</td><td>同左（同一渲染管线）</td></tr>
+      <tr><td><code>&lt;@toolArg&gt;…</code></td><td>模型工具参数</td><td>✓（入史保持原文）</td><td>工具卡显示原文</td><td>同左</td></tr>
+    </table>
+    <div class="tip warn">
+      <b>改任一 tag 格式的连带清单</b>见 AGENTS.md；行前缀 <code>- </code> 与关键词「整理上下文」是硬契约。改事件协议检查三处：后端 <code>MapEvent</code>（event.go）、<code>replayable</code> 名单（session.go）、前端 <code>apply</code> case（含幂等性——所有可回放帧的 apply 必须幂等）。
+    </div>
+  </section>
+
+  <!-- ═══════════════ 04 产品视角 ═══════════════ -->
+  <section id="ch-interaction">
+    <h2><span class="no">第四章</span>产品视角 · 人机协同交互</h2>
+    <p class="sub">agent 的能力边界再大，落到用户手里的只是几个交互面。ezharness 把人机协同交互工具<b>外置</b>——不塞进对话流硬凑，做成独立的产品面，让用户在 agent 工作时能看、能改、能答。核心理念：<b>为用户提供最简单的交互方案</b>——上下文工程、工具封装、人机交互三支柱，能力越复杂，落到用户手里的越要简单。</p>
+
+    <h3>决策链路：四档审批策略</h3>
+    <table>
+      <tr><th>档位</th><th>行为</th></tr>
+      <tr><td><code>ask</code> 每次审批</td><td>所有工具调用都出决策卡等用户</td></tr>
+      <tr><td><code>black</code> 黑名单</td><td>名单内的出决策卡，其余放行</td></tr>
+      <tr><td><code>white</code> 白名单</td><td>名单内的放行，其余出决策卡</td></tr>
+      <tr><td><code>auto</code> 全部免审</td><td>全自动（人机与内部工具恒免审不受档位影响）</td></tr>
+    </table>
+    <ul>
+      <li>审批 / 询问两型 <b>DecisionCard</b> 嵌在时间线，设置页即时生效</li>
+      <li>悬置请求登记 pending——断线重连可重放；刷新后由 decisions.jsonl 重建</li>
+      <li>轮已结束的过期决策自动丢弃</li>
+    </ul>
+
+    <h3>全局通知栏：跨分支找到你</h3>
+    <ul>
+      <li>汇总<b>所有分支（含后台分支与分身）</b>的未决请求——无论用户停在哪个分支哪个页面，agent 需要人时一定能找到人</li>
+      <li>通知内联直接决策（乐观移除）；「查看」跳转：跨分支先切线，分身请求开分身抽屉定位决策卡</li>
+      <li>服务端为唯一真相，内容不变不换引用，防前端抖动</li>
+    </ul>
+
+    <h3>共享终端：人机共用同一个真实 shell</h3>
+    <div class="diagram-card">
+<pre class="mermaid">
+flowchart LR
+    subgraph TERM["ConPTY 全局公共池 · 跨会话共享"]
+        PT["真实 shell&lt;br/&gt;环形缓冲 256KB"]:::core
+    end
+    AG["🤖 agent&lt;br/&gt;term_send / term_read"]:::side --> PT
+    US["👤 用户&lt;br/&gt;xterm 直接敲"]:::side --> PT
+    PT -- "readMark 单游标&lt;br/&gt;读即消费" --> AG
+
+    classDef core fill:#072331,stroke:#00add8,color:#9be5f7
+    classDef side fill:#0b1322,stroke:#33496e,color:#c4cede
+    style TERM fill:#0a101d,stroke:#33496e,stroke-dasharray:6 4
+</pre>
+    </div>
+    <div class="diagram-cap">不是 agent 私有的副本：agent 的工作目录与终端一致，用户随时接管、演示、纠错；输出进同一环形缓冲，双方读的是同一条流。</div>
+    <ul>
+      <li>单条 WebSocket 多路复用全部终端（帧带 id 路由，断线指数退避重连，环形缓冲恢复快照）</li>
+      <li>终端<b>全局共享</b>（个人助手语义）；各会话的终端基线独立——A 会话首轮见到 B 会话开的终端报"新增"是<b>设计</b>（各会话模型知悉全局水位）</li>
+      <li>readMark 单游标：term_send 与 term_read 共用，send 返回增量后必须推进，否则 read 重复输出</li>
+    </ul>
+
+    <h3>共享浏览器：AI 操作、用户共见</h3>
+    <div class="diagram-card">
+<pre class="mermaid">
+flowchart LR
+    subgraph COREP["core · 桥服务端"]
+        BT["browser_* 工具十件套&lt;br/&gt;定义/审批在 core（tools 层不感知实现）"]:::core
+    end
+    subgraph DESK["desktop · 浏览器窗口 = 壳的资产"]
+        EXE["执行器&lt;br/&gt;WebContentsView.webContents 直接操作"]:::side
+        VIEW["👤 用户共见&lt;br/&gt;原生交互（点击 / IME / 视频）"]:::side
+    end
+    AI["🤖 agent"]:::side -- "工具调用" --> BT
+    BT -- "WS 桥 /api/browser/bridge&lt;br/&gt;JSON-RPC 转发 + 回执" --> EXE
+    EXE --- VIEW
+
+    classDef core fill:#072331,stroke:#00add8,color:#9be5f7
+    classDef side fill:#0b1322,stroke:#33496e,color:#c4cede
+    style COREP fill:#0a101d,stroke:#00add8,stroke-dasharray:6 4
+    style DESK fill:#0a101d,stroke:#33496e,stroke-dasharray:6 4
+</pre>
+    </div>
+    <div class="diagram-cap">真实浏览器 = Electron 主进程的 WebContentsView（每标签一个，partition persist:ezbrowser 登录态共享）；浏览器抽屉只画 UI 框架（标签条 / 地址栏，同一份 SPA 的 ?popout=browser 形态），内容区不挂 DOM——由渲染层上报 rect、主进程 setBounds 贴靠。</div>
+    <ul>
+      <li><b>AI 开始操作 → 浏览器窗口自动弹出置前</b>（共见）；<b>用户关窗 = 隐藏保留</b>（标签后台存活，AI 可能正在用）</li>
+      <li>核心链路：AI 调 <code class="inline">browser_start / navigate / click / type / read / screenshot</code> 等 → core 经 WS 桥转发 → 壳执行器直接操作对应标签的 webContents → 回执（截图 base64 回传落盘，多模态可读）</li>
+      <li>桥未连接（web 端访问）时工具报「仅桌面端可用」——主应用无浏览器残缺 UI，端无关原则</li>
+    </ul>
+
+    <div class="tip">
+      <b>快速上手：</b>Releases 下载绿色版 / 安装包——<b>exe 在哪运行，配置与数据就在哪生成</b>（ezharness.json + data\ 就地创建，零配置可用）。「模型」页填 apiKey 即可对话；
+      纯 server 形态：直接运行 ezharness-core.exe，浏览器访问 <code class="inline">http://127.0.0.1:&lt;port&gt;</code>——与桌面端同一份页面（浏览器控制等桌面专属能力自动降级）。
+    </div>
+  </section>
+
+  <!-- ═══════════════ 附录 ═══════════════ -->
+  <section id="appendix">
+    <h2><span class="no">附录</span>深读文档索引</h2>
+    <p class="sub">本页是全景与速查；细节文档（md/ 目录）与各主题一一对应，改代码前先扫对应篇。</p>
+    <table>
+      <tr><th>文档</th><th>内容</th></tr>
+      <tr><td><a href="md/architecture.md">architecture.md</a></td><td>系统整体架构：分层、双仓库、数据目录、三通道（第一章底稿）</td></tr>
+      <tr><td><a href="md/session.md">session.md</a></td><td>session 设计：树、SessionSnap、三种演进、恢复、不变量（第二章底稿）</td></tr>
+      <tr><td><a href="md/runtime.md">runtime.md</a></td><td>运行时：hook 组成与一轮 chat 全流程、上下文消息全表（第三章底稿）</td></tr>
+      <tr><td><a href="md/frontend.md">frontend.md</a></td><td>前端：SSE 事件全集与归约、历史重载解析、Block 类型、tag 契约</td></tr>
+      <tr><td><a href="md/hooks.md">hooks.md</a></td><td>封装原则：四步范式与 ezloop / ezharness 分界判据</td></tr>
+      <tr><td><a href="md/context.md">context.md</a></td><td>上下文工程：system 组装、trim 双触发、agent_status 快照、guard 兜底</td></tr>
+      <tr><td><a href="md/compaction.md">compaction.md</a></td><td>trim 与 compact 分工：模型侧折叠 vs 用户侧沉淀换代</td></tr>
+      <tr><td><a href="build.md">build.md</a> · <a href="interaction.md">interaction.md</a></td><td>构建方案 / 人机交互设计</td></tr>
+      <tr><td><code>AGENTS.md</code>（仓库根）</td><td>开发备忘：变更连带检查清单与易踩的坑——改 remind / 工具面 / skill / 终端 / SSE / warp 前必扫</td></tr>
+    </table>
+    <div class="tip">
+      <b>三大原则回顾：</b>① 对话不是唯一的通道（决策、观察、操作各有专门产品面）；
+      ② 状态即消息（全部状态是可落盘的消息库与 system，重启即恢复，折叠不丢档）；
+      ③ 一切面向用户简化（零配置、文件夹即存储、桌面与浏览器同一份页面）。
+    </div>
+  </section>
+
+</main>
+
+<footer>
+  ezharness — 简单，交给用户 ·
+  <a href="https://github.com/xuanlv2002/ezharness" target="_blank">GitHub</a> ·
+  深读文档见 <a href="md/architecture.md">architecture.md</a> /
+  <a href="md/session.md">session.md</a> /
+  <a href="md/runtime.md">runtime.md</a> /
+  <a href="md/frontend.md">frontend.md</a> /
+  <a href="md/hooks.md">hooks.md</a>
+</footer>
+
+<script>
+  // ── 粒子特效：漂浮光点 + 邻近连线 + 鼠标扰动 ──
+  (function () {
+    var canvas = document.getElementById('particles');
+    if (!canvas) return;
+    var ctx = canvas.getContext('2d');
+    var hero = canvas.parentElement;
+    var dpr = Math.min(window.devicePixelRatio || 1, 2);
+    var W, H, parts = [], bursts = [], trail = [];
+    var mouse = { x: -9999, y: -9999 };
+    var reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+    function resize() {
+      W = hero.clientWidth; H = hero.clientHeight;
+      canvas.width = W * dpr; canvas.height = H * dpr;
+      canvas.style.width = W + 'px'; canvas.style.height = H + 'px';
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      var n = Math.max(36, Math.min(110, Math.round(W * H / 16000)));
+      parts = [];
+      for (var i = 0; i < n; i++) {
+        var big = Math.random() < .07;
+        var vx = (Math.random() - .5) * .35, vy = (Math.random() - .5) * .35;
+        parts.push({
+          x: Math.random() * W, y: Math.random() * H,
+          bvx: vx, bvy: vy, vx: vx, vy: vy,
+          r: big ? 2 + Math.random() * 1.4 : .6 + Math.random() * 1.2,
+          base: big ? .5 + Math.random() * .4 : .12 + Math.random() * .5,
+          phase: Math.random() * Math.PI * 2,
+          speed: .4 + Math.random() * 1.1,
+          big: big,
+          violet: Math.random() < .25
+        });
+      }
+    }
+
+    function step(t) {
+      ctx.clearRect(0, 0, W, H);
+      ctx.globalCompositeOperation = 'lighter';
+      var i, j, p, q;
+
+      if (mouse.x > -999) {
+        var mg = ctx.createRadialGradient(mouse.x, mouse.y, 0, mouse.x, mouse.y, 110);
+        mg.addColorStop(0, 'rgba(125,211,252,.16)');
+        mg.addColorStop(.5, 'rgba(125,211,252,.05)');
+        mg.addColorStop(1, 'rgba(125,211,252,0)');
+        ctx.fillStyle = mg;
+        ctx.fillRect(mouse.x - 110, mouse.y - 110, 220, 220);
+      }
+
+      for (i = 1; i < trail.length; i++) {
+        var ta = i / trail.length;
+        ctx.strokeStyle = 'rgba(160,220,255,' + (ta * .32) + ')';
+        ctx.lineWidth = ta * 2.6;
+        ctx.lineCap = 'round';
+        ctx.beginPath();
+        ctx.moveTo(trail[i - 1].x, trail[i - 1].y);
+        ctx.lineTo(trail[i].x, trail[i].y);
+        ctx.stroke();
+      }
+
+      for (i = 0; i < parts.length; i++) {
+        p = parts[i];
+        p.x += p.vx; p.y += p.vy;
+        var dx = p.x - mouse.x, dy = p.y - mouse.y;
+        var md2 = dx * dx + dy * dy;
+        if (md2 < 25600 && md2 > 25) {
+          var md = Math.sqrt(md2);
+          var ux = dx / md, uy = dy / md;
+          var pull = .02 * (1 - md / 160);
+          var tang = pull * 1.5;
+          p.vx += -ux * pull + -uy * tang;
+          p.vy += -uy * pull + ux * tang;
+          p.vx *= .984; p.vy *= .984;
+          var sp2 = p.vx * p.vx + p.vy * p.vy;
+          if (sp2 > .81) { var sc = .9 / Math.sqrt(sp2); p.vx *= sc; p.vy *= sc; }
+        } else {
+          p.vx += (p.bvx - p.vx) * .006;
+          p.vy += (p.bvy - p.vy) * .006;
+        }
+        if (p.x < -14) p.x = W + 14; if (p.x > W + 14) p.x = -14;
+        if (p.y < -14) p.y = H + 14; if (p.y > H + 14) p.y = -14;
+      }
+
+      for (i = 0; i < parts.length; i++) {
+        p = parts[i];
+        var a = p.base * (.55 + .45 * Math.sin(t * .001 * p.speed + p.phase));
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, p.r * (p.big ? 4 : 3), 0, 6.2832);
+        ctx.fillStyle = p.violet ? 'rgba(167,139,250,' + (a * .16) + ')' : 'rgba(125,211,252,' + (a * .18) + ')';
+        ctx.fill();
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, p.r, 0, 6.2832);
+        ctx.fillStyle = p.big ? 'rgba(240,250,255,' + Math.min(1, a + .35) + ')'
+              : p.violet ? 'rgba(196,181,253,' + a + ')' : 'rgba(226,232,240,' + a + ')';
+        ctx.fill();
+      }
+
+      ctx.lineWidth = .6;
+      for (i = 0; i < parts.length; i++) {
+        p = parts[i];
+        for (j = i + 1; j < parts.length; j++) {
+          q = parts[j];
+          var ddx = p.x - q.x, ddy = p.y - q.y;
+          var d2 = ddx * ddx + ddy * ddy;
+          if (d2 < 12100) {
+            var la = (1 - Math.sqrt(d2) / 110) * .1;
+            ctx.strokeStyle = 'rgba(148,197,253,' + la + ')';
+            ctx.beginPath(); ctx.moveTo(p.x, p.y); ctx.lineTo(q.x, q.y); ctx.stroke();
+          }
+        }
+      }
+
+      if (mouse.x > -999) {
+        for (i = 0; i < parts.length; i++) {
+          p = parts[i];
+          var mx = p.x - mouse.x, my = p.y - mouse.y;
+          var mdd = mx * mx + my * my;
+          if (mdd < 25600) {
+            ctx.strokeStyle = 'rgba(125,211,252,' + ((1 - Math.sqrt(mdd) / 160) * .3) + ')';
+            ctx.lineWidth = .8;
+            ctx.beginPath(); ctx.moveTo(mouse.x, mouse.y); ctx.lineTo(p.x, p.y); ctx.stroke();
+          }
+        }
+      }
+
+      for (i = bursts.length - 1; i >= 0; i--) {
+        var b = bursts[i];
+        b.x += b.vx; b.y += b.vy;
+        b.vx *= .955; b.vy *= .955;
+        b.life -= .018;
+        if (b.life <= 0) { bursts.splice(i, 1); continue; }
+        ctx.beginPath();
+        ctx.arc(b.x, b.y, b.r * 3.5, 0, 6.2832);
+        ctx.fillStyle = b.violet ? 'rgba(167,139,250,' + (b.life * .2) + ')' : 'rgba(125,211,252,' + (b.life * .22) + ')';
+        ctx.fill();
+        ctx.beginPath();
+        ctx.arc(b.x, b.y, b.r, 0, 6.2832);
+        ctx.fillStyle = 'rgba(240,250,255,' + b.life + ')';
+        ctx.fill();
+      }
+
+      ctx.globalCompositeOperation = 'source-over';
+      if (!reduced) requestAnimationFrame(step);
+    }
+
+    hero.addEventListener('mousemove', function (e) {
+      var rect = canvas.getBoundingClientRect();
+      mouse.x = e.clientX - rect.left; mouse.y = e.clientY - rect.top;
+      trail.push({ x: mouse.x, y: mouse.y });
+      if (trail.length > 26) trail.shift();
+    });
+    hero.addEventListener('mouseleave', function () {
+      mouse.x = -9999; mouse.y = -9999; trail.length = 0;
+    });
+    hero.addEventListener('click', function (e) {
+      if (reduced) return;
+      var rect = canvas.getBoundingClientRect();
+      var x = e.clientX - rect.left, y = e.clientY - rect.top;
+      for (var i = 0; i < 26; i++) {
+        var ang = Math.random() * 6.2832, sp = 1 + Math.random() * 3.4;
+        bursts.push({
+          x: x, y: y,
+          vx: Math.cos(ang) * sp, vy: Math.sin(ang) * sp,
+          life: 1, r: .8 + Math.random() * 1.8,
+          violet: Math.random() < .3
+        });
+      }
+    });
+    window.addEventListener('resize', resize);
+    resize();
+    requestAnimationFrame(step);
+
+    // ── 滚动高亮当前导航项 ──
+    var links = document.querySelectorAll('nav a.item');
+    var map = {};
+    links.forEach(function (l) { map[l.getAttribute('href').slice(1)] = l; });
+    var observer = new IntersectionObserver(function (entries) {
+      entries.forEach(function (en) {
+        if (en.isIntersecting) {
+          links.forEach(function (l) { l.classList.remove('active'); });
+          var link = map[en.target.id];
+          if (link) link.classList.add('active');
+        }
+      });
+    }, { rootMargin: '-20% 0px -70% 0px' });
+    document.querySelectorAll('section[id]').forEach(function (s) { observer.observe(s); });
+  })();
+</script>
+
+<script type="module">
+  import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
+  mermaid.initialize({
+    startOnLoad: false,
+    theme: 'base',
+    themeVariables: {
+      darkMode: true,
+      background: '#0a101d',
+      primaryColor: '#0b1322',
+      primaryTextColor: '#e8edf6',
+      primaryBorderColor: '#33496e',
+      lineColor: '#64748b',
+      edgeLabelBackground: '#0a101d',
+      clusterBkg: '#0a101d',
+      clusterBorder: '#33496e',
+      fontFamily: '-apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif',
+      fontSize: '13px'
+    }
+  });
+  mermaid.run({ querySelector: '.mermaid' });
+</script>
+</body>
+</html>
