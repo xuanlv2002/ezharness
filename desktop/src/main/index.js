@@ -375,7 +375,7 @@ app.whenReady().then(async () => {
   createTray()
   registerIpc()
   startBrowserModule({ corePort, token: coreToken, getParentWindow: () => mainWindow, findBrowserOwner: () => findBrowserPopout() })
-})
+}).catch((err) => console.error('启动失败:', err))
 
 /* 托盘常驻：全部窗口关闭不退出（退出只走托盘菜单/关闭确认） */
 app.on('window-all-closed', () => {})

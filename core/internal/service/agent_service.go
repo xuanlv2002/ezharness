@@ -16,6 +16,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"slices"
@@ -263,7 +264,7 @@ func (a *AgentService) Assemble(s *domain.Session, st domain.Settings) {
 			approver,
 			asker,
 			task.New(),
-			NewMcpHook(s.Fsys, a.McpRouter),
+			NewMcpHook(context.Background(), s.Fsys, a.McpRouter),
 			offload.New(s.Fsys, offload.WithSkip(askuser.ToolName, task.ToolName, skilltool.ToolName), offload.WithReplayTool("read_file"),
 				offload.WithAbs(func(p string) string { // 提示给绝对路径：模型不知道 FS 挂载基准，按工作目录拼相对路径必错
 					if abs, err := filepath.Abs(p); err == nil {
@@ -342,7 +343,9 @@ func (a *AgentService) RecognizeImage(ctx context.Context, path, question string
 	}
 	{
 		if a.Hub.ApplyVisionUsage(&resp.Usage) {
-			_ = SaveModelsConfig(a.Hub.Fsys, a.Hub.ModelsSnapshot())
+			if err := SaveModelsConfig(context.Background(), a.Hub.Fsys, a.Hub.ModelsSnapshot()); err != nil {
+				log.Printf("视觉用量落盘失败: %v", err)
+			}
 		}
 	}
 	return resp.Content, nil
@@ -662,7 +665,7 @@ func briefSeg(s string, max int) string {
 
 /* mcpListLines 返回启用 server 的"名: 描述"清单。 */
 func mcpListLines(fsys osfs.OS) []string {
-	f := loadMcpFileOrNil(fsys)
+	f := loadMcpFileOrNil(context.Background(), fsys)
 	if f == nil {
 		return nil
 	}
@@ -681,7 +684,7 @@ func mcpListLines(fsys osfs.OS) []string {
 
 /* mcpStatusList 返回 MCP 清单（remind 变更基线与 available 清单用）。 */
 func mcpStatusList(fsys osfs.OS) []hooks.StatusMcp {
-	f := loadMcpFileOrNil(fsys)
+	f := loadMcpFileOrNil(context.Background(), fsys)
 	if f == nil {
 		return nil
 	}

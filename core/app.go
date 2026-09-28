@@ -113,8 +113,11 @@ func (a *app) restart(port int, listen, dataDir string, ln net.Listener) {
 	go func() { _ = srv.Serve(ln) }()
 }
 
-/* stop 关停当前代并释放系统级资源（MCP 连接池；托盘退出/关窗/进程信号时），幂等。
-换代走 restart，router 不在此路径释放（跨代常驻）。 */
+/*
+	stop 关停当前代并释放系统级资源（MCP 连接池；托盘退出/关窗/进程信号时），幂等。
+
+换代走 restart，router 不在此路径释放（跨代常驻）。
+*/
 func (a *app) stop() {
 	a.shutdownGeneration()
 	a.mu.Lock()
@@ -172,8 +175,12 @@ func syncDrained(dataDir, activeID string) {
 	}
 	for _, f := range []string{"stats.json", "topics.json"} {
 		if data, err := os.ReadFile(filepath.Join(cwd, f)); err == nil {
-			_ = os.WriteFile(filepath.Join(dataDir, f), data, 0o644)
+			if wErr := os.WriteFile(filepath.Join(dataDir, f), data, 0o644); wErr != nil {
+				log.Printf("换代同步 %s 失败: %v", f, wErr)
+			}
 		}
 	}
-	_ = osfs.CopyDir(filepath.Join(cwd, "sessions", activeID), filepath.Join(dataDir, "sessions", activeID), true)
+	if err := osfs.CopyDir(filepath.Join(cwd, "sessions", activeID), filepath.Join(dataDir, "sessions", activeID), true); err != nil {
+		log.Printf("换代同步活动会话失败（%s）: %v", activeID, err)
+	}
 }

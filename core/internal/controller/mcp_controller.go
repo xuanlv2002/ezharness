@@ -17,7 +17,7 @@ type McpController struct {
 
 /* List GET /api/mcp。 */
 func (c *McpController) List(g *gin.Context) {
-	g.JSON(http.StatusOK, gin.H{"servers": c.Svc.List()})
+	g.JSON(http.StatusOK, gin.H{"servers": c.Svc.List(g.Request.Context())})
 }
 
 /* Update POST /api/mcp（下一轮迭代热加载生效）。 */
@@ -27,7 +27,7 @@ func (c *McpController) Update(g *gin.Context) {
 		g.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	if err := c.Svc.Update(f); err != nil {
+	if err := c.Svc.Update(g.Request.Context(), f); err != nil {
 		g.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}

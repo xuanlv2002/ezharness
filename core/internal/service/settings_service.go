@@ -55,7 +55,7 @@ func (s *SettingsService) Get() SettingsView {
 }
 
 /* Update 保存行为设置并重建 agent（busy 时拒绝；水位随 Reassemble 生效）。 */
-func (s *SettingsService) Update(v SettingsView) error {
+func (s *SettingsService) Update(ctx context.Context, v SettingsView) error {
 	st := s.Hub.SettingsSnapshot()
 	st.SystemExtra = v.SystemExtra
 	if v.TrimPercent != nil {
@@ -86,7 +86,7 @@ func (s *SettingsService) Update(v SettingsView) error {
 			}
 		}
 	}
-	if err := SaveSettings(s.Hub.Fsys, st); err != nil {
+	if err := SaveSettings(ctx, s.Hub.Fsys, st); err != nil {
 		return err
 	}
 	s.Hub.ApplySettings(st)
@@ -121,7 +121,7 @@ func normalizeModels(m domain.ModelsConfig) domain.ModelsConfig {
 
 有启用条目——能力槽允许全部停用）并重建 agent（busy 时拒绝）。
 */
-func (s *SettingsService) UpdateModels(m domain.ModelsConfig) error {
+func (s *SettingsService) UpdateModels(ctx context.Context, m domain.ModelsConfig) error {
 	if len(m.Main) == 0 {
 		return errors.New("main 槽至少需要一个模型")
 	}
@@ -148,7 +148,7 @@ func (s *SettingsService) UpdateModels(m domain.ModelsConfig) error {
 			return fmt.Errorf("%s 槽至多启用一个模型", slot)
 		}
 	}
-	if err := SaveModelsConfig(s.Hub.Fsys, normalizeModels(m)); err != nil {
+	if err := SaveModelsConfig(ctx, s.Hub.Fsys, normalizeModels(m)); err != nil {
 		return err
 	}
 	s.Hub.ApplyModels(m)
@@ -177,7 +177,7 @@ func (s *SettingsService) SecurityRules() []domain.ToolRule {
 }
 
 /* UpdateSecurity 保存审批策略。needsApprove 运行时读设置快照，即时生效。 */
-func (s *SettingsService) UpdateSecurity(rules []domain.ToolRule) error {
+func (s *SettingsService) UpdateSecurity(ctx context.Context, rules []domain.ToolRule) error {
 	valid := map[domain.Level]bool{
 		domain.LevelAsk: true, domain.LevelBlack: true,
 		domain.LevelWhite: true, domain.LevelAuto: true,
@@ -190,7 +190,7 @@ func (s *SettingsService) UpdateSecurity(rules []domain.ToolRule) error {
 			return errors.New("task 只支持 审批/免审（分身继承主 agent 策略）")
 		}
 	}
-	if err := SaveToolRules(s.Hub.Fsys, rules); err != nil {
+	if err := SaveToolRules(ctx, s.Hub.Fsys, rules); err != nil {
 		return err
 	}
 	s.Hub.ApplyToolRules(rules)
@@ -239,13 +239,13 @@ type MemoryConfigView struct {
 }
 
 /* Config 汇总记忆页数据（目录缺失容错为空列表）。 */
-func (m *MemoryService) Config() MemoryConfigView {
+func (m *MemoryService) Config(ctx context.Context) MemoryConfigView {
 	var v MemoryConfigView
 	v.Longterm.Dir = hooks.LongtermDir
 	v.Skills.Dir = hooks.SkillsDir
 	v.Topics.Dir = hooks.SessionsDir
 
-	if entries, err := m.Hub.Fsys.List(context.Background(), hooks.LongtermDir); err == nil {
+	if entries, err := m.Hub.Fsys.List(ctx, hooks.LongtermDir); err == nil {
 		for _, e := range entries {
 			if e.IsDir {
 				continue
@@ -266,7 +266,7 @@ func (m *MemoryService) Config() MemoryConfigView {
 			Enabled: !slices.Contains(disabled, id), Builtin: true,
 		})
 	}
-	if entries, err := skill.LoadDir(context.Background(), m.Hub.Fsys, hooks.SkillsDir); err == nil {
+	if entries, err := skill.LoadDir(ctx, m.Hub.Fsys, hooks.SkillsDir); err == nil {
 		for _, s := range entries {
 			id := hooks.SkillDirOf(s.Path)
 			v.Skills.Items = append(v.Skills.Items, SkillEntryView{
@@ -294,14 +294,14 @@ func fileMtime(path string) string {
 }
 
 /* GetMemory 返回 harness.md 内容。 */
-func (m *MemoryService) GetMemory() string {
-	data, _ := m.Hub.Fsys.Read(context.Background(), hooks.HarnessMd)
+func (m *MemoryService) GetMemory(ctx context.Context) string {
+	data, _ := m.Hub.Fsys.Read(ctx, hooks.HarnessMd)
 	return string(data)
 }
 
 /* SaveMemory 写入 harness.md（下一轮对话即注入 system）。 */
-func (m *MemoryService) SaveMemory(content string) error {
-	return m.Hub.Fsys.Write(context.Background(), hooks.HarnessMd, []byte(content))
+func (m *MemoryService) SaveMemory(ctx context.Context, content string) error {
+	return m.Hub.Fsys.Write(ctx, hooks.HarnessMd, []byte(content))
 }
 
 /* ── 技能管理：启停 / 删除 / zip 新建 ── */
@@ -340,7 +340,7 @@ ToggleSkill 切换技能启停（DisabledSkills 名单按目录名增删）。lo
 与状态面板经闭包实时读取设置快照，即时生效；system 清单是 session 级
 快照，下个 session 生效（与 skill 文件编辑同语义）。
 */
-func (m *MemoryService) ToggleSkill(id string, enabled bool) error {
+func (m *MemoryService) ToggleSkill(ctx context.Context, id string, enabled bool) error {
 	if !validSkillID(id) {
 		return fmt.Errorf("非法技能名 %q", id)
 	}
@@ -354,7 +354,7 @@ func (m *MemoryService) ToggleSkill(id string, enabled bool) error {
 	default:
 		return nil
 	}
-	if err := SaveSettings(m.Hub.Fsys, st); err != nil {
+	if err := SaveSettings(ctx, m.Hub.Fsys, st); err != nil {
 		return err
 	}
 	m.Hub.ApplySettings(st)
@@ -362,7 +362,7 @@ func (m *MemoryService) ToggleSkill(id string, enabled bool) error {
 }
 
 /* DeleteSkill 删除技能目录（连同 scripts 等子资源），并清理禁用名单残留。 */
-func (m *MemoryService) DeleteSkill(id string) error {
+func (m *MemoryService) DeleteSkill(ctx context.Context, id string) error {
 	if !validSkillID(id) {
 		return fmt.Errorf("非法技能名 %q", id)
 	}
@@ -378,7 +378,7 @@ func (m *MemoryService) DeleteSkill(id string) error {
 	}
 	if st := m.Hub.SettingsSnapshot(); slices.Contains(st.DisabledSkills, id) {
 		st.DisabledSkills = slices.DeleteFunc(st.DisabledSkills, func(s string) bool { return s == id })
-		if err := SaveSettings(m.Hub.Fsys, st); err != nil {
+		if err := SaveSettings(ctx, m.Hub.Fsys, st); err != nil {
 			return err
 		}
 		m.Hub.ApplySettings(st)
@@ -397,7 +397,7 @@ CreateSkill 从 zip 压缩包新建技能，目录名自动推导：单文件夹
 取外层文件夹名，平铺取 SKILL.md frontmatter 的 name。解压写入
 memory/skills/<名>/，zip 需含根级 SKILL.md（唯一必需文件）。
 */
-func (m *MemoryService) CreateSkill(zipData []byte) error {
+func (m *MemoryService) CreateSkill(ctx context.Context, zipData []byte) error {
 	if len(zipData) > skillZipMax {
 		return errors.New("压缩包超过 20MB 上限")
 	}
@@ -415,7 +415,6 @@ func (m *MemoryService) CreateSkill(zipData []byte) error {
 	if _, err := os.Stat(hooks.SkillsDir + "/" + name); err == nil {
 		return fmt.Errorf("技能 %q 已存在", name)
 	}
-	ctx := context.Background()
 	for _, f := range files {
 		if err := m.Hub.Fsys.Write(ctx, hooks.SkillsDir+"/"+name+"/"+f.name, f.data); err != nil {
 			return fmt.Errorf("写入 %q 失败: %w", f.name, err)

@@ -21,6 +21,14 @@ import (
 	"github.com/coder/websocket"
 )
 
+/* 桥调用等待上限分档：交互动作可等页面响应，快操作秒级，轮首快照不能拖住轮。 */
+const (
+	bridgeWriteTimeout = 5 * time.Second  // WS 帧发送
+	bridgeOpTimeout    = 30 * time.Second // click/type/key/scroll 与 read/screenshot 默认
+	bridgeQuickTimeout = 15 * time.Second // close/list
+	bridgeBriefTimeout = 2 * time.Second  // 轮首 TabsBrief 快照
+)
+
 /* bridgeRequest 是 core → desktop 的调用帧。 */
 type bridgeRequest struct {
 	ID     int64          `json:"id"`
@@ -137,7 +145,7 @@ func (s *BrowserService) call(ctx context.Context, method string, params map[str
 	payload, err := json.Marshal(bridgeRequest{ID: id, Method: method, Params: params})
 	if err == nil {
 		s.writeMu.Lock()
-		wctx, wcancel := context.WithTimeout(context.Background(), 5*time.Second)
+		wctx, wcancel := context.WithTimeout(context.Background(), bridgeWriteTimeout)
 		err = conn.Write(wctx, websocket.MessageText, payload)
 		wcancel()
 		s.writeMu.Unlock()
@@ -211,7 +219,7 @@ func (s *BrowserService) NavigateBrowser(ctx context.Context, tabID, rawURL stri
 func (s *BrowserService) ClickBrowser(ctx context.Context, tabID, selector string, x, y int) (string, error) {
 	reply, err := s.call(ctx, "click", map[string]any{
 		"tabId": tabID, "selector": selector, "x": x, "y": y,
-	}, 30*time.Second)
+	}, bridgeOpTimeout)
 	if err != nil {
 		return "", err
 	}
@@ -222,7 +230,7 @@ func (s *BrowserService) ClickBrowser(ctx context.Context, tabID, selector strin
 func (s *BrowserService) TypeBrowser(ctx context.Context, tabID, selector, text string, submit bool) (string, error) {
 	reply, err := s.call(ctx, "type", map[string]any{
 		"tabId": tabID, "selector": selector, "text": text, "submit": submit,
-	}, 30*time.Second)
+	}, bridgeOpTimeout)
 	if err != nil {
 		return "", err
 	}
@@ -245,7 +253,7 @@ func (s *BrowserService) ScrollBrowser(ctx context.Context, tabID, direction str
 	}
 	reply, err := s.call(ctx, "scroll", map[string]any{
 		"tabId": tabID, "direction": direction, "amountPx": amountPx,
-	}, 30*time.Second)
+	}, bridgeOpTimeout)
 	if err != nil {
 		return "", err
 	}
@@ -265,7 +273,7 @@ func (s *BrowserService) ReadBrowser(ctx context.Context, tabID, mode string, ch
 	if chars > 20000 {
 		chars = 20000
 	}
-	timeout := 30 * time.Second
+	timeout := bridgeOpTimeout
 	if timeoutMs > 0 {
 		timeout = time.Duration(timeoutMs+10000) * time.Millisecond
 	}
@@ -287,7 +295,7 @@ image_loaded 标记(由 filetools 转持久化图片消息),无视觉返回路�
 func (s *BrowserService) ScreenshotBrowser(ctx context.Context, tabID string, fullPage bool, timeoutMs int) (string, error) {
 	/* timeoutMs 透传:desktop 先等加载收尾(默认 10000ms)再截,消除
 	"返回即截图"撞首帧未合成的竞态;桥上限 = 等待 + 截图余量 */
-	timeout := 30 * time.Second
+	timeout := bridgeOpTimeout
 	if timeoutMs > 0 {
 		timeout = time.Duration(timeoutMs+20000) * time.Millisecond
 	}
@@ -320,7 +328,7 @@ func (s *BrowserService) ScreenshotBrowser(ctx context.Context, tabID string, fu
 
 /* CloseBrowserTab 关闭标签;幂等,返回 desktop 回执的 closed JSON。 */
 func (s *BrowserService) CloseBrowserTab(ctx context.Context, tabID string) (string, error) {
-	reply, err := s.call(ctx, "close", map[string]any{"tabId": tabID}, 15*time.Second)
+	reply, err := s.call(ctx, "close", map[string]any{"tabId": tabID}, bridgeQuickTimeout)
 	if err != nil {
 		return "", err
 	}
@@ -329,7 +337,7 @@ func (s *BrowserService) CloseBrowserTab(ctx context.Context, tabID string) (str
 
 /* ListBrowserTabsJSON 标签清单 JSON 文本(browser_list 工具直接返回)。 */
 func (s *BrowserService) ListBrowserTabsJSON(ctx context.Context) string {
-	reply, err := s.call(ctx, "list", nil, 15*time.Second)
+	reply, err := s.call(ctx, "list", nil, bridgeQuickTimeout)
 	if err != nil {
 		return fmt.Sprintf(`{"error":%q}`, err.Error())
 	}
@@ -344,9 +352,9 @@ agent_status 快照每轮现查用;id 供模型直接 browser_action/read 与
 自带 2 秒短超时:每轮 OnStart 同步调用,desktop 卡死不能拖住轮首。
 */
 func (s *BrowserService) TabsBrief() []string {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), bridgeBriefTimeout)
 	defer cancel()
-	reply, err := s.call(ctx, "list", nil, 2*time.Second)
+	reply, err := s.call(ctx, "list", nil, bridgeBriefTimeout)
 	if err != nil {
 		return nil
 	}

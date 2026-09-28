@@ -444,7 +444,7 @@ func isRawControl(cmd string) bool {
 }
 
 /*
-	writeAI 是 AI 侧写入（锁外写 PTY，避免与 readPump 互等）。
+writeAI 是 AI 侧写入（锁外写 PTY，避免与 readPump 互等）。
 */
 func (s *TerminalService) writeAI(sess *TermSession, lastCmd string, b []byte) {
 	s.mu.Lock()

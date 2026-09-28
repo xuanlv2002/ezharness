@@ -18,6 +18,7 @@ tools/hooks 为领域扩展，osfs/config 为基础设施。main 只做装配。
 package main
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"flag"
@@ -113,9 +114,9 @@ func (a *app) buildRouter() *gin.Engine {
 	// 系统级 MCP router(全局唯一):agent 的 mcp hook 与页面/API 调用共用
 	// 同一连接池,跨代复用;换代可能切数据目录,按当代 mcp.json 重载列表
 	if a.mcpRouter == nil {
-		a.mcpRouter = service.NewMcpRouter(hub.Fsys)
+		a.mcpRouter = service.NewMcpRouter(context.Background(), hub.Fsys)
 	} else {
-		service.SyncMcpServers(a.mcpRouter, hub.Fsys)
+		service.SyncMcpServers(context.Background(), a.mcpRouter, hub.Fsys)
 	}
 
 	agents := &service.AgentService{Hub: hub, Term: termSvc, Browser: a.browser, McpRouter: a.mcpRouter}

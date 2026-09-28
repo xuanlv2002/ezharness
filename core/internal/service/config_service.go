@@ -4,6 +4,7 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"log"
 
 	"github.com/xuanlv2002/ezloop/types"
 
@@ -17,37 +18,39 @@ func BootstrapHub(h *domain.Hub) {
 	ctx := context.Background()
 	if _, err := h.Fsys.Read(ctx, "models.json"); err != nil {
 		h.Models = domain.DefaultModelsConfig()
-		_ = SaveModelsConfig(h.Fsys, h.Models)
+		_ = SaveModelsConfig(ctx, h.Fsys, h.Models)
 	} else {
-		h.Models = LoadModelsConfig(h.Fsys)
+		h.Models = LoadModelsConfig(ctx, h.Fsys)
 	}
 	if _, err := h.Fsys.Read(ctx, "settings.json"); err != nil {
 		h.Settings = domain.DefaultSettings()
-		_ = SaveSettings(h.Fsys, h.Settings)
+		_ = SaveSettings(ctx, h.Fsys, h.Settings)
 	} else {
-		h.Settings = LoadSettings(h.Fsys)
+		h.Settings = LoadSettings(ctx, h.Fsys)
 	}
 	if _, err := h.Fsys.Read(ctx, "toolRules.json"); err != nil {
 		h.ToolRules = domain.DefaultToolRules()
-		_ = SaveToolRules(h.Fsys, h.ToolRules)
+		_ = SaveToolRules(ctx, h.Fsys, h.ToolRules)
 	} else {
-		h.ToolRules = LoadToolRules(h.Fsys)
+		h.ToolRules = LoadToolRules(ctx, h.Fsys)
 	}
 	h.Stats = domain.NewStats(h.Fsys)
 	h.Topics = hooks.NewTopics(h.Fsys)
 	h.SetActive(h.BootstrapActive())
 }
 
-/* recordUsage 累计主模型用量并落盘。 */
+/* recordUsage 累计主模型用量并落盘（失败记日志不中断轮）。 */
 func recordUsage(h *domain.Hub, u *types.Usage) {
 	if h.ApplyUsage(u) {
-		_ = SaveModelsConfig(h.Fsys, h.ModelsSnapshot())
+		if err := SaveModelsConfig(context.Background(), h.Fsys, h.ModelsSnapshot()); err != nil {
+			log.Printf("模型用量落盘失败: %v", err)
+		}
 	}
 }
 
 /* LoadModelsConfig 读 models.json，缺失或损坏回落默认值。 */
-func LoadModelsConfig(fsys osfs.OS) domain.ModelsConfig {
-	data, err := fsys.Read(context.Background(), "models.json")
+func LoadModelsConfig(ctx context.Context, fsys osfs.OS) domain.ModelsConfig {
+	data, err := fsys.Read(ctx, "models.json")
 	if err != nil {
 		return domain.DefaultModelsConfig()
 	}
@@ -59,18 +62,18 @@ func LoadModelsConfig(fsys osfs.OS) domain.ModelsConfig {
 }
 
 /* SaveModelsConfig 落盘模型四槽。 */
-func SaveModelsConfig(fsys osfs.OS, m domain.ModelsConfig) error {
+func SaveModelsConfig(ctx context.Context, fsys osfs.OS, m domain.ModelsConfig) error {
 	data, err := json.MarshalIndent(m, "", "  ")
 	if err != nil {
 		return err
 	}
-	return fsys.Write(context.Background(), "models.json", data)
+	return fsys.Write(ctx, "models.json", data)
 }
 
 /* LoadSettings 读 settings.json，缺失回落默认值。 */
-func LoadSettings(fsys osfs.OS) domain.Settings {
+func LoadSettings(ctx context.Context, fsys osfs.OS) domain.Settings {
 	out := domain.DefaultSettings()
-	data, err := fsys.Read(context.Background(), "settings.json")
+	data, err := fsys.Read(ctx, "settings.json")
 	if err != nil {
 		return out
 	}
@@ -105,17 +108,17 @@ func LoadSettings(fsys osfs.OS) domain.Settings {
 }
 
 /* SaveSettings 落盘行为设置。 */
-func SaveSettings(fsys osfs.OS, s domain.Settings) error {
+func SaveSettings(ctx context.Context, fsys osfs.OS, s domain.Settings) error {
 	data, err := json.MarshalIndent(s, "", "  ")
 	if err != nil {
 		return err
 	}
-	return fsys.Write(context.Background(), "settings.json", data)
+	return fsys.Write(ctx, "settings.json", data)
 }
 
 /* LoadToolRules 读 toolRules.json；缺失或空档回落内置默认。 */
-func LoadToolRules(fsys osfs.OS) []domain.ToolRule {
-	data, err := fsys.Read(context.Background(), "toolRules.json")
+func LoadToolRules(ctx context.Context, fsys osfs.OS) []domain.ToolRule {
+	data, err := fsys.Read(ctx, "toolRules.json")
 	if err != nil {
 		return domain.DefaultToolRules()
 	}
@@ -127,12 +130,12 @@ func LoadToolRules(fsys osfs.OS) []domain.ToolRule {
 }
 
 /* SaveToolRules 落盘审批策略。 */
-func SaveToolRules(fsys osfs.OS, rules []domain.ToolRule) error {
+func SaveToolRules(ctx context.Context, fsys osfs.OS, rules []domain.ToolRule) error {
 	data, err := json.MarshalIndent(rules, "", "  ")
 	if err != nil {
 		return err
 	}
-	return fsys.Write(context.Background(), "toolRules.json", data)
+	return fsys.Write(ctx, "toolRules.json", data)
 }
 
 /* clamp 限值到 [lo, hi]。 */

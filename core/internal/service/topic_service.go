@@ -9,6 +9,7 @@ package service
 import (
 	"context"
 	"errors"
+	"log"
 	"os"
 	"path/filepath"
 	"sort"
@@ -254,10 +255,14 @@ func (t *TopicService) Delete(ctx context.Context, rootID string) error {
 			continue
 		}
 		if snap, err := hooks.LoadSnap(ctx, t.Hub.Fsys, id); err == nil && snap.LineRoot == rootID {
-			_ = os.RemoveAll(filepath.Join(hooks.SessionsDir, id))
+			if rmErr := os.RemoveAll(filepath.Join(hooks.SessionsDir, id)); rmErr != nil {
+				log.Printf("删除会话目录失败（%s）: %v", id, rmErr)
+			}
 		}
 	}
-	_ = os.RemoveAll(filepath.Join(hooks.SessionsDir, rootID))
+	if rmErr := os.RemoveAll(filepath.Join(hooks.SessionsDir, rootID)); rmErr != nil {
+		log.Printf("删除会话目录失败（%s）: %v", rootID, rmErr)
+	}
 	t.Hub.Topics.Remove(rootID)
 	return nil
 }

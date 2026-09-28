@@ -12,6 +12,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"sort"
@@ -497,13 +498,15 @@ type DecisionRecord struct {
 	Ts         int64  `json:"ts"`
 }
 
-/* AppendDecision 追加决策记录（sessions/<id>/decisions.jsonl，失败静默）。 */
+/* AppendDecision 追加决策记录（sessions/<id>/decisions.jsonl，失败记日志不阻塞轮）。 */
 func AppendDecision(ctx context.Context, fsys AppendFS, id string, r DecisionRecord) {
 	if r.CallID == "" || id == "" {
 		return
 	}
 	data, _ := json.Marshal(r)
-	_ = fsys.Append(ctx, SessionsDir+"/"+id+"/decisions.jsonl", append(data, '\n'))
+	if err := fsys.Append(ctx, SessionsDir+"/"+id+"/decisions.jsonl", append(data, '\n')); err != nil {
+		log.Printf("决策记录追加失败（%s）: %v", id, err)
+	}
 }
 
 /* LoadDecisions 读回会话的全部决策记录（无文件返回 nil）。 */

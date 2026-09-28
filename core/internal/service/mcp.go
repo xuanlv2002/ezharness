@@ -90,8 +90,8 @@ func NewMcpService(fsys fs.FileSystem, router *mcp.Router) *McpService {
 }
 
 /* List 返回 MCP 页数据（连接状态以全局 router 为准）。 */
-func (s *McpService) List() []McpServerView {
-	f := loadMcpFileOrNil(s.Fsys)
+func (s *McpService) List(ctx context.Context) []McpServerView {
+	f := loadMcpFileOrNil(ctx, s.Fsys)
 	out := make([]McpServerView, 0)
 	if f == nil {
 		return out
@@ -128,7 +128,7 @@ Connect 经全局 router 建立会话并返回工具清单（连接前按 mcp.js
 禁用的 server 不装配进 router，页面同样不可连（禁用即禁用）。
 */
 func (s *McpService) Connect(ctx context.Context, name string) ([]McpToolView, error) {
-	SyncMcpServers(s.Router, s.Fsys)
+	SyncMcpServers(ctx, s.Router, s.Fsys)
 	defs, err := s.Router.Tools(ctx, name)
 	if err != nil {
 		s.Router.Drop(name) // 连接失效：逐出重建再试一次
@@ -171,7 +171,7 @@ func (s *McpService) Call(ctx context.Context, server, tool string, args json.Ra
 
 server 的页面会话。
 */
-func (s *McpService) Update(f McpFile) error {
+func (s *McpService) Update(ctx context.Context, f McpFile) error {
 	for _, srv := range f.Servers {
 		if srv.Name == "" {
 			return errMcp("server name required")
@@ -193,11 +193,11 @@ func (s *McpService) Update(f McpFile) error {
 	if err != nil {
 		return err
 	}
-	if err := s.Fsys.Write(context.Background(), "mcp.json", data); err != nil {
+	if err := s.Fsys.Write(ctx, "mcp.json", data); err != nil {
 		return err
 	}
 	// 即时热替换：被删除/禁用 server 的连接随之关闭，agent 与页面立即可见
-	SyncMcpServers(s.Router, s.Fsys)
+	SyncMcpServers(ctx, s.Router, s.Fsys)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for name := range s.toolDefs {
@@ -247,8 +247,8 @@ func nonNilHeaders(h map[string]string) map[string]string {
 }
 
 /* McpNames 返回已启用的 server 名（状态栏显示用）。 */
-func McpNames(fsys fs.FileSystem) []string {
-	f := loadMcpFileOrNil(fsys)
+func McpNames(ctx context.Context, fsys fs.FileSystem) []string {
+	f := loadMcpFileOrNil(ctx, fsys)
 	if f == nil {
 		return nil
 	}
@@ -266,12 +266,12 @@ NewMcpRouter 构造系统级 router（全局唯一，连接跨 session 常驻；
 main 装配一次，换代复用）。SyncMcpServers 按当前 mcp.json 热替换
 server 列表（换代切数据目录、保存配置后即时生效共用此入口）。
 */
-func NewMcpRouter(fsys fs.FileSystem) *mcp.Router {
-	return mcp.NewRouter(buildServers(loadMcpFileOrNil(fsys)))
+func NewMcpRouter(ctx context.Context, fsys fs.FileSystem) *mcp.Router {
+	return mcp.NewRouter(buildServers(loadMcpFileOrNil(ctx, fsys)))
 }
 
-func SyncMcpServers(r *mcp.Router, fsys fs.FileSystem) {
-	r.ReplaceServers(buildServers(loadMcpFileOrNil(fsys)))
+func SyncMcpServers(ctx context.Context, r *mcp.Router, fsys fs.FileSystem) {
+	r.ReplaceServers(buildServers(loadMcpFileOrNil(ctx, fsys)))
 }
 
 /*
@@ -279,14 +279,14 @@ func SyncMcpServers(r *mcp.Router, fsys fs.FileSystem) {
 
 OnLoop Reload 兜底手改 mcp.json 的热加载；禁用项不装配。
 */
-func NewMcpHook(fsys fs.FileSystem, router *mcp.Router) *mcp.Hook {
+func NewMcpHook(ctx context.Context, fsys fs.FileSystem, router *mcp.Router) *mcp.Hook {
 	return mcp.NewHookWithRouter(router, func(context.Context) ([]mcp.ServerConfig, error) {
-		return buildServers(loadMcpFileOrNil(fsys)), nil
+		return buildServers(loadMcpFileOrNil(ctx, fsys)), nil
 	})
 }
 
-func loadMcpFileOrNil(fsys fs.FileSystem) *McpFile {
-	data, err := fsys.Read(context.Background(), "mcp.json")
+func loadMcpFileOrNil(ctx context.Context, fsys fs.FileSystem) *McpFile {
+	data, err := fsys.Read(ctx, "mcp.json")
 	if err != nil {
 		return nil
 	}

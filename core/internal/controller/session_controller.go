@@ -16,17 +16,17 @@ type SessionController struct {
 
 /* Bootstrap GET /api/bootstrap。 */
 func (c *SessionController) Bootstrap(g *gin.Context) {
-	g.JSON(http.StatusOK, c.Svc.Bootstrap())
+	g.JSON(http.StatusOK, c.Svc.Bootstrap(g.Request.Context()))
 }
 
 /* Status GET /api/status。 */
 func (c *SessionController) Status(g *gin.Context) {
-	g.JSON(http.StatusOK, c.Svc.Snapshot())
+	g.JSON(http.StatusOK, c.Svc.Snapshot(g.Request.Context()))
 }
 
 /* History GET /api/sessions/:id（:id=分支根 ID，返回该线当前叶历史）。 */
 func (c *SessionController) History(g *gin.Context) {
-	g.JSON(http.StatusOK, c.Svc.History(g.Param("id")))
+	g.JSON(http.StatusOK, c.Svc.History(g.Request.Context(), g.Param("id")))
 }
 
 /* Prev GET /api/sessions/:id/prev（compact 链上一会话，无上级 204）。 */

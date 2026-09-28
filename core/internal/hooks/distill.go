@@ -15,7 +15,6 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"github.com/xuanlv2002/ezloop/ext/fs"
 	"github.com/xuanlv2002/ezloop/provider"
@@ -49,7 +48,7 @@ distillToMemory 执行沉淀：组装全量旧文（user/soul/project.md + 各 p
 项目文件与索引原样写入。view 是模型视图（与归档摘要同源，含 marker 链）。
 */
 func distillToMemory(ctx context.Context, p provider.ModelProvider, fsys fs.FileSystem, view []types.Message, workDir string) error {
-	ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+	ctx, cancel := context.WithTimeout(ctx, modelSummaryTimeout)
 	defer cancel()
 	var b strings.Builder
 	ltAbs, err := filepath.Abs(LongtermDir) // 索引里的记忆地址给绝对路径：模型不知道 FS 挂载基准

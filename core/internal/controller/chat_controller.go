@@ -22,6 +22,9 @@ import (
 /* 附件输入限制（拖入即暂存，发送只传 tmp/ 路径引用）。 */
 const maxAttachFiles = 8 // 单条消息附件数上限
 
+/* SSE 心跳间隔：代理空闲约 200s 断连，20s 注释帧保活足够。 */
+const sseHeartbeatInterval = 20 * time.Second
+
 /* ChatController 对话表现层。 */
 type ChatController struct {
 	Svc *service.ChatService
@@ -152,7 +155,7 @@ func (c *ChatController) Events(g *gin.Context) {
 	hb := g.Request.Context()
 	// 心跳注释帧：SSE 经代理（Vite dev proxy 等）空闲约 200s 被断，
 	// 周期性写入保持连接活性（注释行不触发前端 onmessage）。
-	hbTick := time.NewTicker(20 * time.Second)
+	hbTick := time.NewTicker(sseHeartbeatInterval)
 	defer hbTick.Stop()
 	for {
 		select {
