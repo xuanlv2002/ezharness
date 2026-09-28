@@ -128,6 +128,56 @@
     padding: 26px 20px; color: var(--muted); font-size: 13px;
   }
 
+  /* ── md 就地阅读器 ── */
+  #reader {
+    position: fixed; inset: 0; z-index: 100; overflow-y: auto;
+    background: var(--bg);
+  }
+  #reader .bar {
+    position: sticky; top: 0; z-index: 2;
+    display: flex; align-items: center; gap: 14px;
+    padding: 12px 28px; border-bottom: 1px solid var(--border);
+    background: rgba(5,7,13,.88); backdrop-filter: blur(12px);
+  }
+  #reader .bar .back {
+    border: 1px solid var(--border-soft); border-radius: 8px; padding: 5px 14px;
+    color: #c4cede; font-size: 13px; cursor: pointer; background: transparent;
+    font-family: inherit;
+  }
+  #reader .bar .back:hover { border-color: var(--accent); color: var(--accent); }
+  #reader .bar .mdfile {
+    font-family: Consolas, monospace; font-size: 12.5px; color: var(--muted);
+    flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  #reader .bar .src { font-size: 12.5px; }
+  .md-body { max-width: 860px; margin: 0 auto; padding: 40px 26px 100px; }
+  .md-body h1, .md-body h2, .md-body h3, .md-body h4 { color: var(--white); line-height: 1.35; margin: 1.4em 0 .5em; }
+  .md-body h1 { font-size: 26px; border-bottom: 1px solid var(--border); padding-bottom: 10px; }
+  .md-body h2 { font-size: 21px; }
+  .md-body h3 { font-size: 17px; }
+  .md-body p, .md-body li { color: #c4cede; font-size: 14.5px; }
+  .md-body ul, .md-body ol { padding-left: 24px; margin: 10px 0; }
+  .md-body li { margin: 4px 0; }
+  .md-body li::marker { color: var(--accent); }
+  .md-body code {
+    background: rgba(56,189,248,.12); color: var(--accent); border-radius: 5px;
+    padding: 1px 6px; font-family: Consolas, monospace; font-size: 87%;
+  }
+  .md-body pre {
+    background: #070d1a; border: 1px solid var(--border-soft); border-radius: 10px;
+    padding: 14px 18px; overflow-x: auto; margin: 14px 0; line-height: 1.7;
+  }
+  .md-body pre code { background: none; color: #dbe4f0; padding: 0; }
+  .md-body blockquote {
+    border-left: 4px solid var(--accent-deep); background: rgba(56,189,248,.07);
+    border-radius: 0 10px 10px 0; padding: 10px 18px; margin: 14px 0; color: #c8dced;
+  }
+  .md-body table { width: 100%; border-collapse: collapse; margin: 14px 0; font-size: 14px; }
+  .md-body th { text-align: left; padding: 9px 13px; background: rgba(255,255,255,.035); border-bottom: 1px solid var(--border-soft); color: #9fb0c8; }
+  .md-body td { padding: 8px 13px; border-bottom: 1px solid var(--border); color: #c4cede; vertical-align: top; }
+  .md-body img { max-width: 100%; }
+  .md-body hr { border: 0; border-top: 1px solid var(--border); margin: 28px 0; }
+
   @media (max-width: 860px) {
     .cards { grid-template-columns: 1fr; }
     .card.wide { grid-column: span 1; }
@@ -431,6 +481,17 @@
   <a href="https://github.com/xuanlv2002/ezloop" target="_blank">ezloop</a>
 </footer>
 
+<!-- md 就地阅读器 -->
+<div id="reader" hidden>
+  <div class="bar">
+    <button class="back" onclick="closeMd()"><span class="zh">← 返回</span><span class="en">← Back</span></button>
+    <span class="mdfile" id="readerPath"></span>
+    <a class="src" id="readerSrc" href="#" target="_blank"><span class="zh">源文件 ↗</span><span class="en">Source ↗</span></a>
+  </div>
+  <div class="md-body" id="readerBody"></div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/marked@11/marked.min.js"></script>
 <script>
   function setLang(lang) {
     document.body.classList.toggle('zh', lang === 'zh')
@@ -443,6 +504,86 @@
   var saved = 'zh'
   try { saved = localStorage.getItem('ez-docs-lang') || 'zh' } catch (e) { }
   if (saved !== 'zh') setLang(saved)
+
+  /* ── md 就地阅读：http 环境下 fetch+marked 渲染；file:// 或加载失败退回直接打开 ── */
+  var reader = document.getElementById('reader')
+  var readerBody = document.getElementById('readerBody')
+  var readerPath = document.getElementById('readerPath')
+  var readerSrc = document.getElementById('readerSrc')
+  var currentMd = ''
+
+  /* docs/ 内的 .md 链接接入阅读器（越出 docs/ 的如 ../AGENTS.md 保持直接跳转；
+     href 一律保留作兜底与中键新开） */
+  document.querySelectorAll('main a[href$=".md"]').forEach(function (a) {
+    var href = a.getAttribute('href')
+    if (href.indexOf('../') !== 0) a.setAttribute('data-md', href)
+  })
+
+  function openMd(path) {
+    if (!window.marked || location.protocol === 'file:') { location.href = path; return }
+    fetch(path).then(function (r) {
+      if (!r.ok) throw new Error(r.status)
+      return r.text()
+    }).then(function (text) {
+      currentMd = path
+      readerPath.textContent = path
+      readerSrc.href = sourceUrl(path)
+      readerBody.innerHTML = window.marked.parse(text)
+      reader.hidden = false
+      reader.scrollTop = 0
+      renderMermaid()
+    }).catch(function () { location.href = path })
+  }
+
+  /* md 路径 → 仓库源文件地址（../ 前缀的越出 docs/） */
+  function sourceUrl(path) {
+    var norm = path.replace(/^\.\//, '')
+    var base = 'https://github.com/xuanlv2002/ezharness/blob/main/'
+    return norm.indexOf('../') === 0 ? base + norm.slice(3) : base + 'docs/' + norm
+  }
+
+  /* md 里的 mermaid 代码块：换成 .mermaid 节点后统一渲染（失败保持代码块原样） */
+  function renderMermaid() {
+    var blocks = readerBody.querySelectorAll('pre code.language-mermaid, pre code.lang-mermaid')
+    if (!blocks.length) return
+    blocks.forEach(function (code) {
+      var box = document.createElement('div')
+      box.className = 'mermaid'
+      box.textContent = code.textContent
+      code.parentNode.replaceWith(box)
+    })
+    import('https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs').then(function (m) {
+      m.default.initialize({ startOnLoad: false, theme: 'dark' })
+      m.default.run()
+    }).catch(function () { /* 离线则原样显示 */ })
+  }
+
+  function closeMd() {
+    reader.hidden = true
+    readerBody.innerHTML = ''
+    currentMd = ''
+  }
+
+  document.addEventListener('click', function (e) {
+    var a = e.target.closest('a[data-md]')
+    if (a && !e.ctrlKey && !e.metaKey && !e.shiftKey) {
+      e.preventDefault()
+      openMd(a.getAttribute('data-md'))
+      return
+    }
+    /* 阅读器内部的 .md 相对链接继续接续阅读 */
+    if (currentMd && !reader.hidden) {
+      var inner = e.target.closest('#readerBody a')
+      if (inner && /\.md$/.test(inner.getAttribute('href') || '')) {
+        e.preventDefault()
+        var dir = currentMd.replace(/[^/]*$/, '')
+        openMd(dir + inner.getAttribute('href').replace(/^\.\//, ''))
+      }
+    }
+  })
+  document.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape' && !reader.hidden) closeMd()
+  })
 </script>
 </body>
 </html>
