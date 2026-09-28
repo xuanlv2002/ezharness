@@ -120,7 +120,7 @@ func (c *TopicController) Activate(g *gin.Context) {
 		g.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	g.JSON(http.StatusOK, gin.H{"id": c.Svc.Hub.Active.RootID})
+	g.JSON(http.StatusOK, gin.H{"id": c.Svc.Hub.ActiveSession().RootID})
 }
 
 /* Tree GET /api/memory/tree（完整会话树：全部世代与分叉，记忆页渲染）。 */

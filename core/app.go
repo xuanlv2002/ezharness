@@ -91,7 +91,7 @@ func (a *app) restart(port int, listen, dataDir string, ln net.Listener) {
 	a.mu.Unlock()
 	a.shutdownGeneration()
 	if hub != nil {
-		syncDrained(dataDir, hub.Active.ID)
+		syncDrained(dataDir, hub.ActiveSession().ID)
 	}
 	if err := os.MkdirAll(dataDir, 0o755); err == nil {
 		_ = os.Chdir(dataDir)
@@ -143,10 +143,13 @@ func (a *app) shutdownGeneration() {
 		term.Shutdown(3 * time.Second) // 换代=换数据目录:杀全部终端 shell
 	}
 	if hub != nil {
-		hub.Active.Shutdown(5 * time.Second)
+		active := hub.ActiveSession()
+		if active != nil {
+			active.Shutdown(5 * time.Second)
+		}
 		// 后台分支的运行轮同样只在 OnEnd 落盘：逐个收尾，不等待直接退出会丢轮
 		for _, s := range hub.Sessions() {
-			if s != hub.Active {
+			if s != active {
 				s.Shutdown(5 * time.Second)
 			}
 		}

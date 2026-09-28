@@ -119,7 +119,7 @@ func (a *app) buildRouter() *gin.Engine {
 	}
 
 	agents := &service.AgentService{Hub: hub, Term: termSvc, Browser: a.browser, McpRouter: a.mcpRouter}
-	agents.Assemble(hub.Active, hub.SettingsSnapshot())
+	agents.Assemble(hub.ActiveSession(), hub.SettingsSnapshot())
 
 	appSvc := &service.AppService{
 		Cfg:       a.snapshot,

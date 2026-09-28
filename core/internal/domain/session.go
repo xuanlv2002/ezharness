@@ -27,6 +27,9 @@ import (
 /* ErrBusy 表示会话当前有一轮运行未结束。 */
 var ErrBusy = errors.New("session busy")
 
+/* snapFlushBytes 是 in-flight 流快照帧的重序列化阈值（内容增量超过它才重写帧）。 */
+const snapFlushBytes = 8192
+
 /* ErrNoAPIKey 表示 models.json 尚未配置 API Key（应用可启动，发消息被拒）。 */
 var ErrNoAPIKey = errors.New("未配置 API Key，请在设置中填写")
 
@@ -64,20 +67,21 @@ type Session struct {
 	Sess   *hooks.Store
 	Topics *hooks.Topics
 
-	mu         sync.Mutex
-	history    []types.Message
-	archiving  bool // 归档进行中（摘要最长 2 分钟）：锁发消息/切分支/二次归档
-	cur        *runState
-	subs       map[chan []byte]struct{}
-	pending    map[string]Event
-	ctxTokens  int
-	wired      *Wiring
-	snap       *hooks.SessionSnap // bootstrap 恢复的快照（Assemble 读取；nil = 新建）
-	sysP       *hooks.SysPrompt   // system 来源（Assemble 创建；resume/compact 热更）
-	turnFrames [][]byte           // 本轮聚合帧缓存（刷新回放重建时间线；轮开始清空）
-	turnRefs   []hooks.RefFile    // 本轮引用（StartRun 存入：loop_start 帧附带供回放重建 chips）
-	snapAcc    map[string]*StreamSnapshot // forkID → in-flight 流累积快照（chunk 到达即累积）
-	snapIdx    map[string]int             // forkID → 快照帧在 turnFrames 的下标
+	mu          sync.Mutex
+	history     []types.Message
+	archiving   bool // 归档进行中（摘要最长 2 分钟）：锁发消息/切分支/二次归档
+	cur         *runState
+	subs        map[chan []byte]struct{}
+	pending     map[string]Event
+	ctxTokens   int
+	wired       *Wiring
+	snap        *hooks.SessionSnap         // bootstrap 恢复的快照（Assemble 读取；nil = 新建）
+	sysP        *hooks.SysPrompt           // system 来源（Assemble 创建；resume/compact 热更）
+	turnFrames  [][]byte                   // 本轮聚合帧缓存（刷新回放重建时间线；轮开始清空）
+	turnRefs    []hooks.RefFile            // 本轮引用（StartRun 存入：loop_start 帧附带供回放重建 chips）
+	snapAcc     map[string]*StreamSnapshot // forkID → in-flight 流累积快照（chunk 到达即累积）
+	snapIdx     map[string]int             // forkID → 快照帧在 turnFrames 的下标
+	snapFlushed map[string]int             // forkID → 快照帧上次序列化时的内容规模（节流用）
 }
 
 /* Attach 注入装配产物（service 层构造，领域持有引用）。 */
@@ -245,6 +249,7 @@ func (s *Session) StartRun(ctx context.Context, text string, refs []hooks.RefFil
 	s.turnFrames = nil
 	s.snapAcc = map[string]*StreamSnapshot{}
 	s.snapIdx = map[string]int{}
+	s.snapFlushed = map[string]int{}
 	s.mu.Unlock()
 	return h, cancel, nil
 }
@@ -489,17 +494,36 @@ func (s *Session) trackStreamLocked(e Event) {
 	s.putSnapLocked(e, fork)
 }
 
-/* putSnapLocked 把当前快照写进 turnFrames（已有则原位替换）。 */
+/*
+putSnapLocked 把当前快照写进 turnFrames（已有则原位替换）。序列化按
+内容增量节流（snapFlushBytes）：每个 chunk 全量重marshal 累积快照是
+O(文本长度²)，且全程压着 Publish 的扇出锁；首帧立即落，之后内容自上
+次序列化增长超过阈值才重写。节流只降低帧缓存更新频率，读取口
+（ReplayFrames）会强制 flush 到最新，断线重连拿到的仍是完整快照。
+*/
 func (s *Session) putSnapLocked(e Event, fork string) {
 	acc := s.snapAcc[fork]
 	if acc == nil || (acc.Content == "" && acc.Reasoning == "" && len(acc.Tools) == 0) {
 		return
 	}
-	frame := Event{Type: "stream.snapshot", Ts: e.Ts, ForkID: fork, Data: Raw(*acc)}
+	size := len(acc.Content) + len(acc.Reasoning)
+	for _, t := range acc.Tools {
+		size += len(t.Name) + len(t.Args)
+	}
+	if _, ok := s.snapIdx[fork]; ok && size-s.snapFlushed[fork] < snapFlushBytes {
+		return // 已有帧且增量未到阈值：跳过本轮序列化
+	}
+	s.writeSnapLocked(e.Ts, fork, acc, size)
+}
+
+/* writeSnapLocked 序列化快照帧写入 turnFrames（原位替换或追加）。 */
+func (s *Session) writeSnapLocked(ts int64, fork string, acc *StreamSnapshot, size int) {
+	frame := Event{Type: "stream.snapshot", Ts: ts, ForkID: fork, Data: Raw(*acc)}
 	b, err := json.Marshal(frame)
 	if err != nil {
 		return
 	}
+	s.snapFlushed[fork] = size
 	if i, ok := s.snapIdx[fork]; ok && i < len(s.turnFrames) {
 		s.turnFrames[i] = b
 		return
@@ -511,6 +535,7 @@ func (s *Session) putSnapLocked(e Event, fork string) {
 /* dropSnapLocked 丢弃该流的快照帧并修正其余下标。 */
 func (s *Session) dropSnapLocked(fork string) {
 	delete(s.snapAcc, fork)
+	delete(s.snapFlushed, fork)
 	i, ok := s.snapIdx[fork]
 	if !ok {
 		return
@@ -631,6 +656,20 @@ func (s *Session) ReplayFrames() [][]byte {
 		}
 		return out
 	}
+	// 回放前把 in-flight 快照强制 flush 到最新（绕过 putSnap 的节流）：
+	// 回放是断线重连/切回分支的唯一读取口，此处不新则节流丢的尾部永久不可见
+	for fork, acc := range s.snapAcc {
+		if acc == nil || (acc.Content == "" && acc.Reasoning == "" && len(acc.Tools) == 0) {
+			continue
+		}
+		size := len(acc.Content) + len(acc.Reasoning)
+		for _, t := range acc.Tools {
+			size += len(t.Name) + len(t.Args)
+		}
+		if _, ok := s.snapIdx[fork]; !ok || size != s.snapFlushed[fork] {
+			s.writeSnapLocked(time.Now().UnixMilli(), fork, acc, size)
+		}
+	}
 	out := make([][]byte, 0, len(s.turnFrames))
 	return append(out, s.turnFrames...) // 未决请求帧也在其中（request 是聚合帧）
 }
@@ -657,8 +696,15 @@ type Hub struct {
 	ToolRules []ToolRule
 	Stats     *Stats
 	Topics    *hooks.Topics
-	Active    *Session
+	active    *Session
 	branches  map[string]*Session
+}
+
+/* ActiveSession 返回当前活动分支（持锁读：SetActive 并发切换下的无锁读是数据竞争）。 */
+func (h *Hub) ActiveSession() *Session {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.active
 }
 
 /*
@@ -689,7 +735,7 @@ func NewHub() *Hub {
 	}
 	h.Stats = NewStats(h.Fsys)
 	h.Topics = hooks.NewTopics(h.Fsys)
-	h.Active = h.bootstrap()
+	h.active = h.bootstrap()
 	return h
 }
 
@@ -714,7 +760,7 @@ func (h *Hub) Register(s *Session) {
 func (h *Hub) Unregister(rootID string) bool {
 	h.mu.Lock()
 	delete(h.branches, rootID)
-	active := h.Active
+	active := h.active
 	h.mu.Unlock()
 	return active != nil && active.RootID == rootID
 }
@@ -722,7 +768,7 @@ func (h *Hub) Unregister(rootID string) bool {
 /* SetActive 切换当前分支（不取消旧分支运行中的轮）。 */
 func (h *Hub) SetActive(s *Session) {
 	h.mu.Lock()
-	h.Active = s
+	h.active = s
 	h.mu.Unlock()
 }
 
@@ -823,16 +869,17 @@ func (h *Hub) newSession(id string, rootID string, snap *hooks.SessionSnap) *Ses
 		rootID = id // 新线：自成一根
 	}
 	s := &Session{
-		ID:      id,
-		RootID:  rootID,
-		Fsys:    h.Fsys,
-		Sess:    hooks.NewStore(h.Fsys, id),
-		Topics:  h.Topics,
-		snap:    snap,
-		subs:    map[chan []byte]struct{}{},
-		pending: map[string]Event{},
-		snapAcc: map[string]*StreamSnapshot{},
-		snapIdx: map[string]int{},
+		ID:          id,
+		RootID:      rootID,
+		Fsys:        h.Fsys,
+		Sess:        hooks.NewStore(h.Fsys, id),
+		Topics:      h.Topics,
+		snap:        snap,
+		subs:        map[chan []byte]struct{}{},
+		pending:     map[string]Event{},
+		snapAcc:     map[string]*StreamSnapshot{},
+		snapIdx:     map[string]int{},
+		snapFlushed: map[string]int{},
 	}
 	s.Sess.SetLineRoot(rootID)
 	return s

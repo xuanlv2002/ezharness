@@ -32,7 +32,7 @@ type BootstrapData struct {
 
 /* Bootstrap 汇总启动数据。 */
 func (s *SessionService) Bootstrap() BootstrapData {
-	sess := s.Hub.Active
+	sess := s.Hub.ActiveSession()
 	st := s.Hub.SettingsSnapshot()
 	p := st.TrimPercent
 	w := st.WorkDir
@@ -84,7 +84,7 @@ type Status struct {
 
 /* Snapshot 汇总活动会话状态。 */
 func (s *SessionService) Snapshot() Status {
-	sess := s.Hub.Active
+	sess := s.Hub.ActiveSession()
 	w := sess.Wired()
 	var tools []string
 	if w != nil {

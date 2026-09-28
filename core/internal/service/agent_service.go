@@ -351,7 +351,7 @@ func (a *AgentService) RecognizeImage(ctx context.Context, path, question string
 仍返回 ErrBusy 保持前端提示语义。
 */
 func (a *AgentService) Reassemble(st domain.Settings) error {
-	if a.Hub.Active.Busy() {
+	if a.Hub.ActiveSession().Busy() {
 		return domain.ErrBusy
 	}
 	for _, s := range a.Hub.Sessions() {

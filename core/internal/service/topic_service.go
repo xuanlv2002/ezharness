@@ -46,7 +46,7 @@ type BranchView struct {
 
 /* buildBranchViews 由索引+注册表合成分支列表（含未索引的活动新分支）。 */
 func buildBranchViews(h *domain.Hub) []BranchView {
-	active := h.Active
+	active := h.ActiveSession()
 	entries := h.Topics.Load()
 	out := make([]BranchView, 0, len(entries)+1)
 	found := false
@@ -243,7 +243,7 @@ func (t *TopicService) Delete(ctx context.Context, rootID string) error {
 			return domain.ErrBusy
 		}
 	}
-	active := t.Hub.Active
+	active := t.Hub.ActiveSession()
 	if active != nil && active.RootID == rootID {
 		t.NewBranch() // 活动分支被删：先切到全新空线
 	}
@@ -286,7 +286,7 @@ func (t *TopicService) Tree(ctx context.Context) []SessionNode {
 	for _, e := range t.Hub.Topics.Load() {
 		entries[e.ID] = e
 	}
-	active := t.Hub.Active
+	active := t.Hub.ActiveSession()
 	ids, _ := hooks.ListMain(ctx, t.Hub.Fsys)
 	out := make([]SessionNode, 0, len(ids))
 	for _, id := range ids {
@@ -330,7 +330,7 @@ func (t *TopicService) Archive(ctx context.Context, id string, archived bool) er
 	if err != nil {
 		return ErrTopicNotFound
 	}
-	if s := t.Hub.SessionOf(snap.LineRoot); s != nil && s.ID == id && (s == t.Hub.Active || s.Busy()) {
+	if s := t.Hub.SessionOf(snap.LineRoot); s != nil && s.ID == id && (s == t.Hub.ActiveSession() || s.Busy()) {
 		return ErrCantArchive
 	}
 	snap.Archived = archived
@@ -344,7 +344,7 @@ Compact 归档换代（用户按键触发，分支列表行操作）：把指定
 不换库）相对。摘要期间持归档锁：锁发消息/切分支/防二次触发。
 */
 func (t *TopicService) Compact(ctx context.Context, rootID string) error {
-	s := t.Hub.Active
+	s := t.Hub.ActiveSession()
 	if rootID != "" {
 		if v := t.Hub.SessionOf(rootID); v != nil {
 			s = v

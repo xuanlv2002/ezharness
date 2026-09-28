@@ -446,7 +446,8 @@ func isRawControl(cmd string) bool {
 /*
 	writeAI 是 AI 侧写入:记录 lastCmd 与最近终端,不做用户输入聚合
 
-(避免 agent_status 自反馈)。
+(避免 agent_status 自反馈)。PTY 写在 sess.mu 之外:readPump 要同一把锁
+才能排空输出,持锁写一旦写满 PTY 缓冲就是双向互等死锁。
 */
 func (s *TerminalService) writeAI(sess *TermSession, lastCmd string, b []byte) {
 	s.mu.Lock()
@@ -456,8 +457,8 @@ func (s *TerminalService) writeAI(sess *TermSession, lastCmd string, b []byte) {
 	if lastCmd != "" {
 		sess.LastCmd = lastCmd
 	}
-	sess.pty.Write(b) //nolint:errcheck
 	sess.mu.Unlock()
+	sess.pty.Write(b) //nolint:errcheck
 }
 
 /*
@@ -629,16 +630,14 @@ func (s *TerminalService) remove(sess *TermSession) {
 /*
 	UserInput 是用户手敲输入(WS 路径):写入 PTY 即完成。
 
-按 id 精确查找(WS 帧必须带 id,不走 AI 最近终端兜底)。
+按 id 精确查找(WS 帧必须带 id,不走 AI 最近终端兜底)。锁外写,理由同 writeAI。
 */
 func (s *TerminalService) UserInput(id string, b []byte) error {
 	sess, ok := s.get(id)
 	if !ok {
 		return fmt.Errorf("终端 %q 不存在", id)
 	}
-	sess.mu.Lock()
 	sess.pty.Write(b) //nolint:errcheck
-	sess.mu.Unlock()
 	return nil
 }
 
@@ -651,9 +650,7 @@ func (s *TerminalService) Resize(id string, cols, rows int) error {
 	if cols < 2 || rows < 2 || cols > 500 || rows > 300 {
 		return nil
 	}
-	sess.mu.Lock()
 	sess.pty.Resize(cols, rows) //nolint:errcheck
-	sess.mu.Unlock()
 	return nil
 }
 

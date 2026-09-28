@@ -124,7 +124,7 @@ func (c *ChatController) CancelTurn(g *gin.Context) {
 func (c *ChatController) Events(g *gin.Context) {
 	sess := c.Svc.Hub.SessionOf(g.Param("id"))
 	if sess == nil {
-		sess = c.Svc.Hub.Active
+		sess = c.Svc.Hub.ActiveSession()
 	}
 	fl, ok := g.Writer.(interface{ Flush() })
 	if !ok {

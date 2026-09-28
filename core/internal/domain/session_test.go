@@ -137,6 +137,7 @@ func TestStreamSnapshotReplay(t *testing.T) {
 		pending: map[string]Event{},
 		snapAcc: map[string]*StreamSnapshot{},
 		snapIdx: map[string]int{},
+		snapFlushed: map[string]int{},
 	}
 	publish := func(typ string, data any) {
 		s.Publish(Event{Type: typ, Ts: time.Now().UnixMilli(), Data: Raw(data)})
