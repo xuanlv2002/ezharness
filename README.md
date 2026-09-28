@@ -14,6 +14,7 @@
 [![Release](https://img.shields.io/badge/release-v0.2.0-blue?logo=github)](https://github.com/xuanlv2002/ezharness/releases)
 [![Platform](https://img.shields.io/badge/platform-Windows-0078D6?logo=windows)](https://github.com/xuanlv2002/ezharness/releases)
 [![License](https://img.shields.io/badge/license-Apache--2.0-green)](LICENSE)
+[![Docs](https://img.shields.io/badge/docs-online-38bdf8?logo=readthedocs)](https://xuanlv2002.github.io/ezharness/)
 [![Go Version](https://img.shields.io/badge/go-1.25%2B-00ADD8?logo=go)](https://go.dev)
 [![Frontend](https://img.shields.io/badge/frontend-Svelte%205-ff3e00?logo=svelte)](https://svelte.dev)
 [![Desktop](https://img.shields.io/badge/desktop-electron-47848f?logo=electron)](https://www.electronjs.org/)
@@ -110,14 +111,14 @@ flowchart TB
 
 ## 文档
 
-文档库支持[中英文切换](docs/index.html)，按由浅入深组织：
+**[在线文档](https://xuanlv2002.github.io/ezharness/)**（支持中英文切换，按由浅入深组织）：
 
 | 层 | 内容 | 入口 |
 |---|---|---|
-| 快速上手 | 安装、首次配置、第一轮对话 | 本页 + [文档主页](docs/index.html) |
-| 用户指南 | 会话 / 终端 / 浏览器 / 画板 / 快应用 / MCP 各功能面 | [docs/index.html](docs/index.html) |
-| 核心概念 | 树状会话、上下文工程、人机协同交互 | [docs/index.html](docs/index.html) · [interaction.md](docs/interaction.md) |
-| 深入设计 | 架构、hook 全景、存储格式、上下文全动作 | [architecture.html](docs/architecture.html) · [docs/md/](docs/md/) |
+| 快速上手 | 安装、配置模型、第一轮对话 | 本页 + [快速上手](https://xuanlv2002.github.io/ezharness/#start) |
+| 用户指南 | 会话 / 终端 / 浏览器 / 画板 / 快应用 / MCP 各功能面 | [用户指南](https://xuanlv2002.github.io/ezharness/#guide) |
+| 核心概念 | 树状会话、上下文工程、人机协同交互 | [核心概念](https://xuanlv2002.github.io/ezharness/#concepts) · [interaction.md](docs/interaction.md) |
+| 深入设计 | 架构、hook 全景、存储格式、上下文全动作 | [架构深读](https://xuanlv2002.github.io/ezharness/architecture.html) · [docs/md/](docs/md/) |
 | 参考 | 构建方案、开发备忘 | [build.md](docs/build.md) · [AGENTS.md](AGENTS.md) |
 
 ## 从源码构建
@@ -133,7 +134,7 @@ script\release.bat       # 发布打包 -> release\v<版本>\ 安装包 + 绿色
 
 ## 贡献
 
-欢迎 issue 与 PR。改动前请先读 [AGENTS.md](AGENTS.md)（开发备忘：变更连带检查清单与易踩的坑），深读设计见[文档库](docs/index.html)。
+欢迎 issue 与 PR。改动前请先读 [AGENTS.md](AGENTS.md)（开发备忘：变更连带检查清单与易踩的坑），深读设计见[在线文档](https://xuanlv2002.github.io/ezharness/)。
 
 ## 许可
 

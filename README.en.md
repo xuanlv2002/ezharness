@@ -14,6 +14,7 @@ One exe · Three roles · Zero config — a desktop agent harness built for the 
 [![Release](https://img.shields.io/badge/release-v0.2.0-blue?logo=github)](https://github.com/xuanlv2002/ezharness/releases)
 [![Platform](https://img.shields.io/badge/platform-Windows-0078D6?logo=windows)](https://github.com/xuanlv2002/ezharness/releases)
 [![License](https://img.shields.io/badge/license-Apache--2.0-green)](LICENSE)
+[![Docs](https://img.shields.io/badge/docs-online-38bdf8?logo=readthedocs)](https://xuanlv2002.github.io/ezharness/)
 [![Go Version](https://img.shields.io/badge/go-1.25%2B-00ADD8?logo=go)](https://go.dev)
 [![Frontend](https://img.shields.io/badge/frontend-Svelte%205-ff3e00?logo=svelte)](https://svelte.dev)
 [![Desktop](https://img.shields.io/badge/desktop-electron-47848f?logo=electron)](https://www.electronjs.org/)
@@ -110,14 +111,14 @@ Division of labor with the sister repo [ezloop](https://github.com/xuanlv2002/ez
 
 ## Documentation
 
-The [docs site](docs/index.html) supports Chinese/English switching and is organized from shallow to deep:
+The **[docs site](https://xuanlv2002.github.io/ezharness/)** supports Chinese/English switching and is organized from shallow to deep:
 
 | Layer | Content | Entry |
 |---|---|---|
-| Getting started | Install, first config, first chat | This page + [docs home](docs/index.html) |
-| User guide | Sessions / terminal / browser / whiteboard / quick apps / MCP | [docs/index.html](docs/index.html) |
-| Core concepts | Session tree, context engineering, human-agent interaction | [docs/index.html](docs/index.html) |
-| Deep dives | Architecture, hook panorama, storage formats, context in action | [architecture.html](docs/architecture.html) · [docs/md/](docs/md/) |
+| Getting started | Install, models, first chat | This page + [Get started](https://xuanlv2002.github.io/ezharness/#start) |
+| User guide | Sessions / terminal / browser / whiteboard / quick apps / MCP | [User guide](https://xuanlv2002.github.io/ezharness/#guide) |
+| Core concepts | Session tree, context engineering, human-agent interaction | [Core concepts](https://xuanlv2002.github.io/ezharness/#concepts) |
+| Deep dives | Architecture, hook panorama, storage formats, context in action | [Architecture](https://xuanlv2002.github.io/ezharness/architecture.html) · [docs/md/](docs/md/) |
 | Reference | Build, dev memo | [build.md](docs/build.md) · [AGENTS.md](AGENTS.md) |
 
 ## Building from source
@@ -133,7 +134,7 @@ script\release.bat       # release: installer + portable into release\v<version>
 
 ## Contributing
 
-Issues and PRs are welcome. Before changing code, read [AGENTS.md](AGENTS.md) (dev memo: change-ripple checklists and known pitfalls); see the [docs site](docs/index.html) for deep design notes.
+Issues and PRs are welcome. Before changing code, read [AGENTS.md](AGENTS.md) (dev memo: change-ripple checklists and known pitfalls); see the [docs site](https://xuanlv2002.github.io/ezharness/) for deep design notes.
 
 ## License
 

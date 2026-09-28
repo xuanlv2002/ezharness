@@ -208,7 +208,7 @@
   <p class="tag zh">一个 exe · 三重角色 · 零配置的桌面智能体 harness。<br>从这里出发，按你需要的深度阅读：上手 → 指南 → 概念 → 深读 → 参考。</p>
   <p class="tag en">One exe · three roles · zero config — a desktop agent harness.<br>Start here and read as deep as you need: start → guide → concepts → deep dives → reference.</p>
   <div class="cta">
-    <a class="primary" href="../README.md#安装"><span class="zh">快速开始</span><span class="en">Get started</span></a>
+    <a class="primary" href="start.md"><span class="zh">快速开始</span><span class="en">Get started</span></a>
     <a href="architecture.html"><span class="zh">深入设计</span><span class="en">Deep dives</span></a>
     <a href="https://github.com/xuanlv2002/ezharness/releases" target="_blank"><span class="zh">下载</span><span class="en">Download</span></a>
   </div>
@@ -230,19 +230,19 @@
     <p class="layer-desc zh">三步跑起来。原则只有一条：exe 在哪运行，配置与数据就在哪生成——零配置可用。</p>
     <p class="layer-desc en">Three steps to run it. One rule: wherever the exe runs, config and data live next to it — zero config required.</p>
     <div class="cards">
-      <a class="card" href="../README.md#安装">
+      <a class="card" href="start.md#安装">
         <div class="t"><span class="zh">① 安装</span><span class="en">① Install</span></div>
         <div class="d zh">Releases 下载绿色版或安装包；绿色版放任意文件夹加入 PATH 即可。也支持纯 server 形态（浏览器访问）。</div>
         <div class="d en">Grab the portable exe or installer from Releases; the portable build just needs a folder on PATH. A plain-server mode (browser access) is also available.</div>
         <span class="go">README · 安装 →</span>
       </a>
-      <a class="card" href="../README.md#30-秒上手">
+      <a class="card" href="start.md#配置模型">
         <div class="t"><span class="zh">② 配置模型</span><span class="en">② Pick a model</span></div>
         <div class="d zh">「模型」页填 apiKey：main / vision / image / audio 四槽单选，各自带用量统计。</div>
         <div class="d en">Enter your apiKey on the Models page: four single-choice slots (main / vision / image / audio), each with usage stats.</div>
         <span class="go">README · 30 秒上手 →</span>
       </a>
-      <a class="card" href="../README.md#30-秒上手">
+      <a class="card" href="start.md#第一轮对话">
         <div class="t"><span class="zh">③ 第一轮对话</span><span class="en">③ First chat</span></div>
         <div class="d zh">把任务直接交给它；需要你的时候，审批与提问会以决策卡出现在时间线与右上角通知栏。</div>
         <div class="d en">Hand over a task; approvals and questions arrive as decision cards in the timeline and the notification corner.</div>
@@ -289,23 +289,23 @@
         <div class="d en">Real embedded Chromium on desktop: the AI operates via tools, you take over natively; the window pops up for co-viewing.</div>
         <span class="go">interaction.md →</span>
       </a>
-      <a class="card" href="../README.md#核心玩法">
+      <a class="card" href="https://github.com/xuanlv2002/ezharness#核心玩法" target="_blank">
         <div class="t"><span class="zh">魔法画板</span><span class="en">Magic whiteboard</span></div>
         <div class="d zh">对象模型白板：标注截图、白板创作，所见即所得回填为对话附件。</div>
         <div class="d en">Object-model canvas: annotate screenshots or draw, and hand it back to the chat as an attachment.</div>
-        <span class="go">README · 核心玩法 →</span>
+        <span class="go">README · 核心玩法 ↗</span>
       </a>
-      <a class="card" href="../README.md#核心玩法">
+      <a class="card" href="https://github.com/xuanlv2002/ezharness#核心玩法" target="_blank">
         <div class="t"><span class="zh">快应用</span><span class="en">Quick apps</span></div>
         <div class="d zh">agent 生成的小工具一键启动为子窗口；同源页面直调 MCP（/api/mcp/call）无需令牌。</div>
         <div class="d en">Agent-generated mini tools launch as child windows; same-origin pages call MCP directly, token-free.</div>
-        <span class="go">README · 核心玩法 →</span>
+        <span class="go">README · 核心玩法 ↗</span>
       </a>
-      <a class="card" href="../README.md#核心玩法">
+      <a class="card" href="https://github.com/xuanlv2002/ezharness#核心玩法" target="_blank">
         <div class="t"><span class="zh">MCP</span></div>
         <div class="d zh">外部工具服务器（http/stdio）：探活、启停、热加载；mcp_router 工具统一入口。</div>
         <div class="d en">External tool servers (http/stdio): health checks, start/stop, hot reload; unified via the mcp_router tool.</div>
-        <span class="go">README · 核心玩法 →</span>
+        <span class="go">README · 核心玩法 ↗</span>
       </a>
       <a class="card" href="architecture.html#arch-data">
         <div class="t"><span class="zh">技能与记忆</span><span class="en">Skills & memory</span></div>
@@ -438,7 +438,7 @@
         <div class="d zh">构建方案与发布链</div><div class="d en">Build and release pipeline</div>
         <span class="go">build.md →</span>
       </a>
-      <a class="card" href="../AGENTS.md">
+      <a class="card" href="https://github.com/xuanlv2002/ezharness/blob/main/AGENTS.md" target="_blank">
         <div class="t">AGENTS.md</div>
         <div class="d zh">开发备忘：变更连带检查清单与易踩的坑</div><div class="d en">Dev memo: change-ripple checklists and pitfalls</div>
         <span class="go">AGENTS.md →</span>
@@ -495,27 +495,40 @@
   var readerSrc = document.getElementById('readerSrc')
   var currentMd = ''
 
-  /* docs/ 内的 .md 链接接入阅读器（越出 docs/ 的如 ../AGENTS.md 保持直接跳转；
+  /* docs/ 内的 .md 链接接入阅读器（外链与越出 docs/ 的保持直接跳转；
      href 一律保留作兜底与中键新开） */
-  document.querySelectorAll('main a[href$=".md"]').forEach(function (a) {
+  document.querySelectorAll('main a[href*=".md"]').forEach(function (a) {
     var href = a.getAttribute('href')
-    if (href.indexOf('../') !== 0) a.setAttribute('data-md', href)
+    if (href.indexOf('http') === 0 || href.indexOf('../') === 0) return
+    a.setAttribute('data-md', href)
   })
 
-  function openMd(path) {
-    if (!window.marked || location.protocol === 'file:') { location.href = path; return }
-    fetch(path).then(function (r) {
+  function openMd(spec) {
+    var hash = ''
+    var cut = spec.indexOf('#')
+    if (cut >= 0) { hash = decodeURIComponent(spec.slice(cut + 1)); spec = spec.slice(0, cut) }
+    if (!window.marked || location.protocol === 'file:') { location.href = spec + (hash ? '#' + hash : ''); return }
+    fetch(spec).then(function (r) {
       if (!r.ok) throw new Error(r.status)
       return r.text()
     }).then(function (text) {
-      currentMd = path
-      readerPath.textContent = path
-      readerSrc.href = sourceUrl(path)
+      currentMd = spec
+      readerPath.textContent = spec
+      readerSrc.href = sourceUrl(spec)
       readerBody.innerHTML = window.marked.parse(text)
       reader.hidden = false
       reader.scrollTop = 0
+      if (hash) scrollToHeading(hash)
       renderMermaid()
-    }).catch(function () { location.href = path })
+    }).catch(function () { location.href = spec })
+  }
+
+  /* md 锚点：marked 不给标题加 id，按标题文本匹配定位（#安装 → 「## 安装」） */
+  function scrollToHeading(text) {
+    var heads = readerBody.querySelectorAll('h1, h2, h3, h4')
+    for (var i = 0; i < heads.length; i++) {
+      if (heads[i].textContent.trim() === text) { heads[i].scrollIntoView(); return }
+    }
   }
 
   /* md 路径 → 仓库源文件地址（../ 前缀的越出 docs/） */
@@ -557,7 +570,7 @@
     /* 阅读器内部的 .md 相对链接继续接续阅读 */
     if (currentMd && !reader.hidden) {
       var inner = e.target.closest('#readerBody a')
-      if (inner && /\.md$/.test(inner.getAttribute('href') || '')) {
+      if (inner && /\.md(#|$)/.test(inner.getAttribute('href') || '')) {
         e.preventDefault()
         var dir = currentMd.replace(/[^/]*$/, '')
         openMd(dir + inner.getAttribute('href').replace(/^\.\//, ''))
