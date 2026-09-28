@@ -19,6 +19,7 @@ const { BrowserWindow, WebContentsView, ipcMain, session } = require('electron')
 const { attachInspectMenu } = require('../inspect')
 
 let corePort = 5260
+let coreToken = ''
 let getParentWindow = null
 let bridge = null          // WebSocket → core
 let bridgeReconnectTimer = null
@@ -615,9 +616,7 @@ function delay(ms) {
 
 function connectBridge() {
   if (bridge) return
-  /* token 进 query 过 core 鉴权。 */
-  const token = encodeURIComponent(process.env.EZHARNESS_TOKEN || '')
-  const ws = new WebSocket(`ws://127.0.0.1:${corePort}/api/browser/bridge?token=${token}`)
+  const ws = new WebSocket(`ws://127.0.0.1:${corePort}/api/browser/bridge?token=${encodeURIComponent(coreToken)}`)
   bridge = ws
   ws.onmessage = async (ev) => {
     let req
@@ -705,8 +704,9 @@ function registerIpc() {
 }
 
 /* startBrowserModule 壳装配入口。 */
-function startBrowserModule({ corePort: port, getParentWindow: parent, findBrowserOwner }) {
+function startBrowserModule({ corePort: port, token, getParentWindow: parent, findBrowserOwner }) {
   corePort = port
+  coreToken = token || ''
   getParentWindow = parent
   findOwner = findBrowserOwner || (() => null)
   registerIpc()

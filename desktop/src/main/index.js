@@ -31,7 +31,7 @@ function pageBase() {
 
 /* 带令牌的页面地址。 */
 function pageUrl(suffix) {
-  return `${pageBase()}${suffix.includes('?') ? '&' : '?'}token=${coreToken}`
+  return `${pageBase()}${suffix}${suffix.includes('?') ? '&' : '?'}token=${coreToken}`
 }
 
 /* coreFetch 主进程访问 core API，统一带头。 */
@@ -374,7 +374,7 @@ app.whenReady().then(async () => {
   createMainWindow()
   createTray()
   registerIpc()
-  startBrowserModule({ corePort, getParentWindow: () => mainWindow, findBrowserOwner: () => findBrowserPopout() })
+  startBrowserModule({ corePort, token: coreToken, getParentWindow: () => mainWindow, findBrowserOwner: () => findBrowserPopout() })
 })
 
 /* 托盘常驻：全部窗口关闭不退出（退出只走托盘菜单/关闭确认） */
