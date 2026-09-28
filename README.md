@@ -3,7 +3,7 @@
 
 <div align="center">
 
-<img src="docs/logo.svg" width="150" alt="ezharness logo">
+<img src="docs/avatar.webp" width="150" alt="ezharness">
 
 # ezharness
 
