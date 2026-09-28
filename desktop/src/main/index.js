@@ -43,6 +43,50 @@ function coreFetch(pathname, opts = {}) {
   })
 }
 
+/* killCore 结束 core 及其全部子进程（terminal 的 cmd.exe、MCP stdio
+   server 都继承 core 的隐藏控制台，不树杀会被孤儿化留在系统里）。
+   Windows 用 taskkill /T；其余平台 core 无进程组，直接 kill 只及 core 自身。 */
+function killCore() {
+  if (!coreProc || coreProc.killed) return
+  if (process.platform === 'win32') {
+    spawn('taskkill', ['/PID', String(coreProc.pid), '/T', '/F'], { windowsHide: true })
+  } else {
+    coreProc.kill('SIGKILL')
+  }
+}
+
+/* guardWebContents 导航守卫：窗口只许停留在 core origin（URL 解析比
+   origin，前缀字符串会被端口前缀骗过：127.0.0.1:5260 匹配 127.0.0.1:52601）。
+   程序化导航（location.assign、表单 target、meta-refresh）绕得过渲染层
+   的点击拦截，一旦离开 core origin，preload 挂着的 window.ez 就交给
+   了外部页面——这是守卫必须挂在 will-navigate 上的原因。外部目标转
+   系统浏览器打开。 */
+function guardWebContents(wc) {
+  const coreOrigin = () => new URL(pageBase()).origin
+  wc.on('will-navigate', (e, url) => {
+    let same = false
+    try {
+      same = new URL(url).origin === coreOrigin()
+    } catch {
+      /* 非法 URL 一律拦 */
+    }
+    if (same) return
+    e.preventDefault()
+    if (/^https?:\/\//.test(url)) shell.openExternal(url)
+  })
+  wc.setWindowOpenHandler(({ url }) => {
+    let same = false
+    try {
+      same = new URL(url).origin === coreOrigin()
+    } catch {
+      /* 非法 URL 一律拒 */
+    }
+    if (same) return { action: 'allow' }
+    if (/^https?:\/\//.test(url)) shell.openExternal(url)
+    return { action: 'deny' }
+  })
+}
+
 /* core exe 所在目录：打包后在 resources/；开发模式在仓库根 bin/ */
 function coreDir() {
   return app.isPackaged
@@ -136,6 +180,7 @@ function createMainWindow() {
     },
   })
   mainWindow.loadURL(pageUrl('/?desktop=1'))
+  guardWebContents(mainWindow.webContents)
   mainWindow.once('ready-to-show', () => mainWindow.show())
   /* 系统级关闭（Alt+F4/任务栏 X）拦截：与标题栏 X 同一条询问流程 */
   mainWindow.on('close', (e) => {
@@ -185,7 +230,7 @@ async function handleCloseRequest() {
 
 function quitApp() {
   quitting = true
-  if (coreProc) coreProc.kill()
+  killCore()
   app.quit()
 }
 
@@ -249,6 +294,7 @@ function registerIpc() {
     })
     attachInspectMenu(win.webContents)
     win.loadURL(pageUrl(url))
+    guardWebContents(win.webContents)
   })
   /* 抽屉工具弹出窗口：view → BrowserWindow。popoutState 是各工具最新
      的 pane 状态快照（file 弹出时由弹窗持续上报），关窗回流给主窗口。 */
@@ -274,6 +320,7 @@ function registerIpc() {
       ...at,
     })
     win.loadURL(pageUrl(`/?desktop=1&popout=${view}`))
+    guardWebContents(win.webContents)
     return win
   }
 
@@ -343,5 +390,5 @@ app.on('window-all-closed', () => {})
 
 app.on('before-quit', () => {
   quitting = true
-  if (coreProc) coreProc.kill()
+  killCore()
 })
