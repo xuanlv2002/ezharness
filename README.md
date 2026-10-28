@@ -201,6 +201,8 @@ flowchart TB
 ```sh
 script\dev.bat           # 调试：前端构建 + core 编译，前台启动 Electron
 script\build.bat         # 发布打包 -> release\v<版本>\ 安装包 + 绿色版
+
+script/dev.sh            # macOS / Linux 同 dev.bat；5260 占用时自动换端口
 ```
 
 需要修改 [ezloop](https://github.com/xuanlv2002/ezloop) 本身时，在 `core/go.mod` 用 `replace` 指向本地仓库。
