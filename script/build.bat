@@ -32,7 +32,7 @@ rem build core as a console-subsystem app: do NOT add -H windowsgui. A GUI-subsy
 rem has no console, so each console child it spawns (terminal's cmd.exe, taskkill, MCP
 rem server) gets its own visible console window and flashes a black box. The desktop shell
 rem instead spawns core with windowsHide, so core holds one hidden console that children inherit
-go build -o ..\release\dev\ezharness-core.exe .
+go build -trimpath -ldflags "-s -w" -o ..\release\dev\ezharness-core.exe .
 if errorlevel 1 exit /b 1
 cd ..
 

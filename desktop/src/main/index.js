@@ -415,17 +415,14 @@ function createNoticeWindow() {
 async function handleCloseRequest() {
   const settings = await coreSettings()
   if (settings.closeToTray === true) {
-    mainWindow.hide()
+    hideMainToTray()
     return { prompt: false }
   }
   /* 确认框是主窗内的页面 modal——主窗若被别的窗口（弹出窗/快应用/
      其他程序）压住，弹框就跟着"不在最上层"。弹之前先把主窗带前台；
      共享浏览器视图是 OS 层子视图（永远在页面 DOM 之上），一并临时
      藏起，否则浏览器内容会盖住确认框 */
-  if (mainWindow && !mainWindow.isDestroyed()) {
-    mainWindow.show()
-    mainWindow.focus()
-  }
+  if (mainWindow && !mainWindow.isDestroyed()) showMain()
   overlayBrowser(true)
   mainWindow.webContents.send('ez:close-prompt')
   return { prompt: true }
@@ -452,13 +449,22 @@ function createTray() {
     { label: '退出', click: () => quitApp() },
   ]))
   tray.on('click', () => {
-    if (mainWindow.isVisible()) mainWindow.hide()
+    if (mainWindow.isVisible()) hideMainToTray()
     else showMain()
   })
 }
 
+/* hideMainToTray 最小化到托盘：隐藏主窗；macOS 同时收起 Dock 图标
+   （只留菜单栏托盘）。窗口仅最小化（黄色按钮）时 Dock 图标照常保留 */
+function hideMainToTray() {
+  if (!mainWindow || mainWindow.isDestroyed()) return
+  mainWindow.hide()
+  if (process.platform === 'darwin') app.dock?.hide()
+}
+
 function showMain() {
   if (!mainWindow) return
+  if (process.platform === 'darwin') void app.dock?.show()
   mainWindow.show()
   mainWindow.focus()
 }
@@ -477,7 +483,7 @@ function registerIpc() {
   ipcMain.on('ez:close-decision', (_e, tray, remember) => {
     overlayBrowser(false) /* 恢复被确认框临时藏起的浏览器视图 */
     if (tray) {
-      mainWindow?.hide()
+      hideMainToTray()
       if (remember) void saveCloseToTray(true)
     } else {
       quitApp()

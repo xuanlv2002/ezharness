@@ -55,7 +55,7 @@ jobs:
         run: |
           cd core
           mkdir -p ../release/dev
-          go build -o ../release/dev/ezharness-core.exe .
+          go build -trimpath -ldflags "-s -w" -o ../release/dev/ezharness-core.exe .
 
       - name: Package desktop
         run: |
@@ -74,7 +74,15 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: ezharness-v${{ steps.ver.outputs.version }}-${{ runner.os }}
-          path: release/v${{ steps.ver.outputs.version }}/*
+          # 只传安装包与校验和：electron-builder 输出目录里还有 win-unpacked/、
+          # mac/、linux-unpacked/ 等未打包目录（数百 MB），不能用 /* 通配
+          path: |
+            release/v${{ steps.ver.outputs.version }}/ezharness-v*-setup.exe
+            release/v${{ steps.ver.outputs.version }}/ezharness-v*.exe
+            release/v${{ steps.ver.outputs.version }}/ezharness-*.dmg
+            release/v${{ steps.ver.outputs.version }}/ezharness-v*.AppImage
+            release/v${{ steps.ver.outputs.version }}/SHA256SUMS-*.txt
+          compression-level: 0
 
       - name: Attach to GitHub Release
         if: startsWith(github.ref, 'refs/tags/v')

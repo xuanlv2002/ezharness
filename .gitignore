@@ -38,3 +38,6 @@ data/
 
 # 运行时记忆目录（cwd=包目录跑测试时的残留）
 core/internal/hooks/memory/
+
+# Trae 工具的分享打包产物
+.trae-html-share-packages/
