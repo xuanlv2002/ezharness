@@ -33,6 +33,10 @@ let corePort = 5260
 let petWindow = null
 let noticeWindow = null
 const PET_SIZE = 288
+/* 头像（悬浮球）在宠物窗内的可见尺寸与居中偏移：拖拽钳制以「球」为准，
+   窗口可以越过屏幕顶，但球必须留在工作区内 */
+const PET_AVATAR = 72
+const PET_AVATAR_OFFSET = (PET_SIZE - PET_AVATAR) / 2
 /* 工作区 pane（浏览器 / 终端 / 资源）共用的最小内容尺寸。抽屉底宽、
    主窗口与弹出窗的最小尺寸都以它为基准——pane 被压成细条后页面会错位 */
 const PANE_MIN_WIDTH = 640
@@ -360,6 +364,10 @@ function createPetWindow() {
     resizable: false,
     skipTaskbar: true,
     alwaysOnTop: true,
+    /* macOS 默认把窗口 y 钳制在菜单栏下方；头像在 288 窗内居中（y=108），
+       不加这个拖到最上方仍会留约 108px 空隙。放开后窗口可越过屏幕顶，
+       悬浮球才能贴到菜单栏（仅 macOS 生效，其他平台无副作用） */
+    enableLargerThanScreen: true,
     hasShadow: false,
     show: false,
     autoHideMenuBar: true,
@@ -566,11 +574,22 @@ function registerIpc() {
     }, 60)
   }
   /* 宠物拖拽移动：渲染层 pointermove 上报屏幕坐标（指针采样频率），
-     主进程即时 setPosition——比轮询移窗平滑得多 */
+     主进程即时 setPosition——比轮询移窗平滑得多。窗口开了
+     enableLargerThanScreen（macOS 下才能贴到菜单栏），系统钳制随之失效，
+     所以这里自己把可见头像限制在工作区内：球可以贴住菜单栏/屏幕边缘，
+     但不会越过去（也不会被拖出屏幕丢球） */
   ipcMain.on('ez:pet-dragmove', (_e, x, y) => {
     const win = petWindow
     if (!win || win.isDestroyed() || !petDrag) return
-    win.setPosition(Math.round(x - petDrag.dx), Math.round(y - petDrag.dy))
+    const wa = screen.getDisplayNearestPoint({ x: Math.round(x), y: Math.round(y) }).workArea
+    const minX = wa.x - PET_AVATAR_OFFSET
+    const maxX = wa.x + wa.width - PET_AVATAR_OFFSET - PET_AVATAR
+    const minY = wa.y - PET_AVATAR_OFFSET
+    const maxY = wa.y + wa.height - PET_AVATAR_OFFSET - PET_AVATAR
+    win.setPosition(
+      Math.min(Math.max(Math.round(x - petDrag.dx), minX), maxX),
+      Math.min(Math.max(Math.round(y - petDrag.dy), minY), maxY),
+    )
   })
   /* 宠物 JS 拖拽：按下记光标与窗口左上角偏移
      （不用 app-region:drag——那会把右键变成系统窗口菜单） */
