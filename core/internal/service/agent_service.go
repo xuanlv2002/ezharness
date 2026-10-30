@@ -378,7 +378,11 @@ func (a *AgentService) Assemble(s *domain.Session, st domain.Settings) {
 					return filepath.ToSlash(p)
 				})),
 			mcpHook,
-			offload.New(s.Fsys, offload.WithThreshold(st.OffloadThreshold), offload.WithSkip(askuser.ToolName, task.ToolName, skilltool.ToolName), offload.WithReplayTool("read_file"),
+			offload.New(s.Fsys, offload.WithThreshold(st.OffloadThreshold),
+				/* 摘要头随阈值分档但封顶（默认 512，最大 1KB），避免
+				   阈值调大后卸载结果仍占满上下文。 */
+				func(o *offload.Options) { o.Head = offloadHead(st.OffloadThreshold) },
+				offload.WithSkip(askuser.ToolName, task.ToolName, skilltool.ToolName), offload.WithReplayTool("read_file"),
 				offload.WithAbs(func(p string) string { // 提示给绝对路径：模型不知道 FS 挂载基准，按工作目录拼相对路径必错
 					if abs, err := filepath.Abs(p); err == nil {
 						return filepath.ToSlash(abs)
@@ -421,6 +425,28 @@ func (a *AgentService) Reassemble(st domain.Settings) error {
 		a.Assemble(s, st)
 	}
 	return nil
+}
+
+// offloadHead 返回卸载后保留在上下文里的摘要头部字节数：随阈值分档
+// 但封顶。默认阈值 4096 → 512 字节；阈值 >= 8192 时最多 1024 字节；
+// 极小阈值下不超过阈值一半。卸载的目的是缩小上下文，摘要头若与阈值
+// 等长，多个大结果很快又把上下文灌满，模型仍要 read_file 补细节，
+// 等于两头都输。
+func offloadHead(threshold int) int {
+	if threshold <= 0 {
+		threshold = offload.DefaultThreshold
+	}
+	head := threshold / 8
+	if head < 256 {
+		head = 256
+	}
+	if head > 1024 {
+		head = 1024
+	}
+	if head > threshold/2 {
+		head = threshold / 2
+	}
+	return head
 }
 
 /*

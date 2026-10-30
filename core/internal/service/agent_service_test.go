@@ -3,9 +3,13 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"ezharness/core/internal/domain"
+
+	"github.com/xuanlv2002/ezloop/ext/fs"
+	"github.com/xuanlv2002/ezloop/ext/hook/offload"
 	"github.com/xuanlv2002/ezloop/types"
 )
 
@@ -169,5 +173,41 @@ func TestBuildServersEnabledFilter(t *testing.T) {
 	got := buildServers(context.Background(), f, nil)
 	if len(got) != 2 || got[0].Name != "time" || got[1].Name != "default-on" {
 		t.Fatalf("disabled server must be excluded, got %v", got)
+	}
+}
+
+/*
+卸载摘要头随阈值分档但封顶：默认 4096 → 512，大阈值最多 1KB，极小
+阈值不超过一半。不能与阈值等长，否则多个大结果很快又把上下文灌满。
+*/
+func TestOffloadHeadFollowsThreshold(t *testing.T) {
+	cases := []struct{ threshold, want int }{
+		{0, 512},
+		{-1, 512},
+		{100, 50},
+		{1024, 256},
+		{4096, 512},
+		{8192, 1024},
+		{1_000_000, 1024},
+	}
+	for _, c := range cases {
+		if got := offloadHead(c.threshold); got != c.want {
+			t.Errorf("offloadHead(%d) = %d, want %d", c.threshold, got, c.want)
+		}
+	}
+}
+
+// 集成校验：卸载后消息里保留的摘要头长度按分档规则生效。
+func TestOffloadHeadApplied(t *testing.T) {
+	const threshold = 1000
+	hook := offload.New(fs.NewLocal(t.TempDir()), offload.WithThreshold(threshold),
+		func(o *offload.Options) { o.Head = offloadHead(threshold) })
+	res := &types.ToolResult{Name: "dump", Content: strings.Repeat("x", 5000)}
+	if err := hook.OnToolEnd(context.Background(), &types.LoopState{}, res); err != nil {
+		t.Fatal(err)
+	}
+	want := strings.Repeat("x", 256) + "\n\n[输出共 5000 字节"
+	if !strings.HasPrefix(res.Content, want) {
+		t.Fatalf("offload head = %q..., want prefix %q", res.Content[:min(len(res.Content), 140)], want)
 	}
 }

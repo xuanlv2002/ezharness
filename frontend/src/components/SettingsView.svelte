@@ -51,7 +51,7 @@
   let savingIters = $state(false)
   let itersMsg = $state('')
 
-  /* 工具结果卸载阈值（字节；超过即卸载到文件只留摘要头部，0 = 默认 4096，随 Reassemble 生效） */
+  /* 工具结果卸载阈值（字节；超过即卸载到文件只留摘要头，0 = 默认 4096，摘要头随阈值分档封顶 1KB，随 Reassemble 生效） */
   let offload = $state<number | ''>('')
   let origOffload = $state<number | null>(null)
   let savingOffload = $state(false)
@@ -344,7 +344,7 @@
       <p class="msg">{itersMsg}</p>
     {/if}
     <label class="field">
-      <span>工具结果卸载阈值/字节（超过即卸载到文件、上下文只留摘要；0 = 默认 4096，上限 1MB）</span>
+      <span>工具结果卸载阈值/字节（超过即卸载到文件、上下文只留摘要头；0 = 默认 4096，上限 1MB；摘要头默认 512 字节、随阈值放宽但封顶 1KB）</span>
       <input type="number" bind:value={offload} min="0" max="1048576" />
     </label>
     <button

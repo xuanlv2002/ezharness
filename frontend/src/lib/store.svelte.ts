@@ -1615,6 +1615,9 @@ class AppStore {
         const last = this.lastStreaming(bs)
         if (last) {
           last.streaming = false
+          /* 慢消费丢帧时增量正文可能不全：以聚合帧的完整内容为准校准 */
+          if (ev.data?.content) last.text = ev.data.content
+          if (ev.data?.reasoning) last.reasoning = ev.data.reasoning
         } else if (!ev.forkId && (ev.data?.content || ev.data?.reasoning)) {
           // 回放重建：无流式块时按聚合帧补完整回复（实时路径 chunk 已建块）
           this.blocks.push({
@@ -1689,11 +1692,28 @@ class AppStore {
       case 'tool_end': {
         const d = ev.data || {}
         const bs = ev.forkId ? this.ensureFork(ev.forkId).blocks : this.blocks
-        const t = bs.find((b) => b.kind === 'tool' && b.id === d.callId)
-        if (t && t.kind === 'tool') {
+        const findTool = (fn: (b: Extract<Block, { kind: 'tool' }>) => boolean) =>
+          bs.find((b): b is Extract<Block, { kind: 'tool' }> => b.kind === 'tool' && fn(b))
+        let t = findTool((b) => b.id === d.callId)
+        // tool_start 丢失时按构建期同名块认领，避免卡片永远停在「构造中」
+        if (!t) t = findTool((b) => b.state === 'building' && !!d.name && b.name === d.name)
+        if (t) {
+          t.id = d.callId || t.id
           t.result = d.content || ''
           t.err = d.err || ''
           t.state = 'done'
+        } else {
+          // 起始帧彻底丢失：补一张完成态卡片，至少保留执行痕迹与结果
+          bs.push({
+            kind: 'tool',
+            uid: this.nuid(),
+            id: d.callId || '',
+            name: d.name || '',
+            args: '',
+            result: d.content || '',
+            err: d.err || '',
+            state: 'done',
+          })
         }
         // 工具结果携带图片加载标记：实时渲染缩略图行（历史路径走
         // <image_loaded> user 消息，两条路径渲染同一 imgload 块）

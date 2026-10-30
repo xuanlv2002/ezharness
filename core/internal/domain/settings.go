@@ -76,7 +76,7 @@ type Settings struct {
 	PinnedApps       []string `json:"pinnedApps,omitempty"`      // 钉到桌面小助手的快应用名（快应用页/宠物窗轮询读取，即改即生效）
 	ReasoningEffort  string   `json:"reasoningEffort,omitempty"` // 思考强度档位（''=不控制 | none=关闭 | low/high/max；请求侧经 reasoningeffort warp 即改即生效）
 	ApproveMode      string   `json:"approveMode,omitempty"`     // 审批档位（''=跟随安全配置 | off=全放行 | strict=全审；工具审批实时读取全局快照）
-	OffloadThreshold int      `json:"offloadThreshold"`          // 工具结果卸载阈值（字节；超过即卸载到文件只留摘要，0=默认 4096；随 Reassemble 生效）
+	OffloadThreshold int      `json:"offloadThreshold"`          // 工具结果卸载阈值（字节；超过即卸载到文件只留摘要头，0=默认 4096；摘要头随阈值分档封顶 1KB；随 Reassemble 生效）
 }
 
 /*

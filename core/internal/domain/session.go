@@ -31,6 +31,27 @@ var ErrBusy = errors.New("session busy")
 /* snapFlushBytes 是流式快照帧的重序列化增量阈值。 */
 const snapFlushBytes = 8192
 
+/* subBuffer 是单个 SSE 订阅者的帧缓冲。 */
+const subBuffer = 1024
+
+// Frame 是发往 SSE 订阅者的一帧。Type 用于慢消费者满缓冲时的丢弃决策：
+// 高频增量帧可以丢，生命周期帧（tool_start/tool_end/model_end/turn_end…）
+// 不能丢——丢了前端会一直停在「模型思考中」、工具卡不出现，直到下一条
+// 无关事件碰巧到达。
+type Frame struct {
+	Type string
+	Data []byte
+}
+
+/* droppable 判定高频增量帧：慢消费者积压时丢弃这些帧不影响时间线骨架。 */
+func droppable(t string) bool {
+	switch t {
+	case "model_chunk", "reasoning_chunk", "tool_chunk", "tool.output":
+		return true
+	}
+	return false
+}
+
 /* ErrNoAPIKey 表示 models.json 尚未配置 API Key（应用可启动，发消息被拒）。 */
 var ErrNoAPIKey = errors.New("未配置 API Key，请在设置中填写")
 
@@ -73,7 +94,7 @@ type Session struct {
 	history     []types.Message
 	archiving   bool // 归档进行中（摘要最长 2 分钟）：锁发消息/切分支/二次归档
 	cur         *runState
-	subs        map[chan []byte]struct{}
+	subs        map[chan Frame]struct{}
 	pending     map[string]Event
 	completed   *PendingNotice // 最近一轮完成的 info 通知（新一轮覆盖旧值）
 	ctxTokens   int
@@ -358,15 +379,20 @@ func (s *Session) DecideMcpAuth(d mcp.AuthDecision) {
 
 /* ── SSE 订阅（领域事件出口，HTTP 帧写出在 controller）── */
 
-/* Subscribe 注册一个订阅者，返回事件 channel 与注销函数。 */
-func (s *Session) Subscribe() (<-chan []byte, func()) {
-	ch := make(chan []byte, 1024)
+// SubscribeWithReplay 原子地注册订阅并捕获回放快照：先取回放再订阅会
+// 丢掉两步之间发布的事件（前端表现为一直停在「模型思考中」、工具卡不
+// 出现，直到下一条无关事件）；先订阅再取回放又会把间隙事件重复发送。
+// 锁内一次完成，回放帧在前、实时帧随后，无缝衔接。
+func (s *Session) SubscribeWithReplay() (frames [][]byte, turnActive bool, ch <-chan Frame, unsub func()) {
+	c := make(chan Frame, subBuffer)
 	s.mu.Lock()
-	s.subs[ch] = struct{}{}
+	s.subs[c] = struct{}{}
+	turnActive = s.cur != nil
+	frames = s.replayFramesLocked()
 	s.mu.Unlock()
-	return ch, func() {
+	return frames, turnActive, c, func() {
 		s.mu.Lock()
-		delete(s.subs, ch)
+		delete(s.subs, c)
 		s.mu.Unlock()
 	}
 }
@@ -407,6 +433,7 @@ func (s *Session) Publish(e Event) {
 	if err != nil {
 		return
 	}
+	frame := Frame{Type: e.Type, Data: data}
 	s.mu.Lock()
 	if e.Type == "approve.request" || e.Type == "askuser.request" || e.Type == "mcp.auth.request" {
 		var d struct {
@@ -421,21 +448,28 @@ func (s *Session) Publish(e Event) {
 		s.turnFrames = append(s.turnFrames, data)
 	}
 	for ch := range s.subs {
-		select {
-		case ch <- data:
-		default:
-			// 慢消费者满缓冲：流式增量可丢（回放有快照帧兜底），人机请求
-			// 不可丢——挤掉最旧一帧腾位送达，否则审批卡等会让整轮挂死
-			if e.Type == "approve.request" || e.Type == "askuser.request" || e.Type == "mcp.auth.request" {
+		if droppable(e.Type) {
+			// 高频增量：缓冲满时直接丢弃（model_end 会带完整正文/思考，
+			// stream.snapshot 供重连回放，丢增量不影响最终状态）
+			select {
+			case ch <- frame:
+			default:
+			}
+			continue
+		}
+		// 生命周期帧必须送达：满缓冲时挤掉最旧一帧腾位。FIFO 头部
+		// 通常是同一段流积压的增量帧，丢一帧增量远比丢 tool_start 安全。
+		for {
+			select {
+			case ch <- frame:
+			default:
 				select {
 				case <-ch:
 				default:
 				}
-				select {
-				case ch <- data:
-				default:
-				}
+				continue
 			}
+			break
 		}
 	}
 	s.mu.Unlock()
@@ -689,6 +723,13 @@ ReplayFrames 返回 SSE 建立时的重放帧：轮进行中回放整轮聚合�
 func (s *Session) ReplayFrames() [][]byte {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	return s.replayFramesLocked()
+}
+
+// replayFramesLocked 是 ReplayFrames 的无锁实现（调用方须持有 s.mu）：
+// SubscribeWithReplay 在同一次持锁内取快照，避免与订阅注册之间出现
+// 丢帧/重帧窗口。
+func (s *Session) replayFramesLocked() [][]byte {
 	if s.cur == nil {
 		out := make([][]byte, 0, len(s.pending))
 		for _, e := range s.pending {
@@ -865,7 +906,7 @@ func (h *Hub) newSession(id string, rootID string, snap *hooks.SessionSnap) *Ses
 		Sess:        hooks.NewStore(h.Fsys, id),
 		Topics:      h.Topics,
 		snap:        snap,
-		subs:        map[chan []byte]struct{}{},
+		subs:        map[chan Frame]struct{}{},
 		pending:     map[string]Event{},
 		snapAcc:     map[string]*StreamSnapshot{},
 		snapIdx:     map[string]int{},
