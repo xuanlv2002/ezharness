@@ -60,7 +60,7 @@ if [ "$DO_BUILD" = 1 ]; then
   ( cd core && go build -o "$CORE_EXE" . )
 fi
 
-[ -x "$CORE_EXE" ] || { echo "[dev] core 不存在: $CORE_EXE（去掉 --no-build 重新构建）" >&2; exit 1; }
+[ -x "$CORE_EXE" ] || { echo "[dev] core 不存在: ${CORE_EXE}（去掉 --no-build 重新构建）" >&2; exit 1; }
 chmod +x "$CORE_EXE"
 
 # 应用根配置：端口与数据目录。data 控制在 release/dev 下，与正式版数据隔离
@@ -72,7 +72,7 @@ cat > "$DEV_DIR/ezharness.json" <<EOF
   "dataDir": "$DEV_DIR/data"
 }
 EOF
-echo "[dev] 端口 $PORT，数据目录 $DEV_DIR/data"
+echo "[dev] 端口 ${PORT}，数据目录 $DEV_DIR/data"
 
 if [ ! -d desktop/node_modules ]; then
   echo "[dev] installing desktop deps..."
