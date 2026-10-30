@@ -251,10 +251,16 @@
           if (h.boot === res.boot) {
             if (res.url === location.origin) location.reload()
             else {
-              // 换端口跳转：桌面标题栏靠 ?desktop=1 渲染、鉴权靠 token，跳转目标都补上
-              const desktop = new URLSearchParams(location.search).has('desktop')
-              const t = getToken()
-              location.assign(`${res.url}/?${desktop ? 'desktop=1&' : ''}token=${encodeURIComponent(t)}`)
+              /* 换端口跳转：cookie 按 host 生效（不看端口），同 host 无需再带令牌；
+                 跨 host（如 Vite dev 的 localhost 页面跳到 127.0.0.1）才带一次引导令牌 */
+              const q = new URLSearchParams()
+              if (new URLSearchParams(location.search).has('desktop')) q.set('desktop', '1')
+              if (new URL(res.url).hostname !== location.hostname) {
+                const t = getToken()
+                if (t) q.set('token', t)
+              }
+              const qs = q.toString()
+              location.assign(`${res.url}/${qs ? `?${qs}` : ''}`)
             }
             return
           }
@@ -297,7 +303,7 @@
       <p class="err">{restartErr}</p>
     {/if}
     <label class="field">
-      <span>API 访问令牌（所有请求都需携带：X-EZ-Token 头或 ?token=；主界面与快应用打开时自动传入）</span>
+      <span>API 访问令牌（REST/SSE 用 X-EZ-Token 头；浏览器自动发起的导航、图片、PDF、快应用请求用 ez_token cookie）</span>
       <span class="tokenRow">
         <input type="text" bind:value={apiToken} readonly placeholder="加载中…" />
         <button onclick={(e) => copyToken((e.currentTarget as HTMLButtonElement).previousElementSibling as HTMLInputElement)}>

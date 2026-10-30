@@ -2,7 +2,6 @@
   import { onDestroy, onMount, tick, untrack } from 'svelte'
   import { store, type Attachment, type FileRef } from '../lib/store.svelte'
   import { fileBaseName, isImagePath } from '../lib/textfile'
-  import { authUrl } from '../lib/auth'
   import type { ReasoningEffort } from '../lib/api'
   import PlanPanel from './PlanPanel.svelte'
   import SessionStatus from './SessionStatus.svelte'
@@ -78,7 +77,7 @@
         name: a.name,
         path: a.path,
         isImage,
-        url: isImage && a.path ? authUrl(`/api/workspace/file?path=${encodeURIComponent(a.path)}${v ? `&v=${v}` : ''}`) : '',
+        url: isImage && a.path ? `/api/workspace/file?path=${encodeURIComponent(a.path)}${v ? `&v=${v}` : ''}` : '',
         ready: !!a.path,
       }
     }),

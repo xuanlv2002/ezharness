@@ -71,7 +71,8 @@ func main() {
 		}
 		token = hex.EncodeToString(b)
 		url := fmt.Sprintf("http://127.0.0.1:%d/?token=%s", c.Port, token)
-		log.Printf("web 入口（含 token，勿外传）：%s", url)
+		/* 入口 URL 的 token 是一次性引导：前端换 HttpOnly cookie 后立即从地址栏摘掉 */
+		log.Printf("web 入口（含一次性引导 token，勿外传）：%s", url)
 	}
 	/* 写回环境：terminal 与快应用后端等子进程继承，脚本用 EZHARNESS_TOKEN 鉴权 */
 	_ = os.Setenv("EZHARNESS_TOKEN", token)

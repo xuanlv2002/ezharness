@@ -9,8 +9,12 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/coder/websocket"
 	"github.com/gin-gonic/gin"
 )
+
+/* authCookieName 是浏览器自动请求的鉴权 cookie（HttpOnly、SameSite=Strict）。 */
+const authCookieName = "ez_token"
 
 /* Controllers 是路由依赖集合（main 装配）。 */
 type Controllers struct {
@@ -34,14 +38,22 @@ func NewRouter(c Controllers, dist fs.FS, token string) *gin.Engine {
 	r := gin.New()
 	r.Use(gin.Logger(), gin.Recovery())
 
+	/* 换代探活：旧页面重启后在新 origin 上跨域轮询，必须免鉴权（只回 boot） */
+	r.GET("/api/app/health", c.App.Health)
+
 	api := r.Group("/api", authRequired(token))
 	{
-		api.GET("/app/health", c.App.Health)
 		api.GET("/app/config", c.App.Config)
 		api.POST("/app/restart", c.App.Restart)
 		/* 当前访问令牌：设置页展示/复制用（能过鉴权者才可见）。 */
 		api.GET("/app/token", func(g *gin.Context) {
 			g.JSON(http.StatusOK, gin.H{"token": token})
+		})
+		/* 令牌换 HttpOnly cookie：浏览器自动发起的导航、图片/PDF、快应用
+		   请求无法加自定义头，前端启动时用入口令牌换一次 cookie。 */
+		api.POST("/auth/cookie", func(g *gin.Context) {
+			setAuthCookie(g, token)
+			g.Status(http.StatusNoContent)
 		})
 
 		api.GET("/bootstrap", c.Session.Bootstrap)
@@ -136,19 +148,72 @@ func NewRouter(c Controllers, dist fs.FS, token string) *gin.Engine {
 	return r
 }
 
-/* authRequired 校验 API 令牌：头/query 恒定时间比较，不认来源（Origin/Host 可伪造）。 */
+// authRequired 校验 API 令牌：X-EZ-Token 头 / ez_token cookie / WS 子协议
+// 任一匹配即可（恒定时间比较）；不认来源（Origin/Host 可伪造）。
 func authRequired(token string) gin.HandlerFunc {
 	return func(g *gin.Context) {
-		present := g.GetHeader("X-EZ-Token")
-		if present == "" {
-			present = g.Query("token")
-		}
-		if subtle.ConstantTimeCompare([]byte(present), []byte(token)) == 1 {
+		if validToken(g, token) {
 			g.Next()
 			return
 		}
 		g.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
 	}
+}
+
+// validToken 收集所有令牌通道并逐一恒定时间比较。cookie 供浏览器自动
+// 发起的请求（导航、<img>/<video>/PDF、快应用页）使用——这些请求加不了
+// 自定义请求头。任一通道有效即通过，避免残留的旧 cookie/旧头互相干扰。
+func validToken(g *gin.Context, token string) bool {
+	candidates := []string{g.GetHeader("X-EZ-Token")}
+	if c, err := g.Cookie(authCookieName); err == nil {
+		candidates = append(candidates, c)
+	}
+	if t, _ := wsProtocolToken(g.GetHeader("Sec-WebSocket-Protocol")); t != "" {
+		candidates = append(candidates, t)
+	}
+	for _, c := range candidates {
+		if c != "" && subtle.ConstantTimeCompare([]byte(c), []byte(token)) == 1 {
+			return true
+		}
+	}
+	return false
+}
+
+// setAuthCookie 下发 HttpOnly 会话 cookie：SameSite=Strict 阻断跨站请求
+// 顺手携带；HTTPS 下补 Secure。
+func setAuthCookie(g *gin.Context, token string) {
+	http.SetCookie(g.Writer, &http.Cookie{
+		Name:     authCookieName,
+		Value:    token,
+		Path:     "/",
+		HttpOnly: true,
+		SameSite: http.SameSiteStrictMode,
+		Secure:   g.Request.TLS != nil,
+	})
+}
+
+// wsProtocolToken 从 Sec-WebSocket-Protocol 提取前端令牌与完整子协议值：
+// 浏览器 WebSocket 不能设置自定义请求头，前端把令牌编码成
+// `ez-token.<token>` 子协议。Accept 需要把这个值原样回显，否则部分客户端
+// （如 ws）会以 "Server sent no subprotocol" 拒绝连接。
+func wsProtocolToken(header string) (token, proto string) {
+	for _, p := range strings.Split(header, ",") {
+		p = strings.TrimSpace(p)
+		if t, ok := strings.CutPrefix(p, "ez-token."); ok {
+			return t, p
+		}
+	}
+	return "", ""
+}
+
+// wsAcceptOptions 组装 WebSocket Accept 选项：放行本机开发来源；若客户端
+// 用子协议携带令牌，回显该子协议（ws 等客户端要求服务端确认所选协议）。
+func wsAcceptOptions(g *gin.Context) *websocket.AcceptOptions {
+	opts := &websocket.AcceptOptions{OriginPatterns: []string{"localhost:*", "127.0.0.1:*"}}
+	if _, proto := wsProtocolToken(g.GetHeader("Sec-WebSocket-Protocol")); proto != "" {
+		opts.Subprotocols = []string{proto}
+	}
+	return opts
 }
 
 /* serveStatic 服务 SPA：静态资源 + 非 /api 路径回退 index.html。 */

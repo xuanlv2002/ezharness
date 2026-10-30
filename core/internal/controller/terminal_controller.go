@@ -54,9 +54,7 @@ Ws GET /api/terminal/ws:升级后先发 hello(清单+快照),再双泵循环—�
 */
 func (c *TerminalController) Ws(g *gin.Context) {
 	// dev 模式页面经 Vite 代理(Origin: localhost:5173),放行本机来源
-	conn, err := websocket.Accept(g.Writer, g.Request, &websocket.AcceptOptions{
-		OriginPatterns: []string{"localhost:*", "127.0.0.1:*"},
-	})
+	conn, err := websocket.Accept(g.Writer, g.Request, wsAcceptOptions(g))
 	if err != nil {
 		return
 	}

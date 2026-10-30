@@ -4,7 +4,15 @@ import App from './App.svelte'
 import { isDesktop } from './lib/desktop'
 import { initToken } from './lib/auth'
 
-initToken()
+/* 令牌/cookie 就绪后再挂载：首屏接口与资源请求都要用到鉴权 */
+void (async () => {
+  try {
+    await initToken()
+  } catch {
+    /* 鉴权初始化失败也挂载：页面会以未授权状态提示 */
+  }
+  mount(App, { target: document.getElementById('app')! })
+})()
 
 /* 启动横幅：isometric1 等轴测 3D 字体，逐行青→紫渐变（ez 系列 logo 同款色系） */
 const LOGO = [
@@ -31,8 +39,6 @@ const grad = (t: number) =>
 LOGO.forEach((line, i) => {
   console.log(`%c${line}`, `color:${grad(i / (LOGO.length - 1))};font-family:ui-monospace,Consolas,monospace`)
 })
-
-const app = mount(App, { target: document.getElementById('app')! })
 
 /* 外部链接拦截（捕获阶段）：点击消息/页面里的外链在系统浏览器打开。
    桌面壳窗口当前页导航会离开应用（SPA 被顶掉无法返回），绝不能放行；
@@ -63,4 +69,4 @@ document.addEventListener(
   true,
 )
 
-export default app
+export {}

@@ -5,7 +5,7 @@ core 伺服的页面；托盘常驻；关闭语义（托盘隐藏/确认退出�
 用子窗口；共享浏览器（WebContentsView，browser 模块）。
 core 是唯一业务后端——本进程只做壳与桌面资产，不做业务。
 */
-const { app, BrowserWindow, Tray, Menu, ipcMain, shell, nativeImage, screen, dialog } = require('electron')
+const { app, BrowserWindow, Tray, Menu, ipcMain, shell, nativeImage, screen, dialog, session } = require('electron')
 const path = require('path')
 const fs = require('fs')
 const http = require('http')
@@ -53,9 +53,34 @@ function pageBase() {
   return process.env.EZHARNESS_DEV_URL || `http://127.0.0.1:${corePort}`
 }
 
-/* 带令牌的页面地址。 */
+/* 页面地址：令牌不再进 URL，由 setCoreCookie 写进 HttpOnly cookie。 */
 function pageUrl(suffix) {
-  return `${pageBase()}${suffix}${suffix.includes('?') ? '&' : '?'}token=${coreToken}`
+  return `${pageBase()}${suffix}`
+}
+
+/*
+setCoreCookie 把 API 令牌写进默认会话的 HttpOnly cookie。浏览器自动发起的
+请求——页面导航、<img>/<video>/PDF、快应用页的 fetch——没法加自定义请求头，
+只能靠 cookie 鉴权；REST/SSE/WS 仍走 X-EZ-Token 头（或子协议）。
+*/
+async function setCoreCookie() {
+  let origin = ''
+  try {
+    origin = new URL(pageBase()).origin
+  } catch {
+    return
+  }
+  try {
+    await session.defaultSession.cookies.set({
+      url: `${origin}/`,
+      name: 'ez_token',
+      value: coreToken,
+      httpOnly: true,
+      sameSite: 'strict',
+    })
+  } catch {
+    /* 设置失败不阻塞启动：前端会再用入口令牌换一次 cookie */
+  }
 }
 
 /* failStart 打包环境没有终端可看：启动失败弹系统对话框，细节留在日志里。 */
@@ -698,6 +723,7 @@ function registerIpc() {
 app.whenReady().then(async () => {
   installAppMenu()
   await startCore()
+  await setCoreCookie()
   createMainWindow()
   createTray()
   registerIpc()

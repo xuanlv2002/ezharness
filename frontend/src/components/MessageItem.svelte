@@ -3,7 +3,6 @@
   import DOMPurify from 'dompurify'
   import { api, type ImagePayload } from '../lib/api'
   import { fileBaseName, isImagePath } from '../lib/textfile'
-  import { authUrl } from '../lib/auth'
   import { launchApp } from '../lib/apps'
   import { store } from '../lib/store.svelte'
 
@@ -242,7 +241,7 @@
 
   /* 附件预览地址（工作目录文件服务；带版本参数——画板写回后强制刷新） */
   const fileUrl = (p?: string) =>
-    p ? authUrl(`/api/workspace/file?path=${encodeURIComponent(p)}${(store.imgVer[p] ?? 0) ? `&v=${store.imgVer[p]}` : ''}`) : ''
+    p ? `/api/workspace/file?path=${encodeURIComponent(p)}${(store.imgVer[p] ?? 0) ? `&v=${store.imgVer[p]}` : ''}` : ''
 </script>
 
 {#if role === 'user'}

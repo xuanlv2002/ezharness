@@ -1,5 +1,6 @@
 /* API 封装：REST + SSE。v0.2：bootstrap 模式（会话对用户隐藏）。 */
-import { authUrl } from './auth'
+import { fetchEventSource } from '@microsoft/fetch-event-source'
+import { getToken } from './auth'
 
 /* 人机决策持久化记录（后端 hooks.DecisionRecord 的 JSON 形状） */
 export interface DecisionRecord {
@@ -626,22 +627,58 @@ export const api = {
   appHealth: (base = '') => fetch(`${base}/api/app/health`).then(json<{ ok: boolean; boot: number }>),
 }
 
+/* SSE 致命错误（鉴权失败/响应类型不符）：不重试，避免用同一个坏令牌刷请求 */
+class SseFatalError extends Error {}
+
 /* subscribe 建立 SSE 订阅，返回断开函数。
-window 级单连接：HMR/重复订阅先关旧连接，防泄漏挤占同域连接池。 */
+window 级单连接：HMR/重复订阅先关旧连接，防泄漏挤占同域连接池。
+用 fetch-event-source 而不是原生 EventSource：EventSource 不能设置请求头，
+过去只能把 token 拼进 URL；现在走 X-EZ-Token 头。 */
 export function subscribe(id: string, onEvent: (ev: SseEvent) => void): () => void {
-  const w = window as unknown as { __ezSSE?: EventSource }
-  w.__ezSSE?.close()
-  const es = new EventSource(authUrl(`/api/sessions/${id}/events`))
-  w.__ezSSE = es
-  es.onmessage = (m) => {
-    try {
-      onEvent(JSON.parse(m.data))
-    } catch {
-      /* 忽略坏帧 */
-    }
+  const w = window as unknown as { __ezSSE?: AbortController }
+  w.__ezSSE?.abort()
+  const ac = new AbortController()
+  w.__ezSSE = ac
+  const url = `/api/sessions/${id}/events`
+  const headers = { 'X-EZ-Token': getToken() }
+
+  const connect = () => {
+    void fetchEventSource(url, {
+      headers,
+      signal: ac.signal,
+      /* 原生 EventSource 切后台不断连；库默认会在 document.hidden 时断开，
+         这里保持常连，避免 agent 运行中丢事件 */
+      openWhenHidden: true,
+      onopen(res) {
+        const ct = res.headers.get('content-type') || ''
+        if (!res.ok || !ct.startsWith('text/event-stream')) {
+          throw new SseFatalError(`SSE ${res.status} ${ct}`)
+        }
+        return Promise.resolve()
+      },
+      onmessage(m) {
+        try {
+          onEvent(JSON.parse(m.data))
+        } catch {
+          /* 忽略坏帧 */
+        }
+      },
+      onclose() {
+        /* 服务端正常关流（重启/换代）：稍后重连，保持原生 EventSource 语义 */
+        if (!ac.signal.aborted) window.setTimeout(connect, 1000)
+      },
+      onerror(err) {
+        /* 网络类错误交给库重连；鉴权/协议错误直接终止 */
+        if (err instanceof SseFatalError) throw err
+        return 1000
+      },
+    }).catch((err) => {
+      if (!ac.signal.aborted) console.warn('[sse] 订阅终止', err)
+    })
   }
+  connect()
   return () => {
-    es.close()
-    if (w.__ezSSE === es) w.__ezSSE = undefined
+    ac.abort()
+    if (w.__ezSSE === ac) w.__ezSSE = undefined
   }
 }

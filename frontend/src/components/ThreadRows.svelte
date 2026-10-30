@@ -3,7 +3,6 @@
      保证两处块类型、工具卡、记忆 diff、资源变更、图片与收尾提示完全一致。
      两处差异只有头像尺寸/神态和是否播放历史入场动画，由 props 控制。 */
   import { store } from '../lib/store.svelte'
-  import { authUrl } from '../lib/auth'
   import { TOOL_GROUP_MIN, type Row } from '../lib/rows'
   import EzAvatar from './EzAvatar.svelte'
   import MessageItem from './MessageItem.svelte'
@@ -121,7 +120,7 @@
                   <img
                     src={snap
                       ? `data:${snap.mimeType};base64,${snap.data}`
-                      : authUrl(`/api/workspace/file?path=${encodeURIComponent(p)}`)}
+                      : `/api/workspace/file?path=${encodeURIComponent(p)}`}
                     alt={p}
                     loading="lazy"
                     onclick={() => store.openFileAt(p)}

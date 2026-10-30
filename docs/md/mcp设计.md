@@ -66,9 +66,10 @@ MCP 让 agent 接入外部工具服务器。ezharness 除了把 MCP 工具交给
 
 所有 `/api/*` 需要鉴权：
 
-- 请求头 `X-EZ-Token: <token>`，或查询参数 `?token=<token>`；
-- 恒定时间比较，避免时序侧信道；
-- 不按来源放行（Origin / Host 都可伪造）：主界面把令牌放在 `?token=` 与 sessionStorage，由全局 fetch 补丁带上；快应用页由 core 注入令牌桥，同样自动带令牌。
+- REST/SSE 用请求头 `X-EZ-Token: <token>`；浏览器自动发起的导航、图片/PDF、快应用请求用 HttpOnly cookie `ez_token`；浏览器 WebSocket 用 `Sec-WebSocket-Protocol: ez-token.<token>`（原生 WebSocket 不能设置自定义请求头）。
+- 恒定时间比较，避免时序侧信道；API 不认 URL 查询参数里的 token。
+- 不按来源放行（Origin / Host 都可伪造）：桌面壳启动时把令牌写进会话 cookie，主界面由全局 fetch 补丁带请求头；快应用页同源请求自动带 cookie。
+- 入口 URL 的 `?token=` 只在 web 直跑时做一次性引导（前端换 cookie 后立即从地址栏摘掉），不是 API 鉴权通道。
 - 脚本：terminal / 共享终端 / 快应用后端等子进程继承环境变量 `EZHARNESS_TOKEN`，请求时把它放进 `X-EZ-Token` 头即可，不需要用户手填。
 
 ### 4.1 直调 MCP 工具
@@ -125,7 +126,7 @@ POST /api/model/call
 
 ### 4.5 快应用页面
 
-快应用页面由 core 在 `/apps/<app-id>/` 同源伺服。打开时入口 URL 带上主访问令牌；HTML 响应注入令牌桥，从打开地址的 `?token=` 取令牌给页内 `fetch('/api/mcp/call')` 补 `X-EZ-Token`，应用代码不需要自己保管密钥。
+快应用页面由 core 在 `/apps/<app-id>/` 同源伺服。打开入口不再带令牌：页面与页内 `fetch('/api/mcp/call')` 同源，浏览器自动携带 `ez_token` cookie，应用代码不需要自己保管密钥。旧链接里的 `?token=` 仍由 core 注入的令牌桥兼容（转成 `X-EZ-Token` 头）。
 
 内置的 `ez-mcp-auth.js` 提供 `ezMcp.call / authorize / deepParse`：自动处理 401、弹出授权并重试。带后端的快应用是独立端口，属于跨源，需要后端自己返回 CORS 头。
 
