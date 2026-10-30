@@ -276,7 +276,8 @@ function startCore() {
   })
 }
 
-/* createMainWindow 主窗口：无边框（前端 TitleBar 自绘 + app-region 拖拽） */
+/* createMainWindow 主窗口：Windows/Linux 无边框（前端 TitleBar 自绘 +
+   app-region 拖拽）；macOS 保留原生红绿灯并放到左侧，贴合系统习惯 */
 function createMainWindow() {
   const cfg = readCoreConfig()
   mainWindow = new BrowserWindow({
@@ -285,10 +286,15 @@ function createMainWindow() {
     /* 侧栏 64 + 聊天主列 480 + 抽屉 pane 底宽；高度 = 标题栏 + pane 头部 + 内容 */
     minWidth: 64 + 480 + PANE_MIN_WIDTH,
     minHeight: PANE_MIN_HEIGHT + 120,
-    frame: false,
+    /* macOS：hiddenInset 隐藏标题栏但保留原生交通灯（前端不再自绘三键）；
+       位置按 34px 自绘标题栏垂直居中、与侧栏 logo 左缘对齐 */
+    ...(process.platform === 'darwin'
+      ? { titleBarStyle: 'hiddenInset', trafficLightPosition: { x: 16, y: 11 } }
+      : { frame: false }),
     /* 不可全屏：共享浏览器标签里的页面 requestFullscreen（双击视频/图片常见）
        会把承载它的窗口整个拉成全屏——主窗本就无边框、独立窗全屏后框也没了，
-       用户拿不到关闭入口。禁掉窗口全屏后页面改在视图框内铺满，不接管整屏。 */
+       用户拿不到关闭入口。禁掉窗口全屏后页面改在视图框内铺满，不接管整屏。
+       macOS 下该选项同时让绿灯执行「最大化」而非全屏，与前端自绘按钮语义一致。 */
     fullscreenable: false,
     show: false,
     autoHideMenuBar: true,

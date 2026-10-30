@@ -6,6 +6,8 @@ const { contextBridge, ipcRenderer } = require('electron')
 
 contextBridge.exposeInMainWorld('ez', {
   desktop: true,
+  /* 渲染层按平台切换窗口按钮形态（macOS 用原生红绿灯，不再自绘，见 TitleBar） */
+  platform: process.platform,
   window: {
     minimize: () => ipcRenderer.send('ez:minimize'),
     toggleMaximize: () => ipcRenderer.invoke('ez:toggle-maximize'),
