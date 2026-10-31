@@ -315,6 +315,12 @@ func wsAcceptOptions(g *gin.Context) *websocket.AcceptOptions {
 func serveStatic(r *gin.Engine, dist fs.FS) {
 	fileServer := http.FileServerFS(dist)
 	r.NoRoute(func(g *gin.Context) {
+		/* API 路径不存在就是 404：回退 index.html 会把 200+HTML 塞给调用方，
+		   报错退化成 "Unexpected token '<'" 这类迷惑形态 */
+		if strings.HasPrefix(g.Request.URL.Path, "/api/") {
+			g.Status(http.StatusNotFound)
+			return
+		}
 		path := strings.TrimPrefix(g.Request.URL.Path, "/")
 		if path != "" && fs.ValidPath(path) {
 			if _, err := fs.Stat(dist, path); err == nil {

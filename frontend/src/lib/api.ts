@@ -515,16 +515,17 @@ export const api = {
     return json<{ result: string }>(res)
   },
 
-  /* MCP OAuth：取授权 URL（前端用系统浏览器打开）/ 探测是否需 OAuth / 轮询状态 / 取消 / 注销 */
+  /* MCP OAuth：取授权 URL（前端用系统浏览器打开）/ 探测是否需 OAuth / 轮询状态 / 取消 / 注销。
+     start/status/cancel 在 OpenAPI 面（会话凭证同样可过），probe/logout 在会话面。 */
   oauthStart: (name: string, metadataUrl = '') =>
-    post<{ url: string }>('/api/mcp/oauth/start', metadataUrl ? { name, metadata_url: metadataUrl } : { name }),
+    post<{ url: string }>('/api/open/mcp/oauth/start', metadataUrl ? { name, metadata_url: metadataUrl } : { name }),
 
   oauthProbe: (name: string) => post<{ oauth: boolean }>('/api/mcp/oauth/probe', { name }),
 
   oauthStatus: (name: string) =>
-    fetch(`/api/mcp/oauth/status?name=${encodeURIComponent(name)}`).then(json<{ authorized: boolean; pending: boolean }>),
+    fetch(`/api/open/mcp/oauth/status?name=${encodeURIComponent(name)}`).then(json<{ authorized: boolean; pending: boolean }>),
 
-  oauthCancel: (name: string) => post<{ ok: boolean }>('/api/mcp/oauth/cancel', { name }),
+  oauthCancel: (name: string) => post<{ ok: boolean }>('/api/open/mcp/oauth/cancel', { name }),
 
   oauthLogout: (name: string) => post<{ ok: boolean }>('/api/mcp/oauth/logout', { name }),
 
