@@ -2,6 +2,7 @@
 AppsService 快应用用例：按 app.quick 协议扫描 apps/ 下的目录应用（含该
 声明文件的目录才是快应用），并执行启动——开窗由调用方（desktop 壳/web
 新标签页）做，声明了 backend 的应用在这里把后端送进内置终端跑起来。
+卸载也在这里：停后端终端、删应用目录、清钉选残留。
 */
 package service
 
@@ -57,12 +58,14 @@ type AppView struct {
 }
 
 /*
-appTerm 是快应用启动所需的终端能力（TerminalService 实现；测试注入假实现，
-不必真起 PTY）。Launch 只写入命令不等输出，后端日志留在那个终端里。
+appTerm 是快应用所需的终端能力（TerminalService 实现；测试注入假实现，
+不必真起 PTY）。Launch 只写入命令不等输出，后端日志留在那个终端里；
+Close 供卸载收掉仍在跑的后端。
 */
 type appTerm interface {
 	Launch(dir, name, desc, origin, command string) (*TermInfo, error)
 	List() []TermInfo
+	Close(id string)
 }
 
 /* AppsService 快应用扫描与启动。 */
@@ -154,6 +157,38 @@ func (s *AppsService) TogglePin(ctx context.Context, name string) (bool, error) 
 	}
 	s.Hub.ApplySettings(st)
 	return slices.Contains(st.PinnedApps, name), nil
+}
+
+/*
+Uninstall 卸载快应用：先收掉该应用仍在跑的后端终端（文件被后端占用时
+目录删不掉），再删除 apps/<名>/ 整个目录，最后清掉钉选列表里的残留。
+名单校验同 Launch（名字不可穿越）；不存在的应用报 ErrAppNotFound。
+*/
+func (s *AppsService) Uninstall(ctx context.Context, name string) error {
+	if _, err := s.load(ctx, name); err != nil {
+		return err
+	}
+	if s.Term != nil {
+		if id := liveTerm(s.Term.List(), AppOrigin(name)); id != "" {
+			s.Term.Close(id)
+		}
+	}
+	if err := os.RemoveAll(filepath.Join(AppsDir, name)); err != nil {
+		return fmt.Errorf("删除应用目录失败: %w", err)
+	}
+	if s.Hub == nil {
+		return nil
+	}
+	st := s.Hub.SettingsSnapshot()
+	if !slices.Contains(st.PinnedApps, name) {
+		return nil
+	}
+	st.PinnedApps = slices.DeleteFunc(st.PinnedApps, func(p string) bool { return p == name })
+	if err := SaveSettings(ctx, s.Hub.Fsys, st); err != nil {
+		return err
+	}
+	s.Hub.ApplySettings(st)
+	return nil
 }
 
 /* iconURL 校验声明的 icon（同 entry 的相对路径约束）并拼成同源 URL；空/越界返回空串。 */

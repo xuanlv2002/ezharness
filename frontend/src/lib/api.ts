@@ -476,6 +476,10 @@ export const api = {
   pinApp: (name: string) =>
     post<{ ok: boolean; pinned: boolean }>(`/api/apps/${encodeURIComponent(name)}/pin`, {}),
 
+  /* 卸载快应用：后端停掉运行中的后端终端、删 apps/<名>/ 目录、清钉选残留 */
+  uninstallApp: (name: string) =>
+    fetch(`/api/apps/${encodeURIComponent(name)}`, { method: 'DELETE' }).then(json<{ ok: boolean }>),
+
   /* 文本文件保存（file:// 编辑器）；按绝对路径写，与 /api/workspace/file 同源 */
   saveFile: (path: string, content: string) =>
     post<{ ok: boolean }>('/api/workspace/save', { path, content }),
