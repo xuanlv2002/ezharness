@@ -209,24 +209,29 @@
     <!-- 底部全部应用栏：… 点击展开，一行最多 3 个、滚轮横滚 -->
     <div class="traylist" class:open={hovered && trayOpen}>
       <div class="scroll">
-        {#each apps as a, i (a.name)}
-          <span class="item" style={`transition-delay:${i * 24}ms`}>
-            <button class="app" onclick={() => void launchApp(a)} title={`${a.title}（点击启动）`}>
-              {#if a.icon && !iconFailed[a.name]}
-                <img src={a.icon} alt="" onerror={() => (iconFailed[a.name] = true)} />
-              {:else}
-                <span class="name">{a.title.slice(0, 3)}</span>
-              {/if}
-            </button>
-            <button class="pinmark" class:on={a.pinned} onclick={() => void togglePin(a.name)}
-              title={a.pinned ? '取消钉选' : '钉到环形菜单（满 3 个顶掉最早）'}>
-              <svg viewBox="0 0 24 24" fill={a.pinned ? 'currentColor' : 'none'} stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M12 17v5" />
-                <path d="M9 3h6l-1 6 3 3v2H7v-2l3-3-1-6z" />
-              </svg>
-            </button>
-          </span>
-        {/each}
+        {#if apps.length === 0}
+          <!-- 空态：竖排提示撑起托盘，别让它瘪成一条白片 -->
+          <p class="empty">暂无快应用</p>
+        {:else}
+          {#each apps as a, i (a.name)}
+            <span class="item" style={`transition-delay:${i * 24}ms`}>
+              <button class="app" onclick={() => void launchApp(a)} title={`${a.title}（点击启动）`}>
+                {#if a.icon && !iconFailed[a.name]}
+                  <img src={a.icon} alt="" onerror={() => (iconFailed[a.name] = true)} />
+                {:else}
+                  <span class="name">{a.title.slice(0, 3)}</span>
+                {/if}
+              </button>
+              <button class="pinmark" class:on={a.pinned} onclick={() => void togglePin(a.name)}
+                title={a.pinned ? '取消钉选' : '钉到环形菜单（满 3 个顶掉最早）'}>
+                <svg viewBox="0 0 24 24" fill={a.pinned ? 'currentColor' : 'none'} stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M12 17v5" />
+                  <path d="M9 3h6l-1 6 3 3v2H7v-2l3-3-1-6z" />
+                </svg>
+              </button>
+            </span>
+          {/each}
+        {/if}
       </div>
     </div>
   </div>
@@ -449,17 +454,20 @@
     height: 10px;
   }
 
-  /* 全部应用栏：… 点击展开（自左侧滑入），贴左缘竖向一列，滚轮纵向滚动。
-     贴左不挡右侧环形球（环最左的球边缘 ~x62，本列右缘 ~x56）。 */
+  /* 全部应用栏：… 点击展开（自左侧滑入），竖向一列，滚轮纵向滚动。
+     尽量贴近头像又不压环形球（环最左的球是 150° 的「…」，左缘 ~x63，
+     本列右缘 ~x64 只擦到 1px 圆弧投影）。
+     无阴影：托盘阴影会被窗界裁出左右不对称的灰边；实色底 + 细边定
+     轮廓，任何背景上都干净。 */
   .traylist {
     position: absolute;
-    left: 4px;
+    left: 12px;
     top: 50%;
     width: 52px;
     padding: 5px;
+    border: 1px solid var(--line);
     border-radius: 14px;
-    background: color-mix(in srgb, var(--bg) 88%, transparent);
-    box-shadow: 0 6px 20px rgb(0 0 0 / 18%);
+    background: var(--bg);
     opacity: 0;
     transform: translate(-14px, -50%) scale(0.9);
     pointer-events: none;
@@ -475,6 +483,7 @@
   .scroll {
     display: flex;
     flex-direction: column;
+    align-items: center;
     gap: 8px;
     max-height: calc(100vh - 24px);
     overflow-y: auto;
@@ -500,6 +509,15 @@
   .traylist.open .item {
     opacity: 1;
     transform: none;
+  }
+  /* 空态提示：竖排汉字撑起托盘（52px 宽的竖列里横排只会折行） */
+  .empty {
+    margin: 8px 0;
+    writing-mode: vertical-rl;
+    font-size: var(--font-size-small);
+    letter-spacing: 4px;
+    color: var(--faint);
+    white-space: nowrap;
   }
   .traylist .app {
     display: grid;
