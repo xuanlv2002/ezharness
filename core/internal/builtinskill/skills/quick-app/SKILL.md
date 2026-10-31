@@ -7,7 +7,7 @@ description: 构建/更新快应用——判断纯前端还是需要后端，app
 
 快应用 = `<数据目录>/apps/<名>/` 目录（数据目录绝对路径见 system 提示 `<workspace>` 段，apps 行给出的是同一个位置）。目录里有 `app.quick` 声明才算一个应用。
 
-用户点击启动 = **打开应用窗口**；声明了 `backend` 就在 ezharness 内置终端里把后端跑起来。
+快应用是一套与宿主无关的打包标准：协议只约定文件组织（声明、入口、启动命令、图标、文档），不约束语言与技术栈；页面里要用大模型或 MCP 能力时，调用方法见 open-api 技能。用户点击启动 = **打开应用窗口**；声明了 `backend` 就在 ezharness 内置终端里把后端跑起来。
 
 ## app.quick 协议
 
@@ -22,7 +22,7 @@ description: 构建/更新快应用——判断纯前端还是需要后端，app
 
 - `title`：卡片标题；缺省取 entry 文件的 `<title>`，再缺省用目录名
 - `entry`：前端入口（相对应用目录），缺省 `index.html`
-- `backend`：后端启动命令，cwd 是应用目录；**省略 = 纯前端**，只开窗不起终端
+- `backend`：启动命令，cwd 是应用目录；**省略 = 纯前端**，只开窗不起终端
 - `icon`：卡片头像（相对应用目录的图片文件名，应用目录内、不可上溯）
 - 未识别的字段一律忽略——协议向前兼容，加字段不会破旧版
 
@@ -47,11 +47,9 @@ description: 构建/更新快应用——判断纯前端还是需要后端，app
 
 **先判断形态，别一上来就写后端：**
 
-1. **能用 MCP 就用 MCP**：本机已配的 MCP 服务可经页面同源直调（见 `<local_api>` 段），不必起后端；大模型能力（总结/翻译/识别/生成）用 `/api/model/call`，同样不必起后端。
+1. **够用 HTTP 就不起后端**：页面里直调大模型、调 MCP 工具都是一次 HTTP 请求（用法与鉴权见 open-api 技能）；`file://` 直接打开页面就能测试。
 2. **纯前端**：`save_app`（name/title/html）一次写全 `app.quick` + `index.html`。
-3. **需要后端**：`save_app` 带 `backend` 建骨架，再用 `write_file` 把后端脚本等文件写进同一目录（save_app 只写声明与前端，它引用的脚本要先写好）。
-
-需要本机命令能力（TLS 证书探测、本地文件处理、调非 MCP 的本地程序）而 MCP 又覆盖不了时，才走第 3 条。
+3. **需要后端**：要长期可靠调核心能力、或需要本机命令能力（TLS 证书探测、本地文件处理、调非 MCP 的本地程序）而 MCP 覆盖不了时，`save_app` 带 `backend` 建骨架，再用 `write_file` 把后端脚本等文件写进同一目录（save_app 只写声明与前端，它引用的脚本要先写好）。后端怎么取令牌见 open-api 技能。
 
 ## 头像（icon）
 
@@ -68,51 +66,8 @@ description: 构建/更新快应用——判断纯前端还是需要后端，app
 - **前台**运行：不要 `start /b`、不要 `&`——日志留在那个终端里，用户和你都看得到；停服务 = 在那个终端 Ctrl+C 或关掉它。后台化会让输出与退出都失控。
 - 端口自己定一个高位端口，页面里用同一个值。
 - 只依赖用户机器上已有的运行时（python/node 等），不要在脚本里装依赖。
-
-## 页面与 core 的关系
-
-- 前端由 core **同源**伺服（`/apps/<名>/`），页内直接 `fetch('/api/…')`，API 访问令牌自动携带，不要自己加头；应用目录就是信任边界。
-- 后端在终端里跑，继承 `EZHARNESS_TOKEN`，请求时把它放进 `X-EZ-Token` 头；**API 访问令牌不要写进页面、不要回传前端**。
 - 后端在另一个端口 = **跨源**：页面直接 fetch 后端时，后端必须返回 CORS 头（`Access-Control-Allow-Origin: *`），否则浏览器拦掉。
 - **没有就绪握手**：点启动会立刻开窗，后端可能还没监听——页面首次请求自带重试（如 3 次 × 300ms），不要假设一开就有响应。
-
-## 调 MCP（统一组件，别自己写 fetch）
-
-快应用调 MCP 一律走组件——普通 server 直接返回结果；需 OAuth 的自动弹框、开浏览器、授权后重试，**不要自己写 fetch + 弹框 + 轮询**：
-
-```html
-<script src="/ez-mcp-auth.js"></script>
-<script>
-  // 需要授权时组件会自动在页面最外层居中弹出授权框（自带样式、隔离在 Shadow DOM），
-  // 用户点「去授权」→ 系统浏览器打开 → 授权完成后自动重试并返回结果。
-  const data = await ezMcp.call('notion', 'search', { q: 'hello' })
-</script>
-```
-
-- `ezMcp.call(server, tool, args?)` → Promise，resolve 为工具结果（已层层 `JSON.parse` 解包）；失败/取消/超时以 `Error` reject（`message` 是原因）。
-- `ezMcp.authorize(server)` → Promise：只发起授权、不调用工具（做「先授权再用」的入口）。
-- 组件是**单文件零依赖、Shadow DOM 自带样式**，弹框 `position:fixed` 盖在最外层、不参与页面布局，页面的 CSS 不会污染它、它也不污染页面。
-- 同一个 server 的并发调用共用一次授权；用户在应用外（会话弹框 / MCP 设置页 / 通知栏）授权同样有效（MCP 授权全局共享）。
-- **MCP 授权必须由用户本人在浏览器完成**，页面/后端都不要替用户跑授权流程。
-
-## 大模型直调（model call）
-
-页面里直接 `fetch('/api/model/call', …)`（鉴权见「页面与 core 的关系」）：
-
-```js
-const r = await fetch('/api/model/call', {
-  method: 'POST',
-  headers: { 'Content-Type': 'application/json' },
-  body: JSON.stringify({ prompt: '把下面这段翻译成英文：…' })
-})
-const { result } = await r.json()   // result 是模型返回的文本
-```
-
-- body：`{prompt: string, model?: string, images?: string[]}`。`model` 省略 = 当前主模型；填模型名（system `<models>` 段清单里的条目）可选更合适的模型。
-- `images` 是**本机图片绝对路径**列表（最多 4 张）——识别/描述图片时用，但目标模型必须支持视觉（模型页可见「支持视觉」标记），否则返回报错。
-- 返回：`200 {"result": "模型输出文本"}`；失败非 2xx 且 `{"error":"原因"}`。
-- 单次调用最长 5 分钟，失败直接报错，不重试。
-- 用途：翻译、总结、分类、图片识别（把用户选的图片路径传进去）、内容生成等"一次问答"——需要多步推理或工具的活走 MCP/后端，别硬塞进一次 prompt。
 
 ## 重启与边界
 

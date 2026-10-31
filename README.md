@@ -161,6 +161,7 @@ ezharness 在每轮对话里持续做三件事：**修剪**（按窗口水位就
 | 共享浏览器 | 让 agent 打开网页操作，浏览器窗口自动弹出共见；你在同一页面随时接管 |
 | [快应用](docs/md/快应用.md) | 让 agent 做个小工具，生成后一键启动为独立窗口，下次还能被它自己调用 |
 | [MCP](docs/md/mcp设计.md) | 设置页添加 MCP server，agent 自动发现工具 |
+| [认证与 OpenAPI](docs/md/认证与openapi.md) | 脚本/快应用/外部程序一套令牌直调模型与 MCP |
 
 ## 它由什么组成
 
@@ -189,7 +190,7 @@ flowchart TB
 | 模型与用量 | 槽位、协议、厂商预设、统计口径 | [模型配置](docs/md/模型配置.md) |
 | 会话与上下文 | 树状会话、归档换代、修剪与记忆 | [session 管理](docs/md/session设计.md) · [上下文管理](docs/md/上下文设计.md) |
 | 协同与交付 | 共享终端、浏览器、资源、快应用 | [协同工具](docs/md/协同设计.md) · [快应用](docs/md/快应用.md) |
-| 扩展面 | 技能、MCP 与对外 API、工具边界 | [skill 设计](docs/md/skill设计.md) · [MCP 设计](docs/md/mcp设计.md) · [工具快查](docs/md/external.md) |
+| 扩展面 | 技能、MCP 与对外 API、工具边界 | [skill 设计](docs/md/skill设计.md) · [MCP 设计](docs/md/mcp设计.md) · [认证与 OpenAPI](docs/md/认证与openapi.md) · [工具快查](docs/md/external.md) |
 | 设计总述 | 取舍与边界 | [设计理念](docs/md/设计理念.md) |
 
 ## 从源码构建

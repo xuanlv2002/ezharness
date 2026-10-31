@@ -1,5 +1,6 @@
 /*
-AppController 是应用级端点：health（代际探活）、配置查询、换代重启。
+AppController 是应用级端点：health（代际探活）、配置查询、换代重启、
+令牌管理（展示/复制/重置）。
 */
 package controller
 
@@ -12,7 +13,8 @@ import (
 )
 
 type AppController struct {
-	Svc *service.AppService
+	Svc    *service.AppService
+	Tokens *TokenStore
 }
 
 /*
@@ -44,4 +46,33 @@ func (c *AppController) Restart(g *gin.Context) {
 		return
 	}
 	g.JSON(http.StatusOK, res)
+}
+
+/* SessionToken GET /api/app/token：当前会话令牌（设置页展示/复制）。 */
+func (c *AppController) SessionToken(g *gin.Context) {
+	g.JSON(http.StatusOK, gin.H{"token": c.Tokens.Session()})
+}
+
+/* OpenapiToken GET /api/app/openapi-token：当前 OpenAPI 令牌。 */
+func (c *AppController) OpenapiToken(g *gin.Context) {
+	g.JSON(http.StatusOK, gin.H{"token": c.Tokens.Openapi()})
+}
+
+/*
+ResetOpenapiToken POST /api/app/openapi-token/reset：换新落盘并即时生效。
+旧令牌立即作废，硬编码它的产物需要重新生成。
+*/
+func (c *AppController) ResetOpenapiToken(g *gin.Context) {
+	token := service.ResetOpenapiToken()
+	c.Tokens.SetOpenapi(token)
+	g.JSON(http.StatusOK, gin.H{"token": token})
+}
+
+/*
+AuthCookie POST /api/auth/cookie：会话令牌换 HttpOnly cookie，浏览器自动
+发起的导航、图片、PDF 请求靠它鉴权（这些请求加不了自定义头）。
+*/
+func (c *AppController) AuthCookie(g *gin.Context) {
+	setAuthCookie(g, c.Tokens.Session())
+	g.Status(http.StatusNoContent)
 }

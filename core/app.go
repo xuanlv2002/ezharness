@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"ezharness/core/internal/config"
+	"ezharness/core/internal/controller"
 	"ezharness/core/internal/domain"
 	"ezharness/core/internal/osfs"
 	"ezharness/core/internal/service"
@@ -30,7 +31,7 @@ import (
 type app struct {
 	mu        sync.Mutex
 	cfg       config.Config
-	token     string                   // API 访问令牌（进程级常量，换代沿用）
+	tokens    *controller.TokenStore   // 双令牌：会话（进程内）+ openapi（落盘 openapi.json）
 	hub       *domain.Hub              // 当前代领域根（换代重建；退出/换代收尾用）
 	srv       *http.Server             // 当前代 HTTP 服务
 	term      *service.TerminalService // 当前代共享终端（换代重建；收尾杀全部 shell）
@@ -62,7 +63,9 @@ func newApp(c config.Config, token string) (*app, error) {
 	if len(created) > 0 {
 		log.Printf("数据目录初始化：新建 %d 个配置文件（%s）", len(created), strings.Join(created, "、"))
 	}
-	return &app{cfg: c, token: token}, nil
+	// openapi 令牌随数据目录（换代切目录时在 restart 重新加载）
+	tokens := controller.NewTokenStore(token, service.LoadOrCreateOpenapiToken())
+	return &app{cfg: c, tokens: tokens}, nil
 }
 
 /* start 启动第一代 server（端口占用失败即退出）。 */
@@ -112,6 +115,8 @@ func (a *app) restart(port int, listen, dataDir string, ln net.Listener) {
 		}
 	}
 	config.FollowDataDir(dataDir) // 日志文件跟随数据目录换代
+	// 换代可能切数据目录：openapi 令牌随新目录的 openapi.json（缺则新建）
+	a.tokens.SetOpenapi(service.LoadOrCreateOpenapiToken())
 	engine := a.buildRouter()
 	srv := &http.Server{Handler: engine}
 	a.mu.Lock()

@@ -21,6 +21,24 @@ func (c *McpController) List(g *gin.Context) {
 	g.JSON(http.StatusOK, gin.H{"servers": c.Svc.List(g.Request.Context())})
 }
 
+/*
+OpenList GET /api/open/mcp：OpenAPI 面的服务清单，只报名字/描述/启用——
+不含连接配置（env/header 可能带密钥），openapi 令牌持有者不可见。
+*/
+func (c *McpController) OpenList(g *gin.Context) {
+	type lean struct {
+		Name        string `json:"name"`
+		Description string `json:"description"`
+		Enabled     bool   `json:"enabled"`
+	}
+	servers := c.Svc.List(g.Request.Context())
+	out := make([]lean, 0, len(servers))
+	for _, s := range servers {
+		out = append(out, lean{Name: s.Name, Description: s.Description, Enabled: s.Enabled})
+	}
+	g.JSON(http.StatusOK, gin.H{"servers": out})
+}
+
 /* Update POST /api/mcp（下一轮迭代热加载生效）。 */
 func (c *McpController) Update(g *gin.Context) {
 	var f service.McpFile

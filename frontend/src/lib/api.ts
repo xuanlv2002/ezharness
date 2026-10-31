@@ -500,10 +500,10 @@ export const api = {
 
   disconnectMcp: (name: string) => post<{ ok: boolean }>('/api/mcp/disconnect', { name }),
 
-  /* callMcp 调用 MCP 工具；需要 OAuth 时后端回 401 + needs_auth，
+  /* callMcp 调用 MCP 工具（OpenAPI 面）；需要 OAuth 时后端回 401 + needs_auth，
      这里抛出携带 server/auth_url/metadata_url 的 McpAuthError 供调用方引导认证。 */
   callMcp: async (server: string, tool: string, args: unknown) => {
-    const res = await fetch('/api/mcp/call', {
+    const res = await fetch('/api/open/mcp/call', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ server, tool, args }),
@@ -547,9 +547,9 @@ export const api = {
   setReasoningEffort: (effort: ReasoningEffort) =>
     post<{ ok: boolean; effort: string }>('/api/settings/reasoning', { effort }),
 
-  /* 直调大模型（快应用/脚本；与 /api/mcp/call 同级的内置能力） */
+  /* 直调大模型（OpenAPI 面，与 mcp/call 同级） */
   callModel: (prompt: string, model = '', images: string[] = []) =>
-    post<{ result: string }>('/api/model/call', { model, prompt, images }),
+    post<{ result: string }>('/api/open/model/call', { model, prompt, images }),
 
   getMemoryConfig: () => fetch('/api/memory/config').then(json<MemoryConfig>),
 
@@ -620,6 +620,11 @@ export const api = {
   appConfig: () => fetch('/api/app/config').then(json<AppConfig>),
 
   appToken: () => fetch('/api/app/token').then(json<{ token: string }>),
+
+  /* OpenAPI 令牌：脚本/快应用/外部程序调 /api/open/* 用的持久令牌（设置页展示/重置） */
+  openapiToken: () => fetch('/api/app/openapi-token').then(json<{ token: string }>),
+
+  resetOpenapiToken: () => post<{ token: string }>('/api/app/openapi-token/reset', {}),
 
   appRestart: (req: { port?: number; listen?: string; dataDir?: string }) =>
     post<{ url: string; boot: number }>('/api/app/restart', req),

@@ -30,7 +30,7 @@ type modelCallTool struct {
 	invoke  OneShot
 }
 
-/* OneShot 用指定模型条目执行一次无工具请求（service 提供：buildProvider + 超时护栏；REST /api/model/call 复用）。 */
+/* OneShot 用指定模型条目执行一次无工具请求（service 提供：buildProvider + 超时护栏；REST /api/open/model/call 复用）。 */
 type OneShot func(ctx context.Context, entry domain.ModelEntry, req types.ModelRequest) (string, error)
 
 /* ModelCall 返回 model_call 工具；entries/active 实时读模型快照（设置页改动即生效）。 */
@@ -97,7 +97,7 @@ func (t modelCallTool) Invoke(ctx context.Context, raw json.RawMessage) (string,
 }
 
 /* LoadImages 读盘转内嵌图片（超限与坏文件直接报错，模型可自纠路径）；
-model_call 工具与 HTTP /api/model/call 共用。 */
+model_call 工具与 HTTP /api/open/model/call 共用。 */
 func LoadImages(ctx context.Context, fsys osfs.OS, paths []string) ([]types.ImagePart, error) {
 	if len(paths) > 4 {
 		return nil, fmt.Errorf("model_call: images 最多 4 张")

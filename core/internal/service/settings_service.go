@@ -119,7 +119,7 @@ func (s *SettingsService) Update(ctx context.Context, v SettingsView) error {
 }
 
 /*
-ModelCall 是 HTTP /api/model/call 的用例（快应用/脚本直调大模型，与 mcp call
+ModelCall 是 HTTP /api/open/model/call 的用例（直调大模型，与 mcp/call
 同级的系统内置能力）：model 空 = 主模型；images 路径按目标模型视觉能力附带。
 */
 func (s *SettingsService) ModelCall(ctx context.Context, model, prompt string, images []string) (string, error) {

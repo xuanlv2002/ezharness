@@ -291,7 +291,7 @@ func (c *SettingsController) SetApproveMode(g *gin.Context) {
 }
 
 /*
-CallModel POST /api/model/call：快应用/脚本直调大模型（与 /api/mcp/call 同级的
+CallModel POST /api/open/model/call：直调大模型（OpenAPI 面，与 /api/open/mcp/call 同级
 系统内置能力）。body {model?, prompt, images?: [路径]}；返回 {result}。
 */
 func (c *SettingsController) CallModel(g *gin.Context) {

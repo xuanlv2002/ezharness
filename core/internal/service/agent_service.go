@@ -128,7 +128,7 @@ func modelFactoryOf(hub *domain.Hub) func(string) provider.ModelProvider {
 	}
 }
 
-/* OneShotInvoke 用指定模型条目做一次无工具请求并返回文本（model_call 工具与 HTTP /api/model/call 共用）。 */
+/* OneShotInvoke 用指定模型条目做一次无工具请求并返回文本（model_call 工具与 HTTP /api/open/model/call 共用）。 */
 func OneShotInvoke(ctx context.Context, entry domain.ModelEntry, req types.ModelRequest) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 	defer cancel()
@@ -778,18 +778,14 @@ func buildSystemBase(ctx context.Context, st domain.Settings, fsys osfs.OS, mc d
 		}
 		b.WriteString("\n</mcp>")
 	}
-	// core 暴露的可调用 API 统一在此说明（鉴权 + 端点），MCP 清单段不再重复
+	// core OpenAPI 索引：载荷、示例、SDK 与授权处理的完整用法在 open-api 技能
 	b.WriteString("\n\n<local_api>\n" +
-		"（core 暴露的本机 API。鉴权统一：同源页面直接 fetch('/api/…')，API 访问令牌自动携带，不要自己加头；" +
-		"终端/脚本用请求头 X-EZ-Token: $EZHARNESS_TOKEN（Windows %EZHARNESS_TOKEN%）；" +
-		"外部程序由用户在设置页复制「API 访问令牌」，不要让用户把 API 访问令牌贴进对话；任何情况下不要把 API 访问令牌写进页面源码或回传前端。\n" +
-		"POST /api/model/call — 直调大模型：载荷 {\"prompt\":\"提示词\",\"model\":\"可选，省略=主模型\",\"images\":[\"可选，本机绝对路径，最多 4 张，模型须支持视觉\"]}，返回 {\"result\":\"输出文本\"}；" +
-		"翻译/总结/识别/生成这类一次问答直接用它，不必绕道 MCP 或后端。\n" +
-		"POST /api/mcp/call — 调 MCP 工具：载荷 {\"server\":\"服务名\",\"tool\":\"工具名\",\"args\":{}}，成功 {\"result\":\"文本\"}、失败 {\"error\":\"原因\"}；" +
-		"需 OAuth 的服务未授权时返回 401 + {\"needs_auth\":true,...}，页面统一用 ezMcp.call 自动授权重试（见 quick-app 技能），不要自己写弹框。\n" +
-		"GET /api/mcp — MCP 服务清单。")
+		"（core 本机 OpenAPI：POST /api/open/model/call 直调大模型、POST /api/open/mcp/call 调 MCP 工具、GET /api/open/mcp 服务清单。\n" +
+		"鉴权：请求头 X-EZ-Open-Token: $EZHARNESS_OPENAPI_TOKEN（Windows %EZHARNESS_OPENAPI_TOKEN%，终端与子进程自动继承）；" +
+		"外部程序读 <数据目录>/openapi.json。浏览器页面引 /api/open/sdk.js 后 ez.config 无脑传令牌即可。\n" +
+		"写调用代码前先 load_skill 加载 open-api 技能拿载荷与示例；401 多半是令牌被重置，重取令牌即可，不要让用户把令牌贴进对话。）")
 	if base := localAPIBase(); base != "" {
-		b.WriteString("\n脚本用完整地址：" + base + "/api/<路径>。")
+		b.WriteString("\n完整地址：" + base + "/api/open/<路径>。")
 	}
 	b.WriteString("\n</local_api>")
 	b.WriteString("\n\n<action>\n" +

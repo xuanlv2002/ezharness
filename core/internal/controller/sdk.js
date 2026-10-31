@@ -1,43 +1,108 @@
 /*
-ez-mcp-auth.js —— 快应用调用 MCP 的统一 OAuth 组件。
+ezharness OpenAPI 浏览器 SDK。
 
-用法（快应用页面，同源）：
+用法（任何页面：ezharness 同源伺服、file:// 直开、远程页面均可）：
 
-    <script src="/ez-mcp-auth.js"></script>
+    <script src="http://127.0.0.1:PORT/api/open/sdk.js"></script>
     <script>
-      const data = await ezMcp.call('notion', 'search', { q: 'hello' })
+      ez.config({ token: 'openapi 令牌' })            // 无脑传、永远传
+      const text = await ez.model.call('把这段翻译成英文：…')
+      const data = await ez.mcp.call('notion', 'search', { q: 'hi' })
     </script>
 
-`ezMcp.call` 调 POST /api/mcp/call；若目标 server 需要 OAuth 且未授权（后端
-回 HTTP 401 + {needs_auth:true, auth_url}），组件会自动在最外层居中弹出一个
-授权弹框（Shadow DOM 自带样式，位于页面所有内容之上，不参与页面的任何布局）：
-
-  - 「去授权」→ 取授权 URL（必要时现取）→ 系统默认浏览器打开 → 轮询授权状态
-  - 授权完成后弹框自动关闭，**同一次调用自动重试**并返回结果
-  - 「取消」→ 取消后端流程，call 以 Error('cancelled') 拒绝
-  - 轮询超时（默认 5 分钟）→ 以 Error('timeout') 拒绝
-
-同一个 server 的并发授权请求会复用同一个弹框/流程。用户也完全可以在应用外
-（会话里的待认证弹框、MCP 设置页、通知栏）完成授权——令牌全局共享，轮询同样
-能感知到。
-
-无需构建、无依赖；令牌与流程全在 core 侧，本文件只负责弹框与重试。
+基址从本脚本的加载地址推导，file:// 页面同样可用。令牌恒随请求发送；
+在 ezharness 同源页面里浏览器还会自动附 cookie——两通道任一命中即通过，
+所以硬编码的令牌即使已被重置，同源下凭 cookie 仍可调用。MCP 服务需要
+OAuth 时自动弹出授权框，用户在浏览器完成授权后自动重试本次调用。
 */
 ;(function () {
   'use strict'
 
-  var API_CALL = '/api/mcp/call'
-  var API_START = '/api/mcp/oauth/start'
-  var API_STATUS = '/api/mcp/oauth/status'
-  var API_CANCEL = '/api/mcp/oauth/cancel'
+  var BASE = (function () {
+    var s = document.currentScript && document.currentScript.src
+    if (s) {
+      try {
+        return new URL(s).origin
+      } catch (e) {}
+    }
+    return location.origin
+  })()
+
+  var token = ''
+
+  function headers() {
+    return token ? { 'X-EZ-Open-Token': token } : {}
+  }
+
+  /* post POST /api/open/<path>（JSON 载荷）。 */
+  function post(path, body) {
+    var h = headers()
+    h['Content-Type'] = 'application/json'
+    return fetch(BASE + path, { method: 'POST', headers: h, body: JSON.stringify(body || {}) })
+  }
+
+  /* get GET /api/open/<path>。 */
+  function get(path) {
+    return fetch(BASE + path, { headers: headers() })
+  }
+
+  /* asError 把非 2xx 响应抛成 Error（message 取后端 error 字段）。 */
+  function asError(r) {
+    return r
+      .json()
+      .catch(function () {
+        return {}
+      })
+      .then(function (b) {
+        if (!r.ok) throw new Error(b.error || 'HTTP ' + r.status)
+        return b
+      })
+  }
+
+  /* deepParse 层层 JSON.parse 直到不能再解析（MCP result 常是嵌套的 JSON 文本）。 */
+  function deepParse(v, depth) {
+    depth = depth || 0
+    if (typeof v !== 'string' || depth > 8) return v
+    var s = v.trim()
+    if (!s) return v
+    var c = s.charAt(0)
+    if (c !== '{' && c !== '[' && c !== '"') return v
+    try {
+      return deepParse(JSON.parse(s), depth + 1)
+    } catch (e) {
+      return v
+    }
+  }
+
+  /* ── 模型直调 ── */
+
+  /*
+    model.call(prompt, opts?) → Promise<string>
+    opts: { model?: string, images?: string[]（本机图片绝对路径，最多 4 张，模型须支持视觉） }
+    model 省略 = 当前主模型。单次上限 5 分钟。
+  */
+  function modelCall(prompt, opts) {
+    opts = opts || {}
+    return post('/api/open/model/call', {
+      prompt: prompt,
+      model: opts.model || '',
+      images: opts.images || [],
+    })
+      .then(asError)
+      .then(function (b) {
+        return b.result
+      })
+  }
+
+  /* ── MCP 调用（含 OAuth 弹框与自动重试） ── */
+
   var POLL_MS = 1500
   var TIMEOUT_MS = 5 * 60 * 1000
 
-  /* ── 弹框（Shadow DOM，隔离样式，固定居中于最外层）── */
   var host = null
   var shadow = null
   var els = null
-  var cur = null // { server, authUrl, resolve, reject, poller, timer }
+  var cur = null // { server, metadataUrl, resolve, reject, poller, timer }
 
   var CSS =
     ':host{all:initial}' +
@@ -73,7 +138,7 @@ ez-mcp-auth.js —— 快应用调用 MCP 的统一 OAuth 组件。
   function ensureHost() {
     if (host) return
     host = document.createElement('div')
-    host.setAttribute('data-ez-mcp-auth', '')
+    host.setAttribute('data-ez-oauth', '')
     host.style.cssText = 'position:fixed;inset:0;z-index:2147483000;display:none'
     shadow = host.attachShadow({ mode: 'open' })
     shadow.innerHTML =
@@ -104,9 +169,9 @@ ez-mcp-auth.js —— 快应用调用 MCP 的统一 OAuth 组件。
     })
   }
 
-  function open(server, authUrl, metadataUrl) {
+  function open(server, metadataUrl) {
     ensureHost()
-    cur = { server: server, authUrl: authUrl, metadataUrl: metadataUrl, poller: 0, timer: 0 }
+    cur = { server: server, metadataUrl: metadataUrl, poller: 0, timer: 0 }
     els.msg.innerHTML = '服务 <b></b> 需要 OAuth 认证才能调用工具。点「去授权」在浏览器中完成授权，完成后会自动重试本次调用。'
     els.msg.querySelector('b').textContent = server
     els.hint.hidden = true
@@ -130,11 +195,7 @@ ez-mcp-auth.js —— 快应用调用 MCP 的统一 OAuth 组件。
     if (host) host.style.display = 'none'
     if (err) {
       // 取消后端流程（幂等；授权已完成时也无害）
-      fetch(API_CANCEL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: c.server }),
-      }).catch(function () {})
+      post('/api/open/mcp/oauth/cancel', { name: c.server }).catch(function () {})
       c.reject(err)
     } else {
       c.resolve()
@@ -147,15 +208,14 @@ ez-mcp-auth.js —— 快应用调用 MCP 的统一 OAuth 组件。
     els.go.disabled = true
     els.go.textContent = '打开中…'
     els.err.hidden = true
-
-    startAuth(server, cur.authUrl, cur.metadataUrl)
+    startAuth(server, cur.metadataUrl)
       .then(function (url) {
         if (!cur) return
         els.hint.hidden = false
         els.go.textContent = '重新打开授权页'
         els.go.disabled = false
         try {
-          window.open(url, '_blank') // 桌面壳 → 系统浏览器；web 端 → 新标签
+          window.open(url, '_blank')
         } catch (e) {
           setError('无法打开浏览器，请手动访问：' + url)
         }
@@ -178,7 +238,7 @@ ez-mcp-auth.js —— 快应用调用 MCP 的统一 OAuth 组件。
         settle(new Error('timeout'))
         return
       }
-      fetch(API_STATUS + '?name=' + encodeURIComponent(server))
+      get('/api/open/mcp/oauth/status?name=' + encodeURIComponent(server))
         .then(function (r) {
           return r.json()
         })
@@ -191,15 +251,10 @@ ez-mcp-auth.js —— 快应用调用 MCP 的统一 OAuth 组件。
     }, POLL_MS)
   }
 
-  function startAuth(server, authUrl, metadataUrl) {
-    if (authUrl) return Promise.resolve(authUrl)
+  function startAuth(server, metadataUrl) {
     var body = { name: server }
     if (metadataUrl) body.metadata_url = metadataUrl
-    return fetch(API_START, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    }).then(function (r) {
+    return post('/api/open/mcp/oauth/start', body).then(function (r) {
       return r.json().then(function (b) {
         if (!r.ok || !b.url) throw new Error(b.error || '无法获取授权地址')
         return b.url
@@ -207,15 +262,13 @@ ez-mcp-auth.js —— 快应用调用 MCP 的统一 OAuth 组件。
     })
   }
 
-  /* ── 对外 API ── */
-
   var inflight = {} // server → Promise（同一 server 的并发授权复用）
 
   function ensureAuthorized(server, authUrl, metadataUrl) {
     if (inflight[server]) return inflight[server]
     var p = new Promise(function (resolve, reject) {
       if (cur) {
-        // 已有别的 server 的弹框：等它结束后重试本 server
+        // 已有别的 server 的弹框：等它结束后再开本 server 的
         var wait = setInterval(function () {
           if (!cur) {
             clearInterval(wait)
@@ -224,7 +277,7 @@ ez-mcp-auth.js —— 快应用调用 MCP 的统一 OAuth 组件。
         }, 200)
         return
       }
-      open(server, authUrl, metadataUrl)
+      open(server, metadataUrl)
       cur.resolve = resolve
       cur.reject = reject
       cur.timer = setTimeout(function () {
@@ -241,65 +294,45 @@ ez-mcp-auth.js —— 快应用调用 MCP 的统一 OAuth 组件。
     return p
   }
 
-  /* deepParse 层层 JSON.parse 直到不能再解析（MCP result 常是嵌套的 JSON 文本） */
-  function deepParse(v, depth) {
-    depth = depth || 0
-    if (typeof v !== 'string' || depth > 8) return v
-    var s = v.trim()
-    if (!s) return v
-    var c = s.charAt(0)
-    if (c !== '{' && c !== '[' && c !== '"') return v
-    try {
-      return deepParse(JSON.parse(s), depth + 1)
-    } catch (e) {
-      return v
-    }
-  }
-
   /*
-  call(server, tool, args?) → Promise<result>
+    mcp.call(server, tool, args?) → Promise<result>
     调用 MCP 工具。需要授权时弹框、授权后自动重试一次。
-    成功返回 result（已 deepParse）；失败/取消/超时以 Error 拒绝（message 为后端原因）。
+    成功返回 result（已 deepParse）；失败/取消/超时以 Error 拒绝。
   */
-  function call(server, tool, args, _retried) {
-    var body = { server: server, tool: tool, args: args == null ? {} : args }
-    return fetch(API_CALL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    }).then(function (r) {
-      if (r.status === 401) {
-        return r
-          .json()
-          .catch(function () {
-            return {}
-          })
-          .then(function (b) {
-            if (!b.needs_auth) throw new Error(b.error || '未授权')
-            return ensureAuthorized(b.server || server, b.auth_url || '', b.metadata_url || '').then(function () {
-              if (_retried) throw new Error('授权后仍无法调用')
-              return call(server, tool, args, true)
+  function mcpCall(server, tool, args, _retried) {
+    return post('/api/open/mcp/call', { server: server, tool: tool, args: args == null ? {} : args })
+      .then(function (r) {
+        if (r.status === 401) {
+          return r
+            .json()
+            .catch(function () {
+              return {}
             })
-          })
-      }
-      return r.text().then(function (text) {
-        var parsed = deepParse(text)
-        if (!r.ok) {
-          var msg = parsed && parsed.error ? parsed.error : 'HTTP ' + r.status
-          throw new Error(msg)
+            .then(function (b) {
+              if (!b.needs_auth) throw new Error(b.error || '未授权')
+              return ensureAuthorized(b.server || server, b.auth_url || '', b.metadata_url || '').then(function () {
+                if (_retried) throw new Error('授权后仍无法调用')
+                return mcpCall(server, tool, args, true)
+              })
+            })
         }
-        if (parsed && typeof parsed === 'object' && 'result' in parsed) {
-          return deepParse(parsed.result)
-        }
-        return parsed
+        return asError(r).then(function (b) {
+          return deepParse(b.result)
+        })
       })
-    })
   }
 
-  /* authorize(server) → Promise<void>：仅发起授权（不调用工具），供预授权用 */
-  function authorize(server) {
-    return ensureAuthorized(server, '')
+  /* mcp.authorize(server) → Promise<void>：仅发起授权（不调用工具），供预授权用。 */
+  function mcpAuthorize(server) {
+    return ensureAuthorized(server, '', '')
   }
 
-  window.ezMcp = { call: call, authorize: authorize, deepParse: deepParse }
+  window.ez = {
+    config: function (o) {
+      token = (o && o.token) || ''
+    },
+    model: { call: modelCall },
+    mcp: { call: mcpCall, authorize: mcpAuthorize },
+    deepParse: deepParse,
+  }
 })()

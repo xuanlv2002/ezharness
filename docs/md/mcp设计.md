@@ -64,18 +64,12 @@ MCP 让 agent 接入外部工具服务器。ezharness 除了把 MCP 工具交给
 
 ## 四、对外暴露的 API
 
-所有 `/api/*` 需要鉴权：
-
-- REST/SSE 用请求头 `X-EZ-Token: <token>`；浏览器自动发起的导航、图片/PDF、快应用请求用 HttpOnly cookie `ez_token`；浏览器 WebSocket 用 `Sec-WebSocket-Protocol: ez-token.<token>`（原生 WebSocket 不能设置自定义请求头）。
-- 恒定时间比较，避免时序侧信道；API 不认 URL 查询参数里的 token。
-- 不按来源放行（Origin / Host 都可伪造）：桌面壳启动时把令牌写进会话 cookie，主界面由全局 fetch 补丁带请求头；快应用页同源请求自动带 cookie。
-- 入口 URL 的 `?token=` 只在 web 直跑时做一次性引导（前端换 cookie 后立即从地址栏摘掉），不是 API 鉴权通道。
-- 脚本：terminal / 共享终端 / 快应用后端等子进程继承环境变量 `EZHARNESS_TOKEN`，请求时把它放进 `X-EZ-Token` 头即可，不需要用户手填。
+直调 MCP 与模型的能力在 OpenAPI 面 `/api/open/*`：跨源放行，鉴权用 `X-EZ-Open-Token: <openapi 令牌>`（或会话凭证）。令牌怎么取、CORS 细节、路由两面模型见[认证与 OpenAPI](认证与openapi.md)。
 
 ### 4.1 直调 MCP 工具
 
 ```http
-POST /api/mcp/call
+POST /api/open/mcp/call
 Content-Type: application/json
 
 {
@@ -96,27 +90,36 @@ Content-Type: application/json
 
 `args` 必须是 JSON 对象，不是字符串。
 
-### 4.2 其他 MCP 端点
+### 4.2 其他端点
+
+OpenAPI 面（openapi 令牌或会话凭证）：
+
+| 方法 | 路径 | 用途 |
+| --- | --- | --- |
+| GET | `/api/open/mcp` | 已启用服务清单（名/描述/启用，不含连接配置） |
+| POST | `/api/open/mcp/oauth/start` | 发起授权 |
+| GET | `/api/open/mcp/oauth/status` | 查询授权状态 |
+| POST | `/api/open/mcp/oauth/cancel` | 取消授权流程 |
+
+会话面（MCP 管理与配置，仅会话凭证）：
 
 | 方法 | 路径 | 用途 |
 | --- | --- | --- |
 | GET / POST | `/api/mcp` | 读取 / 保存服务器配置 |
 | POST | `/api/mcp/connect` · `/disconnect` | 手动连接 / 断开 |
-| POST | `/api/mcp/oauth/start` | 发起授权 |
-| GET | `/api/mcp/oauth/status` | 查询授权状态 |
-| POST | `/api/mcp/oauth/probe` · `/cancel` · `/logout` | 探测 / 取消 / 登出 |
+| POST | `/api/mcp/oauth/probe` · `/logout` | 探测 / 登出 |
 
 ### 4.3 模型调用
 
 ```http
-POST /api/model/call
+POST /api/open/model/call
 
 { "prompt": "...", "model": "可选", "images": ["可选"] }
 ```
 
 返回 `{ "result": "..." }`。上限 4 张图、5 分钟超时。
 
-### 4.4 事件流与共享通道
+### 4.4 事件流与共享通道（会话面）
 
 | 通道 | 路径 | 说明 |
 | --- | --- | --- |
@@ -126,24 +129,15 @@ POST /api/model/call
 
 ### 4.5 快应用页面
 
-快应用页面由 core 在 `/apps/<app-id>/` 同源伺服。打开入口不再带令牌：页面与页内 `fetch('/api/mcp/call')` 同源，浏览器自动携带 `ez_token` cookie，应用代码不需要自己保管密钥。旧链接里的 `?token=` 仍由 core 注入的令牌桥兼容（转成 `X-EZ-Token` 头）。
-
-内置的 `ez-mcp-auth.js` 提供 `ezMcp.call / authorize / deepParse`：自动处理 401、弹出授权并重试。带后端的快应用是独立端口，属于跨源，需要后端自己返回 CORS 头。
+页面引 `/api/open/sdk.js` 并用 OpenAPI 令牌初始化：`ez.mcp.call` 自动处理 401、弹出授权并重试。纯前端把令牌硬编码进 `ez.config`；带后端的应用由后端实时取令牌，页面只请求自己的后端。带后端的应用在独立端口，属于跨源，需要后端自己返回 CORS 头。
 
 ## 五、一个最小调用示例
 
-```js
-const res = await fetch('/api/mcp/call', {
-  method: 'POST',
-  headers: { 'Content-Type': 'application/json' },
-  body: JSON.stringify({
-    server: 'filesystem',
-    tool: 'read_text_file',
-    args: { path: 'D:/work/README.md' },
-  }),
-})
-const data = await res.json()
-console.log(data.result)
+```bash
+curl -s -H "X-EZ-Open-Token: $EZHARNESS_OPENAPI_TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{"server":"filesystem","tool":"read_text_file","args":{"path":"D:/work/README.md"}}' \
+  http://127.0.0.1:5260/api/open/mcp/call
 ```
 
 ## 六、设计取舍

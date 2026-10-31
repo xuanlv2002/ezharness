@@ -62,8 +62,11 @@ func main() {
 	// modeldump 输出恒进日志（写不写由开关决定，开关随设置/换代在 buildRouter 推导）
 	modeldump.Out = logWriter
 
-	/* API 令牌：desktop 经 EZHARNESS_TOKEN 注入；web 直跑自生成并打印入口 URL。 */
+	/* 会话令牌：desktop 经 EZHARNESS_TOKEN 注入；web 直跑自生成并打印入口
+	   URL。会话令牌只活在进程内：不落盘、不下发子进程——终端与快应用后端
+	   等子进程用 openapi 令牌（openapi.json / EZHARNESS_OPENAPI_TOKEN）。 */
 	token := os.Getenv("EZHARNESS_TOKEN")
+	_ = os.Unsetenv("EZHARNESS_TOKEN")
 	if token == "" {
 		b := make([]byte, 18)
 		if _, err := rand.Read(b); err != nil {
@@ -74,8 +77,6 @@ func main() {
 		/* 入口 URL 的 token 是一次性引导：前端换 HttpOnly cookie 后立即从地址栏摘掉 */
 		log.Printf("web 入口（含一次性引导 token，勿外传）：%s", url)
 	}
-	/* 写回环境：terminal 与快应用后端等子进程继承，脚本用 EZHARNESS_TOKEN 鉴权 */
-	_ = os.Setenv("EZHARNESS_TOKEN", token)
 
 	a, err := newApp(c, token)
 	if err != nil {
@@ -146,10 +147,10 @@ func (a *app) buildRouter() *gin.Engine {
 		Topics:    &controller.TopicController{Svc: &service.TopicService{Hub: hub, Agents: agents}},
 		Mcp:       &controller.McpController{Svc: service.NewMcpService(hub.Fsys, a.mcpRouter, a.mcpAuth)},
 		Apps:      &controller.AppsController{Svc: &service.AppsService{Fsys: hub.Fsys, Term: termSvc, Hub: hub}},
-		App:       &controller.AppController{Svc: appSvc},
+		App:       &controller.AppController{Svc: appSvc, Tokens: a.tokens},
 		Terminal:  &controller.TerminalController{Svc: termSvc},
 		Browser:   &controller.BrowserController{Svc: a.browser},
 		Workspace: &controller.WorkspaceController{Svc: service.NewWorkspaceService(hub.Fsys, hub)},
 	}
-	return controller.NewRouter(controllers, distFS(), a.token)
+	return controller.NewRouter(controllers, distFS(), a.tokens)
 }
