@@ -183,9 +183,38 @@
     switchTo(want)
   })
 
+  /* paneSize 量看板的实际列行数:已有实例直接复用(同容器、常驻 fit);
+     首建时在容器里起一个隐藏探针(与 holder 同几何)跑一次 fit。量不出来
+     返回 0,后端退回默认尺寸。 */
+  function paneSize(): { cols: number; rows: number } {
+    const t = terms.get(current) ?? [...terms.values()][0]
+    if (t) return { cols: t.term.cols, rows: t.term.rows }
+    if (!root) return { cols: 0, rows: 0 }
+    /* 探针节点要自己写几何:Svelte 的 scoped 样式只命中模板里的 .holder,
+       运行时创建的节点带不上作用域哈希 */
+    const el = document.createElement('div')
+    el.style.cssText = 'position:absolute;inset:6px 8px;visibility:hidden'
+    root.appendChild(el)
+    const probe = new Terminal(termOptions())
+    const fit = new FitAddon()
+    probe.loadAddon(fit)
+    probe.open(el)
+    let size = { cols: 0, rows: 0 }
+    try {
+      fit.fit()
+      size = { cols: probe.cols, rows: probe.rows }
+    } catch {
+      /* 容器尺寸不可测:交给后端默认 */
+    }
+    probe.dispose()
+    el.remove()
+    return size
+  }
+
   async function createOne() {
     try {
-      const info = await termManager.create()
+      const { cols, rows } = paneSize()
+      const info = await termManager.create(undefined, undefined, cols, rows)
       /* 乐观合并:不等 WS terminals 帧(连接异常时也能立即显示) */
       if (!sessions.find((s) => s.id === info.id)) sessions = [...sessions, info]
       switchTo(info.id)

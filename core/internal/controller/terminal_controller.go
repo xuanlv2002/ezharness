@@ -160,14 +160,20 @@ func (c *TerminalController) List(g *gin.Context) {
 	g.JSON(http.StatusOK, c.Svc.List())
 }
 
-/* Create POST /api/terminal/create:新建终端(body{name,desc})。 */
+/*
+Create POST /api/terminal/create:新建终端(body{name,desc,cols,rows})。
+
+	cols/rows 是前端看板的实际列行数:shell 一开始就按观看端宽度排版。
+*/
 func (c *TerminalController) Create(g *gin.Context) {
 	var body struct {
 		Name string `json:"name"`
 		Desc string `json:"desc"`
+		Cols int    `json:"cols"`
+		Rows int    `json:"rows"`
 	}
 	_ = g.ShouldBindJSON(&body)
-	info, err := c.Svc.Create(body.Name, body.Desc, "用户")
+	info, err := c.Svc.Create(body.Name, body.Desc, "用户", body.Cols, body.Rows)
 	if err != nil {
 		g.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return

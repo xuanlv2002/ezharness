@@ -115,11 +115,13 @@ class TerminalManager {
     this.send({ type: 'resize', id, cols, rows })
   }
 
-  async create(name?: string, desc?: string): Promise<TermInfo> {
+  /* create 的 cols/rows 是看板实际列行数:后端让 shell 按这个宽度启动,
+     首屏提示符的擦除序列不会和窄窗错位。(0/不传由后端用默认尺寸) */
+  async create(name?: string, desc?: string, cols?: number, rows?: number): Promise<TermInfo> {
     const r = await fetch('/api/terminal/create', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name, desc }),
+      body: JSON.stringify({ name, desc, cols, rows }),
     })
     if (!r.ok) throw new Error(`新建终端失败: ${r.status}`)
     return r.json()
