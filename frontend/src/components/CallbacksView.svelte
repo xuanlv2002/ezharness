@@ -55,6 +55,7 @@
   let modal = $state<'create' | 'edit' | null>(null)
   let editingId = $state('')
   let detailId = $state('')
+  let selId = $state('') // 最近查看的任务：列表行保持选中高亮（关掉详情后仍可见）
   let form = $state<Form>(emptyForm())
   let saving = $state(false)
   let formError = $state('')
@@ -171,7 +172,7 @@
     return { today, failures }
   })
 
-  /* 发送到：与分支列表同一份、同一顺序（当前分支仅在原位标注），另加「每次新建会话」。 */
+  /* 发送到：与分支列表同一份、同一顺序，只列标题（不加「当前会话」标注），另加「每次新建会话」。 */
   const sessionOptions = $derived.by(() => {
     const out: { value: string; label: string; hint: string }[] = []
     const seen = new Set<string>()
@@ -182,7 +183,7 @@
     }
     for (const b of store.branches) {
       const leaf = b.leafId || b.id
-      add(leaf, b.title || '未命名会话', b.id === store.activeId ? '当前会话' : shortId(leaf))
+      add(leaf, b.title || '未命名会话', shortId(leaf))
     }
     if (form.sessionTarget && form.sessionTarget !== 'new' && !seen.has(form.sessionTarget)) {
       out.push({
@@ -213,19 +214,22 @@
   $effect(() => {
     if (recordPage > recordPages) recordPage = recordPages
   })
-  /* 通知点进来：等任务加载后展开对应详情；本地列表可能落后一个轮询周期，
-     找不到时补拉一次再判定，避免把刚触发的任务误报成已删除。 */
+  /* 通知点进来：等任务加载后翻到该任务所在页、高亮并展开详情；本地列表可能
+     落后一个轮询周期，找不到时补拉一次再判定，避免把刚触发的任务误报成已删除。 */
   $effect(() => {
     const id = store.callbackFocus
     if (!id || !loaded) return
     store.callbackFocus = ''
     if (tasks.some((x) => x.id === id)) {
+      revealTask(id)
       detailId = id
       return
     }
     void load(true).then(() => {
-      if (tasks.some((x) => x.id === id)) detailId = id
-      else notify('该回调已删除或不存在')
+      if (tasks.some((x) => x.id === id)) {
+        revealTask(id)
+        detailId = id
+      } else notify('该回调已删除或不存在')
     })
   })
 
@@ -267,6 +271,20 @@
     recordPage = 1
   }
 
+  /* revealTask 把目标任务翻到可见页并保持选中高亮：被筛选挡住时先清筛选。 */
+  function revealTask(id: string) {
+    selId = id
+    let idx = visible.findIndex((t) => t.id === id)
+    if (idx < 0) {
+      kindFilter = 'all'
+      statusFilter = 'all'
+      query = ''
+      resetPages()
+      idx = visible.findIndex((t) => t.id === id)
+    }
+    if (idx >= 0) page = Math.floor(idx / TASK_PAGE_SIZE) + 1
+  }
+
   async function load(silent = false) {
     try {
       const [{ callbacks }, { apps: list }] = await Promise.all([
@@ -302,6 +320,7 @@
 
   function openDetail(t: CallbackTask) {
     modal = null
+    selId = t.id
     detailId = t.id
   }
 
@@ -734,7 +753,7 @@
           <span class="thact">操作</span>
         </div>
         {#each pagedTasks as t (t.id)}
-          <article class="taskrow" class:off={!t.enabled}>
+          <article class="taskrow" class:off={!t.enabled} class:sel={t.id === selId}>
             <div class="tmain">
               <div class="ttop">
                 <span class="kind" class:app={t.kind === 'app'} class:script={t.kind === 'script'}>{kindLabel(t.kind)}</span>
@@ -1088,7 +1107,8 @@
       {/if}
     </div>
     <footer>
-      <button class="btn danger" onclick={() => { detailId = ''; delTarget = t }}>删除</button>
+      <!-- 先取 t 再关弹窗：detailId 清空后 detailTask/t 立即失效，反过来拿不到任务 -->
+      <button class="btn danger" onclick={() => { delTarget = t; detailId = '' }}>删除</button>
       <button class="btn" disabled={t.lastStatus === 'running'} onclick={() => void runNow(t)}>立即运行</button>
       {#if !t.finishedAt}
         <button class="btn" onclick={() => startEdit(t)}>编辑</button>
@@ -1308,6 +1328,14 @@
   }
   .taskrow:hover {
     background: var(--bg-soft);
+  }
+  /* 选中高亮：通知/会话卡跳转过来的目标任务，关掉详情后仍能认出是哪一条 */
+  .taskrow.sel {
+    background: color-mix(in srgb, var(--accent) 8%, transparent);
+    box-shadow: inset 3px 0 0 var(--accent);
+  }
+  .taskrow.sel:hover {
+    background: color-mix(in srgb, var(--accent) 12%, transparent);
   }
   .taskrow.off {
     opacity: 0.72;

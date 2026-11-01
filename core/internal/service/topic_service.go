@@ -171,10 +171,11 @@ system/水位承源；分叉出处仅存展示元数据，删源不伤内容。
 标题取源线在索引里的标题（区分 fork-of-fork），退化首条 user。
 */
 func (t *TopicService) Fork(ctx context.Context, sourceID string, anchor int) (*domain.Session, error) {
-	src, err := hooks.LoadSnap(ctx, t.Hub.Fsys, sourceID)
+	srcSnap, err := hooks.LoadSnap(ctx, t.Hub.Fsys, sourceID)
 	if err != nil {
 		return nil, ErrTopicNotFound
 	}
+	src := hooks.RepairForkSnap(ctx, t.Hub.Fsys, srcSnap) // 源是空壳 fork 时先补齐再复制
 	if anchor <= 0 || anchor > len(src.Messages) {
 		return nil, ErrBadAnchor
 	}
@@ -213,6 +214,11 @@ func (t *TopicService) Fork(ctx context.Context, sourceID string, anchor int) (*
 	if err := hooks.SaveSnap(ctx, t.Hub.Fsys, snap); err != nil {
 		return nil, err
 	}
+	// 前缀副本写进 fork 自己的 trace.jsonl：session.json 不落消息，
+	// 重启后 LoadSnap 靠 trace 合成历史，缺这步则 fork 变空壳
+	if err := hooks.AppendMessages(ctx, t.Hub.Fsys, newID, "", snap.Messages); err != nil {
+		return nil, err
+	}
 	_ = t.Hub.Topics.Add(hooks.TopicEntry{
 		ID: newID, LeafID: newID, Title: title, Kind: "fork",
 		CreatedAt: now, UpdatedAt: now, Msgs: len(snap.Messages), Origin: snap.ForkedFrom,
@@ -245,6 +251,7 @@ func (t *TopicService) Switch(ctx context.Context, rootID string) error {
 	if err != nil {
 		return ErrTopicNotFound
 	}
+	snap = hooks.RepairForkSnap(ctx, t.Hub.Fsys, snap) // 旧版空壳 fork 就地补前缀
 	s := t.Hub.LoadBranch(rootID, snap)
 	t.Agents.Assemble(s, t.Hub.SettingsSnapshot())
 	t.Hub.SetActive(s)
@@ -313,6 +320,7 @@ func (t *TopicService) EnsureSession(ctx context.Context, sessionID string) (*do
 	if snap.Archived {
 		return nil, ErrSessionArchived
 	}
+	snap = hooks.RepairForkSnap(ctx, t.Hub.Fsys, snap) // 旧版空壳 fork 就地补前缀
 	s := t.Hub.LoadBranch(lineRoot, snap)
 	t.Agents.Assemble(s, t.Hub.SettingsSnapshot())
 	return s, nil

@@ -8,7 +8,7 @@
 
 一个桌面智能体工作台：AI 直接在你的真实环境里干活，每一步可见、可接管。
 
-[![Release](https://img.shields.io/badge/release-v1.0.1-blue?logo=github)](https://github.com/xuanlv2002/ezharness/releases)
+[![Release](https://img.shields.io/badge/release-v1.1.0-blue?logo=github)](https://github.com/xuanlv2002/ezharness/releases)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-0078D6)](https://github.com/xuanlv2002/ezharness/releases)
 [![License](https://img.shields.io/badge/license-Apache--2.0-green)](LICENSE)
 [![Docs](https://img.shields.io/badge/docs-online-38bdf8?logo=readthedocs)](https://xuanlv2002.github.io/ezharness/)

@@ -879,6 +879,7 @@ func (h *Hub) Sessions() []*Session {
 /* BootstrapActive 恢复最近未封存的存档，没有则新建。 */
 func (h *Hub) BootstrapActive() *Session {
 	if snap := hooks.LatestMainSnap(context.Background(), h.Fsys); snap != nil {
+		snap = hooks.RepairForkSnap(context.Background(), h.Fsys, snap) // 旧版空壳 fork 就地补前缀
 		s := h.newSession(snap.ID, snap.LineRoot, snap)
 		s.restoreFrom(snap)
 		h.Register(s)

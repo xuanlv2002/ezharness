@@ -600,6 +600,33 @@ func LoadSnapMeta(ctx context.Context, fsys fs.FileSystem, id string) (*SessionS
 }
 
 /*
+RepairForkSnap 补齐 fork 分支缺失的前缀档案：fork 开新线时复制的前缀
+只存内存（session.json 不落消息，trace.jsonl 当时不建），重启后
+LoadSnap 合成出空历史。这里沿 TargetID→Anchor 回源复制（源可能是同样
+的空 fork，递归处理），补写 trace 后内存态同步可用；trace 已有内容的
+正常 fork 原样返回（前缀首轮已随消息落盘，无需修）。
+*/
+func RepairForkSnap(ctx context.Context, fsys AppendFS, snap *SessionSnap) *SessionSnap {
+	if snap.SeedKind != "fork" || snap.TargetID == "" || snap.Anchor <= 0 || len(snap.Messages) > 0 {
+		return snap
+	}
+	src, err := LoadSnap(ctx, fsys, snap.TargetID)
+	if err != nil {
+		return snap
+	}
+	src = RepairForkSnap(ctx, fsys, src)
+	if snap.Anchor > len(src.Messages) {
+		return snap // 源也没了或锚点越界：退化为现状，不挡加载
+	}
+	prefix := append([]types.Message(nil), src.Messages[:snap.Anchor]...)
+	if err := AppendMessages(ctx, fsys, snap.ID, "", prefix); err != nil {
+		return snap // 落盘失败不挡本次加载（下次再修）
+	}
+	snap.Messages = prefix
+	return snap
+}
+
+/*
 SaveSnap 写回会话状态（sessions/<snap.ID>/session.json；Messages 在 trace.jsonl，不在此写）。
 带 Messages 的快照顺手补 MsgCount（旧快照字段缺失时）。
 */

@@ -184,3 +184,39 @@ func TestForkAnchorAlignment(t *testing.T) {
 		t.Fatalf("fork must end at clicked user message, got %+v", last)
 	}
 }
+
+/*
+fork 前缀必须写进 fork 自己的 trace.jsonl（session.json 不落消息）：
+重启后 LoadSnap 从 trace 合成历史，缺这步 fork 重启即空壳（回归测试）。
+*/
+func TestForkPrefixSurvivesRestart(t *testing.T) {
+	chdirTemp(t)
+	ctx := context.Background()
+	fsys := osfs.OS{}
+	src := &hooks.SessionSnap{ID: "s1", SeedKind: "new"}
+	src.Messages = []types.Message{
+		{Role: types.RoleUser, Content: "q1"},
+		{Role: types.RoleAssistant, Content: "A1"},
+		{Role: types.RoleUser, Content: "q2"},
+	}
+	if err := hooks.SaveSnap(ctx, fsys, src); err != nil {
+		t.Fatal(err)
+	}
+	if err := hooks.AppendMessages(ctx, fsys, "s1", "", src.Messages); err != nil {
+		t.Fatal(err)
+	}
+	hub := newTestHub()
+	ts := &TopicService{Hub: hub, Agents: &AgentService{Hub: hub}}
+	s, err := ts.Fork(ctx, "s1", 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 模拟重启：绕开内存分支，直接从盘上重读
+	reloaded, err := hooks.LoadSnap(ctx, fsys, s.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(reloaded.Messages) != 3 || reloaded.Messages[2].Content != "q2" {
+		t.Fatalf("fork prefix lost on disk reload: %d msgs %+v", len(reloaded.Messages), reloaded.Messages)
+	}
+}

@@ -230,6 +230,10 @@ class AppStore {
   blocks = $state<Block[]>([])
   forks = $state<Record<string, ForkState>>({})
   notices = $state<NoticeData[]>([])
+  /* 回调投递即前台：启动后新出现的会话投递通知自动开标签切过去
+     （bootedAt 过滤启动前的旧通知，刷新页面不重放抢屏）。 */
+  private autoOpenSeen = new Set<string>()
+  private readonly bootedAt = Date.now()
   /* 本轮已处理的记忆待确认操作（op id → 结果）：通知栏与聊天记忆卡共用的确认入口，
      本地记录结果给卡片落定状态（后端返回后待确认项即消失） */
   memoryDecisions = $state<Record<string, 'accept' | 'cancel'>>({})
@@ -1415,6 +1419,15 @@ class AppStore {
             resolution: done ? '已完成' : '',
             target: done || it.kind === 'callback' ? jump : it.kind === 'memory' ? '' : `decision-${it.callId}`,
           })
+          if (
+            it.kind === 'callback' &&
+            jump.startsWith('callback-session:') &&
+            it.ts > this.bootedAt - 5000 &&
+            !this.autoOpenSeen.has(it.callId)
+          ) {
+            this.autoOpenSeen.add(it.callId)
+            void this.openSession(jump.slice('callback-session:'.length))
+          }
         }
       }
       const local = this.notices.filter((n) => n.local)
