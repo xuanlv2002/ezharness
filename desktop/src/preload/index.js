@@ -22,6 +22,8 @@ contextBridge.exposeInMainWorld('ez', {
     openApp: (url, title) => ipcRenderer.send('ez:open-app', url, title),
     /* 在系统文件管理器中定位本机文件（资源查看器的当前 tab） */
     reveal: (p) => ipcRenderer.send('ez:reveal', p),
+    /* 原生目录选择对话框（资源页目录树），取消返回 null */
+    pickDir: () => ipcRenderer.invoke('ez:pick-dir'),
     /* 路径是文件夹时在资源管理器打开它,返回是否已处理 */
     openDir: (p) => ipcRenderer.invoke('ez:open-dir', p),
     /* 系统级关闭（Alt+F4/任务栏）由主进程转到前端弹框 */

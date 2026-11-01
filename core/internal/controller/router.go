@@ -190,6 +190,9 @@ func NewRouter(c Controllers, dist fs.FS, tokens *TokenStore) *gin.Engine {
 		api.POST("/workspace/save", c.Workspace.Save)        // 工作目录文本保存（资源查看器·文本）
 		api.POST("/workspace/save-bin", c.Workspace.SaveBin) // 二进制写回（资源查看器·图片画板保存）
 		api.POST("/workspace/stash", c.Workspace.Stash)      // 附件暂存（拖入即落盘 tmp/，发送只传路径引用）
+		api.GET("/workspace/workdir", c.Workspace.WorkDir)   // 解析后的工作目录（目录树默认根）
+		api.GET("/workspace/tree", c.Workspace.Tree)         // 目录树一层 + git 工作区变更（资源页目录树）
+		api.GET("/workspace/git-blob", c.Workspace.GitBlob)  // 文件 HEAD 原文（变更对比左侧）
 
 		/* 魔法看板·共享终端：WS 多路复用 + REST 管理 */
 		api.GET("/terminal/ws", c.Terminal.Ws)

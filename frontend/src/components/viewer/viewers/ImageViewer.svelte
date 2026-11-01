@@ -1,9 +1,11 @@
 <script lang="ts">
   /*
-  图片查看器（画板）：MagicBoard 的资源化包装，一切皆资源——每张图都有
-  真身路径（画笔钮草稿也是 tmp 下的一张图片）。画布改动防抖自动写回原
-  路径（Ctrl+S 立即写回），缩略图版本 bump 即刻刷新（历史 chips 同步
-  更新，引用同一资源处处显示最新）；「添加到对话」先写回再回流路径 chip。
+  图片查看器（画板）：MagicBoard 的资源化包装。两类来源——
+  真身图片（tab.path）：画布改动防抖自动写回原路径（Ctrl+S 立即写回），
+  缩略图版本 bump 即刻刷新（历史 chips 同步更新）；
+  内存草稿（tab.draftSrc，画笔钮/消息 base64 入口）：只活在本 tab，
+  不落盘——点开画板不产生文件；保存（Ctrl+S/写回钮）或「添加到对话」
+  时才 stash 成 tmp 真身并回填 path，此后与真身图片同一条路。
   */
 
   import { onDestroy, onMount } from 'svelte'
@@ -27,6 +29,7 @@
      首次落盘即分流为 tmp 下的 PNG 草稿（realPath），此后写回都写它，
      原 SVG 永不被改写 */
   const isSvg = (tab.path || '').toLowerCase().endsWith('.svg')
+  const isDraft = $derived(!tab.path && !!tab.draftSrc) // 内存草稿（未落盘）
   let realPath = $state('')
 
   onMount(() => void load())
@@ -44,15 +47,18 @@
   }
 
   async function load() {
-    if (!tab.path) return
+    if (!tab.path && !tab.draftSrc) return
     err = ''
     loading = true
     try {
-      const r = await fetch('/api/workspace/file?path=' + encodeURIComponent(tab.path), { cache: 'no-store' })
+      const url = tab.path
+        ? '/api/workspace/file?path=' + encodeURIComponent(tab.path)
+        : tab.draftSrc!
+      const r = await fetch(url, { cache: 'no-store' })
       if (!r.ok) throw new Error(`HTTP ${r.status}`)
       const blob = await r.blob()
       await decodeCheck(blob)
-      srcFile = new File([blob], fileBaseName(tab.path), { type: blob.type || 'image/png' })
+      srcFile = new File([blob], fileBaseName(tab.path || '画板草稿.png'), { type: blob.type || 'image/png' })
     } catch (e) {
       err = `图片加载失败：${(e as Error).message}`
     } finally {
@@ -60,14 +66,15 @@
     }
   }
 
-  /* persist 落盘分流并返回真身路径：普通图片原位覆盖；SVG 首次落盘
-     stash 成 tmp PNG 草稿（此后 realPath 固定，原位覆盖这张草稿） */
+  /* persist 落盘分流并返回真身路径：内存草稿 stash 成 tmp PNG（保存即
+     创建文件的时刻）；普通图片原位覆盖；SVG 首次落盘 stash 成 tmp PNG
+     草稿（此后 realPath 固定，原位覆盖这张草稿） */
   async function persist(f: File): Promise<string | null> {
     if (realPath) {
       await api.saveBin(realPath, f)
       return realPath
     }
-    if (isSvg) {
+    if (isDraft || isSvg) {
       const [p] = await api.stash([f])
       return p ?? null
     }
@@ -75,14 +82,16 @@
     return tab.path!
   }
 
-  /* 写回真身：保存钮与「添加到对话」共用 */
+  /* 写回真身：保存钮与「添加到对话」共用（草稿在这里首次落盘） */
   async function writeBack(f: File): Promise<boolean> {
-    if (!tab.path || saving) return false
+    if ((!tab.path && !tab.draftSrc) || saving) return false
     saving = true
     try {
       const p = await persist(f)
       if (!p) throw new Error('未取到落盘路径')
       realPath = realPath || p
+      tab.path = tab.path || p // 草稿就此有了真身，后续写回全部对齐
+      if (tab.draftSrc && tab.name === '画板草稿') tab.name = fileBaseName(p)
       store.bumpImg(p)
       savedAt = new Date().toTimeString().slice(0, 5)
       dirty = false
@@ -95,18 +104,20 @@
     }
   }
 
-  /* 保存写回真身（Ctrl+S） */
+  /* 保存写回真身（Ctrl+S）；草稿首次保存 = 落盘成 tmp 文件 */
   async function save() {
-    if (!tab.path || !board) return
+    if ((!tab.path && !tab.draftSrc) || !board) return
     await writeBack(await board.exportFile())
   }
 
-  /* 改动自动写回（防抖）：磁盘始终是最新真身——拖出为独立窗口、关窗回流、
-     切换 tab 都不会丢未经手保存的笔画，也不需要跨窗口的额外状态交接 */
+  /* 真身图片：改动自动写回（防抖），磁盘始终是最新真身——拖出为独立
+     窗口、关窗回流、切换 tab 都不会丢未经手保存的笔画。内存草稿不自动
+     写盘：只有显式保存（保存钮/Ctrl+S/添加到对话）才创建文件 */
   let saveTimer: ReturnType<typeof setTimeout> | undefined
   let dirty = false // 有改动未写回（卸载时补写、以及避免用旧画布覆盖别人写的新图）
   function scheduleSave() {
     dirty = true
+    if (isDraft) return // 草稿：只标脏，不落盘
     clearTimeout(saveTimer)
     saveTimer = setTimeout(() => {
       saveTimer = undefined
@@ -133,12 +144,12 @@
     }
   }
 
-  /* 添加到对话：先把当前画布写回真身（onDone 给的就是最新合成图），
-     再回流路径 chip——不写盘会让 AI 读到旧图 */
+  /* 添加到对话：先把当前画布写回真身（草稿就此首次落盘；onDone 给的就
+     是最新合成图），再回流路径 chip——不写盘会让 AI 读到旧图 */
   async function addToChat(f: File) {
-    if (!tab.path) return
+    if (!tab.path && !tab.draftSrc) return
     if (!(await writeBack(f))) return
-    const p = realPath || tab.path
+    const p = realPath || tab.path || ''
     store.pendingAttachments = [{ name: fileBaseName(p), path: p }]
   }
 </script>
@@ -158,11 +169,11 @@
       <MagicBoard bind:this={board} {active} source={srcFile} doneLabel="添加到对话" onDone={(f) => void addToChat(f)} onChange={scheduleSave} />
     </div>
   {/if}
-  {#if tab.path}
+  {#if tab.path || tab.draftSrc}
     <!-- 状态条（与文本系统一风格）：保存写回 + 状态（「添加到对话」在
-    画板 footer 主按钮上） -->
+    画板 footer 主按钮上；草稿首次保存才落盘成文件） -->
     <div class="statusbar">
-      <button class="savebtn" class:busy={saving} disabled={saving || !!err || loading} onclick={() => void save()} title={isSvg ? '另存 PNG 草稿（Ctrl+S）——原 SVG 文件不变，历史与输入框中的缩略图同步更新' : '写回原文件（Ctrl+S）——历史与输入框中的同名缩略图将同步更新'}>
+      <button class="savebtn" class:busy={saving} disabled={saving || !!err || loading} onclick={() => void save()} title={isDraft ? '保存到工作目录 tmp（Ctrl+S）——落盘成文件后方可添加到对话' : isSvg ? '另存 PNG 草稿（Ctrl+S）——原 SVG 文件不变，历史与输入框中的缩略图同步更新' : '写回原文件（Ctrl+S）——历史与输入框中的同名缩略图将同步更新'}>
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
           <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z" />
           <polyline points="17 21 17 13 7 13 7 21" />
@@ -172,6 +183,8 @@
       <span class="stat">
         {#if saving}
           <i>保存中…</i>
+        {:else if isDraft}
+          <i>内存草稿 · 保存后落盘（添加到对话会自动保存）</i>
         {:else if savedAt && isSvg && realPath}
           <i>画笔已存 {fileBaseName(realPath)} · {savedAt}（原 SVG 不变）</i>
         {:else if savedAt}

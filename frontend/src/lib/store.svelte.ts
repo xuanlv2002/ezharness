@@ -153,7 +153,7 @@ function baseName(p: string): string {
   return i >= 0 ? p.slice(i + 1) : p
 }
 
-/* 空白画板底图（画板默认画布尺寸）——画笔钮新建草稿时先落盘用 */
+/* 空白画板底图（画板默认画布尺寸）——画笔钮新建内存草稿的初始内容 */
 function blankBoardPng(): Promise<File> {
   const c = document.createElement('canvas')
   c.width = 960
@@ -168,6 +168,16 @@ function blankBoardPng(): Promise<File> {
       if (b) resolve(new File([b], '画板.png', { type: 'image/png' }))
       else reject(new Error('空白画板生成失败'))
     }, 'image/png')
+  })
+}
+
+/* fileToDataUrl File → dataURL（内存草稿的载体，可进 tab 状态跨窗口搬运） */
+function fileToDataUrl(f: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader()
+    r.onload = () => resolve(String(r.result))
+    r.onerror = () => reject(new Error('图片读取失败'))
+    r.readAsDataURL(f)
   })
 }
 
@@ -274,6 +284,9 @@ class AppStore {
   /* 已弹出为独立窗口的工具页：mini 图标/AI 拉开抽屉均改为聚焦窗口 */
   popoutTools = $state<DrawerTool[]>([])
   fileFocus = $state('')
+  /* 待打开的内存画板草稿（dataURL，画笔钮/消息 base64 入口；ResourcePane
+     消费后清空）——草稿不落盘，保存时才成真身 */
+  fileDraftSrc = $state('')
   private boardTag = ''
   /* 模型调用进行中（model_start→model_end），思考指示用 */
   modelActive = $state(false)
@@ -730,18 +743,30 @@ class AppStore {
   /* ── 魔法看板（图片查看器的画布引擎，草稿入口） ── */
 
   /* openImageDraft 打开画板（输入框画笔钮 / 续编 chip / 消息内 base64 图片）：
-     先把画布落盘到工作目录 tmp 拿真身路径，再按普通图片资源打开——草稿
-     就是一张 tmp 图片（"磁盘是唯一真身"），跨窗口（拖出为独立窗口/弹回
-     抽屉）随之自然成立。source 无 = 空白画板底图。 */
+     底图只放内存（dataURL），不落盘——点开画板不产生文件；保存（写回/
+     添加到对话）时才 stash 成 tmp 真身并回填路径。dataURL 可序列化，
+     草稿跨窗口（拖出为独立窗口/弹回抽屉）照常搬运。source 无 = 空白画板。 */
   async openImageDraft(source: File | null = null) {
     try {
       const file = source ?? (await blankBoardPng())
-      const [path] = await api.stash([file])
-      if (!path) throw new Error('未取到落盘路径')
-      this.openFileAt(path)
+      this.openImageDraftData(await fileToDataUrl(file))
     } catch (e) {
       this.lastStatus = `画板打开失败：${(e as Error).message}`
     }
+  }
+
+  /* openImageDraftData 把内存草稿（dataURL）送进资源页：已弹出则转发信号，
+     否则拉开抽屉文件页。ResourcePane 消费 fileDraftSrc 建草稿 tab。 */
+  openImageDraftData(dataUrl: string) {
+    if (!dataUrl) return
+    if (this.popoutTools.includes('file')) {
+      ;(window as any).ez?.popout?.signal('file', 'draft', dataUrl)
+      this.yieldDrawer('file')
+      return
+    }
+    this.fileDraftSrc = dataUrl
+    this.drawerTool = 'file'
+    this.termDrawerOpen = true
   }
 
   /* bumpImg 图片写回后按路径递增缩略图版本（同 URL 的 img 立即换 src，

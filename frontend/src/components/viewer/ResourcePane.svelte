@@ -4,16 +4,21 @@
   import { fileBaseName, normFileKey } from '../../lib/textfile'
   import { store } from '../../lib/store.svelte'
   import { filePane } from '../../lib/filePaneState'
+  import { autoDiffOn, explorer, hasGitChange } from '../../lib/explorerState.svelte'
   import { kindOf, VIEWERS, MAX_BYTES, type ResTab } from './registry'
   import KindIcon from './KindIcon.svelte'
+  import ExplorerTree from './ExplorerTree.svelte'
   import TextViewer from './viewers/TextViewer.svelte'
   import ImageViewer from './viewers/ImageViewer.svelte'
   import HtmlViewer from './viewers/HtmlViewer.svelte'
   import MarkdownViewer from './viewers/MarkdownViewer.svelte'
+  import DiffViewer from './viewers/DiffViewer.svelte'
 
   /*
   工作区抽屉·资源查看器（file:// 的消费端，通用框架）：多 tab 按扩展名
   路由到各资源专属 viewer（registry 单一来源，新资源=新组件+此处挂载）。
+  左侧目录树（可收起）浏览文件系统，默认工作目录；git 仓库内的文本文件
+  可切「变更对比」（HEAD ↔ 当前，DiffViewer 只读观测）。
   磁盘是唯一真身——一切皆资源（画笔钮草稿也是 tmp 下的一张图片）：
   文本系（text/md/html 原文）单编辑器+tab 状态数据化（单实例重绑）；
   图片 tab per-tab 实例保活（画布状态不可数据化，改动防抖自动写回）。
@@ -30,6 +35,8 @@
   let pendingClose = $state('')
   let sending = $state(false)
   let textViewer = $state<TextViewer>()
+  /* 目录树（悬浮面板）显隐：不占布局宽，默认收起；记忆上次选择 */
+  let explorerOpen = $state(localStorage.getItem('ez-explorer-open') === '1')
 
   const tab = $derived(tabs.find((t) => t.key === current))
   const dirty = $derived(!!tab && tab.kind !== 'image' && tab.content !== tab.saved)
@@ -84,6 +91,19 @@
     void openTab(want)
   })
 
+  /* 内存画板草稿（画笔钮/消息 base64 入口）：不落盘直接开 tab，保存时
+     才 stash 成真身回填 path（draftSeq 保证多草稿 key 唯一） */
+  let draftSeq = 0
+  $effect(() => {
+    const src = store.fileDraftSrc
+    if (!src) return
+    store.fileDraftSrc = ''
+    draftSeq++
+    const t = blankTab({ key: `draft:${draftSeq}`, kind: 'image', name: '画板草稿', draftSrc: src })
+    tabs = [...tabs, t]
+    current = t.key
+  })
+
   /* 磁盘变更轮询：仅资源页激活且当前 tab 是文本系时进行 */
   $effect(() => {
     if (!active) return
@@ -132,6 +152,27 @@
     }
   }
 
+  /* 目录树点开文件：当前根目录开着自动对比时，有未提交变更的文本文件
+     直接进对比视图（开关在树头部的 git chip 上，按目录各自记忆）；
+     面板保持开着（连续浏览多个文件），当前文件在树内高亮 */
+  function openFromTree(abs: string) {
+    void openTab(abs)
+    if (autoDiffOn(explorer.dir) && hasGitChange(abs) && ['text', 'markdown', 'html'].includes(kindOf(abs))) {
+      const t = tabs.find((x) => x.key === normFileKey(abs))
+      if (t) t.diff = true
+    }
+  }
+
+  /* 当前 tab 同步给目录树（树内高亮打开中的文件） */
+  $effect(() => {
+    explorer.activeFile = tab?.path ?? ''
+  })
+
+  /* 变更对比开关（状态条按钮；仅 git 仓库内的文本系 tab 显示） */
+  function toggleDiff() {
+    if (tab && textish) tab.diff = !tab.diff
+  }
+
   /* 干净 tab 磁盘有更新时自动重载（AI 改盘后）；dirty 只提示不覆盖 */
   async function pollDisk() {
     const t = tab
@@ -172,6 +213,58 @@
     removeTab(key)
   }
 
+  /* ── 右键菜单（与会话标签条同款交互）：关闭 / 关闭其他 / 关闭右侧。
+     批量关只立即关干净 tab；带未保存修改的保留（橙点可见），不静默丢弃 */
+  let menu = $state<{ x: number; y: number; key: string } | null>(null)
+  const menuKey = $derived(menu?.key ?? '')
+  const menuIdx = $derived(menuKey ? tabs.findIndex((t) => t.key === menuKey) : -1)
+  const hasOthers = $derived(!!menu && tabs.length > 1)
+  const hasRight = $derived(menuIdx >= 0 && menuIdx < tabs.length - 1)
+
+  function openMenu(e: MouseEvent, key: string) {
+    e.preventDefault()
+    menu = {
+      x: Math.min(e.clientX, window.innerWidth - 150),
+      y: Math.min(e.clientY, window.innerHeight - 130),
+      key,
+    }
+  }
+
+  function runMenu(fn: (key: string) => void) {
+    const key = menu?.key
+    menu = null
+    if (key !== undefined) fn(key)
+  }
+
+  /* dirty 判定与 closeTab 一致（文本系未保存；图片草稿未落盘视作干净——
+     草稿本就丢弃无痕） */
+  function isDirty(t: ResTab): boolean {
+    return t.kind !== 'image' && t.content !== t.saved
+  }
+
+  function closeBatch(targets: ResTab[]) {
+    for (const t of targets) {
+      if (!isDirty(t)) removeTab(t.key)
+    }
+  }
+
+  function closeRightOf(key: string) {
+    const i = tabs.findIndex((t) => t.key === key)
+    if (i >= 0) closeBatch(tabs.slice(i + 1))
+  }
+
+  function onGlobalDown(e: PointerEvent) {
+    if (menu && !(e.target as HTMLElement).closest('.tabmenu')) menu = null
+  }
+
+  /* 右键菜单里的「在资源管理器打开」：当前 tab 有真身路径才可用（草稿没有） */
+  const menuTabPath = $derived(menuKey ? (tabs.find((t) => t.key === menuKey)?.path ?? '') : '')
+
+  function revealTab(key: string) {
+    const t = tabs.find((x) => x.key === key)
+    if (t?.path) (window as any).ez?.window?.reveal?.(t.path)
+  }
+
   function removeTab(key: string) {
     const i = tabs.findIndex((t) => t.key === key)
     if (i < 0) return
@@ -203,12 +296,6 @@
     removeTab(key)
   }
 
-  /* 在系统文件管理器中定位当前资源（draft 也有 tmp 真身路径；web 端无壳按钮不显 */
-  function revealInExplorer() {
-    const p = tab?.path
-    if (p) (window as any).ez?.window?.reveal?.(p)
-  }
-
   /* 添加到对话（文本系）：纯文件引用 chip 塞进输入框（发送时经
   <reference_file> 告知模型，AI read_file 真身）；dirty 先自动保存 */
   async function addToChat() {
@@ -227,13 +314,37 @@
   }
 </script>
 
+<svelte:window onpointerdown={onGlobalDown} onkeydown={(e) => e.key === 'Escape' && (menu = null)} />
+
 <div class="file-pane">
   <div class="strip">
+    <button
+      class="exptoggle"
+      class:open={explorerOpen}
+      onpointerdown={(e) => e.stopPropagation()}
+      onclick={() => {
+        explorerOpen = !explorerOpen
+        localStorage.setItem('ez-explorer-open', explorerOpen ? '1' : '0')
+      }}
+      title={explorerOpen ? '收起目录面板' : '打开目录面板'}
+    >
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="3" y="4" width="18" height="16" rx="2" />
+        <path d="M9 4v16" />
+      </svg>
+    </button>
     {#each tabs as t (t.key)}
-      <button class="strip-item" class:active={current === t.key} onclick={() => (current = t.key)} title={t.path || '画板草稿（未保存）'}>
+      <button
+        class="strip-item"
+        class:active={current === t.key}
+        onclick={() => (current = t.key)}
+        onauxclick={(e) => e.button === 1 && closeTab(t.key)}
+        oncontextmenu={(e) => openMenu(e, t.key)}
+        title={t.path || '画板草稿（未保存）'}
+      >
         <span class="kind"><KindIcon kind={t.kind} /></span>
         <span class="name">{t.name}</span>
-        {#if t.kind !== 'image' && t.content !== t.saved}<i class="dirty"></i>{/if}
+        {#if (t.kind !== 'image' && t.content !== t.saved) || (t.kind === 'image' && !t.path)}<i class="dirty"></i>{/if}
         <span class="x" onclick={(e) => { e.stopPropagation(); closeTab(t.key) }} role="button" tabindex="-1" title="关闭">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round">
             <path d="M6 6l12 12M18 6L6 18" />
@@ -241,13 +352,6 @@
         </span>
       </button>
     {/each}
-    {#if tab?.path}
-      <button class="reveal" onclick={revealInExplorer} title="在资源管理器中打开">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
-        </svg>
-      </button>
-    {/if}
   </div>
 
   {#if pendingClose}
@@ -260,22 +364,26 @@
   {/if}
 
   <div class="body">
-    <!-- 文本系：单编辑器 + tab 状态数据化（单实例重绑） -->
-    {#if tab && textish}
-      {#if tab.kind === 'text'}
-        <TextViewer bind:this={textViewer} {tab} {active} onSave={() => void saveTab(tab)} />
-      {:else if tab.kind === 'markdown'}
-        <MarkdownViewer {tab} {active} onSave={() => void saveTab(tab)} />
-      {:else if tab.kind === 'html'}
-        <HtmlViewer {tab} {active} onSave={() => void saveTab(tab)} />
-      {/if}
+    <!-- 目录悬浮面板：absolute 盖在预览区左侧，不占布局宽（选完文件自动收起） -->
+    {#if explorerOpen}
+      <ExplorerTree {active} onopen={openFromTree} onclose={() => (explorerOpen = false)} />
+    {/if}
+    <!-- 文本系：单编辑器 + tab 状态数据化（单实例重绑）；diff=变更对比视图 -->
+    {#if tab && textish && tab.diff}
+      <DiffViewer {tab} />
+    {:else if tab && tab.kind === 'text'}
+      <TextViewer bind:this={textViewer} {tab} {active} onSave={() => void saveTab(tab)} />
+    {:else if tab && tab.kind === 'markdown'}
+      <MarkdownViewer {tab} {active} onSave={() => void saveTab(tab)} />
+    {:else if tab && tab.kind === 'html'}
+      <HtmlViewer {tab} {active} onSave={() => void saveTab(tab)} />
     {:else if tab && binViewer}
       {@const Viewer = binViewer}
       <Viewer {tab} {active} />
     {:else if !imageTabs.length}
       <div class="empty">
         <p>还没有打开的资源</p>
-        <p class="hint">对话中出现 <code>文件名</code> 入口时点击即可打开 · 画笔钮可新建图片草稿</p>
+        <p class="hint">左上角目录钮打开目录面板选文件 · 对话中的 <code>文件名</code> 入口也可点击</p>
       </div>
     {/if}
     <!-- 图片 tab：per-tab 实例保活（画板画布状态不可数据化）；
@@ -290,9 +398,21 @@
   </div>
 
   {#if tab && textish}
-    <!-- 统一状态条（文本系）：保存 + 添加到对话 + 轻量状态 -->
+    <!-- 统一状态条（文本系）：对比 + 保存 + 添加到对话 + 轻量状态 -->
     <div class="statusbar">
-      <button class="savebtn" class:dirty disabled={!dirty || tab.loading} onclick={() => void saveTab(tab)} title="保存（Ctrl+S）">
+        {#if explorer.repo}
+          <button class="diffbtn" class:on={tab.diff} onclick={toggleDiff} title={tab.diff ? '退出对比，回到编辑' : '查看与上次提交（HEAD）的变更对比'}>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="6" cy="18" r="2.2" />
+              <circle cx="18" cy="6" r="2.2" />
+              <path d="M6 15.8V9a3 3 0 0 1 3-3h4" />
+              <path d="M11 4l2.5 2L11 8" />
+              <path d="M18 8.2V15a3 3 0 0 1-3 3h-4" />
+            </svg>
+            对比
+          </button>
+        {/if}
+        <button class="savebtn" class:dirty disabled={!dirty || tab.loading} onclick={() => void saveTab(tab)} title="保存（Ctrl+S）">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
           <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z" />
           <polyline points="17 21 17 13 7 13 7 21" />
@@ -320,6 +440,16 @@
   {/if}
 </div>
 
+{#if menu}
+  <div class="tabmenu" style="left:{menu.x}px; top:{menu.y}px" role="menu">
+    <button role="menuitem" onclick={() => runMenu((key) => closeTab(key))}>关闭</button>
+    <button role="menuitem" disabled={!hasOthers} onclick={() => runMenu((key) => closeBatch(tabs.filter((t) => t.key !== key)))}>关闭其他</button>
+    <button role="menuitem" disabled={!hasRight} onclick={() => runMenu(closeRightOf)}>关闭右侧</button>
+    <div class="msep"></div>
+    <button role="menuitem" disabled={!menuTabPath} title={menuTabPath ? '' : '草稿尚未保存到磁盘'} onclick={() => runMenu(revealTab)}>在资源管理器打开</button>
+  </div>
+{/if}
+
 <style>
   .file-pane {
     display: flex;
@@ -328,7 +458,72 @@
     min-height: 0;
     gap: 8px;
   }
+  /* 目录面板开关：tab 条最左的常驻小钮（pointerdown 不冒泡——
+     面板的"点外部关闭"以此识别开关钮，避免点按即关又立即重开） */
+  .exptoggle {
+    flex: none;
+    display: grid;
+    place-items: center;
+    width: 26px;
+    height: 26px;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: var(--bg);
+    color: var(--faint);
+    cursor: pointer;
+    transition:
+      color var(--dur-fast) var(--ease-out),
+      background var(--dur-fast) var(--ease-out),
+      border-color var(--dur-fast) var(--ease-out);
+  }
+  .exptoggle svg {
+    width: 13px;
+    height: 13px;
+  }
+  .exptoggle:hover,
+  .exptoggle.open {
+    color: var(--fg);
+    background: var(--bg-soft);
+  }
+  .exptoggle.open {
+    border-color: var(--line-strong);
+  }
+  /* 变更对比开关（状态条）：与保存钮同族，开启态反显 */
+  .diffbtn {
+    flex: none;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    height: 24px;
+    padding: 0 8px;
+    border: 1px solid var(--line);
+    border-radius: 7px;
+    background: transparent;
+    color: var(--muted);
+    font: inherit;
+    font-size: var(--font-size-ui);
+    cursor: pointer;
+    transition:
+      color var(--dur-fast) var(--ease-out),
+      background var(--dur-fast) var(--ease-out),
+      border-color var(--dur-fast) var(--ease-out);
+  }
+  .diffbtn svg {
+    width: 12px;
+    height: 12px;
+  }
+  .diffbtn:hover {
+    color: var(--fg);
+    background: var(--bg-soft);
+  }
+  .diffbtn.on {
+    border-color: var(--accent-soft, var(--accent));
+    color: var(--accent, #2563eb);
+    background: var(--accent-soft, color-mix(in srgb, #2563eb 10%, transparent));
+    font-weight: 600;
+  }
   .body {
+    position: relative; /* 目录悬浮面板的定位上下文 */
     flex: 1;
     min-height: 0;
     display: flex;
@@ -411,31 +606,6 @@
   .x svg {
     width: 9px;
     height: 9px;
-  }
-  /* 在资源管理器中打开：tab 条右端常驻，当前 tab 有真身路径才显 */
-  .reveal {
-    flex: none;
-    display: grid;
-    place-items: center;
-    width: 22px;
-    height: 22px;
-    margin-left: auto;
-    border: 1px solid var(--line);
-    border-radius: 7px;
-    background: var(--bg);
-    color: var(--faint);
-    cursor: pointer;
-    transition:
-      color var(--dur-fast) var(--ease-out),
-      background var(--dur-fast) var(--ease-out);
-  }
-  .reveal svg {
-    width: 13px;
-    height: 13px;
-  }
-  .reveal:hover {
-    color: var(--fg);
-    background: var(--bg-soft);
   }
   /* dirty 关闭二次确认条 */
   .confirm {
@@ -580,5 +750,39 @@
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+  }
+  /* 资源 tab 右键菜单（与会话标签条同款） */
+  .tabmenu {
+    position: fixed;
+    z-index: 60;
+    display: flex;
+    flex-direction: column;
+    min-width: 108px;
+    padding: 4px;
+    border: 1px solid var(--line);
+    border-radius: 9px;
+    background: var(--bg);
+    box-shadow: 0 6px 20px rgb(0 0 0 / 10%);
+  }
+  .tabmenu button {
+    border: none;
+    background: transparent;
+    text-align: left;
+    padding: 6px 10px;
+    font-size: var(--font-size-ui);
+    color: var(--fg);
+    border-radius: 6px;
+  }
+  .tabmenu button:hover:not(:disabled) {
+    background: var(--bg-soft);
+  }
+  .tabmenu button:disabled {
+    color: var(--faint);
+    cursor: default;
+  }
+  .tabmenu .msep {
+    height: 1px;
+    margin: 4px 2px;
+    background: var(--line);
   }
 </style>

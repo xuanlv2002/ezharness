@@ -759,25 +759,28 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: 12px;
+    gap: 10px;
   }
+  /* 工具组与主按钮一律不换行：抽屉保底宽下整行放得下；
+     主按钮 nowrap 防止「添加到对话」被挤成两行 */
   .tools {
     display: flex;
     align-items: center;
-    gap: 10px;
-    flex-wrap: wrap;
+    gap: 8px;
+    flex-wrap: nowrap;
+    flex: none;
   }
   .group {
     display: flex;
     align-items: center;
-    gap: 4px;
-    padding: 4px;
+    gap: 3px;
+    padding: 3px;
     border: 1px solid var(--line);
     border-radius: 10px;
   }
   .swatch {
-    width: 22px;
-    height: 22px;
+    width: 20px;
+    height: 20px;
     border-radius: 6px;
     border: 1px solid var(--line);
     padding: 0;
@@ -789,8 +792,8 @@
   .size {
     display: grid;
     place-items: center;
-    width: 26px;
-    height: 26px;
+    width: 24px;
+    height: 24px;
     border: none;
     background: transparent;
     border-radius: 7px;
@@ -810,8 +813,8 @@
   .tool {
     display: grid;
     place-items: center;
-    width: 26px;
-    height: 26px;
+    width: 24px;
+    height: 24px;
     border: none;
     background: transparent;
     border-radius: 7px;
@@ -834,11 +837,13 @@
     cursor: default;
   }
   .done {
+    flex: none;
+    white-space: nowrap;
     border: 1px solid var(--line-strong);
     background: var(--bg-invert);
     color: var(--fg-invert);
     border-radius: 10px;
-    padding: 9px 20px;
+    padding: 8px 14px;
     font-size: var(--font-size-section);
     font-weight: 600;
   }

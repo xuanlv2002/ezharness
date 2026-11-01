@@ -7,21 +7,72 @@
 package controller
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"mime"
 	"mime/multipart"
 	"net/http"
+	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 
 	"ezharness/core/internal/service"
 )
 
-/* WorkspaceController 工作目录文件服务（读预览 + 文本写保存）。 */
+/* WorkspaceController 工作目录文件服务（读预览 + 文本/二进制写保存 + 目录树）。 */
 type WorkspaceController struct {
 	Svc *service.WorkspaceService
+}
+
+/*
+WorkDir GET /api/workspace/workdir：解析后的工作目录绝对路径
+（资源页目录树的默认根）。
+*/
+func (c *WorkspaceController) WorkDir(g *gin.Context) {
+	g.JSON(http.StatusOK, gin.H{"path": c.Svc.DefaultWorkDir()})
+}
+
+/*
+Tree GET /api/workspace/tree?path=<目录>：目录一级条目 + 所在 git 仓库
+的工作区变更（资源页目录树数据源，懒加载按层拉取）。path 缺省 = 工作目录。
+*/
+func (c *WorkspaceController) Tree(g *gin.Context) {
+	dir := strings.TrimSpace(g.Query("path"))
+	if dir == "" {
+		dir = c.Svc.DefaultWorkDir()
+	}
+	view, err := c.Svc.Tree(g.Request.Context(), dir)
+	if err != nil {
+		if errors.Is(err, os.ErrInvalid) {
+			g.JSON(http.StatusBadRequest, gin.H{"error": "invalid path"})
+			return
+		}
+		g.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	g.JSON(http.StatusOK, view)
+}
+
+/*
+GitBlob GET /api/workspace/git-blob?path=<文件>：文件在 HEAD 的原文
+（变更对比左侧）。不在仓库内/未纳入 HEAD 回 404。
+*/
+func (c *WorkspaceController) GitBlob(g *gin.Context) {
+	abs, err := c.Svc.Path(g.Query("path"))
+	if err != nil {
+		g.JSON(http.StatusBadRequest, gin.H{"error": "invalid path"})
+		return
+	}
+	content, err := c.Svc.GitBlob(g.Request.Context(), abs)
+	if err != nil {
+		g.JSON(http.StatusNotFound, gin.H{"error": "not in HEAD"})
+		return
+	}
+	g.Header("Cache-Control", "no-cache")
+	g.Data(http.StatusOK, "text/plain; charset=utf-8", []byte(content))
 }
 
 /*
