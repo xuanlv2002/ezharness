@@ -31,7 +31,7 @@
     align-items: center;
     justify-content: center;
     gap: 10px;
-    padding-bottom: 20px;
+    padding: 0 16px 20px; /* 水平留白：窄面板下推荐卡（width:100%）不贴边 */
   }
   .logo {
     width: 46px;
