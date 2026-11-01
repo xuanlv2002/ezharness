@@ -59,6 +59,28 @@ func TestNeedsApproveMcpToolCall(t *testing.T) {
 	}
 }
 
+/* callback 按 action 逐项查表：list 免审，其余动作各自档位生效。 */
+func TestNeedsApproveCallbackActions(t *testing.T) {
+	rules := []domain.ToolRule{
+		{Key: "callback:list", Level: domain.LevelAuto},
+		{Key: "callback:create", Level: domain.LevelAsk},
+		{Key: "callback:run", Level: domain.LevelAuto},
+	}
+	call := func(action string) *types.ToolCall {
+		args, _ := json.Marshal(map[string]string{"action": action})
+		return &types.ToolCall{ID: "c1", Name: "callback", Args: args}
+	}
+	s := newApproveService(rules)
+	for action, want := range map[string]bool{
+		"list": false, "create": true, "run": false,
+		"update": true, // 档内没配 → 回落内置默认（callback:update = ask）
+	} {
+		if got := s.needsApprove(call(action)); got != want {
+			t.Errorf("callback:%s = %v want %v", action, got, want)
+		}
+	}
+}
+
 // 白名单 mcp：精确 server.tool 或整站前缀（点边界），部分前缀不误命中。
 func TestMatchRuleListDotBoundary(t *testing.T) {
 	args := json.RawMessage(`{"action":"tool_call","server":"time","tool":"getCurrentTime"}`)

@@ -359,7 +359,7 @@ export interface TopicEntry {
    通知栏轮询数据源；kind=info 是完成通知，非待处理） */
 export interface NotificationGroup {
   rootId: string
-  items: { callId: string; forkId?: string; kind: 'approve' | 'ask' | 'plan' | 'info' | 'mcp_auth' | 'memory'; tool: string; args?: string; ts: number }[]
+  items: { callId: string; forkId?: string; kind: 'approve' | 'ask' | 'plan' | 'info' | 'callback' | 'mcp_auth' | 'memory'; tool: string; args?: string; ts: number }[]
 }
 
 /* 分支面板条目（GET /api/topics 响应，含运行态合成） */

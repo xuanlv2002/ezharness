@@ -61,9 +61,16 @@ func DefaultToolRules() []ToolRule {
 		/* 系统自带：两档，默认免审（save_app 会覆盖应用文件，默认审批） */
 		{Key: "task", Level: LevelAuto},
 		{Key: "save_app", Level: LevelAsk},
-		{Key: "load_app", Level: LevelAuto},      // 只读应用文档
-		{Key: "callback:list", Level: LevelAuto}, // 只读任务清单
-		{Key: "callback", Level: LevelAsk},       // 增删改/启停/立即执行
+		{Key: "load_app", Level: LevelAuto}, // 只读应用文档
+		/* 定时回调逐 action：list 只读免审，其余动作默认审批。新增 action
+		必须同时列在这里，否则安全页不会出现该行。 */
+		{Key: "callback:list", Level: LevelAuto},
+		{Key: "callback:create", Level: LevelAsk},
+		{Key: "callback:update", Level: LevelAsk},
+		{Key: "callback:delete", Level: LevelAsk},
+		{Key: "callback:enable", Level: LevelAsk},
+		{Key: "callback:disable", Level: LevelAsk},
+		{Key: "callback:run", Level: LevelAsk},
 		{Key: "sleep", Level: LevelAuto},
 		{Key: "memory", Level: LevelAuto},      // 提案本身即待审（用户在记忆页审阅），双重审批无意义
 		{Key: "plan:new", Level: LevelAuto},    // 新方案走计划确认卡（可编辑/反馈），不再叠一层审批
@@ -78,9 +85,9 @@ func DefaultToolRules() []ToolRule {
 }
 
 /*
-	ListKindOf 返回该 key 的名单类型：""=无名单能力（只有 审批/免审 两档）；
-	"path"=文件路径前缀白名单；"command"=终端命令词；"mcpTool"=server 或
-	server.tool。前端据此决定展示哪些档位与名单编辑框。
+ListKindOf 返回该 key 的名单类型：""=无名单能力（只有 审批/免审 两档）；
+"path"=文件路径前缀白名单；"command"=终端命令词；"mcpTool"=server 或
+server.tool。前端据此决定展示哪些档位与名单编辑框。
 */
 func ListKindOf(key string) string {
 	switch key {

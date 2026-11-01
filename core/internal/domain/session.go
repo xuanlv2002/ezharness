@@ -675,7 +675,7 @@ type StreamSnapshot struct {
 type PendingNotice struct {
 	CallID string `json:"callId"`
 	ForkID string `json:"forkId,omitempty"`
-	Kind   string `json:"kind"` // approve | ask | info
+	Kind   string `json:"kind"` // approve | ask | plan | mcp_auth | info | callback
 	Tool   string `json:"tool"`
 	Args   string `json:"args,omitempty"`
 	Ts     int64  `json:"ts"`

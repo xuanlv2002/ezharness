@@ -236,7 +236,7 @@ func (c *ChatController) DecideMcpAuth(g *gin.Context) {
 /*
 	Notifications GET /api/notifications：全分支未决人机请求、完成通知、
 
-记忆待确认与快应用触发汇总（通知栏全局轮询数据源；纯读无状态，后台
+记忆待确认与定时回调触发汇总（通知栏全局轮询数据源；纯读无状态，后台
 分支的请求也在此可达）。组间按最新条目时间排序（Hub.Sessions 遍历序
 随机），保证轮询结果顺序稳定。
 */
@@ -266,7 +266,7 @@ func (c *ChatController) Notifications(g *gin.Context) {
 			out = append(out, noticeGroup{RootID: "memory", Items: items})
 		}
 	}
-	// 快应用触发通知同样是全局的：独立一组，点击打开「回调」页
+	// 定时回调触发通知同样是全局的：独立一组，点击跳会话或任务详情
 	if c.Callbacks != nil {
 		if items := c.Callbacks.Notices(); len(items) > 0 {
 			out = append(out, noticeGroup{RootID: "callbacks", Items: items})
@@ -281,8 +281,8 @@ func (c *ChatController) Notifications(g *gin.Context) {
 /*
 	DismissNotification POST /api/sessions/:id/notifications/dismiss：关闭该
 
-会话的完成通知或全局快应用触发通知（:id=分支根 ID / callbacks；仅完成
-通知可关，未决请求走决策端点）。
+会话的完成通知或全局定时回调通知（:id=分支根 ID / callbacks；仅完成/
+回调通知可关，未决请求走决策端点）。
 */
 func (c *ChatController) DismissNotification(g *gin.Context) {
 	var body struct {

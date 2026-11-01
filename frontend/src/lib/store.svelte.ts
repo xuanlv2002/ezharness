@@ -19,6 +19,7 @@ import {
   type Status,
   type StatusPayload,
 } from './api'
+import { parseCallbackMessage, type CallbackMessageMeta } from './callbackMessage'
 import { filePane } from './filePaneState'
 import { openExternal } from './desktop'
 import pkg from '../../package.json'
@@ -97,7 +98,7 @@ export interface DecisionData {
 export interface NoticeData {
   id: string // 决策回传键（工具调用 ID）
   rootId: string // 所属分支根（跳转与决策端点路由键）
-  kind: 'approve' | 'ask' | 'plan' | 'info' | 'mcp_auth' | 'memory'
+  kind: 'approve' | 'ask' | 'plan' | 'info' | 'callback' | 'mcp_auth' | 'memory'
   source: string // 'agent'、分支名或 fork 标识
   forkId: string // 非空＝分身请求：跳转打开分身抽屉而非主时间线
   title: string
@@ -120,6 +121,8 @@ export type Block = { uid: number } & (
       /* 文件引用 chips（文件页「添加到对话」→<reference_file>）：count
          = 标注条数（历史重建不还原片段全文，chip 点击回跳文件页） */
       fileRefs?: { path: string; count: number }[]
+      /* 定时回调消息：标签元数据（text 已去掉包装，只留任务正文） */
+      callback?: CallbackMessageMeta
       owner?: string
       msgIdx?: number
     }
@@ -523,6 +526,14 @@ class AppStore {
     for (let mi = 0; mi < messages.length; mi++) {
       const m = messages[mi]
       if (m.role === 'user') {
+        const cbMsg = parseCallbackMessage(m.content)
+        if (cbMsg) {
+          out.push({
+            kind: 'user', uid: this.nuid(), text: cbMsg.body, callback: cbMsg.meta,
+            images: m.images, owner, msgIdx: msgStart + mi,
+          })
+          continue
+        }
         const d = parseStatus(m.content) // JSON 载荷
         if (d) {
           // 状态记录仅水位异常时入时间线，平时只在右上角
@@ -1077,6 +1088,13 @@ class AppStore {
     if (this.activeId === rootId) this.jumpView = 'chat'
   }
 
+  /* openCallbackTask 从回调消息卡跳到对应任务详情。 */
+  openCallbackTask(taskId: string) {
+    if (!taskId) return
+    this.callbackFocus = taskId
+    this.jumpView = 'callbacks'
+  }
+
   /* closeTab：关标签即停会话（关掉的线在跑就取消当前轮，别让它悄悄在
      列表里继续跑）；关活动标签激活右邻（退化左邻，浏览器惯例）；最后
      一个 → 空状态（退订 SSE、清视图——会话本身留在列表，仅停轮）。 */
@@ -1395,7 +1413,7 @@ class AppStore {
             time: new Date(it.ts || Date.now()).toTimeString().slice(0, 5),
             status: done ? 'done' : 'pending',
             resolution: done ? '已完成' : '',
-            target: done ? jump : it.kind === 'memory' ? '' : `decision-${it.callId}`,
+            target: done || it.kind === 'callback' ? jump : it.kind === 'memory' ? '' : `decision-${it.callId}`,
           })
         }
       }
@@ -1492,7 +1510,9 @@ class AppStore {
     const n = this.notices.find((x) => x.id === id)
     this.notices = this.notices.filter((x) => x.id !== id)
     // 完成通知（info）在服务端置空——否则下一轮轮询又拉回来；本地通知无服务端对应
-    if (n?.kind === 'info' && !n.local) void api.dismissNotification(n.rootId, n.id).catch(() => this.refreshNotices())
+    if ((n?.kind === 'info' || n?.kind === 'callback') && !n.local) {
+      void api.dismissNotification(n.rootId, n.id).catch(() => this.refreshNotices())
+    }
   }
 
   /* activate 切换活动会话（分支三操作/分叉/新建/引导都走它）：该会话的完成
@@ -1551,6 +1571,7 @@ class AppStore {
         const d = ev.data
         const obj = d && typeof d === 'object' ? d : null
         const text = typeof d === 'string' ? d : (obj?.text ?? '')
+        const cbMsg = parseCallbackMessage(text)
         // 新一轮开始：清空上一轮的资源变更（右上角只挂本轮）（resource.change 按需推送不自动清）
         if (!ev.forkId) this.liveChanges = []
         if (ev.forkId) {
@@ -1582,7 +1603,8 @@ class AppStore {
           }
           if (rebuildText) {
             const uid = this.nuid()
-            this.blocks.push({ kind: 'user', uid, text })
+            if (cbMsg) this.blocks.push({ kind: 'user', uid, text: cbMsg.body, callback: cbMsg.meta })
+            else this.blocks.push({ kind: 'user', uid, text })
             if (!firstUid) firstUid = uid
           }
           this.pendingUserUid = firstUid

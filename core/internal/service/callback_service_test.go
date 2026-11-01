@@ -266,7 +266,7 @@ func TestCallbackAppRunRecordsAndNotice(t *testing.T) {
 		t.Fatalf("backend not auto-started: %+v", term.calls)
 	}
 	notices := svc.Notices()
-	if len(notices) != 1 || notices[0].Tool != "同步" ||
+	if len(notices) != 1 || notices[0].Tool != "同步" || notices[0].Kind != "callback" ||
 		!strings.Contains(notices[0].Args, "HTTP 200") ||
 		!strings.Contains(notices[0].Args, "callback-task:"+task.ID) {
 		t.Fatalf("notices = %+v", notices)
@@ -289,6 +289,11 @@ func TestCallbackNoticeTarget(t *testing.T) {
 	notices := svc.Notices()
 	if len(notices) != 2 {
 		t.Fatalf("notices = %+v", notices)
+	}
+	for _, n := range notices {
+		if n.Kind != "callback" {
+			t.Fatalf("notice kind = %q want callback", n.Kind)
+		}
 	}
 	if !strings.Contains(notices[1].Args, `"target":"callback-session:r1"`) ||
 		!strings.Contains(notices[1].Args, "已发送到会话 s1") {

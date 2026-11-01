@@ -46,6 +46,7 @@
           images={ub.images}
           files={ub.files}
           fileRefs={ub.fileRefs}
+          callback={ub.callback}
           role="user"
           onFork={ub.owner && ub.msgIdx !== undefined ? () => void store.forkFrom(ub.owner!, ub.msgIdx!) : undefined}
         />

@@ -26,6 +26,7 @@
     ask: { label: '询问', icon: '<circle cx="12" cy="12" r="9"/><path d="M9.5 9.5a2.5 2.5 0 1 1 3.4 2.3c-.6.3-.9.8-.9 1.4v.3"/><path d="M12 17h.01"/>' },
     plan: { label: '计划', icon: '<path d="M4 6h9M4 12h9M4 18h9"/><path d="M17 6l1.6 1.6L21.5 4.6"/>' },
     info: { label: '通知', icon: '<circle cx="12" cy="12" r="9"/><path d="M12 8h.01M12 11v5"/>' },
+    callback: { label: '回调', icon: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>' },
     mcp_auth: { label: '认证', icon: '<circle cx="8" cy="15" r="4"/><path d="M11 12l7-7M16 5l2 2M14 7l2 2"/>' },
     memory: { label: '记忆', icon: '<path d="M12 3a4 4 0 0 0-4 4c0 1.1.45 2.1 1.17 2.83L12 12l2.83-2.17A4 4 0 0 0 12 3z"/><path d="M5 8h14l1 12H4L5 8z"/>' },
   }
@@ -119,6 +120,8 @@
               {#if n.kind === 'memory'}
                 <button class="btn ok" onclick={() => onResolve?.(n.id, 'accept')}>确认</button>
                 <button class="btn no" onclick={() => onResolve?.(n.id, 'cancel')}>取消</button>
+              {:else if n.kind === 'callback'}
+                <button class="btn ok" onclick={() => onDismiss?.(n.id)}>知道了</button>
               {:else if n.kind === 'mcp_auth'}
                 <button class="btn ok" onclick={() => onResolve?.(n.id, 'authorize')}>去授权</button>
                 <button class="btn no" onclick={() => onResolve?.(n.id, 'cancel')}>取消</button>

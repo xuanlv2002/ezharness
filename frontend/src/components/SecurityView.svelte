@@ -66,8 +66,13 @@
     'plan:clear': '清除当前计划',
     save_app: '保存快应用 html',
     load_app: '读取快应用调用文档（只读）',
-    callback: '定时回调管理（增删改 / 启停 / 立即执行）',
     'callback:list': '查看定时回调清单（只读）',
+    'callback:create': '创建定时回调',
+    'callback:update': '修改定时回调配置',
+    'callback:delete': '删除定时回调与全部触发记录',
+    'callback:enable': '启用定时回调并重算下次运行',
+    'callback:disable': '停用定时回调',
+    'callback:run': '立即执行一次（不改变计划，可能有副作用）',
     sleep: '定时阻塞等待（等后端就绪/轮询间隔；用户停止即中断）',
     ask_user: '向用户提问收集信息（交互工具）',
     trim_context: '模型整理压缩上下文（内部整理）',
@@ -106,6 +111,7 @@
     term_action: ['send', 'read'],
     browser_action: ['navigate', 'read', 'eval', 'console', 'network', 'screenshot', 'upload'],
     plan: ['new', 'update', 'clear'],
+    callback: ['list', 'create', 'update', 'delete', 'enable', 'disable', 'run'],
   }
   function orderOf(key: string): number {
     const base = baseOf(key)

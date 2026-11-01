@@ -9,8 +9,8 @@ CallbackService 是全局定时回调中心：callbacks.json 的 CRUD、每秒�
 正在跑轮先取消再发送，归档/compact 换代后该会话不可用，任务失败，不
 继承到新会话。脚本任务在工作目录执行，输出尾部与退出码进运行记录。
 一次性任务执行后自动停用；间隔/cron 从完成时刻重新计下一轮。
-每次触发（含失败/跳过）写一条运行记录并进通知栏：会话投递成功时点
-通知直达目标会话，其余点通知打开回调页并展开该任务。
+每次触发（含失败/跳过）写一条运行记录并进通知栏（待用户确认）：会话
+投递成功时点通知直达目标会话，其余点通知打开回调页并展开该任务。
 */
 package service
 
@@ -217,7 +217,7 @@ func (s *CallbackService) run(ctx context.Context, task callback.Task, manual bo
 		return // 任务已被删除/落盘失败：不再执行
 	}
 
-	outcome, err := s.execute(ctx, task)
+	outcome, err := s.execute(ctx, task, started)
 	if outcome.Target == "" {
 		outcome.Target = task.TargetLabel()
 	}
@@ -266,10 +266,10 @@ func (s *CallbackService) run(ctx context.Context, task callback.Task, manual bo
 }
 
 /* execute 按任务类型执行。 */
-func (s *CallbackService) execute(ctx context.Context, task callback.Task) (callbackRun, error) {
+func (s *CallbackService) execute(ctx context.Context, task callback.Task, started time.Time) (callbackRun, error) {
 	switch task.Kind {
 	case callback.KindSession:
-		return s.runSession(ctx, task)
+		return s.runSession(ctx, task, started)
 	case callback.KindApp:
 		return s.runApp(ctx, task)
 	case callback.KindScript:
@@ -278,19 +278,20 @@ func (s *CallbackService) execute(ctx context.Context, task callback.Task) (call
 	return callbackRun{}, fmt.Errorf("未知任务类型 %q", task.Kind)
 }
 
-/* runSession 向绑定的叶会话或新建会话投递一条消息。 */
-func (s *CallbackService) runSession(ctx context.Context, task callback.Task) (callbackRun, error) {
+/* runSession 向绑定的叶会话或新建会话投递一条带回调元数据的消息。 */
+func (s *CallbackService) runSession(ctx context.Context, task callback.Task, started time.Time) (callbackRun, error) {
 	target := task.Session
 	out := callbackRun{}
 	if target == nil {
 		return out, fmt.Errorf("会话目标缺失")
 	}
 	out.Content = target.Message
+	text := callback.FormatMessage(task, target.Message, started)
 	if target.Mode == callback.ModeNew {
 		out.Target = "新建会话"
 		sess := s.Hub.CreateBranch()
 		s.Agents.Assemble(sess, s.Hub.SettingsSnapshot())
-		if err := s.Chat.Send(sess.RootID, target.Message, nil); err != nil {
+		if err := s.Chat.Send(sess.RootID, text, nil); err != nil {
 			s.Hub.Unregister(sess.RootID)
 			return out, fmt.Errorf("新建会话发送失败: %w", err)
 		}
@@ -311,7 +312,7 @@ func (s *CallbackService) runSession(ctx context.Context, task callback.Task) (c
 		return out, fmt.Errorf("目标会话已归档或已换代（不是创建任务时的会话），本次未发送")
 	}
 	interrupted := sess.Busy()
-	if err := s.Chat.SendSession(sess.RootID, target.SessionID, target.Message, nil); err != nil {
+	if err := s.Chat.SendSession(sess.RootID, target.SessionID, text, nil); err != nil {
 		switch {
 		case errors.Is(err, domain.ErrSessionChanged):
 			return out, fmt.Errorf("目标会话已归档或已换代（不是创建任务时的会话），本次未发送")
@@ -685,9 +686,9 @@ func (s *CallbackService) DismissNotice(callID string) {
 }
 
 /*
-addRunNotice 为每次触发写一条通知：标题是任务名，detail 带目标与结果；
-成功投递到会话时 target 指向会话根（点击直接跳到会话），其余指向任务
-（点击打开回调页并展开该任务的记录）。
+addRunNotice 为每次触发写一条待确认通知（kind=callback）：标题是任务名，
+detail 带目标与结果；成功投递到会话时 target 指向会话根（点击直接跳到
+会话），其余指向任务（点击打开回调页并展开该任务的记录）。
 */
 func (s *CallbackService) addRunNotice(task callback.Task, status string, outcome callbackRun, result string) {
 	target := "callback-task:" + task.ID
@@ -708,7 +709,7 @@ func (s *CallbackService) addRunNotice(task callback.Task, status string, outcom
 	})
 	n := domain.PendingNotice{
 		CallID: fmt.Sprintf("cb-%d", time.Now().UnixNano()),
-		Kind:   "info",
+		Kind:   "callback",
 		Tool:   task.Title,
 		Args:   string(args),
 		Ts:     time.Now().UnixMilli(),

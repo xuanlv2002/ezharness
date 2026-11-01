@@ -19,6 +19,8 @@ import (
 	"github.com/xuanlv2002/ezloop/ext/fs"
 	"github.com/xuanlv2002/ezloop/provider"
 	"github.com/xuanlv2002/ezloop/types"
+
+	"ezharness/core/internal/callback"
 )
 
 /* EventCompact 是话题归档事件（Data 为 CompactInfo）。 */
@@ -125,7 +127,7 @@ func ArchiveSession(ctx context.Context, p provider.ModelProvider, fsys fs.FileS
 
 /* TitleFromMsg 用消息内容作标题（fork 锚点命名）：截断 40 字。 */
 func TitleFromMsg(m types.Message) string {
-	t := strings.TrimSpace(m.Content)
+	t := strings.TrimSpace(callback.MessageBody(m.Content))
 	if t == "" {
 		return "未命名"
 	}
@@ -145,7 +147,7 @@ func FirstUserTitle(msgs []types.Message) string {
 		if m.Role != types.RoleUser || IsTrimMarker(m) {
 			continue
 		}
-		t := strings.TrimSpace(m.Content)
+		t := strings.TrimSpace(callback.MessageBody(m.Content))
 		if t == "" ||
 			strings.HasPrefix(t, "<agent_status>") ||
 			strings.HasPrefix(t, "<"+ResChangeTag+">") ||
