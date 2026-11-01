@@ -1,23 +1,46 @@
 <script lang="ts">
   import { onMount } from 'svelte'
-  import { api, type AppEntry } from '../lib/api'
+  import { api, type AppEntry, type CallbackTask } from '../lib/api'
   import { store } from '../lib/store.svelte'
   import { launchApp } from '../lib/apps'
 
   /* 快应用 = apps/<名>/ 目录应用（app.quick 声明）。desktop 壳 = IPC 开独立
   子窗口；浏览器访问 = 新标签页直开。声明了后端的应用由后端把终端拉进侧边栏。 */
   let apps = $state<AppEntry[]>([])
+  let callbacks = $state<CallbackTask[]>([])
   let loaded = $state(false)
+
+  /* 应用与定时回调一起拉：卡片上直接展示关联任务与声明的端点 */
+  async function loadAll() {
+    const [{ apps: list }, cb] = await Promise.all([
+      api.getApps(),
+      api.listCallbacks().catch(() => ({ callbacks: [] as CallbackTask[] })),
+    ])
+    apps = list ?? []
+    callbacks = cb.callbacks ?? []
+  }
 
   onMount(async () => {
     try {
-      const { apps: list } = await api.getApps()
-      apps = list ?? []
+      await loadAll()
     } catch {
       /* 后端不可达时空列表 */
     }
     loaded = true
   })
+
+  /* appTasks 返回关联到该应用的定时任务。 */
+  function appTasks(name: string): CallbackTask[] {
+    return callbacks.filter((t) => t.kind === 'app' && t.app?.name === name)
+  }
+
+  /* cbSchedule 是卡片 tooltip 里的计划摘要。 */
+  function cbSchedule(t: CallbackTask): string {
+    const s = t.schedule
+    if (s.kind === 'once') return `一次性 ${s.at ?? ''}`
+    if (s.kind === 'interval') return `每 ${s.every ?? ''}`
+    return `cron ${s.cron ?? ''}`
+  }
 
   /* 启动：desktop 壳子窗口（IPC），web 端新标签页；带后端的应用把它的
   终端拉到侧边栏（后端可能起不来，失败要出声） */
@@ -35,8 +58,7 @@
   async function togglePin(a: AppEntry) {
     try {
       await api.pinApp(a.name)
-      const { apps: list } = await api.getApps()
-      apps = list ?? []
+      await loadAll()
     } catch (err) {
       store.lastStatus = `操作失败：${(err as Error).message}`
     }
@@ -51,8 +73,7 @@
     if (!a) return
     try {
       await api.uninstallApp(a.name)
-      const { apps: list } = await api.getApps()
-      apps = list ?? []
+      await loadAll()
     } catch (err) {
       store.lastStatus = `卸载失败：${(err as Error).message}`
     }
@@ -91,6 +112,19 @@
           </div>
           <h2>{a.title}</h2>
           <p class="desc">{a.name}</p>
+          {#if appTasks(a.name).length}
+            <p class="cbline" title={appTasks(a.name).map((t) => `${t.title} · ${cbSchedule(t)}${t.enabled ? '' : ' · 已停用'}`).join('\n')}>
+              ⏱ {appTasks(a.name).length} 个定时回调：{appTasks(a.name)
+                .slice(0, 2)
+                .map((t) => t.title)
+                .join('、')}{appTasks(a.name).length > 2 ? '…' : ''}
+            </p>
+          {/if}
+          {#if a.callbacks?.length}
+            <p class="cbline" title={a.callbacks?.map((c) => `${c.name}: ${c.method} ${c.url}`).join('\n')}>
+              端点：{a.callbacks?.map((c) => c.name).join('、')}
+            </p>
+          {/if}
           <div class="foot">
             <span class="time">{a.mtime}</span>
             <span class="footbtns">
@@ -258,6 +292,14 @@
     -webkit-box-orient: vertical;
     overflow: hidden;
     flex: 1;
+  }
+  .cbline {
+    font-size: var(--font-size-small);
+    line-height: 1.5;
+    color: var(--muted);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
   .foot {
     display: flex;

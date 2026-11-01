@@ -130,7 +130,13 @@ func (a *app) buildRouter() *gin.Engine {
 	a.mcpAuth.SetRouter(a.mcpRouter)
 
 	agents := &service.AgentService{Hub: hub, Term: termSvc, Browser: a.browser, McpRouter: a.mcpRouter, McpAuth: a.mcpAuth}
+	topicsSvc := &service.TopicService{Hub: hub, Agents: agents}
+	appsSvc := &service.AppsService{Fsys: hub.Fsys, Term: termSvc, Hub: hub}
+	chatSvc := &service.ChatService{Hub: hub}
+	agents.Callbacks = service.NewCallbackService(hub, agents, topicsSvc, appsSvc, chatSvc, hub.Fsys)
 	agents.Assemble(hub.ActiveSession(), hub.SettingsSnapshot())
+	a.setCallbacks(agents.Callbacks)
+	agents.Callbacks.Start()
 
 	appSvc := &service.AppService{
 		Cfg:       a.snapshot,
@@ -138,15 +144,16 @@ func (a *app) buildRouter() *gin.Engine {
 		Boot:      &a.boot,
 	}
 	controllers := controller.Controllers{
-		Session: &controller.SessionController{Svc: &service.SessionService{Hub: hub}},
-		Chat:    &controller.ChatController{Svc: &service.ChatService{Hub: hub}, Memory: &service.MemoryService{Hub: hub}},
+		Session: &controller.SessionController{Svc: &service.SessionService{Hub: hub, Callbacks: agents.Callbacks}},
+		Chat:    &controller.ChatController{Svc: chatSvc, Memory: &service.MemoryService{Hub: hub}, Callbacks: agents.Callbacks},
 		Settings: &controller.SettingsController{
 			Settings: &service.SettingsService{Hub: hub, Agents: agents},
 			Memory:   &service.MemoryService{Hub: hub},
 		},
-		Topics:    &controller.TopicController{Svc: &service.TopicService{Hub: hub, Agents: agents}},
+		Topics:    &controller.TopicController{Svc: topicsSvc},
 		Mcp:       &controller.McpController{Svc: service.NewMcpService(hub.Fsys, a.mcpRouter, a.mcpAuth)},
-		Apps:      &controller.AppsController{Svc: &service.AppsService{Fsys: hub.Fsys, Term: termSvc, Hub: hub}},
+		Apps:      &controller.AppsController{Svc: appsSvc},
+		Callbacks: &controller.CallbackController{Svc: agents.Callbacks},
 		App:       &controller.AppController{Svc: appSvc, Tokens: a.tokens},
 		Terminal:  &controller.TerminalController{Svc: termSvc},
 		Browser:   &controller.BrowserController{Svc: a.browser},

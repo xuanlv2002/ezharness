@@ -33,6 +33,7 @@ ezharness 把模型放进你的真实工作环境：文件、终端、浏览器�
 - **共享浏览器** —— 内嵌真实 Chromium，同一个页面原生接管，不是截图转述
 - **会话树** —— 任意消息点「分叉」开新线；「归档」把长对话蒸馏进记忆并换代，一条不丢
 - **快应用** —— agent 现场构建、一键启动的独立小应用，沉淀为可被它自己再次调用的软件单元
+- **定时回调** —— 到点向当前会话发消息（运行中先打断）、启动快应用调用声明端点，或执行工作目录里的脚本；会话归档/压缩换代后任务失败，每次触发留记录
 - **上下文工程** —— 修剪 / 摘要 / 沉淀 + 三层记忆，聊得久不失忆
 - **四档审批** —— 每次审批 / 黑名单 / 白名单 / 全免审，决定权留在人手里
 - **MCP** —— http / stdio 接入，探活、启停、热加载；快应用也能直调
@@ -63,6 +64,7 @@ ezharness 把模型放进你的真实工作环境：文件、终端、浏览器�
 | [共享终端](docs/md/协同设计.md) | 工作区抽屉的终端里，agent 正在跑的命令你能看见、能接管 |
 | 共享浏览器 | agent 打开网页操作，窗口自动弹出共见，你在同一页面随时接管 |
 | [快应用](docs/md/快应用.md) | 让 agent 做个小工具，生成后一键启动，下次还能被它自己调用 |
+| [定时回调](docs/md/定时回调.md) | 在「回调」页设定时任务：到点给当前会话发消息、启动快应用调用声明端点，或执行脚本；归档/换代后失败，触发记录与通知可回看 |
 | [MCP](docs/md/mcp设计.md) | 设置页添加 MCP server，agent 自动发现工具 |
 | [认证与 OpenAPI](docs/md/认证与openapi.md) | 脚本 / 快应用 / 外部程序一套令牌直调模型与 MCP |
 
@@ -85,7 +87,7 @@ flowchart TB
 
 ## 文档
 
-**[在线文档](https://xuanlv2002.github.io/ezharness/)**（支持中英文切换，按由浅入深组织）：[模型配置](docs/md/模型配置.md) · [session 管理](docs/md/session设计.md) · [上下文管理](docs/md/上下文设计.md) · [协同工具](docs/md/协同设计.md) · [快应用](docs/md/快应用.md) · [skill 设计](docs/md/skill设计.md) · [MCP 设计](docs/md/mcp设计.md) · [认证与 OpenAPI](docs/md/认证与openapi.md) · [设计理念](docs/md/设计理念.md)
+**[在线文档](https://xuanlv2002.github.io/ezharness/)**（支持中英文切换，按由浅入深组织）：[模型配置](docs/md/模型配置.md) · [session 管理](docs/md/session设计.md) · [上下文管理](docs/md/上下文设计.md) · [协同工具](docs/md/协同设计.md) · [快应用](docs/md/快应用.md) · [定时回调](docs/md/定时回调.md) · [skill 设计](docs/md/skill设计.md) · [MCP 设计](docs/md/mcp设计.md) · [认证与 OpenAPI](docs/md/认证与openapi.md) · [设计理念](docs/md/设计理念.md)
 
 ## 从源码构建
 

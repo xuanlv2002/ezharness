@@ -28,6 +28,7 @@ type Controllers struct {
 	Topics    *TopicController
 	Mcp       *McpController
 	Apps      *AppsController
+	Callbacks *CallbackController
 	App       *AppController
 	Terminal  *TerminalController
 	Browser   *BrowserController
@@ -172,13 +173,21 @@ func NewRouter(c Controllers, dist fs.FS, tokens *TokenStore) *gin.Engine {
 		api.POST("/mcp/oauth/logout", c.Mcp.OAuthLogout)
 
 		api.GET("/apps", c.Apps.List)
-		api.POST("/apps/open", c.Apps.Open)     // 名单校验+返回路径标题；开窗由 desktop 壳/web 端执行
-		api.POST("/apps/:name/pin", c.Apps.Pin) // 钉到桌面小助手/取消
+		api.POST("/apps/open", c.Apps.Open)         // 名单校验+返回路径标题；开窗由 desktop 壳/web 端执行
+		api.POST("/apps/:name/pin", c.Apps.Pin)     // 钉到桌面小助手/取消
 		api.DELETE("/apps/:name", c.Apps.Uninstall) // 卸载：停后端终端+删目录+清钉选
 
-		api.GET("/workspace/file", c.Workspace.File)    // 工作目录文件预览（附件 chips 源）
-		api.HEAD("/workspace/file", c.Workspace.File)   // 同上（文件页轮询 Last-Modified 用；gin 不自动映射 HEAD→GET）
-		api.POST("/workspace/save", c.Workspace.Save)   // 工作目录文本保存（资源查看器·文本）
+		/* 定时回调中心：会话面控制面，不进 OpenAPI */
+		api.GET("/callbacks", c.Callbacks.List)
+		api.POST("/callbacks", c.Callbacks.Create)
+		api.POST("/callbacks/:id", c.Callbacks.Update)
+		api.DELETE("/callbacks/:id", c.Callbacks.Delete)
+		api.POST("/callbacks/:id/enabled", c.Callbacks.SetEnabled)
+		api.POST("/callbacks/:id/run", c.Callbacks.Run)
+
+		api.GET("/workspace/file", c.Workspace.File)         // 工作目录文件预览（附件 chips 源）
+		api.HEAD("/workspace/file", c.Workspace.File)        // 同上（文件页轮询 Last-Modified 用；gin 不自动映射 HEAD→GET）
+		api.POST("/workspace/save", c.Workspace.Save)        // 工作目录文本保存（资源查看器·文本）
 		api.POST("/workspace/save-bin", c.Workspace.SaveBin) // 二进制写回（资源查看器·图片画板保存）
 		api.POST("/workspace/stash", c.Workspace.Stash)      // 附件暂存（拖入即落盘 tmp/，发送只传路径引用）
 

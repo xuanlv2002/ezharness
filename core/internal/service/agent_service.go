@@ -59,6 +59,7 @@ type AgentService struct {
 	Browser   *BrowserService  // 共享浏览器桥（魔法看板），可空：browser_* 工具注入的前提
 	McpRouter *mcp.Router      // 系统级 MCP router（全局单例注入），可空：不装配 mcp hook
 	McpAuth   *McpAuthManager  // MCP OAuth 管理器（组 OAuth 配置用），可空
+	Callbacks *CallbackService // 定时回调中心，可空：不装配 callback 工具
 }
 
 /*
@@ -205,7 +206,7 @@ func (a *AgentService) Assemble(s *domain.Session, st domain.Settings) {
 	} else if snap := s.Snapshot(); snap != nil {
 		sys = hooks.NewSysPrompt(snap.SystemBase, snap.SummaryBlock)
 	} else {
-		sys = hooks.NewSysPrompt(buildSystemBase(ctx, st, s.Fsys, a.Hub.ModelsSnapshot()), "")
+		sys = hooks.NewSysPrompt(buildSystemBase(ctx, st, s.Fsys, a.Hub.ModelsSnapshot(), s.CurrentID()), "")
 	}
 	s.SetSysP(sys)
 	sys.SetIdentityFn(func() string { return hooks.SessionIdentityBlock(s.ID) }) // 会话身份：ID+存档路径（trim 折叠后的回忆入口）
@@ -325,6 +326,10 @@ func (a *AgentService) Assemble(s *domain.Session, st domain.Settings) {
 	agentTools = append(agentTools, tools.Memory(s.Fsys))
 	// 快应用：清单随 <apps> 段、增删改进 <resource_change>（与技能同构）；工具只读调用文档
 	agentTools = append(agentTools, tools.LoadApp(s.Fsys))
+	// 定时回调：清单随 <callbacks> 段、增删改进 <resource_change>；工具是唯一配置入口
+	if a.Callbacks != nil {
+		agentTools = append(agentTools, tools.Callback(a.Callbacks, s.CurrentID))
+	}
 	// plan：会话级任务计划（落盘 + plan.update 事件驱动输入框上方进度面板）
 	agentTools = append(agentTools, tools.Plan(s.Fsys, s.RootID, func(p *hooks.SessionPlan) {
 		var data json.RawMessage
@@ -347,6 +352,9 @@ func (a *AgentService) Assemble(s *domain.Session, st domain.Settings) {
 		"mcp_router", hooks.TrimTool, skilltool.ToolName,
 		"model_call", "memory", "plan", "load_app", "term_tab", "term_action",
 		"browser_tab", "browser_action",
+	}
+	if a.Callbacks != nil {
+		toolNames = append(toolNames, "callback")
 	}
 	mcpHook, mcpAuthCh := NewMcpHook(context.Background(), s.Fsys, a.McpRouter, a.McpAuth)
 	agent := core.NewAgent(provider,

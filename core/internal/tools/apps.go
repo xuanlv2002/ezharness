@@ -58,6 +58,23 @@ func renderAppDocument(ctx context.Context, fsys osfs.OS, info quickapp.Info) st
 	if info.Backend != "" {
 		b.WriteString("\nbackend: " + info.Backend)
 	}
+	if len(info.Callbacks) > 0 {
+		b.WriteString("\n定时回调端点（callback 工具按 name 引用）：")
+		for _, c := range info.Callbacks {
+			line := "\n- " + c.Name
+			if c.Title != "" {
+				line += "（" + c.Title + "）"
+			}
+			line += " " + c.Method + " " + c.URL
+			if c.Description != "" {
+				line += " — " + c.Description
+			}
+			b.WriteString(line)
+			if len(c.Body) > 0 {
+				b.WriteString("\n  body: " + oneLineJSON(c.Body))
+			}
+		}
+	}
 	if info.Document == "" {
 		b.WriteString("\n调用文档：无——该应用仅面向用户，不要臆造接口；用户要求时可用浏览器操作页面。")
 	} else {
@@ -78,4 +95,13 @@ func renderAppDocument(ctx context.Context, fsys osfs.OS, info quickapp.Info) st
 		}
 	}
 	return b.String()
+}
+
+/* oneLineJSON 把回调声明的 body 压成单行并截断（load_app 结果可读、不撑上下文）。 */
+func oneLineJSON(raw []byte) string {
+	s := strings.ReplaceAll(strings.ReplaceAll(string(raw), "\r", ""), "\n", " ")
+	if r := []rune(s); len(r) > 500 {
+		return string(r[:500]) + "…"
+	}
+	return s
 }

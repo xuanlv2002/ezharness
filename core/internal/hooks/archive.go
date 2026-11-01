@@ -43,12 +43,13 @@ ArchiveSession 执行归档换代：沉淀长期记忆（user/soul 覆盖写 + �
 工作流，失败静默降级）→ 摘要模型视图 → 旧库封存 → 写新库初始快照
 （空 messages + 新 system + compress 边，重启可恢复形态）→ 内存切换
 （sys 热更、SetID/SetPrev、trace 换库、话题线换代）。
-full 是渲染全量历史（话题标题与线规模），view 是模型视图（摘要输入），
-workDir 是当前工作目录（项目沉淀的 projectId 线索）。
+rebuildBase 接收新会话 ID，用于重建与新身份一致的系统提示；full 是
+渲染全量历史（话题标题与线规模），view 是模型视图（摘要输入），workDir
+是当前工作目录（项目沉淀的 projectId 线索）。
 */
 func ArchiveSession(ctx context.Context, p provider.ModelProvider, fsys fs.FileSystem,
 	sess *Store, sys *SysPrompt, topics *Topics, trace *Trace,
-	rebuildBase func() string, full, view []types.Message, workDir string) (CompactInfo, error) {
+	rebuildBase func(nextID string) string, full, view []types.Message, workDir string) (CompactInfo, error) {
 	oldID := sess.ID()
 	if oldID == "" {
 		return CompactInfo{}, errors.New("no session to archive")
@@ -73,9 +74,10 @@ func ArchiveSession(ctx context.Context, p provider.ModelProvider, fsys fs.FileS
 	if abs, aerr := filepath.Abs(prevPath); aerr == nil { // 给模型看的路径一律绝对
 		prevPath = filepath.ToSlash(abs)
 	}
+	newID := NewSessionID()
 	base := ""
 	if rebuildBase != nil {
-		base = rebuildBase()
+		base = rebuildBase(newID)
 	} else if b, _ := sys.Parts(); b != "" {
 		base = b
 	}
@@ -87,7 +89,6 @@ func ArchiveSession(ctx context.Context, p provider.ModelProvider, fsys fs.FileS
 	sys.Set(base, summaryBlock) // 新 system 两段生效（sys 是会话持有的热更实例）
 
 	// 新库初始快照先落盘：内存切换后任一时刻重启，新库都是可恢复形态
-	newID := NewSessionID()
 	root := sess.LineRoot()
 	now := time.Now()
 	initSnap := SessionSnap{

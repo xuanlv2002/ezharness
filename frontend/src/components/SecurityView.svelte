@@ -66,6 +66,8 @@
     'plan:clear': '清除当前计划',
     save_app: '保存快应用 html',
     load_app: '读取快应用调用文档（只读）',
+    callback: '定时回调管理（增删改 / 启停 / 立即执行）',
+    'callback:list': '查看定时回调清单（只读）',
     sleep: '定时阻塞等待（等后端就绪/轮询间隔；用户停止即中断）',
     ask_user: '向用户提问收集信息（交互工具）',
     trim_context: '模型整理压缩上下文（内部整理）',
@@ -99,7 +101,7 @@
   }
 
   /* 稳定排序：先按工具、再按 action，避免后端返回顺序抖动导致行乱跳 */
-  const BASE_ORDER = ['read_file', 'write_file', 'edit_file', 'terminal', 'term_tab', 'term_action', 'browser_tab', 'browser_action', 'task', 'plan', 'save_app', 'load_app', 'sleep', 'ask_user', 'trim_context', 'load_skill', 'mcp.*']
+  const BASE_ORDER = ['read_file', 'write_file', 'edit_file', 'terminal', 'term_tab', 'term_action', 'browser_tab', 'browser_action', 'task', 'plan', 'save_app', 'load_app', 'callback', 'sleep', 'ask_user', 'trim_context', 'load_skill', 'mcp.*']
   const ACTION_ORDER: Record<string, string[]> = {
     term_action: ['send', 'read'],
     browser_action: ['navigate', 'read', 'eval', 'console', 'network', 'screenshot', 'upload'],

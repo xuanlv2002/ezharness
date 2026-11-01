@@ -27,8 +27,9 @@ const sseHeartbeatInterval = 20 * time.Second
 
 /* ChatController 对话表现层。 */
 type ChatController struct {
-	Svc    *service.ChatService
-	Memory *service.MemoryService // 通知聚合：记忆待确认操作（跨会话全局）
+	Svc       *service.ChatService
+	Memory    *service.MemoryService   // 通知聚合：记忆待确认操作（跨会话全局）
+	Callbacks *service.CallbackService // 通知聚合：快应用触发（全局）
 }
 
 /*
@@ -233,10 +234,11 @@ func (c *ChatController) DecideMcpAuth(g *gin.Context) {
 }
 
 /*
-	Notifications GET /api/notifications：全分支未决人机请求汇总（通知栏
+	Notifications GET /api/notifications：全分支未决人机请求、完成通知、
 
-全局轮询数据源；纯读无状态，后台分支的请求也在此可达）。组间按最新
-请求时间排序（Hub.Sessions 遍历序随机），保证轮询结果顺序稳定。
+记忆待确认与快应用触发汇总（通知栏全局轮询数据源；纯读无状态，后台
+分支的请求也在此可达）。组间按最新条目时间排序（Hub.Sessions 遍历序
+随机），保证轮询结果顺序稳定。
 */
 func (c *ChatController) Notifications(g *gin.Context) {
 	type noticeGroup struct {
@@ -264,20 +266,37 @@ func (c *ChatController) Notifications(g *gin.Context) {
 			out = append(out, noticeGroup{RootID: "memory", Items: items})
 		}
 	}
+	// 快应用触发通知同样是全局的：独立一组，点击打开「回调」页
+	if c.Callbacks != nil {
+		if items := c.Callbacks.Notices(); len(items) > 0 {
+			out = append(out, noticeGroup{RootID: "callbacks", Items: items})
+		}
+	}
 	sort.Slice(out, func(i, j int) bool {
 		return out[i].Items[0].Ts > out[j].Items[0].Ts
 	})
 	g.JSON(http.StatusOK, out)
 }
 
-/* DismissNotification POST /api/sessions/:id/notifications/dismiss：关闭该
-会话的完成通知（:id=分支根 ID；仅完成通知可关，未决请求走决策端点）。 */
+/*
+	DismissNotification POST /api/sessions/:id/notifications/dismiss：关闭该
+
+会话的完成通知或全局快应用触发通知（:id=分支根 ID / callbacks；仅完成
+通知可关，未决请求走决策端点）。
+*/
 func (c *ChatController) DismissNotification(g *gin.Context) {
 	var body struct {
 		CallID string `json:"callId" binding:"required"`
 	}
 	if err := g.ShouldBindJSON(&body); err != nil {
 		g.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	if g.Param("id") == "callbacks" {
+		if c.Callbacks != nil {
+			c.Callbacks.DismissNotice(body.CallID)
+		}
+		g.JSON(http.StatusOK, gin.H{"ok": true})
 		return
 	}
 	if s := c.Svc.Hub.SessionOf(g.Param("id")); s != nil {

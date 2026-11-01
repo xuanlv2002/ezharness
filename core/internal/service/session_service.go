@@ -17,7 +17,8 @@ import (
 
 /* SessionService 会话查询用例。 */
 type SessionService struct {
-	Hub *domain.Hub
+	Hub       *domain.Hub
+	Callbacks *CallbackService // 可空：状态卡展示当前会话定时回调
 }
 
 /* BootstrapData 是前端启动所需的全量数据。 */
@@ -68,22 +69,23 @@ type HistoryData struct {
 
 /* Status 是右栏状态卡数据（命中率与用量为本会话口径，切会话/重启清零）。 */
 type Status struct {
-	Model         string   `json:"model"`
-	ModelVision   bool     `json:"modelVision"` // 主模型是否支持视觉输入（false 时带图发送前端提示省略）
-	SessionID     string   `json:"sessionId"`
-	RootID        string   `json:"rootId"`
-	SessionMsgs   int      `json:"sessionMsgs"`
-	Busy          bool     `json:"busy"`
-	ContextTokens int      `json:"contextTokens"`
-	ContextWindow int      `json:"contextWindow"` // 主模型窗口（水位条分母）
-	TrimPercent   int      `json:"trimPercent"`   // 自动整理阈值（窗口百分比，水位条阈值线；0=禁用）
-	CacheHitRate  float64  `json:"cacheHitRate"`
-	PromptTokens  int      `json:"promptTokens"` // 本会话累计输入（命中率分母）
-	Turns         int      `json:"turns"`
-	Tools         []string `json:"tools"`
-	McpServers    []string `json:"mcpServers"`
-	Skills        []string `json:"skills"`
-	TopicsCount   int      `json:"topicsCount"`
+	Model         string          `json:"model"`
+	ModelVision   bool            `json:"modelVision"` // 主模型是否支持视觉输入（false 时带图发送前端提示省略）
+	SessionID     string          `json:"sessionId"`
+	RootID        string          `json:"rootId"`
+	SessionMsgs   int             `json:"sessionMsgs"`
+	Busy          bool            `json:"busy"`
+	ContextTokens int             `json:"contextTokens"`
+	ContextWindow int             `json:"contextWindow"` // 主模型窗口（水位条分母）
+	TrimPercent   int             `json:"trimPercent"`   // 自动整理阈值（窗口百分比，水位条阈值线；0=禁用）
+	CacheHitRate  float64         `json:"cacheHitRate"`
+	PromptTokens  int             `json:"promptTokens"` // 本会话累计输入（命中率分母）
+	Turns         int             `json:"turns"`
+	Tools         []string        `json:"tools"`
+	McpServers    []string        `json:"mcpServers"`
+	Skills        []string        `json:"skills"`
+	TopicsCount   int             `json:"topicsCount"`
+	Callbacks     []CallbackBrief `json:"callbacks,omitempty"` // 绑定当前会话的定时回调
 }
 
 /* Snapshot 汇总活动会话状态。 */
@@ -131,6 +133,10 @@ func (s *SessionService) Snapshot(ctx context.Context) Status {
 	if m := s.Hub.ModelsSnapshot().ActiveMain(); m != nil {
 		vision, modelName = m.Vision, m.Name
 	}
+	var callbacks []CallbackBrief
+	if s.Callbacks != nil {
+		callbacks = s.Callbacks.Brief(sess.CurrentID())
+	}
 	return Status{
 		Model:         modelName,
 		ModelVision:   vision,
@@ -148,6 +154,7 @@ func (s *SessionService) Snapshot(ctx context.Context) Status {
 		McpServers:    mcp,
 		Skills:        skills,
 		TopicsCount:   len(s.Hub.Topics.Load()),
+		Callbacks:     callbacks,
 	}
 }
 

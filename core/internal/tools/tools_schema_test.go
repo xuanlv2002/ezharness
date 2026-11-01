@@ -19,7 +19,7 @@ func TestAllToolSchemasValidJSON(t *testing.T) {
 	list = append(list, SaveApp(osfs.OS{})...)
 	list = append(list, Sleep(), ModelCall(osfs.OS{}, nil, nil, nil))
 	list = append(list, Memory(osfs.OS{}), Plan(osfs.OS{}, "t", nil))
-	list = append(list, LoadApp(osfs.OS{}))
+	list = append(list, LoadApp(osfs.OS{}), Callback(nil, func() string { return "" }))
 	list = append(list, SharedTerm(nil)...)
 	list = append(list, SharedBrowser(nil)...)
 	for _, tl := range list {

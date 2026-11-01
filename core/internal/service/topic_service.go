@@ -32,6 +32,14 @@ var ErrBadAnchor = errors.New("fork anchor out of range")
 /* ErrCantArchive 活动/运行中的会话不可归档（会继续写入，标记会被覆盖）。 */
 var ErrCantArchive = errors.New("活动或运行中的分支不可归档")
 
+/* 按会话 ID 定位时的失败分类（回调任务直连某个叶 session）。 */
+var (
+	ErrSessionNotFound   = errors.New("session not found")
+	ErrSessionArchived   = errors.New("session archived")
+	ErrSessionArchiving  = errors.New("session archiving")
+	ErrSessionSuperseded = errors.New("session superseded")
+)
+
 /* TopicService 分支用例。 */
 type TopicService struct {
 	Hub    *domain.Hub
@@ -241,6 +249,73 @@ func (t *TopicService) Switch(ctx context.Context, rootID string) error {
 	t.Agents.Assemble(s, t.Hub.SettingsSnapshot())
 	t.Hub.SetActive(s)
 	return nil
+}
+
+/*
+EnsureSession 返回指定叶 session 的已装配会话（按 session ID 精确定位，
+不切换活动分支）。会话已归档、正在归档、已被 compact 换代或还没落盘
+时返回对应错误——定时回调绑定的是创建任务时的那个会话，不跟随新叶。
+*/
+func (t *TopicService) EnsureSession(ctx context.Context, sessionID string) (*domain.Session, error) {
+	sessionID = strings.TrimSpace(sessionID)
+	if sessionID == "" {
+		return nil, ErrSessionNotFound
+	}
+	// 已加载的会话以内存为准：compact 换代时 ID 会随 RotateTo 更新。
+	for _, s := range t.Hub.Sessions() {
+		if s.CurrentID() != sessionID {
+			continue
+		}
+		if s.Archiving() {
+			return nil, ErrSessionArchiving
+		}
+		if snap, err := hooks.LoadSnapMeta(ctx, t.Hub.Fsys, sessionID); err == nil && snap.Archived {
+			return nil, ErrSessionArchived
+		}
+		return s, nil
+	}
+
+	snapMeta, err := hooks.LoadSnapMeta(ctx, t.Hub.Fsys, sessionID)
+	if err != nil {
+		return nil, ErrSessionNotFound
+	}
+	if snapMeta.Archived {
+		return nil, ErrSessionArchived
+	}
+	lineRoot := snapMeta.LineRoot
+	if lineRoot == "" {
+		lineRoot = sessionID
+	}
+	entry, ok := t.Hub.Topics.Get(lineRoot)
+	if !ok {
+		return nil, ErrSessionSuperseded
+	}
+	leaf := entry.LeafID
+	if leaf == "" {
+		leaf = entry.ID
+	}
+	if leaf != sessionID {
+		return nil, ErrSessionSuperseded
+	}
+	if s := t.Hub.SessionOf(lineRoot); s != nil {
+		if s.CurrentID() != sessionID {
+			return nil, ErrSessionSuperseded
+		}
+		if s.Archiving() {
+			return nil, ErrSessionArchiving
+		}
+		return s, nil
+	}
+	snap, err := hooks.LoadSnap(ctx, t.Hub.Fsys, sessionID)
+	if err != nil {
+		return nil, ErrSessionNotFound
+	}
+	if snap.Archived {
+		return nil, ErrSessionArchived
+	}
+	s := t.Hub.LoadBranch(lineRoot, snap)
+	t.Agents.Assemble(s, t.Hub.SettingsSnapshot())
+	return s, nil
 }
 
 /*
@@ -547,7 +622,9 @@ func (t *TopicService) Compact(ctx context.Context, rootID string) error {
 	}
 	st := t.Hub.SettingsSnapshot()
 	info, err := hooks.ArchiveSession(ctx, w.Provider, t.Hub.Fsys, s.Sess, sys,
-		s.Topics, w.Trace, func() string { return buildSystemBase(ctx, st, s.Fsys, t.Hub.ModelsSnapshot()) },
+		s.Topics, w.Trace, func(nextID string) string {
+			return buildSystemBase(ctx, st, s.Fsys, t.Hub.ModelsSnapshot(), nextID)
+		},
 		s.History(), s.ModelView(), ResolveWorkDir(st.WorkDir))
 	if err != nil {
 		return err

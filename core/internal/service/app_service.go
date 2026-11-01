@@ -217,7 +217,7 @@ func MigrateData(src, dst string) error {
 	if err := os.MkdirAll(dst, 0o755); err != nil {
 		return err
 	}
-	for _, f := range []string{"models.json", "settings.json", "stats.json", "topics.json", "memory.md", "mcp.json"} {
+	for _, f := range []string{"models.json", "settings.json", "stats.json", "topics.json", "callbacks.json", "memory.md", "mcp.json"} {
 		data, err := os.ReadFile(filepath.Join(src, f))
 		if err != nil {
 			continue

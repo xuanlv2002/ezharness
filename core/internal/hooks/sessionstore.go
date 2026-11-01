@@ -36,7 +36,7 @@ type AppendFS interface {
 }
 
 /* resSnapV 是资源基线格式版本：V 不等的旧快照视为未建（静默重建，不报变更）。 */
-const resSnapV = 6
+const resSnapV = 9
 
 /* ResSnapshot 是 agent_status 的变更对比快照（skill/mcp/主模型/长期记忆 基线；启停分列）。 */
 type ResSnapshot struct {
@@ -51,6 +51,7 @@ type ResSnapshot struct {
 	Memory    []string `json:"memory,omitempty"`    // user/soul 条目签名（"目标 id|text"，增删改进 resource_change）
 	Projects  []string `json:"projects,omitempty"`  // 项目索引签名（"id|name"，增删/改名进 resource_change）
 	Apps      []string `json:"apps,omitempty"`      // 快应用签名（"id|title|version|callable|description"，增删改进 resource_change）
+	Callbacks []string `json:"callbacks,omitempty"` // 定时回调签名（"id|title|kind|enabled|schedule|target|hash"，增删改进 resource_change）
 }
 
 /* ForkOrigin 是 fork 线的展示元数据（时间线渲染"分叉自 X"，非结构依赖）。 */

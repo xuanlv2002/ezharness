@@ -28,6 +28,9 @@ import (
 /* ErrBusy 表示会话当前有一轮运行未结束。 */
 var ErrBusy = errors.New("session busy")
 
+/* ErrSessionChanged 表示按会话 ID 发送时，该线已换代（compact）不再是同一会话。 */
+var ErrSessionChanged = errors.New("session changed")
+
 /* snapFlushBytes 是流式快照帧的重序列化增量阈值。 */
 const snapFlushBytes = 8192
 
@@ -216,6 +219,13 @@ func (s *Session) SetIdentity(id string) {
 	s.mu.Unlock()
 }
 
+/* CurrentID 返回当前叶 session ID（compact 换代随之变化）。 */
+func (s *Session) CurrentID() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.ID
+}
+
 /* RotateTo 换代（归档后新库空置起步）：切标识、清历史、水位清零。 */
 func (s *Session) RotateTo(id string) {
 	s.mu.Lock()
@@ -255,7 +265,23 @@ func (s *Session) Snapshot() *hooks.SessionSnap {
 
 /* StartRun 占用当前轮并返回运行上下文（busy/归档中返回 ErrBusy）。 */
 func (s *Session) StartRun(ctx context.Context, text string, refs []hooks.RefFile) (*core.RunHandle, context.CancelFunc, error) {
+	return s.startRun("", ctx, text, refs)
+}
+
+/*
+StartRunFor 在 StartRun 的基础上校验目标仍是同一个叶 session：调用方按
+创建任务时保存的 sessionId 投递，compact 换代后拒绝而不是写到新会话。
+*/
+func (s *Session) StartRunFor(sessionID string, ctx context.Context, text string, refs []hooks.RefFile) (*core.RunHandle, context.CancelFunc, error) {
+	return s.startRun(sessionID, ctx, text, refs)
+}
+
+func (s *Session) startRun(expectedID string, ctx context.Context, text string, refs []hooks.RefFile) (*core.RunHandle, context.CancelFunc, error) {
 	s.mu.Lock()
+	if expectedID != "" && s.ID != expectedID {
+		s.mu.Unlock()
+		return nil, nil, ErrSessionChanged
+	}
 	if s.cur != nil || s.archiving {
 		s.mu.Unlock()
 		return nil, nil, ErrBusy

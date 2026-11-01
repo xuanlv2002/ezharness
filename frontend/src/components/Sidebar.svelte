@@ -2,7 +2,7 @@
   import Logo from './Logo.svelte'
   import { store } from '../lib/store.svelte'
 
-  type View = 'chat' | 'models' | 'memory' | 'tools' | 'mcp' | 'security' | 'settings'
+  type View = 'chat' | 'models' | 'memory' | 'tools' | 'callbacks' | 'mcp' | 'security' | 'settings'
 
   let {
     view,
@@ -38,6 +38,11 @@
       icon: '<path d="M13 2L4.5 13h6L11 22l8.5-11h-6L13 2z"/>',
     },
     {
+      key: 'callbacks',
+      label: '回调',
+      icon: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
+    },
+    {
       key: 'mcp',
       label: 'MCP',
       icon: '<circle cx="5" cy="12" r="2"/><circle cx="19" cy="5" r="2"/><circle cx="19" cy="19" r="2"/><path d="M7 12h4M11 12l6-6M11 12l6 6"/>',
@@ -51,7 +56,7 @@
 
   /* 工作面（对话 + agent 产出的快应用）与 harness 配置分两组；
   设置不入数组——底部固定钮独立渲染 */
-  const work = items.filter((i) => i.key === 'chat' || i.key === 'tools')
+  const work = items.filter((i) => i.key === 'chat' || i.key === 'tools' || i.key === 'callbacks')
   const config = items.filter((i) => !work.includes(i))
 </script>
 

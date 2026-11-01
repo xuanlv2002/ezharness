@@ -3,6 +3,7 @@ package domain
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -221,5 +222,15 @@ func TestPublishKeepsLifecycleFrames(t *testing.T) {
 	}
 	if last.Type != "tool_start" {
 		t.Fatalf("delta must be dropped when buffer is full, last frame = %s", last.Type)
+	}
+}
+
+/* StartRunFor 按叶 ID 投递：compact 换代后拒绝，不写到新会话。 */
+func TestStartRunForRejectsChangedSession(t *testing.T) {
+	s := &Session{}
+	s.SetIdentity("s1")
+	_, _, err := s.StartRunFor("s2", context.Background(), "hello", nil)
+	if !errors.Is(err, ErrSessionChanged) {
+		t.Fatalf("StartRunFor changed session = %v", err)
 	}
 }

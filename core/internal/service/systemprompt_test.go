@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"ezharness/core/internal/callback"
 	"ezharness/core/internal/domain"
 	"ezharness/core/internal/osfs"
 )
@@ -16,7 +17,7 @@ base 结构契约的可机检部分：段序固定、段间恰好一个空行、
 */
 func TestBuildSystemBaseStructure(t *testing.T) {
 	base := buildSystemBase(context.Background(), domain.Settings{},
-		osfs.OS{}, domain.ModelsConfig{})
+		osfs.OS{}, domain.ModelsConfig{}, "")
 
 	// 段序固定；<apps> 恒在（空清单也给占位），清单段可缺席时不破坏其余顺序
 	wantOrder := []string{
@@ -43,5 +44,46 @@ func TestBuildSystemBaseStructure(t *testing.T) {
 		if strings.Contains(base, dup) {
 			t.Errorf("base 出现机制文本 %q（应唯一归属在工具描述或技能）", dup)
 		}
+	}
+}
+
+/* 回调清单按会话标注：只有绑定当前叶的任务打「本会话」。 */
+func TestCallbacksSectionKeepsSessionBinding(t *testing.T) {
+	chdirTemp(t)
+	ctx := context.Background()
+	fsys := osfs.OS{}
+	st := callback.New(fsys)
+	if _, err := st.Create(ctx, callback.Task{
+		ID: "cb-1", Title: "每日总结", Kind: callback.KindSession, Enabled: true,
+		Schedule: callback.Schedule{Kind: callback.ScheduleInterval, Every: "24h"},
+		Session:  &callback.SessionTarget{SessionID: "s1", Mode: callback.ModeSession, Message: "总结"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	got := callbacksSection(ctx, fsys, "s1")
+	if !strings.Contains(got, "每日总结") || !strings.Contains(got, "〔本会话〕") {
+		t.Fatalf("same session section = %s", got)
+	}
+	if other := callbacksSection(ctx, fsys, "s2"); strings.Contains(other, "〔本会话〕") {
+		t.Fatalf("other session must not mark: %s", other)
+	}
+}
+
+/* 脚本任务在清单里显示命令，不要求会话。 */
+func TestCallbacksSectionRendersScript(t *testing.T) {
+	chdirTemp(t)
+	ctx := context.Background()
+	fsys := osfs.OS{}
+	st := callback.New(fsys)
+	if _, err := st.Create(ctx, callback.Task{
+		ID: "cb-script", Title: "每日同步", Kind: callback.KindScript, Enabled: true,
+		Schedule: callback.Schedule{Kind: callback.ScheduleInterval, Every: "24h"},
+		Script:   &callback.ScriptTarget{Command: "./sync.sh"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	got := callbacksSection(ctx, fsys, "s1")
+	if !strings.Contains(got, "每日同步") || !strings.Contains(got, "脚本 ./sync.sh") {
+		t.Fatalf("script section = %s", got)
 	}
 }

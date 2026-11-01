@@ -38,15 +38,25 @@ var ErrAppNotFound = errors.New("app not found")
 
 /* AppEntry 是快应用卡片数据。 */
 type AppEntry struct {
-	Name        string `json:"name"` // 应用目录名（应用的稳定身份）
-	Title       string `json:"title"`
-	Description string `json:"description,omitempty"` // 一句话描述
-	Version     string `json:"version,omitempty"`     // 语义化版本
-	Kind        string `json:"kind"`
-	Mtime       string `json:"mtime"`
-	Icon        string `json:"icon,omitempty"` // 卡片头像（同源 URL /apps/<名>/<icon>，空=未声明或越界）
-	Pinned      bool   `json:"pinned"`         // 已钉到桌面小助手
-	Callable    bool   `json:"callable"`       // 应用文档含「Agent 调用」一节
+	Name        string        `json:"name"` // 应用目录名（应用的稳定身份）
+	Title       string        `json:"title"`
+	Description string        `json:"description,omitempty"` // 一句话描述
+	Version     string        `json:"version,omitempty"`     // 语义化版本
+	Kind        string        `json:"kind"`
+	Mtime       string        `json:"mtime"`
+	Icon        string        `json:"icon,omitempty"`      // 卡片头像（同源 URL /apps/<名>/<icon>，空=未声明或越界）
+	Pinned      bool          `json:"pinned"`              // 已钉到桌面小助手
+	Callable    bool          `json:"callable"`            // 应用文档含「Agent 调用」一节
+	Callbacks   []AppCallback `json:"callbacks,omitempty"` // 定时调用端点（回调中心按名引用）
+}
+
+/* AppCallback 是卡片页展示用的回调端点精简视图（不携带 headers/body）。 */
+type AppCallback struct {
+	Name        string `json:"name"`
+	Title       string `json:"title,omitempty"`
+	Description string `json:"description,omitempty"`
+	Method      string `json:"method"`
+	URL         string `json:"url"`
 }
 
 /* AppView 是一次启动的结果：前端入口路径 + 后端终端（无后端时为空）。 */
@@ -90,6 +100,7 @@ func (s *AppsService) List(ctx context.Context) []AppEntry {
 			Icon:        iconURL(a.Name, a.Spec.Icon),
 			Pinned:      s.Hub != nil && slices.Contains(s.Hub.SettingsSnapshot().PinnedApps, a.Name),
 			Callable:    a.Callable,
+			Callbacks:   appCallbacks(a.Callbacks),
 		})
 	}
 	return out
@@ -121,6 +132,13 @@ func renderAppsSection(ctx context.Context, fsys osfs.OS) string {
 			}
 			if a.Callable {
 				b.WriteString("〔可调用〕")
+			}
+			if len(a.Callbacks) > 0 {
+				names := make([]string, 0, len(a.Callbacks))
+				for _, c := range a.Callbacks {
+					names = append(names, c.Name)
+				}
+				b.WriteString("〔定时回调端点 " + strings.Join(names, "、") + "〕")
 			}
 			desc := a.Description
 			if desc == "" {
@@ -192,6 +210,21 @@ func (s *AppsService) Uninstall(ctx context.Context, name string) error {
 	}
 	s.Hub.ApplySettings(st)
 	return nil
+}
+
+/* appCallbacks 把声明端点转成卡片/表单用的精简视图。 */
+func appCallbacks(list []quickapp.Callback) []AppCallback {
+	if len(list) == 0 {
+		return nil
+	}
+	out := make([]AppCallback, 0, len(list))
+	for _, c := range list {
+		out = append(out, AppCallback{
+			Name: c.Name, Title: c.Title, Description: c.Description,
+			Method: c.Method, URL: c.URL,
+		})
+	}
+	return out
 }
 
 /* iconURL 校验声明的 icon（同 entry 的相对路径约束）并拼成同源 URL；空/越界返回空串。 */

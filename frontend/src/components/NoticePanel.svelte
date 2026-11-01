@@ -63,7 +63,7 @@
     </div>
 
   {#if notices.length === 0}
-    <p class="empty">暂无通知——审批、提问与执行完成会出现在这里</p>
+    <p class="empty">暂无通知——审批、提问、执行完成与快应用触发会出现在这里</p>
   {:else}
     <div class="list">
       {#each notices as n (`${n.rootId}:${n.id}`)}

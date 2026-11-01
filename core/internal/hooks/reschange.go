@@ -23,6 +23,7 @@ import (
 	"github.com/xuanlv2002/ezloop/ext/hook/skill"
 
 	"ezharness/core/internal/builtinskill"
+	"ezharness/core/internal/callback"
 	"ezharness/core/internal/quickapp"
 )
 
@@ -47,7 +48,7 @@ buildChanges 对比资源基线产出变更条目（中文完整短语，模型�
 prev 为 nil（首轮或旧格式）只建基线。技能/MCP/可选模型均按启用清单 +
 停用名单分列，区分「新增/移除」与「启用/停用」。
 */
-func (h *Remind) buildChanges(ctx context.Context) (items []string, skills, mcps, models []StatusMcp, apps []StatusApp) {
+func (h *Remind) buildChanges(ctx context.Context) (items []string, skills, mcps, models []StatusMcp, apps []StatusApp, callbacks []callback.Task) {
 	var off []string
 	if h.disabled != nil {
 		off = h.disabled()
@@ -116,6 +117,13 @@ func (h *Remind) buildChanges(ctx context.Context) (items []string, skills, mcps
 		appSigs = append(appSigs, appSignature(a))
 	}
 
+	// 定时回调基线（任务配置与启停；运行态不进签名，避免每次触发都报变更）
+	callbacks = callback.LoadTasks(ctx, h.fsys)
+	callbackSigs := make([]string, 0, len(callbacks))
+	for _, t := range callbacks {
+		callbackSigs = append(callbackSigs, t.Signature())
+	}
+
 	prev := h.store.ResSnap()
 	curModel := ""
 	if h.model != nil {
@@ -132,13 +140,14 @@ func (h *Remind) buildChanges(ctx context.Context) (items []string, skills, mcps
 		items = append(items, diffMemorySignatures(prev.Memory, memSigs)...)
 		items = append(items, diffProjectSignatures(prev.Projects, projSigs)...)
 		items = append(items, diffAppSignatures(prev.Apps, appSigs)...)
+		items = append(items, diffCallbackSignatures(prev.Callbacks, callbackSigs)...)
 	}
 
 	// 推进基线（启用/停用分列）
 	h.store.SetResSnap(&ResSnapshot{V: resSnapV, Skills: onNames, SkillsOff: offNames,
 		Mcps: names(mcps), McpsOff: mcpsOff, Models: names(models), ModelsOff: modelsOff,
-		Model: curModel, Memory: memSigs, Projects: projSigs, Apps: appSigs})
-	return items, skills, mcps, models, apps
+		Model: curModel, Memory: memSigs, Projects: projSigs, Apps: appSigs, Callbacks: callbackSigs})
+	return items, skills, mcps, models, apps, callbacks
 }
 
 /* appSignature 生成应用基线签名（描述放最后，允许含分隔符）。 */
@@ -147,7 +156,12 @@ func appSignature(a quickapp.Info) string {
 	if a.Callable {
 		callable = "1"
 	}
-	return strings.Join([]string{a.Name, a.Title, a.Version, callable, a.Description}, "|")
+	callbacks := make([]string, 0, len(a.Callbacks))
+	for _, c := range a.Callbacks {
+		callbacks = append(callbacks, c.Name+"="+c.Method+" "+strings.ReplaceAll(c.URL, "|", " "))
+	}
+	title := strings.ReplaceAll(a.Title, "|", " ")
+	return strings.Join([]string{a.Name, title, a.Version, callable, strings.Join(callbacks, ","), a.Description}, "|")
 }
 
 /*
@@ -155,7 +169,7 @@ diffAppSignatures 对比应用签名：新增/移除按 id，标题/版本/描�
 变化记为更新。渲染 "新增快应用 id（标题）" 等完整短语。
 */
 func diffAppSignatures(oldS, newS []string) []string {
-	parts := func(s string) []string { return strings.SplitN(s, "|", 5) }
+	parts := func(s string) []string { return strings.SplitN(s, "|", 6) }
 	label := func(p []string) string {
 		if len(p) > 1 && p[1] != "" && p[1] != p[0] {
 			return p[0] + "（" + p[1] + "）"
@@ -177,6 +191,63 @@ func diffAppSignatures(oldS, newS []string) []string {
 		p := parts(s)
 		if !slices.ContainsFunc(newS, func(n string) bool { return parts(n)[0] == p[0] }) {
 			out = append(out, "移除快应用 "+label(p))
+		}
+	}
+	return out
+}
+
+/*
+diffCallbackSignatures 对比定时回调签名：新增/移除按 ID，标题/计划/目标/
+内容变化记为更新；仅启停位变化时渲染「启用/停用定时回调」。
+*/
+func diffCallbackSignatures(oldS, newS []string) []string {
+	parts := func(s string) []string { return strings.SplitN(s, "|", 7) }
+	label := func(p []string) string {
+		if len(p) > 1 && p[1] != "" {
+			return p[1]
+		}
+		return p[0]
+	}
+	enabledOnly := func(a, b []string) bool {
+		if len(a) != 7 || len(b) != 7 {
+			return false
+		}
+		for i := range a {
+			if i == 3 {
+				continue
+			}
+			if a[i] != b[i] {
+				return false
+			}
+		}
+		return a[3] != b[3]
+	}
+	var out []string
+	for _, s := range newS {
+		p := parts(s)
+		i := slices.IndexFunc(oldS, func(o string) bool { return parts(o)[0] == p[0] })
+		if i < 0 {
+			out = append(out, "新增定时回调 "+label(p))
+			continue
+		}
+		old := parts(oldS[i])
+		if oldS[i] == s {
+			continue
+		}
+		if enabledOnly(old, p) {
+			if p[3] == "1" {
+				out = append(out, "启用定时回调 "+label(p))
+			} else {
+				out = append(out, "停用定时回调 "+label(p))
+			}
+			continue
+		}
+		out = append(out, "更新定时回调 "+label(p))
+	}
+	for _, s := range oldS {
+		p := parts(s)
+		if !slices.ContainsFunc(newS, func(n string) bool { return parts(n)[0] == p[0] }) {
+			out = append(out, "移除定时回调 "+label(p))
 		}
 	}
 	return out

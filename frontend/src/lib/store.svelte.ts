@@ -230,7 +230,7 @@ class AppStore {
   /* 本轮已处理的记忆待确认操作（op id → 结果）：通知栏与聊天记忆卡共用的确认入口，
      本地记录结果给卡片落定状态（后端返回后待确认项即消失） */
   memoryDecisions = $state<Record<string, 'accept' | 'cancel'>>({})
-  jumpView = $state<'' | 'memory'>('') // 通知跳页请求（App 消费后清空）
+  jumpView = $state<'' | 'memory' | 'callbacks'>('') // 通知跳页请求（App 消费后清空）
   jumpAnchor = $state('') // 顶栏搜索跳转目标（view:anchor，目标视图消费后清空）
   lastTool = $state('')
   busy = $state(false)
@@ -1377,7 +1377,7 @@ class AppStore {
             id: it.callId,
             rootId: g.rootId,
             kind: it.kind,
-            source: it.forkId ? '分身' : name || 'agent',
+            source: g.rootId === 'callbacks' ? '定时回调' : it.forkId ? '分身' : name || 'agent',
             forkId: it.forkId || '',
             title: it.kind === 'plan' ? '任务计划待确认' : it.tool,
             detail: done ? info : question,
@@ -1444,6 +1444,11 @@ class AppStore {
     if (ref.target === 'memory-view') {
       // 本地记忆通知：打开记忆页（用户查看即确认，关闭通知条即已读）
       this.jumpView = 'memory'
+      return
+    }
+    if (ref.rootId === 'callbacks') {
+      // 快应用触发通知：打开回调页看任务与记录
+      this.jumpView = 'callbacks'
       return
     }
     if (ref.rootId && ref.rootId !== this.activeId) await this.openTab(ref.rootId)

@@ -61,7 +61,9 @@ func DefaultToolRules() []ToolRule {
 		/* 系统自带：两档，默认免审（save_app 会覆盖应用文件，默认审批） */
 		{Key: "task", Level: LevelAuto},
 		{Key: "save_app", Level: LevelAsk},
-		{Key: "load_app", Level: LevelAuto}, // 只读应用文档
+		{Key: "load_app", Level: LevelAuto},      // 只读应用文档
+		{Key: "callback:list", Level: LevelAuto}, // 只读任务清单
+		{Key: "callback", Level: LevelAsk},       // 增删改/启停/立即执行
 		{Key: "sleep", Level: LevelAuto},
 		{Key: "memory", Level: LevelAuto},      // 提案本身即待审（用户在记忆页审阅），双重审批无意义
 		{Key: "plan:new", Level: LevelAuto},    // 新方案走计划确认卡（可编辑/反馈），不再叠一层审批

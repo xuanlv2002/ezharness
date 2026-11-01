@@ -20,16 +20,17 @@ var ErrNotFound = errors.New("app not found")
 
 /* Info 是一个已解析的快应用（JSON 形状即 list_apps 的结果）。 */
 type Info struct {
-	Name        string `json:"name"`
-	Title       string `json:"title"`
-	Description string `json:"description,omitempty"`
-	Version     string `json:"version,omitempty"`
-	Entry       string `json:"entry"`
-	Backend     string `json:"backend,omitempty"`
-	Icon        string `json:"icon,omitempty"`
-	Document    string `json:"document,omitempty"` // 文档相对路径（文件存在时才填）
-	Callable    bool   `json:"callable"`           // 文档含「Agent 调用」一节
-	Spec        Spec   `json:"-"`
+	Name        string     `json:"name"`
+	Title       string     `json:"title"`
+	Description string     `json:"description,omitempty"`
+	Version     string     `json:"version,omitempty"`
+	Entry       string     `json:"entry"`
+	Backend     string     `json:"backend,omitempty"`
+	Icon        string     `json:"icon,omitempty"`
+	Document    string     `json:"document,omitempty"` // 文档相对路径（文件存在时才填）
+	Callable    bool       `json:"callable"`           // 文档含「Agent 调用」一节
+	Callbacks   []Callback `json:"callbacks,omitempty"`
+	Spec        Spec       `json:"-"`
 }
 
 var (
@@ -51,6 +52,9 @@ func Load(ctx context.Context, fsys fs.FileSystem, name string) (Info, error) {
 	if err != nil {
 		return Info{}, err
 	}
+	for i := range spec.Callbacks {
+		spec.Callbacks[i].Normalize()
+	}
 	entry, err := SafeEntry(spec.EntryOr())
 	if err != nil {
 		return Info{}, err
@@ -63,6 +67,7 @@ func Load(ctx context.Context, fsys fs.FileSystem, name string) (Info, error) {
 		Entry:       entry,
 		Backend:     strings.TrimSpace(spec.Backend),
 		Icon:        strings.TrimSpace(spec.Icon),
+		Callbacks:   spec.Callbacks,
 		Spec:        spec,
 	}
 	if document, callable := loadDocument(ctx, fsys, rel, spec); document != "" {

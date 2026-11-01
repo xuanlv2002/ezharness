@@ -26,7 +26,7 @@ func TestSkillsEmbedded(t *testing.T) {
 		t.Fatal("IsBuiltin must reject unknown dir")
 	}
 	// 钉住技能名：embed 资源被误删/误 ignore 时立刻暴露
-	if !IsBuiltin("quick-app") {
-		t.Fatal("missing builtin skill: quick-app")
+	if !IsBuiltin("quick-app") || !IsBuiltin("callback") {
+		t.Fatal("missing builtin skill: quick-app / callback")
 	}
 }

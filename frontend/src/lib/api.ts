@@ -88,6 +88,14 @@ export interface SessionPlan {
   updatedAt?: string
 }
 
+export interface AppCallbackSpec {
+  name: string
+  title?: string
+  description?: string
+  method: string
+  url: string
+}
+
 export interface AppEntry {
   name: string
   title: string
@@ -95,6 +103,92 @@ export interface AppEntry {
   mtime: string
   icon?: string // 卡片头像（同源 URL，未声明/越界时缺省）
   pinned?: boolean // 已钉到桌面小助手
+  callbacks?: AppCallbackSpec[] // app.quick 声明的定时调用端点
+}
+
+/* 定时回调计划（后端 callback.Schedule 的 JSON 形状；本机时区） */
+export interface CallbackSchedule {
+  kind: 'once' | 'interval' | 'cron'
+  at?: string // once：2026-11-01 09:00 / RFC3339
+  every?: string // interval：Go duration，如 30m、2h
+  cron?: string // cron：分 时 日 月 周
+}
+
+export interface CallbackSessionTarget {
+  sessionId?: string // session 模式：创建任务时的叶 session ID（归档/compact 换代后失败）
+  mode: 'session' | 'new'
+  message: string
+}
+
+/* 创建/更新的会话目标：只有当前会话与新建会话两种，绑定 ID 由后端落值 */
+export interface CallbackSessionInput {
+  mode: 'session' | 'new'
+  message: string
+}
+
+export interface CallbackAppTarget {
+  name: string
+  callback: string // app.quick callbacks[].name
+}
+
+export interface CallbackScriptTarget {
+  command: string // 工作目录里执行的 shell 命令
+}
+
+/* 一次触发记录（后端 callback.Run，新的在前） */
+export interface CallbackRun {
+  at: number
+  status: 'ok' | 'error' | 'skipped' | 'missed' | 'running' | string
+  manual?: boolean
+  target: string
+  targetId?: string
+  content?: string
+  result?: string
+  durationMs?: number
+}
+
+/* 定时回调任务（后端 callback.Task） */
+export interface CallbackTask {
+  id: string
+  title: string
+  description?: string
+  kind: 'session' | 'app' | 'script'
+  enabled: boolean
+  schedule: CallbackSchedule
+  session?: CallbackSessionTarget
+  app?: CallbackAppTarget
+  script?: CallbackScriptTarget
+  createdAt: number
+  updatedAt: number
+  nextRunAt?: number
+  lastRunAt?: number
+  lastStatus?: 'ok' | 'error' | 'skipped' | 'missed' | 'running' | string
+  lastResult?: string
+  runCount?: number
+  runs?: CallbackRun[]
+}
+
+/* 创建/更新的配置面（运行态由后端维护） */
+export interface CallbackSpec {
+  title: string
+  description?: string
+  kind: 'session' | 'app' | 'script'
+  enabled?: boolean
+  schedule: CallbackSchedule
+  session?: CallbackSessionInput
+  app?: CallbackAppTarget
+  script?: CallbackScriptTarget
+}
+
+/* 状态卡用的当前会话任务摘要 */
+export interface CallbackBrief {
+  id: string
+  title: string
+  kind: string
+  schedule: string
+  enabled: boolean
+  nextRunAt?: number
+  lastStatus?: string
 }
 
 export interface McpOAuthConfig {
@@ -237,6 +331,7 @@ export interface Status {
   mcpServers: string[]
   skills: string[]
   topicsCount: number
+  callbacks?: CallbackBrief[] // 绑定当前会话的定时回调
 }
 
 /* fork 线的分叉源展示元数据（后端 hooks.ForkOrigin） */
@@ -506,6 +601,29 @@ export const api = {
   /* 卸载快应用：后端停掉运行中的后端终端、删 apps/<名>/ 目录、清钉选残留 */
   uninstallApp: (name: string) =>
     fetch(`/api/apps/${encodeURIComponent(name)}`, { method: 'DELETE' }).then(json<{ ok: boolean }>),
+
+  /* 定时回调中心：sessionId 过滤当前会话任务，app 过滤快应用关联任务 */
+  listCallbacks: (sessionId?: string, app?: string) => {
+    const q = new URLSearchParams()
+    if (sessionId) q.set('sessionId', sessionId)
+    if (app) q.set('app', app)
+    const suffix = q.toString() ? `?${q}` : ''
+    return fetch(`/api/callbacks${suffix}`).then(json<{ callbacks: CallbackTask[] }>)
+  },
+
+  createCallback: (c: CallbackSpec) => post<{ callback: CallbackTask }>('/api/callbacks', c),
+
+  updateCallback: (id: string, c: Partial<CallbackSpec>) =>
+    post<{ callback: CallbackTask }>(`/api/callbacks/${encodeURIComponent(id)}`, c),
+
+  deleteCallback: (id: string) =>
+    fetch(`/api/callbacks/${encodeURIComponent(id)}`, { method: 'DELETE' }).then(json<{ ok: boolean }>),
+
+  setCallbackEnabled: (id: string, enabled: boolean) =>
+    post<{ callback: CallbackTask }>(`/api/callbacks/${encodeURIComponent(id)}/enabled`, { enabled }),
+
+  runCallback: (id: string) =>
+    post<{ ok: boolean }>(`/api/callbacks/${encodeURIComponent(id)}/run`, {}),
 
   /* 文本文件保存（file:// 编辑器）；按绝对路径写，与 /api/workspace/file 同源 */
   saveFile: (path: string, content: string) =>

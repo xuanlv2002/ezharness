@@ -2,7 +2,8 @@
 ChatService 编排对话用例：发送、取消、决策回传与事件流消费。
 按分支路由（rootID=线根 ID，稳定不随 compact 换代）：发送/取消/决策
 作用于所属分支；轮由 Send 启动的 goroutine 消费完毕——后台分支照常
-跑完，事件进各自 turnFrames，切回即重放。
+跑完，事件进各自 turnFrames，切回即重放。发送是打断式：目标正在跑轮
+就先取消并等收尾，再启动新轮；归档中直接拒绝。
 */
 package service
 
@@ -24,6 +25,9 @@ import (
 	"ezharness/core/internal/hooks"
 )
 
+/* sendInterruptWait 是打断式发送等待上一轮收尾的上限。 */
+const sendInterruptWait = 8 * time.Second
+
 /* ChatService 对话用例。 */
 type ChatService struct {
 	Hub *domain.Hub
@@ -39,9 +43,22 @@ func (c *ChatService) resolve(rootID string) *domain.Session {
 
 整文件引用，文件页标注 = 片段+行号+备注；表现层已校验归属），统一经
 <reference_file> 记录告知模型。事件流扇出 SSE，结束更新历史并发
-turn_end。
+turn_end。目标正在跑轮时先取消并在 8 秒内等收尾，再启动新轮。
 */
 func (c *ChatService) Send(rootID, text string, refs []hooks.RefFile) error {
+	return c.send(rootID, "", text, refs)
+}
+
+/*
+SendSession 按创建任务时保存的叶 session ID 投递：除了 Send 的打断语义，
+还要求该线仍然是同一个会话；compact 换代后返回 ErrSessionChanged，不会
+把消息写到新会话。
+*/
+func (c *ChatService) SendSession(rootID, sessionID, text string, refs []hooks.RefFile) error {
+	return c.send(rootID, sessionID, text, refs)
+}
+
+func (c *ChatService) send(rootID, expectedID, text string, refs []hooks.RefFile) error {
 	if main := c.Hub.ModelsSnapshot().ActiveMain(); main == nil || main.APIKey == "" {
 		return domain.ErrNoAPIKey
 	}
@@ -49,7 +66,19 @@ func (c *ChatService) Send(rootID, text string, refs []hooks.RefFile) error {
 	if s == nil {
 		return ErrTopicNotFound
 	}
-	h, cancel, err := s.StartRun(context.Background(), text, refs)
+	if expectedID != "" && s.CurrentID() != expectedID {
+		return domain.ErrSessionChanged
+	}
+	if s.Archiving() {
+		return domain.ErrBusy
+	}
+	if s.Busy() {
+		s.Cancel()
+		if !waitRunEnd(s, sendInterruptWait) {
+			return fmt.Errorf("%w: 当前轮未能在 %s 内终止", domain.ErrBusy, sendInterruptWait)
+		}
+	}
+	h, cancel, err := s.StartRunFor(expectedID, context.Background(), text, refs)
 	if err != nil {
 		return err
 	}
@@ -115,6 +144,18 @@ func (c *ChatService) Send(rootID, text string, refs []hooks.RefFile) error {
 		}
 	}()
 	return nil
+}
+
+/* waitRunEnd 等被打断的轮收尾（FinishRun 释放 busy）。 */
+func waitRunEnd(s *domain.Session, limit time.Duration) bool {
+	deadline := time.Now().Add(limit)
+	for s.Busy() {
+		if time.Now().After(deadline) {
+			return false
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	return true
 }
 
 /* Cancel 取消当前轮。 */

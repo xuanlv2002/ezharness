@@ -24,8 +24,10 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	"ezharness/core/internal/builtinskill"
+	"ezharness/core/internal/callback"
 	"ezharness/core/internal/config"
 	"ezharness/core/internal/domain"
 	"ezharness/core/internal/hooks"
@@ -35,7 +37,7 @@ import (
 )
 
 /* buildSystemBase 按 fixed 段序拼装 base，空段（未配置/无清单）自动跳过。 */
-func buildSystemBase(ctx context.Context, st domain.Settings, fsys osfs.OS, mc domain.ModelsConfig) string {
+func buildSystemBase(ctx context.Context, st domain.Settings, fsys osfs.OS, mc domain.ModelsConfig, sessionID string) string {
 	dataDir, _ := os.Getwd() // 进程 cwd 即数据目录（启动时 chdir）
 	workDir := ResolveWorkDir(st.WorkDir)
 	sections := []string{
@@ -45,6 +47,7 @@ func buildSystemBase(ctx context.Context, st domain.Settings, fsys osfs.OS, mc d
 		memorySection(ctx, fsys),
 		skillsSection(ctx, fsys, st, dataDir),
 		renderAppsSection(ctx, fsys),
+		callbacksSection(ctx, fsys, sessionID),
 		modelsSection(mc),
 		mcpSection(fsys),
 		localAPISection(),
@@ -66,7 +69,7 @@ openingSection 开篇：身份一句 + 分段地图一句。具体规则零复�
 */
 func openingSection() string {
 	return "你是 ezharness——持续陪伴用户的设备级 agent，可全权操作本机文件与命令，能用工具就直接动手。\n" +
-		"分段地图：<workspace> 环境与路径纪律 / <memory> 长期记忆 / <skills>·<apps>·<models>·<mcp> 资源清单 / " +
+		"分段地图：<workspace> 环境与路径纪律 / <memory> 长期记忆 / <skills>·<apps>·<callbacks>·<models>·<mcp> 资源清单 / " +
 		"<local_api> 本机 API / <action> 行动准则 / <output> 输出规范。"
 }
 
@@ -85,7 +88,7 @@ func workspaceSection(dataDir, workDir string) string {
 		"# - " + p("apps") + "  快应用——apps/<名>/，构建约定见 quick-app 技能\n" +
 		"# 路径纪律：文件读写与命令一律绝对路径；用户给了路径就把检索与读写限定在该路径内，没给路径就只在上面的可写位置内；" +
 		"禁止对盘符根、用户主目录、桌面等宽泛位置做递归搜索或遍历（全盘 find/grep 极易超时卡死）；缺少路径信息先问用户，不要自行上溯目录猜路径；临时文件不要丢在工作目录外\n" +
-		"# 禁区：数据目录下的配置与索引文件（settings、models、stats、topics 等）由应用管理，不要改写；" +
+		"# 禁区：数据目录下的配置与索引文件（settings、models、stats、topics、callbacks 等）由应用管理，不要改写；" +
 		"其他历史会话的存档不要主动翻阅，确有需要先问用户；超长工具结果会被系统自动卸载为文件，按工具结果内的提示取回，不要主动浏览卸载区\n" +
 		"</workspace>"
 }
@@ -166,6 +169,81 @@ func skillsSection(ctx context.Context, fsys osfs.OS, st domain.Settings, dataDi
 			strings.Join(offNames, "、"))
 	}
 	b.WriteString("\n</skills>")
+	return b.String()
+}
+
+/*
+callbacksSection 定时回调清单段：任务标题/计划/目标/运行态 + 当前会话标注。
+清单为空时整段缺席（与 mcp 同规）；创建与管理入口唯一归属 callback 工具。
+*/
+func callbacksSection(ctx context.Context, fsys osfs.OS, sessionID string) string {
+	tasks := callback.LoadTasks(ctx, fsys)
+	if len(tasks) == 0 {
+		return ""
+	}
+	topics := hooks.NewTopics(fsys).Load()
+	var b strings.Builder
+	b.WriteString("<callbacks>\n（定时回调清单，以此为准，不要读取 callbacks.json 来发现；用 callback 工具 list/create/update/delete/enable/disable/run 管理。" +
+		"计划语法：once {at} / interval {every} / cron \"分 时 日 月 周\"（本机时区）；会话任务绑定创建时的当前会话，到点若正在跑轮由 chat 发送逻辑先打断，归档/compact 换代后该任务失败且不会继承到新会话；快应用任务触发时自动启动后端并调用声明端点；脚本任务在工作目录执行 shell 命令；轮内变更见 <resource_change>）")
+	for _, t := range tasks {
+		kind := "会话"
+		switch t.Kind {
+		case callback.KindApp:
+			kind = "快应用"
+		case callback.KindScript:
+			kind = "脚本"
+		}
+		line := "\n- [" + t.ID + "] " + briefSeg(t.Title, 80) + "（" + kind + " · " + t.Schedule.Summary() + " · "
+		switch t.Kind {
+		case callback.KindSession:
+			if t.Session == nil {
+				line += "目标缺失"
+				break
+			}
+			if t.Session.Mode == callback.ModeNew {
+				line += "新建会话"
+			} else if t.Session.SessionID == "" {
+				line += "会话未绑定"
+			} else {
+				title := t.Session.SessionID
+				for _, e := range topics {
+					if (e.LeafID == t.Session.SessionID || e.ID == t.Session.SessionID) && e.Title != "" {
+						title = e.Title
+						break
+					}
+				}
+				line += "会话 " + briefSeg(title, 60)
+				if t.Session.SessionID == sessionID {
+					line += "〔本会话〕"
+				}
+			}
+		case callback.KindApp:
+			if t.App == nil {
+				line += "目标缺失"
+				break
+			}
+			line += "快应用 " + t.App.Name + " · " + t.App.Callback
+		case callback.KindScript:
+			if t.Script == nil {
+				line += "目标缺失"
+				break
+			}
+			line += "脚本 " + briefSeg(t.Script.Command, 120)
+		}
+		if t.Enabled {
+			line += " · 启用"
+		} else {
+			line += " · 停用"
+		}
+		if t.LastStatus != "" {
+			line += " · 上次" + callback.StatusLabel(t.LastStatus)
+		}
+		if t.NextRunAt > 0 {
+			line += " · 下次 " + time.UnixMilli(t.NextRunAt).Format("2006-01-02 15:04")
+		}
+		b.WriteString(line + "）")
+	}
+	b.WriteString("\n</callbacks>")
 	return b.String()
 }
 
