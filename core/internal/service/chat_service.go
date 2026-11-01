@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"strings"
 	"time"
 
 	"github.com/xuanlv2002/ezloop/event"
@@ -148,6 +149,26 @@ func (c *ChatService) DecideAnswer(rootID, callID, input string) {
 	}
 	c.recordDecision(s, "ask", callID, input)
 	s.DecideAnswer(askuser.Answer{CallID: callID, Input: input})
+}
+
+/*
+DecidePlan 回传计划确认处置：confirm 放行落盘，feedback 带意见（原样进
+工具结果）。两种都记一条决策回执，轮末刷新后工具卡有徽标。
+*/
+func (c *ChatService) DecidePlan(rootID, callID, action, feedback string) {
+	s := c.resolve(rootID)
+	if s == nil {
+		return
+	}
+	res := "已确认计划"
+	if action == hooks.PlanActionFeedback {
+		res = "已反馈"
+		if fb := strings.TrimSpace(feedback); fb != "" {
+			res = "已反馈：" + fb
+		}
+	}
+	c.recordDecision(s, "plan", callID, res)
+	s.DecidePlan(hooks.PlanDecision{CallID: callID, Action: action, Feedback: feedback})
 }
 
 /* DecideMcpAuth 回传 MCP 授权决策（授权完成后解除工具调用的阻塞并重试）。 */

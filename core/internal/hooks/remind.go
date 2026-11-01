@@ -194,10 +194,13 @@ func renderStatus(d StatusData, plan *SessionPlan) string {
 	return b.String()
 }
 
-/* renderPlan 把计划追加进快照（多行压平，防模型伪造状态行）。 */
+/* renderPlan 把计划三段追加进快照（多行压平，防模型伪造状态行）。 */
 func renderPlan(b *strings.Builder, plan *SessionPlan) {
-	if plan.Plan != "" {
-		b.WriteString("\n当前任务计划：" + oneLine(plan.Plan, 1200))
+	if plan.Goal != "" {
+		b.WriteString("\n当前任务计划：目标：" + oneLine(plan.Goal, 300))
+	}
+	if plan.Approach != "" {
+		b.WriteString("\n方案：" + oneLine(plan.Approach, 1200))
 	}
 	for _, p := range plan.Progress {
 		b.WriteString("\n- [" + planStatusLabel(p.Status) + "] " + oneLine(p.Title, 160))

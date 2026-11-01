@@ -11,6 +11,7 @@ import {
   type HistoryMessage,
   type ImagePayload,
   type ModelEntry,
+  type PlanProgress,
   type ReasoningEffort,
   type Settings,
   type SessionPlan,
@@ -75,11 +76,15 @@ export interface ForkState {
 
 export interface DecisionData {
   id: string
-  dtype: 'approve' | 'ask' | 'mcp-auth'
+  dtype: 'approve' | 'ask' | 'plan' | 'mcp-auth'
   name: string
   args: string
   question: string
   options: string[]
+  /* plan：待确认方案三段（只读展示；解析失败的兜底为空，由卡片提示） */
+  goal: string
+  approach: string
+  progress: PlanProgress[]
   forkId: string
   resolved: boolean
   resolution: string
@@ -90,7 +95,7 @@ export interface DecisionData {
 export interface NoticeData {
   id: string // 决策回传键（工具调用 ID）
   rootId: string // 所属分支根（跳转与决策端点路由键）
-  kind: 'approve' | 'ask' | 'info' | 'mcp_auth' | 'memory'
+  kind: 'approve' | 'ask' | 'plan' | 'info' | 'mcp_auth' | 'memory'
   source: string // 'agent'、分支名或 fork 标识
   forkId: string // 非空＝分身请求：跳转打开分身抽屉而非主时间线
   title: string
@@ -1188,6 +1193,18 @@ class AppStore {
     await api.decideAnswer(this.activeId, block.id, input).catch(() => {})
   }
 
+  /* decidePlan 计划确认卡：confirm 放行，feedback 带意见；
+     与 approve 同款先乐观结算卡片再回传，失败静默（通知栏轮询兜底） */
+  async decidePlan(block: DecisionData, action: 'confirm' | 'feedback', feedback: string) {
+    if (!this.activeId) return
+    const fb = feedback.trim()
+    block.resolved = true
+    block.resolution = action === 'confirm' ? '已确认计划' : fb ? `已反馈：${fb}` : '已反馈'
+    this.markToolDecision(block.id, block.resolution)
+    this.removeResolvedDecisions(block.id)
+    await api.decidePlan(this.activeId, block.id, action, fb).catch(() => {})
+  }
+
   /* ── MCP OAuth 授权（会话内 = 时间线里的决策卡，同 approve/ask） ── */
 
   private mcpAuthTimers: Record<string, ReturnType<typeof setInterval>> = {}
@@ -1341,7 +1358,8 @@ class AppStore {
           let info = ''
           try {
             const a = it.args ? JSON.parse(it.args) : {}
-            question = a.question || ''
+            /* 计划通知用「目标」当摘要（计划参数里没有 question） */
+            question = a.question || (it.kind === 'plan' && typeof a.goal === 'string' ? a.goal : '')
             info = a.detail || ''
           } catch {
             /* 非法 JSON 忽略 */
@@ -1353,7 +1371,7 @@ class AppStore {
             kind: it.kind,
             source: it.forkId ? '分身' : name || 'agent',
             forkId: it.forkId || '',
-            title: it.tool,
+            title: it.kind === 'plan' ? '任务计划待确认' : it.tool,
             detail: done ? info : question,
             time: new Date(it.ts || Date.now()).toTimeString().slice(0, 5),
             status: done ? 'done' : 'pending',
@@ -1404,6 +1422,7 @@ class AppStore {
     this.notices = this.notices.filter((x) => !(x.id === n.id && x.rootId === n.rootId))
     try {
       if (n.kind === 'approve') await api.decideApprove(n.rootId, n.id, action === 'approve', '')
+      else if (n.kind === 'plan') await api.decidePlan(n.rootId, n.id, 'confirm', '')
       else await api.decideAnswer(n.rootId, n.id, input ?? '')
     } catch {
       await this.refreshNotices()
@@ -1820,6 +1839,9 @@ class AppStore {
           args: '',
           question: '',
           options: [],
+          goal: '',
+          approach: '',
+          progress: [],
           forkId: ev.forkId || '',
           resolved: false,
           resolution: '',
@@ -1831,7 +1853,8 @@ class AppStore {
         break
       }
       case 'approve.request':
-      case 'askuser.request': {
+      case 'askuser.request':
+      case 'plan.request': {
         const d = ev.data || {}
         const id = d.id || ''
         let args = d.args
@@ -1862,14 +1885,26 @@ class AppStore {
         }
         let question = ''
         let options: string[] = []
+        let goal = ''
+        let approach = ''
+        let progress: PlanProgress[] = []
         try {
           const a = typeof args === 'string' && args ? JSON.parse(args) : {}
           question = a.question || ''
           if (Array.isArray(a.options)) options = a.options.filter((o: unknown) => typeof o === 'string')
+          /* plan.request：三段式计划（目标/方案/步骤），解析失败留空由卡片提示 */
+          goal = typeof a.goal === 'string' ? a.goal : ''
+          approach = typeof a.approach === 'string' ? a.approach : ''
+          if (Array.isArray(a.progress)) {
+            progress = a.progress.filter(
+              (p: any) => p && typeof p.title === 'string' && ['pending', 'running', 'completed'].includes(p.status),
+            )
+          }
         } catch {
           /* 非法 JSON 忽略 */
         }
-        const dtype: DecisionData['dtype'] = ev.type === 'approve.request' ? 'approve' : 'ask'
+        const dtype: DecisionData['dtype'] =
+          ev.type === 'approve.request' ? 'approve' : ev.type === 'plan.request' ? 'plan' : 'ask'
         const card: Block = {
           kind: 'decision',
           uid: this.nuid(),
@@ -1879,6 +1914,9 @@ class AppStore {
           args: typeof args === 'string' ? args : '',
           question,
           options,
+          goal,
+          approach,
+          progress,
           forkId: ev.forkId || '',
           resolved: false,
           resolution: '',

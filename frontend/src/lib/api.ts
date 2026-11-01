@@ -80,7 +80,8 @@ export interface PlanProgress {
 }
 
 export interface SessionPlan {
-  plan: string
+  goal: string
+  approach: string
   progress: PlanProgress[]
   updatedAt?: string
 }
@@ -260,7 +261,7 @@ export interface TopicEntry {
    通知栏轮询数据源；kind=info 是完成通知，非待处理） */
 export interface NotificationGroup {
   rootId: string
-  items: { callId: string; forkId?: string; kind: 'approve' | 'ask' | 'info' | 'mcp_auth' | 'memory'; tool: string; args?: string; ts: number }[]
+  items: { callId: string; forkId?: string; kind: 'approve' | 'ask' | 'plan' | 'info' | 'mcp_auth' | 'memory'; tool: string; args?: string; ts: number }[]
 }
 
 /* 分支面板条目（GET /api/topics 响应，含运行态合成） */
@@ -454,6 +455,10 @@ export const api = {
 
   decideAnswer: (id: string, callId: string, input: string) =>
     post<{ ok: boolean }>(`/api/sessions/${id}/decisions/answer`, { callId, input }),
+
+  /* 计划确认：confirm 放行落盘；feedback 带意见（走工具结果回模型） */
+  decidePlan: (id: string, callId: string, action: 'confirm' | 'feedback', feedback: string) =>
+    post<{ ok: boolean }>(`/api/sessions/${id}/decisions/plan`, { callId, action, feedback }),
 
   decideMcpAuth: (id: string, callId: string, ok: boolean, reason: string) =>
     post<{ ok: boolean }>(`/api/sessions/${id}/decisions/mcp-auth`, { callId, ok, reason }),

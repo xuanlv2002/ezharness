@@ -67,6 +67,7 @@ type Wiring struct {
 	Provider  ModelProvider
 	ApproveCh chan<- approve.Decision
 	AnswerCh  chan<- askuser.Answer
+	PlanCh    chan<- hooks.PlanDecision
 	McpAuthCh chan<- mcp.AuthDecision
 	ToolNames []string
 	Trace     *hooks.Trace // 调用链记录（Resume 切会话时同步切 trace）
@@ -368,6 +369,15 @@ func (s *Session) DecideAnswer(a askuser.Answer) {
 	sendDecision(s, w.AnswerCh, a, a.CallID)
 }
 
+/* DecidePlan 回传计划确认处置（confirm/feedback）。 */
+func (s *Session) DecidePlan(d hooks.PlanDecision) {
+	w := s.Wired()
+	if w == nil {
+		return
+	}
+	sendDecision(s, w.PlanCh, d, d.CallID)
+}
+
 /* DecideMcpAuth 回传 MCP 授权决策（授权完成后解除工具调用的阻塞）。 */
 func (s *Session) DecideMcpAuth(d mcp.AuthDecision) {
 	w := s.Wired()
@@ -435,7 +445,8 @@ func (s *Session) Publish(e Event) {
 	}
 	frame := Frame{Type: e.Type, Data: data}
 	s.mu.Lock()
-	if e.Type == "approve.request" || e.Type == "askuser.request" || e.Type == "mcp.auth.request" {
+	if e.Type == "approve.request" || e.Type == "askuser.request" ||
+		e.Type == "plan.request" || e.Type == "mcp.auth.request" {
 		var d struct {
 			ID string `json:"id"`
 		}
@@ -690,10 +701,13 @@ func (s *Session) PendingNotices() []PendingNotice {
 	out := make([]PendingNotice, 0, len(s.pending))
 	for _, e := range s.pending {
 		switch e.Type {
-		case "approve.request", "askuser.request":
+		case "approve.request", "askuser.request", "plan.request":
 			kind := "approve"
-			if e.Type == "askuser.request" {
+			switch e.Type {
+			case "askuser.request":
 				kind = "ask"
+			case "plan.request":
+				kind = "plan"
 			}
 			var d ToolStartData
 			if json.Unmarshal(e.Data, &d) != nil || d.ID == "" {

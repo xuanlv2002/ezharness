@@ -7,7 +7,7 @@ export type ToolFace =
   | { kind: 'code'; path: string; content: string }
   | { kind: 'diff'; path: string; old: string; new: string }
   | { kind: 'cmd'; command: string }
-  | { kind: 'plan'; plan: string; progress: { title: string; status: string }[] }
+  | { kind: 'plan'; goal: string; approach: string; progress: { title: string; status: string }[] }
 
 export function toolFace(name: string, raw: string): ToolFace | null {
   let a: any
@@ -26,13 +26,14 @@ export function toolFace(name: string, raw: string): ToolFace | null {
     case 'term_action':
       return a.action === 'send' && typeof a.command === 'string' ? { kind: 'cmd', command: a.command } : null
     case 'plan': {
-      const plan = typeof a.plan === 'string' ? a.plan : ''
+      const goal = typeof a.goal === 'string' ? a.goal : ''
+      const approach = typeof a.approach === 'string' ? a.approach : ''
       const progress = Array.isArray(a.progress)
         ? a.progress
             .filter((p: any) => p && typeof p.title === 'string')
             .map((p: any) => ({ title: String(p.title), status: String(p.status || 'pending') }))
         : []
-      return a.action === 'new' || plan || progress.length ? { kind: 'plan', plan, progress } : null
+      return a.action === 'new' || goal || approach || progress.length ? { kind: 'plan', goal, approach, progress } : null
     }
   }
   return null

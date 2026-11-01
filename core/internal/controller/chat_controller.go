@@ -195,6 +195,28 @@ func (c *ChatController) DecideApprove(g *gin.Context) {
 	g.JSON(http.StatusOK, gin.H{"ok": true})
 }
 
+/*
+DecidePlan POST /api/sessions/:id/decisions/plan（:id=分支根 ID）。
+confirm 放行落盘；feedback 带意见交回模型重做。
+*/
+func (c *ChatController) DecidePlan(g *gin.Context) {
+	var body struct {
+		CallID   string `json:"callId" binding:"required"`
+		Action   string `json:"action" binding:"required"`
+		Feedback string `json:"feedback"`
+	}
+	if err := g.ShouldBindJSON(&body); err != nil {
+		g.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	if body.Action != hooks.PlanActionConfirm && body.Action != hooks.PlanActionFeedback {
+		g.JSON(http.StatusBadRequest, gin.H{"error": "action 需为 confirm 或 feedback"})
+		return
+	}
+	c.Svc.DecidePlan(g.Param("id"), body.CallID, body.Action, body.Feedback)
+	g.JSON(http.StatusOK, gin.H{"ok": true})
+}
+
 /* DecideMcpAuth POST /api/sessions/:id/decisions/mcp-auth（:id=分支根 ID）。 */
 func (c *ChatController) DecideMcpAuth(g *gin.Context) {
 	var body struct {

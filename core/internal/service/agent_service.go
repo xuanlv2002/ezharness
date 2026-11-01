@@ -226,6 +226,7 @@ func (a *AgentService) Assemble(s *domain.Session, st domain.Settings) {
 		return a.needsApprove(c)
 	})
 	asker, answerCh := askuser.New()
+	planner, planCh := hooks.NewPlanConfirm()
 
 	window := main.ContextWindow
 	if window <= 0 {
@@ -368,6 +369,7 @@ func (a *AgentService) Assemble(s *domain.Session, st domain.Settings) {
 			hooks.NewRefFile(), // 有引用轮次在输入前插 <reference_file> 结构化告知（附件+文件页标注统一，模型按需 read_file）
 			approver,
 			asker,
+			planner, // 计划确认排在审批之后：用户给 plan 开了审批就先弹审批，拒绝即短路，计划卡不出现
 			task.New(task.WithModelFactory(modelFactoryOf(a.Hub)),
 				// 子会话存档地址随结果回传，主模型可按需 read_file 回查过程
 				task.WithSessionRef(func(forkID string) string {
@@ -402,6 +404,7 @@ func (a *AgentService) Assemble(s *domain.Session, st domain.Settings) {
 		Provider:  provider,
 		ApproveCh: approveCh,
 		AnswerCh:  answerCh,
+		PlanCh:    planCh,
 		McpAuthCh: mcpAuthCh,
 		Trace:     traceHook,
 		ToolNames: toolNames,

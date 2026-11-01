@@ -193,6 +193,7 @@ func NewRouter(c Controllers, dist fs.FS, tokens *TokenStore) *gin.Engine {
 
 		api.POST("/sessions/:id/decisions/approve", c.Chat.DecideApprove)
 		api.POST("/sessions/:id/decisions/answer", c.Chat.DecideAnswer)
+		api.POST("/sessions/:id/decisions/plan", c.Chat.DecidePlan) // 计划确认（confirm/feedback）
 		api.POST("/sessions/:id/decisions/mcp-auth", c.Chat.DecideMcpAuth)
 	}
 
