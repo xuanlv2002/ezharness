@@ -120,8 +120,9 @@ export interface CallbackSessionTarget {
   message: string
 }
 
-/* 创建/更新的会话目标：只有当前会话与新建会话两种，绑定 ID 由后端落值 */
+/* 创建/更新的会话目标：sessionId 指定叶会话，缺省由后端绑定当前会话 */
 export interface CallbackSessionInput {
+  sessionId?: string
   mode: 'session' | 'new'
   message: string
 }

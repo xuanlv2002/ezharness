@@ -38,7 +38,7 @@ type callbackArgs struct {
 	Kind        string                 `json:"kind,omitempty" desc:"session | app | script（create 必填；update 可改）"`
 	Enabled     *bool                  `json:"enabled,omitempty" desc:"是否启用；create 缺省 true"`
 	Schedule    *callback.Schedule     `json:"schedule,omitempty" desc:"计划：{kind: once|interval|cron, at/every/cron}"`
-	Session     *callback.SessionInput `json:"session,omitempty" desc:"会话目标：{mode: session|new, message}；session 绑定当前会话"`
+	Session     *callback.SessionInput `json:"session,omitempty" desc:"会话目标：{mode: session|new, sessionId?, message}；session 缺省绑定当前会话，可用 sessionId 指定叶会话"`
 	App         *callback.AppTarget    `json:"app,omitempty" desc:"快应用目标：{name,callback}；callback 是 app.quick callbacks[].name"`
 	Script      *callback.ScriptTarget `json:"script,omitempty" desc:"脚本目标：{command}；在工作目录执行 shell 命令"`
 }
@@ -47,11 +47,11 @@ type callbackArgs struct {
 func Callback(api CallbackAPI, currentSession func() string) types.Tool {
 	return types.NewTool("callback",
 		"管理全局定时回调（与快应用/skill/MCP 同级的资源；页面在「回调」模块）。"+
-			"任务三类：kind=session 定时向会话发消息——mode=session 发到创建任务时的当前会话（到点若正在跑轮由 chat 发送逻辑先打断当前轮；该会话归档或 compact 换代后任务失败，不会继承到新会话），mode=new 每次触发新建会话；"+
+			"任务三类：kind=session 定时向会话发消息——mode=session 发到 session.sessionId 指定的叶会话（缺省为调用方当前会话；到点若正在跑轮由 chat 发送逻辑先打断当前轮；该会话归档或 compact 换代后任务失败，不会继承到新会话），mode=new 每次触发新建会话；"+
 			"kind=app 定时触发快应用——app.callback 填 app.quick 的 callbacks[].name，触发时自动启动后端并调用该端点（先用 load_app 查看可用端点）；"+
 			"kind=script 在工作目录执行 shell 命令——script.command 写完整命令（如 './sync.sh'、'python tools/sync.py'），捕获输出尾部与退出码。"+
 			"计划 schedule：once {at:'2026-11-01 09:00'} | interval {every:'30m'} | cron {cron:'0 9 * * *'}（分 时 日 月 周，本机时区）。"+
-			"每次触发（含失败/跳过）写运行记录，页面可看触发时间、目标、内容与结果；快应用触发另进通知栏。一次性任务执行后自动停用。"+
+			"每次触发（含失败/跳过）写运行记录并进通知栏，页面可看触发时间、目标、内容与结果。一次性任务执行后自动停用。"+
 			"create 需要 title/kind/schedule 与对应目标；update 只改传入字段；list 看全部任务与下次时间；enable/disable 启停；run 立即执行一次（不改变计划）。"+
 			"不要手改 callbacks.json",
 		func(ctx context.Context, in *callbackArgs) (string, error) {

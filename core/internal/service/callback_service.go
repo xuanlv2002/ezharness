@@ -9,7 +9,8 @@ CallbackService 是全局定时回调中心：callbacks.json 的 CRUD、每秒�
 正在跑轮先取消再发送，归档/compact 换代后该会话不可用，任务失败，不
 继承到新会话。脚本任务在工作目录执行，输出尾部与退出码进运行记录。
 一次性任务执行后自动停用；间隔/cron 从完成时刻重新计下一轮。
-每次触发（含失败/跳过）写一条运行记录；快应用触发额外进通知栏。
+每次触发（含失败/跳过）写一条运行记录并进通知栏：会话投递成功时点
+通知直达目标会话，其余点通知打开回调页并展开该任务。
 */
 package service
 
@@ -49,7 +50,7 @@ const callbackHTTPTimeout = 30 * time.Second
 /* callbackLaunchWait 是端点连接失败的等待窗口（等后端冷启动）。 */
 const callbackLaunchWait = 15 * time.Second
 
-/* callbackNoticeLimit 是通知栏保留的快应用触发条数。 */
+/* callbackNoticeLimit 是通知栏保留的触发通知条数。 */
 const callbackNoticeLimit = 20
 
 /* callbackScriptTimeout 是单次脚本执行的时长上限。 */
@@ -80,7 +81,7 @@ type CallbackService struct {
 
 	mu      sync.Mutex
 	running map[string]bool
-	notices []domain.PendingNotice // 快应用触发通知（内存，关闭即读）
+	notices []domain.PendingNotice // 触发通知（内存，关闭即读）
 	ctx     context.Context
 	cancel  context.CancelFunc
 	wg      sync.WaitGroup
@@ -189,10 +190,11 @@ func (s *CallbackService) endTask(id string) {
 	s.mu.Unlock()
 }
 
-/* callbackRun 是一次执行向运行记录贡献的字段。 */
+/* callbackRun 是一次执行向运行记录贡献的字段；RootID 供通知点击后打开会话。 */
 type callbackRun struct {
 	Target   string
 	TargetID string
+	RootID   string
 	Content  string
 	Result   string
 }
@@ -200,7 +202,7 @@ type callbackRun struct {
 /*
 run 执行一条任务并写回运行态。manual=true 是页面/工具的“立即运行”，
 不推进计划（不动 Enabled/NextRunAt）。每次执行（成功/失败/跳过）都追加
-一条记录；快应用触发额外写一条通知栏 info。
+一条记录，并写一条通知栏 info。
 */
 func (s *CallbackService) run(ctx context.Context, task callback.Task, manual bool) {
 	started := s.now()
@@ -260,9 +262,7 @@ func (s *CallbackService) run(ctx context.Context, task callback.Task, manual bo
 		}
 		t.NextRunAt = next.UnixMilli()
 	})
-	if task.Kind == callback.KindApp {
-		s.addAppNotice(task, status, result)
-	}
+	s.addRunNotice(task, status, outcome, result)
 }
 
 /* execute 按任务类型执行。 */
@@ -278,7 +278,7 @@ func (s *CallbackService) execute(ctx context.Context, task callback.Task) (call
 	return callbackRun{}, fmt.Errorf("未知任务类型 %q", task.Kind)
 }
 
-/* runSession 向创建时的当前会话或新建会话投递一条消息。 */
+/* runSession 向绑定的叶会话或新建会话投递一条消息。 */
 func (s *CallbackService) runSession(ctx context.Context, task callback.Task) (callbackRun, error) {
 	target := task.Session
 	out := callbackRun{}
@@ -295,6 +295,7 @@ func (s *CallbackService) runSession(ctx context.Context, task callback.Task) (c
 			return out, fmt.Errorf("新建会话发送失败: %w", err)
 		}
 		out.TargetID = sess.RootID
+		out.RootID = sess.RootID
 		out.Result = "已新建会话 " + sess.RootID + " 并发送消息"
 		return out, nil
 	}
@@ -305,6 +306,7 @@ func (s *CallbackService) runSession(ctx context.Context, task callback.Task) (c
 	if err != nil {
 		return out, sessionTargetError(target.SessionID, err)
 	}
+	out.RootID = sess.RootID
 	if sess.CurrentID() != target.SessionID {
 		return out, fmt.Errorf("目标会话已归档或已换代（不是创建任务时的会话），本次未发送")
 	}
@@ -525,8 +527,8 @@ func (b *tailBuffer) String() string { return string(b.data) }
 func (s *CallbackService) List() []callback.Task { return s.Store.List() }
 
 /*
-Create 校验并创建任务：enabled 缺省 true；session 模式绑定调用方当前
-会话（工具传入），HTTP 面未传时取当前活动会话。
+Create 校验并创建任务：enabled 缺省 true；session 模式优先绑定显式
+sessionId，未给时用调用方会话（工具传入），HTTP 面再退化到当前活动会话。
 */
 func (s *CallbackService) Create(ctx context.Context, in callback.CreateInput) (callback.Task, error) {
 	now := s.now()
@@ -564,7 +566,7 @@ func (s *CallbackService) Update(ctx context.Context, id string, in callback.Upd
 			t.Schedule = *in.Schedule
 		}
 		if in.Session != nil {
-			// 改消息不换绑定：已有绑定原样保留；从别的类型切过来才取调用方会话
+			// 显式 sessionId 优先；只改消息时保留既有绑定，从别的类型切过来才取调用方会话
 			var bound string
 			if t.Session != nil && t.Session.Mode == callback.ModeSession {
 				bound = t.Session.SessionID
@@ -660,7 +662,7 @@ func (s *CallbackService) RunNow(id string) error {
 }
 
 /*
-Notices 返回快应用触发通知（通知栏全局轮询数据源，新的在前）。
+Notices 返回触发通知（通知栏全局轮询数据源，新的在前）。
 */
 func (s *CallbackService) Notices() []domain.PendingNotice {
 	s.mu.Lock()
@@ -670,7 +672,7 @@ func (s *CallbackService) Notices() []domain.PendingNotice {
 	return out
 }
 
-/* DismissNotice 关闭一条快应用触发通知。 */
+/* DismissNotice 关闭一条触发通知。 */
 func (s *CallbackService) DismissNotice(callID string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -682,20 +684,34 @@ func (s *CallbackService) DismissNotice(callID string) {
 	}
 }
 
-/* addAppNotice 写一条快应用触发通知（成功与失败都通知，detail 带结果）。 */
-func (s *CallbackService) addAppNotice(task callback.Task, status, result string) {
-	detail := "「" + task.Title + "」" + callback.StatusLabel(status)
+/*
+addRunNotice 为每次触发写一条通知：标题是任务名，detail 带目标与结果；
+成功投递到会话时 target 指向会话根（点击直接跳到会话），其余指向任务
+（点击打开回调页并展开该任务的记录）。
+*/
+func (s *CallbackService) addRunNotice(task callback.Task, status string, outcome callbackRun, result string) {
+	target := "callback-task:" + task.ID
+	if status == callback.StatusOK && outcome.RootID != "" {
+		target = "callback-session:" + outcome.RootID
+	}
+	detail := outcome.Target
+	if detail == "" {
+		detail = task.TargetLabel()
+	}
+	detail += " · " + callback.StatusLabel(status)
 	if result != "" {
 		detail += "：" + result
 	}
-	args, _ := json.Marshal(map[string]string{"detail": oneLine(detail, 500)})
-	now := time.Now().UnixMilli()
+	args, _ := json.Marshal(map[string]string{
+		"detail": oneLine(detail, 500),
+		"target": target,
+	})
 	n := domain.PendingNotice{
 		CallID: fmt.Sprintf("cb-%d", time.Now().UnixNano()),
 		Kind:   "info",
-		Tool:   "快应用触发",
+		Tool:   task.Title,
 		Args:   string(args),
-		Ts:     now,
+		Ts:     time.Now().UnixMilli(),
 	}
 	s.mu.Lock()
 	s.notices = append([]domain.PendingNotice{n}, s.notices...)
@@ -724,7 +740,7 @@ func (s *CallbackService) Brief(sessionID string) []CallbackBrief {
 	return out
 }
 
-/* sessionTarget 把创建/更新输入转成落盘目标：mode=session 时落绑定的叶 ID。 */
+/* sessionTarget 把创建/更新输入转成落盘目标：mode=session 时显式 sessionId 优先，缺省用调用方绑定。 */
 func sessionTarget(in *callback.SessionInput, bind string) *callback.SessionTarget {
 	if in == nil {
 		return nil
@@ -735,14 +751,17 @@ func sessionTarget(in *callback.SessionInput, bind string) *callback.SessionTarg
 	}
 	t := &callback.SessionTarget{Mode: mode, Message: strings.TrimSpace(in.Message)}
 	if mode == callback.ModeSession {
-		t.SessionID = strings.TrimSpace(bind)
+		t.SessionID = strings.TrimSpace(in.SessionID)
+		if t.SessionID == "" {
+			t.SessionID = strings.TrimSpace(bind)
+		}
 	}
 	return t
 }
 
 /*
-prepare 归一化并校验任务配置：session 模式绑定当前会话（调用方未给
-时取活动会话），目标必须是仍可写的当前叶；快应用/端点必须存在；
+prepare 归一化并校验任务配置：session 模式绑定显式 sessionId（未给时
+取活动会话），目标必须是仍可写的当前叶；快应用/端点必须存在；
 脚本命令非空；启用时计算下一次运行时间（一次性过期在创建/启用时拒绝）。
 */
 func (s *CallbackService) prepare(ctx context.Context, t *callback.Task, now time.Time) error {

@@ -105,7 +105,7 @@ export interface NoticeData {
   time: string
   status: 'pending' | 'done'
   resolution: string
-  target: string // 时间线跳转锚点（decision-<id>）；本地记忆通知用 'memory-view'
+  target: string // 跳转目标：decision-<id> / memory-view / callback-session:<root> / callback-task:<id>
   local?: boolean // 本地生成（非后端轮询来源）：refreshNotices 不覆盖、dismiss 不回传
 }
 
@@ -230,7 +230,9 @@ class AppStore {
   /* 本轮已处理的记忆待确认操作（op id → 结果）：通知栏与聊天记忆卡共用的确认入口，
      本地记录结果给卡片落定状态（后端返回后待确认项即消失） */
   memoryDecisions = $state<Record<string, 'accept' | 'cancel'>>({})
-  jumpView = $state<'' | 'memory' | 'callbacks'>('') // 通知跳页请求（App 消费后清空）
+  jumpView = $state<'' | 'chat' | 'memory' | 'callbacks'>('') // 通知跳页请求（App 消费后清空）
+  /* 定时回调通知要展开的任务（回调页消费后清空） */
+  callbackFocus = $state('')
   jumpAnchor = $state('') // 顶栏搜索跳转目标（view:anchor，目标视图消费后清空）
   lastTool = $state('')
   busy = $state(false)
@@ -1068,6 +1070,13 @@ class AppStore {
     }
   }
 
+  /* openSession 打开会话并切到对话页（通知与回调记录跳转共用）。 */
+  async openSession(rootId: string) {
+    if (!rootId) return
+    await this.openTab(rootId)
+    if (this.activeId === rootId) this.jumpView = 'chat'
+  }
+
   /* closeTab：关标签即停会话（关掉的线在跑就取消当前轮，别让它悄悄在
      列表里继续跑）；关活动标签激活右邻（退化左邻，浏览器惯例）；最后
      一个 → 空状态（退订 SSE、清视图——会话本身留在列表，仅停轮）。 */
@@ -1364,11 +1373,13 @@ class AppStore {
         for (const it of g.items) {
           let question = ''
           let info = ''
+          let jump = ''
           try {
             const a = it.args ? JSON.parse(it.args) : {}
             /* 计划通知用「目标」当摘要（计划参数里没有 question） */
             question = a.question || (it.kind === 'plan' && typeof a.goal === 'string' ? a.goal : '')
             info = a.detail || ''
+            jump = typeof a.target === 'string' ? a.target : ''
           } catch {
             /* 非法 JSON 忽略 */
           }
@@ -1384,7 +1395,7 @@ class AppStore {
             time: new Date(it.ts || Date.now()).toTimeString().slice(0, 5),
             status: done ? 'done' : 'pending',
             resolution: done ? '已完成' : '',
-            target: done || it.kind === 'memory' ? '' : `decision-${it.callId}`,
+            target: done ? jump : it.kind === 'memory' ? '' : `decision-${it.callId}`,
           })
         }
       }
@@ -1437,21 +1448,33 @@ class AppStore {
     }
   }
 
-  /* jumpToNoticeRef 跳转到通知来源（外部窗口传入的裸标识）：跨分支先
-  切换（等待历史加载），分身请求打开抽屉定位，主时间线经 jumpMain 锚点
-  由 ChatView 滚动。 */
+  /* jumpToNoticeRef 跳转到通知来源（外部窗口传入的裸标识）：回调通知
+  按 target 打开会话或回调页任务，其他跨分支先切换（等待历史加载），
+  分身请求打开抽屉定位，主时间线经 jumpMain 锚点由 ChatView 滚动。 */
   async jumpToNoticeRef(ref: Pick<NoticeData, 'rootId' | 'forkId' | 'id' | 'target'>) {
-    if (ref.target === 'memory-view') {
+    const target = ref.target || ''
+    if (target.startsWith('callback-session:')) {
+      // 会话回调投递成功：直接打开触发的会话
+      await this.openSession(target.slice('callback-session:'.length))
+      return
+    }
+    if (target.startsWith('callback-task:')) {
+      // 快应用/脚本/失败回调：打开回调页并展开该任务
+      this.callbackFocus = target.slice('callback-task:'.length)
+      this.jumpView = 'callbacks'
+      return
+    }
+    if (target === 'memory-view') {
       // 本地记忆通知：打开记忆页（用户查看即确认，关闭通知条即已读）
       this.jumpView = 'memory'
       return
     }
     if (ref.rootId === 'callbacks') {
-      // 快应用触发通知：打开回调页看任务与记录
+      // 无任务锚点的回调通知：打开回调页
       this.jumpView = 'callbacks'
       return
     }
-    if (ref.rootId && ref.rootId !== this.activeId) await this.openTab(ref.rootId)
+    if (ref.rootId) await this.openSession(ref.rootId)
     if (!ref.target) return // 完成通知：切到该会话即可，无时间线锚点
     if (ref.forkId) {
       this.openFork(ref.forkId, ref.id)

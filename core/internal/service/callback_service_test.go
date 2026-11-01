@@ -70,6 +70,60 @@ func TestCallbackBindsCurrentSession(t *testing.T) {
 	}
 }
 
+/* 页面可选任意在线会话：显式 sessionId 优先于调用方当前会话，更新时也能改绑。 */
+func TestCallbackBindsExplicitSession(t *testing.T) {
+	chdirTemp(t)
+	ctx := context.Background()
+	hub := newTestHub()
+	fsys := osfs.OS{}
+	seed := func(root, id, title string) *hooks.SessionSnap {
+		t.Helper()
+		snap := &hooks.SessionSnap{
+			ID: id, LineRoot: root, SeedKind: "new",
+			Messages: []types.Message{{Role: types.RoleUser, Content: title}},
+		}
+		if err := hooks.SaveSnap(ctx, fsys, snap); err != nil {
+			t.Fatal(err)
+		}
+		if err := hub.Topics.UpdateLeaf(root, id, title, time.Now().UnixMilli(), 1); err != nil {
+			t.Fatal(err)
+		}
+		return snap
+	}
+	one := seed("r-one", "s-one", "会话一")
+	two := seed("r-two", "s-two", "会话二")
+	hub.SetActive(hub.LoadBranch("r-one", one))
+	hub.LoadBranch("r-two", two)
+
+	svc := &CallbackService{
+		Hub: hub, Topics: &TopicService{Hub: hub, Agents: &AgentService{Hub: hub}},
+		Store: callback.New(fsys), now: time.Now,
+	}
+	task, err := svc.Create(ctx, callback.CreateInput{
+		Title:    "指定会话",
+		Kind:     callback.KindSession,
+		Schedule: callback.Schedule{Kind: callback.ScheduleInterval, Every: "1h"},
+		Session:  &callback.SessionInput{SessionID: "s-two", Mode: callback.ModeSession, Message: "继续"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if task.Session == nil || task.Session.SessionID != "s-two" {
+		t.Fatalf("explicit binding = %+v", task.Session)
+	}
+
+	updated, err := svc.Update(ctx, task.ID, callback.UpdateInput{
+		Session: &callback.SessionInput{SessionID: "s-one", Mode: callback.ModeSession, Message: "改绑"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.Session == nil || updated.Session.SessionID != "s-one" ||
+		updated.Session.Message != "改绑" {
+		t.Fatalf("rebind = %+v", updated.Session)
+	}
+}
+
 /*
 EnsureSession 按 session ID 精确定位：当前叶可用；旧叶归档报 archived，
 未归档但已不是当前叶报 superseded，不跟随 compact 新叶。
@@ -212,13 +266,37 @@ func TestCallbackAppRunRecordsAndNotice(t *testing.T) {
 		t.Fatalf("backend not auto-started: %+v", term.calls)
 	}
 	notices := svc.Notices()
-	if len(notices) != 1 || !strings.Contains(notices[0].Args, "同步") ||
-		!strings.Contains(notices[0].Args, "HTTP 200") {
+	if len(notices) != 1 || notices[0].Tool != "同步" ||
+		!strings.Contains(notices[0].Args, "HTTP 200") ||
+		!strings.Contains(notices[0].Args, "callback-task:"+task.ID) {
 		t.Fatalf("notices = %+v", notices)
 	}
 	svc.DismissNotice(notices[0].CallID)
 	if len(svc.Notices()) != 0 {
 		t.Fatal("notice not dismissed")
+	}
+}
+
+/* 通知跳转：成功投递会话指向根 ID，其余指向任务详情；detail 带目标与结果。 */
+func TestCallbackNoticeTarget(t *testing.T) {
+	svc := &CallbackService{}
+	task := callback.Task{ID: "cb-notice", Title: "每日总结", Kind: callback.KindSession}
+	svc.addRunNotice(task, callback.StatusOK,
+		callbackRun{Target: "会话 s1", RootID: "r1"}, "已发送到会话 s1")
+	svc.addRunNotice(task, callback.StatusError,
+		callbackRun{Target: "会话 s1"}, "目标会话已归档")
+
+	notices := svc.Notices()
+	if len(notices) != 2 {
+		t.Fatalf("notices = %+v", notices)
+	}
+	if !strings.Contains(notices[1].Args, `"target":"callback-session:r1"`) ||
+		!strings.Contains(notices[1].Args, "已发送到会话 s1") {
+		t.Fatalf("success notice = %s", notices[1].Args)
+	}
+	if !strings.Contains(notices[0].Args, `"target":"callback-task:cb-notice"`) ||
+		!strings.Contains(notices[0].Args, "目标会话已归档") {
+		t.Fatalf("failure notice = %s", notices[0].Args)
 	}
 }
 
@@ -351,6 +429,14 @@ func TestCallbackScriptRun(t *testing.T) {
 	got, _ = svc.Store.Get(badTask.ID)
 	if got.LastStatus != callback.StatusError || !strings.Contains(got.LastResult, "退出码 3") {
 		t.Fatalf("script fail = %+v", got)
+	}
+	notices := svc.Notices()
+	if len(notices) != 2 || notices[0].Tool != "cb-script-bad" || notices[1].Tool != "cb-script-ok" {
+		t.Fatalf("script notices = %+v", notices)
+	}
+	if !strings.Contains(notices[0].Args, "callback-task:"+badTask.ID) ||
+		!strings.Contains(notices[1].Args, "callback-task:"+okTask.ID) {
+		t.Fatalf("script notice targets = %+v", notices)
 	}
 }
 

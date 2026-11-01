@@ -2,17 +2,23 @@
   import { onMount } from 'svelte'
   import { api, type AppEntry, type CallbackRun, type CallbackSpec, type CallbackTask } from '../lib/api'
   import { store } from '../lib/store.svelte'
+  import SelectMenu from './SelectMenu.svelte'
+  import Pager from './Pager.svelte'
 
   /*
-  回调中心：全局定时任务、触发记录与新建/编辑弹窗。任务三类——向当前
+  回调中心：全局定时任务、触发记录与新建/编辑弹窗。任务三类——向指定
   会话发消息（可每次新建会话）、触发快应用（自动启动后端并调用
-  app.quick 声明的端点），或在工作目录执行 shell 脚本。会话目标存创建
-  时的叶 session，归档/compact 换代后任务失败，不继承到新会话。
+  app.quick 声明的端点），或在工作目录执行 shell 脚本。会话目标存所选
+  叶 session，归档/compact 换代后任务失败，不继承到新会话。任务列表按
+  页展示；点任务标题看详情与该任务的完整触发记录。
   */
 
   type KindFilter = 'all' | 'session' | 'app' | 'script'
   type StatusFilter = 'all' | 'active' | 'paused' | 'error'
   type IntervalUnit = 's' | 'm' | 'h' | 'd'
+
+  const TASK_PAGE_SIZE = 8
+  const RECORD_PAGE_SIZE = 8
 
   interface Form {
     title: string
@@ -24,7 +30,7 @@
     intervalValue: string
     intervalUnit: IntervalUnit
     cron: string
-    sessionMode: 'session' | 'new'
+    sessionTarget: string
     message: string
     appName: string
     appCallback: string
@@ -44,23 +50,24 @@
   let query = $state('')
   let kindFilter = $state<KindFilter>('all')
   let statusFilter = $state<StatusFilter>('all')
+  let page = $state(1)
+  let recordPage = $state(1)
   let modal = $state<'create' | 'edit' | null>(null)
   let editingId = $state('')
+  let detailId = $state('')
   let form = $state<Form>(emptyForm())
   let saving = $state(false)
   let formError = $state('')
   let delTarget = $state<CallbackTask | null>(null)
   let toastTimer: ReturnType<typeof setTimeout> | undefined
 
-  const editingTask = $derived(editingId ? tasks.find((t) => t.id === editingId) : undefined)
-  const sessionHintLabel = $derived(
-    editingTask?.session?.sessionId
-      ? sessionLabel(editingTask.session.sessionId)
-      : currentSessionLabel(),
-  )
+  const detailTask = $derived(detailId ? tasks.find((t) => t.id === detailId) : undefined)
   const selectedApp = $derived(apps.find((a) => a.name === form.appName))
   const selectedCallbacks = $derived(selectedApp?.callbacks ?? [])
   const selectedCallback = $derived(selectedCallbacks.find((c) => c.name === form.appCallback))
+  const selectedSessionLabel = $derived(
+    form.sessionTarget === 'new' ? '每次新建会话' : sessionLabel(form.sessionTarget),
+  )
 
   const counts = $derived.by(() => {
     let session = 0
@@ -79,6 +86,27 @@
     }
     return { all: tasks.length, session, app, script, active, paused, error }
   })
+
+  const kindOptions = $derived([
+    { value: 'all', label: `全部类型（${counts.all}）` },
+    { value: 'session', label: `会话（${counts.session}）` },
+    { value: 'app', label: `快应用（${counts.app}）` },
+    { value: 'script', label: `脚本（${counts.script}）` },
+  ])
+
+  const statusOptions = $derived([
+    { value: 'all', label: '全部状态' },
+    { value: 'active', label: `启用中（${counts.active}）` },
+    { value: 'paused', label: `已停用（${counts.paused}）` },
+    { value: 'error', label: `上次失败（${counts.error}）` },
+  ])
+
+  const unitOptions = [
+    { value: 's', label: '秒' },
+    { value: 'm', label: '分钟' },
+    { value: 'h', label: '小时' },
+    { value: 'd', label: '天' },
+  ]
 
   const visible = $derived.by(() => {
     const q = query.trim().toLowerCase()
@@ -103,7 +131,10 @@
     })
   })
 
-  const records = $derived.by((): RunRow[] => {
+  const taskPages = $derived(Math.max(1, Math.ceil(visible.length / TASK_PAGE_SIZE)))
+  const pagedTasks = $derived(visible.slice((page - 1) * TASK_PAGE_SIZE, page * TASK_PAGE_SIZE))
+
+  const allRecords = $derived.by((): RunRow[] => {
     const ids = new Set(visible.map((t) => t.id))
     const out: RunRow[] = []
     for (const t of tasks) {
@@ -113,8 +144,13 @@
       }
     }
     out.sort((a, b) => b.at - a.at)
-    return out.slice(0, 30)
+    return out
   })
+
+  const recordPages = $derived(Math.max(1, Math.ceil(allRecords.length / RECORD_PAGE_SIZE)))
+  const pagedRecords = $derived(
+    allRecords.slice((recordPage - 1) * RECORD_PAGE_SIZE, recordPage * RECORD_PAGE_SIZE),
+  )
 
   const stats = $derived.by(() => {
     const start = new Date()
@@ -131,6 +167,74 @@
     return { today, failures }
   })
 
+  const sessionOptions = $derived.by(() => {
+    const out: { value: string; label: string; hint: string }[] = []
+    const seen = new Set<string>()
+    const add = (id: string, label: string, hint: string) => {
+      if (!id || seen.has(id)) return
+      seen.add(id)
+      out.push({ value: id, label, hint })
+    }
+    const active = store.branches.find((b) => b.id === store.activeId)
+    if (active) add(active.leafId || active.id, active.title || '当前会话', '当前会话')
+    else if (store.activeId) add(store.leafId || store.activeId, '当前会话', '当前会话')
+    for (const b of store.branches) {
+      const leaf = b.leafId || b.id
+      add(leaf, b.title || '未命名会话', b.id === store.activeId ? '当前会话' : shortId(leaf))
+    }
+    if (form.sessionTarget && form.sessionTarget !== 'new' && !seen.has(form.sessionTarget)) {
+      out.push({
+        value: form.sessionTarget,
+        label: sessionLabel(form.sessionTarget),
+        hint: '不在当前列表（可能已归档）',
+      })
+    }
+    return [{ value: 'new', label: '每次新建会话', hint: '每次触发创建一条新会话' }, ...out]
+  })
+
+  const appOptions = $derived.by(() => {
+    const out = apps.map((a) => ({
+      value: a.name,
+      label: a.title || a.name,
+      hint: a.name,
+      meta: a.callbacks?.length ? `${a.callbacks.length} 端点` : '',
+    }))
+    if (form.appName && !out.some((o) => o.value === form.appName)) {
+      out.unshift({ value: form.appName, label: form.appName, hint: '应用不存在', meta: '' })
+    }
+    return out
+  })
+
+  $effect(() => {
+    if (page > taskPages) page = taskPages
+  })
+  $effect(() => {
+    if (recordPage > recordPages) recordPage = recordPages
+  })
+  /* 通知点进来：等任务加载后展开对应详情；本地列表可能落后一个轮询周期，
+     找不到时补拉一次再判定，避免把刚触发的任务误报成已删除。 */
+  $effect(() => {
+    const id = store.callbackFocus
+    if (!id || !loaded) return
+    store.callbackFocus = ''
+    if (tasks.some((x) => x.id === id)) {
+      detailId = id
+      return
+    }
+    void load(true).then(() => {
+      if (tasks.some((x) => x.id === id)) detailId = id
+      else notify('该回调已删除或不存在')
+    })
+  })
+
+  function defaultSessionTarget(): string {
+    const active = store.branches.find((b) => b.id === store.activeId)
+    if (active) return active.leafId || active.id
+    if (store.activeId) return store.leafId || store.activeId
+    const first = store.branches[0]
+    return first ? first.leafId || first.id : 'new'
+  }
+
   function emptyForm(): Form {
     return {
       title: '',
@@ -142,7 +246,7 @@
       intervalValue: '1',
       intervalUnit: 'h',
       cron: '',
-      sessionMode: 'session',
+      sessionTarget: defaultSessionTarget(),
       message: '',
       appName: '',
       appCallback: '',
@@ -150,18 +254,15 @@
     }
   }
 
-  /* currentSessionLabel：当前活动会话标题；没有会话时给空串。 */
-  function currentSessionLabel(): string {
-    const usable = (b: (typeof store.branches)[number]) => (b.msgs ?? 0) > 0 || !!b.running
-    const active = store.branches.find((b) => b.id === store.activeId && usable(b))
-    const first = active ?? store.branches.find(usable)
-    return first ? first.title || '未命名会话' : ''
-  }
-
   function notify(text: string) {
     toast = text
     clearTimeout(toastTimer)
     toastTimer = setTimeout(() => (toast = ''), 2600)
+  }
+
+  function resetPages() {
+    page = 1
+    recordPage = 1
   }
 
   async function load(silent = false) {
@@ -180,6 +281,7 @@
   }
 
   onMount(() => {
+    void store.refreshBranches()
     void load()
     const timer = setInterval(() => void load(true), 5000)
     return () => {
@@ -191,13 +293,20 @@
   function openCreate() {
     form = emptyForm()
     editingId = ''
+    detailId = ''
     formError = ''
     modal = 'create'
+  }
+
+  function openDetail(t: CallbackTask) {
+    modal = null
+    detailId = t.id
   }
 
   function startEdit(t: CallbackTask) {
     form = fromTask(t)
     editingId = t.id
+    detailId = ''
     formError = ''
     modal = 'edit'
   }
@@ -219,7 +328,7 @@
       f.cron = t.schedule.cron ?? ''
     }
     if (t.session) {
-      f.sessionMode = t.session.mode === 'new' ? 'new' : 'session'
+      f.sessionTarget = t.session.mode === 'new' ? 'new' : t.session.sessionId || ''
       f.message = t.session.message
     }
     if (t.app) {
@@ -262,14 +371,10 @@
     return { value: String(total), unit: 's' }
   }
 
-  function appChanged(e: Event) {
-    const name = (e.currentTarget as HTMLSelectElement).value
+  function setApp(name: string) {
+    form.appName = name
     const app = apps.find((a) => a.name === name)
     form.appCallback = app?.callbacks?.[0]?.name ?? ''
-  }
-
-  function setIntervalUnit(e: Event) {
-    form.intervalUnit = (e.currentTarget as HTMLSelectElement).value as IntervalUnit
   }
 
   /* toSpec 校验表单并生成后端配置面；返回字符串表示错误提示。 */
@@ -313,10 +418,12 @@
       const message = form.message.trim()
       if (!message) return '请填写要发送的消息'
       if (message.length > 8000) return '消息不能超过 8000 字'
-      if (form.sessionMode === 'session' && !currentSessionLabel()) {
-        return '当前没有可绑定的会话，请先打开一个会话，或选择新建会话'
+      if (form.sessionTarget === 'new') {
+        spec.session = { mode: 'new', message }
+      } else {
+        if (!form.sessionTarget) return '请选择要发送到的会话'
+        spec.session = { mode: 'session', sessionId: form.sessionTarget, message }
       }
-      spec.session = { mode: form.sessionMode, message }
       return spec
     }
     if (form.kind === 'app') {
@@ -382,6 +489,7 @@
     if (!t) return
     try {
       await api.deleteCallback(t.id)
+      if (detailId === t.id) detailId = ''
       notify(`已删除「${t.title}」`)
       await load(true)
     } catch (e) {
@@ -452,11 +560,48 @@
     return r.target || '会话'
   }
 
+  /* sessionRoot 把运行记录里的叶 session 还原成分支根（跳转键）。 */
+  function sessionRoot(id?: string): string {
+    if (!id) return ''
+    const b = store.branches.find((x) => x.id === id || x.leafId === id)
+    return b?.id || ''
+  }
+
+  function runJumpable(r: RunRow): boolean {
+    return r.kind === 'session' && !!r.targetId && !!sessionRoot(r.targetId)
+  }
+
+  function asRunRow(t: CallbackTask, r: CallbackRun): RunRow {
+    return { ...r, taskId: t.id, taskTitle: t.title, kind: t.kind }
+  }
+
+  async function jumpSession(targetId?: string) {
+    if (!targetId) return
+    const root = sessionRoot(targetId)
+    if (!root) {
+      notify('触发的会话已不在列表（可能已归档）')
+      return
+    }
+    await store.openSession(root)
+    if (store.activeId !== root) notify('打开会话失败')
+  }
+
   function fmtDateTime(ts?: number): string {
     if (!ts) return '-'
     const d = new Date(ts)
     const pad = (n: number) => String(n).padStart(2, '0')
     return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
+  }
+
+  /* 列表里的创建时间：今年省年份，跨年才带年。 */
+  function dateShort(ts?: number): string {
+    if (!ts) return '-'
+    const d = new Date(ts)
+    const now = new Date()
+    const pad = (n: number) => String(n).padStart(2, '0')
+    const md = `${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
+    const hm = `${pad(d.getHours())}:${pad(d.getMinutes())}`
+    return d.getFullYear() === now.getFullYear() ? `${md} ${hm}` : `${d.getFullYear()}-${md}`
   }
 
   function nextText(ts?: number): string {
@@ -508,7 +653,7 @@
     <div>
       <h1>回调</h1>
       <p class="lead">
-        ezharness 的定时回调中心：到点向当前会话发消息（运行中先打断，归档/换代后失败）、自动启动快应用并调用 app.quick 声明的端点，或在工作目录执行脚本。
+        ezharness 的定时回调中心：到点向指定会话发消息（运行中先打断，归档/换代后失败）、自动启动快应用并调用 app.quick 声明的端点，或在工作目录执行脚本。
       </p>
     </div>
     <button class="newbtn" onclick={openCreate}>
@@ -548,24 +693,28 @@
         <circle cx="11" cy="11" r="7" />
         <path d="M16 16l4 4" />
       </svg>
-      <input bind:value={query} placeholder="搜索标题、描述或目标" />
+      <input bind:value={query} oninput={resetPages} placeholder="搜索标题、描述或目标" />
     </label>
-    <label class="select">
-      <select bind:value={kindFilter}>
-        <option value="all">全部类型（{counts.all}）</option>
-        <option value="session">会话（{counts.session}）</option>
-        <option value="app">快应用（{counts.app}）</option>
-        <option value="script">脚本（{counts.script}）</option>
-      </select>
-    </label>
-    <label class="select">
-      <select bind:value={statusFilter}>
-        <option value="all">全部状态</option>
-        <option value="active">启用中（{counts.active}）</option>
-        <option value="paused">已停用（{counts.paused}）</option>
-        <option value="error">上次失败（{counts.error}）</option>
-      </select>
-    </label>
+    <SelectMenu
+      value={kindFilter}
+      options={kindOptions}
+      width="auto"
+      height={32}
+      onchange={(v) => {
+        kindFilter = v as KindFilter
+        resetPages()
+      }}
+    />
+    <SelectMenu
+      value={statusFilter}
+      options={statusOptions}
+      width="auto"
+      height={32}
+      onchange={(v) => {
+        statusFilter = v as StatusFilter
+        resetPages()
+      }}
+    />
     <span class="shown">{visible.length} 个任务</span>
   </div>
 
@@ -573,22 +722,56 @@
     {#if !loaded}
       <p class="lead">加载中…</p>
     {:else if visible.length}
-      {#each visible as t (t.id)}
-        {@const last = t.runs?.[0]}
-        <article class="task" class:off={!t.enabled}>
-          <div class="rowtop">
-            <div class="titlewrap">
-              <span class="kind" class:app={t.kind === 'app'} class:script={t.kind === 'script'}>{kindLabel(t.kind)}</span>
-              <h2>{t.title}</h2>
-              <span class="state" class:off={!t.enabled}>{t.enabled ? '启用中' : '已停用'}</span>
+      <div class="tasktable">
+        <div class="thead">
+          <span>任务</span>
+          <span>计划</span>
+          <span>目标</span>
+          <span>下次 / 上次</span>
+          <span>创建</span>
+          <span class="thact">操作</span>
+        </div>
+        {#each pagedTasks as t (t.id)}
+          <article class="taskrow" class:off={!t.enabled}>
+            <div class="tmain">
+              <div class="ttop">
+                <span class="kind" class:app={t.kind === 'app'} class:script={t.kind === 'script'}>{kindLabel(t.kind)}</span>
+                <button class="tasktitle" onclick={() => openDetail(t)} title="查看任务详情与回调记录">{t.title}</button>
+                {#if !t.enabled}<em class="tag">停用</em>{/if}
+              </div>
+              {#if t.description}<span class="tdesc" title={t.description}>{t.description}</span>{/if}
             </div>
-            <div class="actions">
+            <div class="tmeta">
+              <span class="tcell mono tschedule" title={scheduleText(t)}>{scheduleText(t)}</span>
+              <span class="tcell ttarget" title={targetText(t)}>{targetText(t)}</span>
+              <span class="tcell tnext">
+                {#if t.lastStatus === 'running'}
+                  <span class="nline next">执行中…</span>
+                {:else}
+                  <span class="nline next" class:off={!t.enabled} class:err={t.enabled && t.lastStatus === 'error' && !t.nextRunAt}>
+                    {#if t.enabled && t.nextRunAt}下次 {nextText(t.nextRunAt)}{:else if !t.enabled}已停用{:else}未排期{/if}
+                  </span>
+                  {#if t.lastStatus}
+                    <span class="nline" class:err={t.lastStatus === 'error'} class:skip={t.lastStatus === 'skipped' || t.lastStatus === 'missed'}>
+                      上次 {statusText(t.lastStatus)}
+                    </span>
+                  {/if}
+                {/if}
+              </span>
+              <span class="tcell tcreated" title={`创建于 ${fmtDateTime(t.createdAt)}`}>{dateShort(t.createdAt)}</span>
+            </div>
+            <div class="tact">
               <label class="switch" title={t.enabled ? '停用' : '启用'}>
                 <input type="checkbox" checked={t.enabled} onchange={() => void toggle(t)} />
                 <span class="slider"></span>
               </label>
               <button class="iconbtn" disabled={t.lastStatus === 'running'} onclick={() => void runNow(t)} title="立即运行（不改变计划）">
                 <svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5.5v13l11-6.5z" /></svg>
+              </button>
+              <button class="iconbtn" onclick={() => openDetail(t)} title="查看回调记录">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
+                  <path d="M4 6h16M4 12h16M4 18h10" />
+                </svg>
               </button>
               <button class="iconbtn" onclick={() => startEdit(t)} title="编辑">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
@@ -602,37 +785,10 @@
                 </svg>
               </button>
             </div>
-          </div>
-          {#if t.description}<p class="desc">{t.description}</p>{/if}
-          <div class="meta">
-            <span class="pill">⏱ {scheduleText(t)}</span>
-            <span class="pill" title={t.kind === 'session' ? t.session?.sessionId : t.kind === 'script' ? t.script?.command : t.app?.name}>→ {targetText(t)}</span>
-            {#if t.enabled && t.nextRunAt}<span class="pill next" title={fmtDateTime(t.nextRunAt)}>下次 {nextText(t.nextRunAt)}</span>{/if}
-            {#if t.runCount}<span class="pill muted">已触发 {t.runCount} 次</span>{/if}
-            {#if t.lastStatus}
-              <span class="pill" class:err={t.lastStatus === 'error'} class:skip={t.lastStatus === 'skipped' || t.lastStatus === 'missed'}>
-                上次 {statusText(t.lastStatus)}
-              </span>
-            {/if}
-          </div>
-          {#if last}
-            <div class="lastrun">
-              <i class="dot" class:ok={last.status === 'ok'} class:err={last.status === 'error'} class:skip={last.status === 'skipped' || last.status === 'missed'}></i>
-              <span class="lr-time" title={fmtDateTime(last.at)}>{recordTime(last.at)}</span>
-              <span class="lr-status">{statusText(last.status)}</span>
-              <span class="lr-text" title={last.result || last.content || ''}>
-                {last.result || last.content || '—'}
-              </span>
-            </div>
-          {:else if t.lastStatus === 'running'}
-            <p class="hint small">执行中…</p>
-          {:else if t.lastResult}
-            <p class="hint small">{t.lastResult}</p>
-          {:else}
-            <p class="hint small">尚未触发</p>
-          {/if}
-        </article>
-      {/each}
+          </article>
+        {/each}
+      </div>
+      <Pager page={page} total={visible.length} pageSize={TASK_PAGE_SIZE} onchange={(p) => (page = p)} />
     {:else if tasks.length}
       <div class="empty">
         <p>没有匹配的任务。</p>
@@ -649,9 +805,9 @@
   <section class="records">
     <div class="sechead">
       <h2>回调记录</h2>
-      <span>{records.length ? `最近 ${records.length} 条` : '暂无'}</span>
+      <span>{allRecords.length ? `共 ${allRecords.length} 条` : '暂无'}</span>
     </div>
-    {#if records.length}
+    {#if allRecords.length}
       <div class="rtable">
         <div class="rhead">
           <span>时间</span>
@@ -660,7 +816,7 @@
           <span>触发内容</span>
           <span>结果</span>
         </div>
-        {#each records as r, i (`${r.taskId}:${r.at}:${i}`)}
+        {#each pagedRecords as r, i (`${r.taskId}:${r.at}:${i}`)}
           <div class="rrow">
             <span class="rtime" title={`${fmtDateTime(r.at)}${r.durationMs ? ` · ${r.durationMs} ms` : ''}`}>{recordTime(r.at)}</span>
             <span class="rtask">
@@ -669,7 +825,13 @@
               <em class="rkind" class:app={r.kind === 'app'} class:script={r.kind === 'script'}>{kindLabel(r.kind)}</em>
               {#if r.manual}<em class="rkind manual">手动</em>{/if}
             </span>
-            <span class="rtarget" title={runTarget(r)}>{runTarget(r)}</span>
+            <span class="rtarget" title={runTarget(r)}>
+              {#if runJumpable(r)}
+                <button class="rlink" onclick={() => void jumpSession(r.targetId)} title="打开触发的会话">↗ {runTarget(r)}</button>
+              {:else}
+                {runTarget(r)}
+              {/if}
+            </span>
             <span class="rcontent" title={r.content || ''}>{r.content || '—'}</span>
             <span class="rresult" class:err={r.status === 'error'} title={r.result || ''}>
               {statusText(r.status)}{#if r.result} · {r.result}{/if}
@@ -677,6 +839,7 @@
           </div>
         {/each}
       </div>
+      <Pager page={recordPage} total={allRecords.length} pageSize={RECORD_PAGE_SIZE} onchange={(p) => (recordPage = p)} />
     {:else}
       <p class="hint">当前筛选下还没有触发记录。清空筛选，或等任务到点 / 点「立即运行」后再看。</p>
     {/if}
@@ -711,31 +874,37 @@
       </div>
 
       {#if form.kind === 'session'}
-        <div class="seg sub">
-          <button class:on={form.sessionMode === 'session'} onclick={() => (form.sessionMode = 'session')}>当前会话</button>
-          <button class:on={form.sessionMode === 'new'} onclick={() => (form.sessionMode = 'new')}>新建会话</button>
+        <div class="field">
+          <span>发送到</span>
+          <SelectMenu
+            value={form.sessionTarget}
+            options={sessionOptions}
+            placeholder="选择会话…"
+            onchange={(v) => (form.sessionTarget = v)}
+          />
         </div>
-        {#if form.sessionMode === 'session'}
-          <p class="hint">
-            创建时绑定当前会话{#if sessionHintLabel}「{sessionHintLabel}」{/if}。到点若它正在跑轮，先打断当前轮再发送；会话归档或 compact 换代后任务失败，不会跟随新会话。
-          </p>
+        {#if form.sessionTarget === 'new'}
+          <p class="hint">每次触发都会新建一条会话再发送消息；不受归档/compact 影响。</p>
         {:else}
-          <p class="hint">每次触发都会新建一条会话再发送消息；不受归档换代影响。</p>
+          <p class="hint">
+            任务绑定「{selectedSessionLabel}」：到点若它正在跑轮，先打断当前轮再发送；会话归档或 compact 换代后任务失败，不会跟随新会话。
+          </p>
         {/if}
         <label class="field">
           <span>消息</span>
           <textarea bind:value={form.message} rows="4" placeholder="到点后作为用户消息发送给该会话"></textarea>
         </label>
       {:else if form.kind === 'app'}
-        <label class="field">
+        <div class="field">
           <span>快应用</span>
-          <select bind:value={form.appName} onchange={appChanged}>
-            <option value="">选择快应用…</option>
-            {#each apps as a (a.name)}
-              <option value={a.name}>{a.title}（{a.name}）</option>
-            {/each}
-          </select>
-        </label>
+          <SelectMenu
+            value={form.appName}
+            options={appOptions}
+            placeholder={apps.length ? '选择快应用…' : '暂无可用快应用'}
+            disabled={!apps.length && !form.appName}
+            onchange={setApp}
+          />
+        </div>
         <div class="field">
           <span>回调端点</span>
           {#if selectedCallbacks.length}
@@ -793,12 +962,12 @@
               oninput={(e) => (form.intervalValue = (e.currentTarget as HTMLInputElement).value)}
               placeholder="30"
             />
-            <select value={form.intervalUnit} onchange={setIntervalUnit}>
-              <option value="s">秒</option>
-              <option value="m">分钟</option>
-              <option value="h">小时</option>
-              <option value="d">天</option>
-            </select>
+            <SelectMenu
+              width="96px"
+              value={form.intervalUnit}
+              options={unitOptions}
+              onchange={(v) => (form.intervalUnit = v as IntervalUnit)}
+            />
           </div>
         </div>
         <p class="hint">最短 10 秒；执行完从完成时刻重新计时。</p>
@@ -819,6 +988,104 @@
     <footer>
       <button class="btn" onclick={() => (modal = null)}>取消</button>
       <button class="btn primary" disabled={saving} onclick={() => void submit()}>{saving ? '保存中…' : '保存'}</button>
+    </footer>
+  </div>
+{/if}
+
+{#if detailTask}
+  {@const t = detailTask}
+  <div class="mask" onclick={() => (detailId = '')}></div>
+  <div class="modal wide" role="dialog" aria-label="回调详情">
+    <header>
+      <div class="dhead">
+        <span class="kind" class:app={t.kind === 'app'} class:script={t.kind === 'script'}>{kindLabel(t.kind)}</span>
+        <h2 title={t.title}>{t.title}</h2>
+        <span class="state" class:off={!t.enabled}>{t.enabled ? '启用中' : '已停用'}</span>
+      </div>
+      <button class="close" onclick={() => (detailId = '')} title="关闭">✕</button>
+    </header>
+    <div class="dbody">
+      {#if t.description}<p class="desc">{t.description}</p>{/if}
+      <div class="dgrid">
+        <div>
+          <span>计划</span>
+          <b>{scheduleText(t)}</b>
+        </div>
+        <div>
+          <span>目标</span>
+          <b title={targetText(t)}>{targetText(t)}</b>
+        </div>
+        <div>
+          <span>下次运行</span>
+          <b>{t.lastStatus === 'running' ? '执行中…' : t.enabled && t.nextRunAt ? nextText(t.nextRunAt) : '—'}</b>
+        </div>
+        <div>
+          <span>创建时间</span>
+          <b>{fmtDateTime(t.createdAt)}</b>
+        </div>
+        <div>
+          <span>更新时间</span>
+          <b>{fmtDateTime(t.updatedAt)}</b>
+        </div>
+        <div>
+          <span>累计触发</span>
+          <b>{t.runCount ?? 0} 次</b>
+        </div>
+      </div>
+      {#if t.kind === 'session' && t.session}
+        <div class="dblock">
+          <span>消息</span>
+          <pre>{t.session.message}</pre>
+        </div>
+      {:else if t.kind === 'script' && t.script}
+        <div class="dblock">
+          <span>命令</span>
+          <pre>{t.script.command}</pre>
+        </div>
+      {:else if t.kind === 'app' && t.app}
+        <div class="dblock">
+          <span>端点</span>
+          <pre>{appTitle(t.app.name)} · {t.app.callback}</pre>
+        </div>
+      {/if}
+      <div class="sechead sub">
+        <h3>回调记录</h3>
+        <span>{t.runs?.length ? `最近 ${t.runs.length} 条` : '暂无'}</span>
+      </div>
+      {#if t.runs?.length}
+        <div class="runs">
+          {#each t.runs as r, i (`${r.at}:${i}`)}
+            {@const rr = asRunRow(t, r)}
+            <div class="runrow">
+              <div class="runtop">
+                <span class="rtime" title={fmtDateTime(r.at)}>{recordTime(r.at)}</span>
+                <i class="dot" class:ok={r.status === 'ok'} class:err={r.status === 'error'} class:skip={r.status === 'skipped' || r.status === 'missed'}></i>
+                <span class="rstat" class:err={r.status === 'error'}>{statusText(r.status)}</span>
+                {#if r.manual}<em class="rkind manual">手动</em>{/if}
+                <span class="rtargetline" title={runTarget(rr)}>
+                  {#if t.kind === 'session' && r.targetId}
+                    <button class="rlink" onclick={() => void jumpSession(r.targetId)} title="打开触发的会话">↗ {runTarget(rr)}</button>
+                  {:else}
+                    {runTarget(rr)}
+                  {/if}
+                </span>
+                {#if r.durationMs}<span class="rdur">{r.durationMs} ms</span>{/if}
+              </div>
+              {#if r.result || r.content}
+                <p class="rres" class:err={r.status === 'error'} title={r.result || r.content || ''}>{r.result || r.content}</p>
+              {/if}
+            </div>
+          {/each}
+        </div>
+      {:else}
+        <p class="hint">还没有触发记录。点「立即运行」可以验证一次。</p>
+      {/if}
+    </div>
+    <footer>
+      <button class="btn danger" onclick={() => { detailId = ''; delTarget = t }}>删除</button>
+      <button class="btn" disabled={t.lastStatus === 'running'} onclick={() => void runNow(t)}>立即运行</button>
+      <button class="btn" onclick={() => startEdit(t)}>编辑</button>
+      <button class="btn primary" onclick={() => (detailId = '')}>关闭</button>
     </footer>
   </div>
 {/if}
@@ -919,7 +1186,7 @@
     display: flex;
     flex-direction: column;
     gap: 2px;
-    padding: 12px 14px;
+    padding: 10px 14px;
     border: 1px solid var(--line);
     border-radius: 11px;
     background: var(--bg-soft);
@@ -930,7 +1197,7 @@
   }
   .stat b {
     font-family: var(--font-mono);
-    font-size: 22px;
+    font-size: 21px;
     font-weight: 650;
     line-height: 1.2;
     color: var(--fg);
@@ -985,39 +1252,6 @@
     font: inherit;
     font-size: var(--font-size-ui);
   }
-  .select {
-    position: relative;
-    flex: none;
-  }
-  .select select {
-    appearance: none;
-    height: 32px;
-    padding: 0 28px 0 10px;
-    border: 1px solid var(--line);
-    border-radius: 8px;
-    background: var(--bg);
-    color: var(--muted);
-    font: inherit;
-    font-size: var(--font-size-ui);
-    cursor: pointer;
-    outline: none;
-  }
-  .select::after {
-    content: '';
-    position: absolute;
-    right: 11px;
-    top: 50%;
-    width: 5px;
-    height: 5px;
-    border-right: 1.5px solid var(--faint);
-    border-bottom: 1.5px solid var(--faint);
-    transform: translateY(-65%) rotate(45deg);
-    pointer-events: none;
-  }
-  .select select:focus {
-    border-color: var(--accent);
-    color: var(--fg);
-  }
   .shown {
     margin-left: auto;
     font-family: var(--font-mono);
@@ -1026,47 +1260,88 @@
     white-space: nowrap;
   }
 
-  /* ── 任务卡 ── */
+  /* ── 任务表 ── */
   .list {
     display: flex;
     flex-direction: column;
-    gap: 10px;
+    gap: 6px;
   }
-  .task {
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
+  .tasktable {
     border: 1px solid var(--line);
     border-radius: 12px;
+    overflow: hidden;
     background: var(--bg);
-    padding: 14px 16px;
-    transition: border-color var(--dur-fast) var(--ease-out), box-shadow var(--dur-fast) var(--ease-out);
   }
-  .task:hover {
-    border-color: var(--line-strong);
-    box-shadow: 0 4px 16px rgb(0 0 0 / 5%);
+  .thead,
+  .taskrow {
+    display: grid;
+    grid-template-columns:
+      minmax(220px, 1.5fr)
+      minmax(112px, 0.85fr)
+      minmax(138px, 1.05fr)
+      124px
+      88px
+      156px;
+    gap: 10px;
+    align-items: center;
+    padding: 8px 12px;
   }
-  .task.off {
+  .thead {
+    background: var(--bg-soft);
+    font-size: var(--font-size-small);
+    color: var(--faint);
+  }
+  .thead .thact {
+    text-align: right;
+  }
+  .taskrow {
+    border-top: 1px solid var(--line);
+    transition: background var(--dur-fast) var(--ease-out);
+  }
+  .taskrow:hover {
+    background: var(--bg-soft);
+  }
+  .taskrow.off {
     opacity: 0.72;
   }
-  .rowtop {
+  .tmain {
     display: flex;
-    align-items: flex-start;
-    justify-content: space-between;
-    gap: 12px;
+    flex-direction: column;
+    gap: 1px;
+    min-width: 0;
   }
-  .titlewrap {
+  .ttop {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: 6px;
     min-width: 0;
-    flex-wrap: wrap;
   }
-  .titlewrap h2 {
+  .tasktitle {
+    min-width: 0;
+    flex: 1;
+    padding: 0;
+    border: none;
+    background: none;
+    color: var(--fg);
+    font: inherit;
     font-size: var(--font-size-body);
     font-weight: 600;
-    color: var(--fg);
-    overflow-wrap: anywhere;
+    line-height: 1.35;
+    text-align: left;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .tasktitle:hover {
+    color: var(--accent);
+  }
+  .tdesc {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: var(--font-size-small);
+    color: var(--faint);
   }
   .kind {
     flex: none;
@@ -1085,19 +1360,64 @@
     color: #6b46c1;
     background: color-mix(in srgb, #805ad5 18%, transparent);
   }
-  .state {
+  .tag {
     flex: none;
-    font-size: var(--font-size-small);
-    color: #2f855a;
+    font-style: normal;
+    font-size: 10px;
+    color: var(--faint);
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    padding: 0 3px;
   }
-  .state.off {
+  .tmeta {
+    display: contents;
+  }
+  .tcell {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: var(--font-size-small);
+    color: var(--muted);
+  }
+  .mono {
+    font-family: var(--font-mono);
+  }
+  .ttarget {
     color: var(--faint);
   }
-  .actions {
-    flex: none;
+  .tnext {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    font-family: var(--font-mono);
+  }
+  .nline {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .nline.next {
+    color: var(--accent);
+  }
+  .nline.next.off {
+    color: var(--faint);
+  }
+  .nline.err {
+    color: var(--danger);
+  }
+  .nline.skip {
+    color: #b7791f;
+  }
+  .tcreated {
+    font-family: var(--font-mono);
+    color: var(--faint);
+  }
+  .tact {
     display: inline-flex;
     align-items: center;
-    gap: 5px;
+    justify-content: flex-end;
+    gap: 4px;
   }
   .iconbtn {
     display: grid;
@@ -1116,7 +1436,7 @@
     height: 12px;
   }
   .iconbtn:hover {
-    background: var(--bg-soft);
+    background: var(--bg);
     color: var(--fg);
   }
   .iconbtn.danger:hover {
@@ -1163,64 +1483,13 @@
   .switch input:checked + .slider::before {
     transform: translateX(14px);
   }
-  .desc {
-    font-size: var(--font-size-ui);
-    line-height: 1.6;
-    color: var(--muted);
-  }
-  .meta {
-    display: flex;
-    align-items: center;
-    flex-wrap: wrap;
-    gap: 6px;
-  }
-  .pill {
-    max-width: 100%;
-    font-family: var(--font-mono);
-    font-size: var(--font-size-small);
-    color: var(--muted);
-    background: var(--bg-soft);
-    border-radius: 6px;
-    padding: 2px 7px;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  .pill.next {
-    color: var(--accent);
-    background: var(--accent-soft);
-  }
-  .pill.muted {
-    color: var(--faint);
-  }
-  .pill.err {
-    color: var(--danger);
-  }
-  .pill.skip {
-    color: #b7791f;
-  }
-  .lastrun {
-    display: flex;
-    align-items: center;
-    gap: 7px;
-    min-width: 0;
-    padding-top: 2px;
-    font-size: var(--font-size-small);
-    color: var(--faint);
-  }
-  .lastrun .lr-time {
-    font-family: var(--font-mono);
+  .state {
     flex: none;
+    font-size: var(--font-size-small);
+    color: #2f855a;
   }
-  .lastrun .lr-status {
-    flex: none;
-    color: var(--muted);
-  }
-  .lastrun .lr-text {
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+  .state.off {
+    color: var(--faint);
   }
   .dot {
     flex: none;
@@ -1267,9 +1536,6 @@
     font-size: var(--font-size-small);
     line-height: 1.6;
     color: var(--faint);
-  }
-  .hint.small {
-    margin-top: -2px;
   }
 
   /* ── 回调记录 ── */
@@ -1371,6 +1637,24 @@
   .rtarget {
     font-family: var(--font-mono);
   }
+  .rlink {
+    display: block;
+    max-width: 100%;
+    padding: 0;
+    border: none;
+    background: none;
+    color: var(--accent);
+    font: inherit;
+    font-family: var(--font-mono);
+    text-align: left;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    cursor: pointer;
+  }
+  .rlink:hover {
+    text-decoration: underline;
+  }
   .rresult {
     display: -webkit-box;
     -webkit-line-clamp: 2;
@@ -1408,6 +1692,9 @@
     box-shadow: 0 16px 48px rgb(0 0 0 / 20%);
     overflow: hidden;
   }
+  .modal.wide {
+    width: min(720px, 94vw);
+  }
   .modal.small {
     width: min(380px, 92vw);
   }
@@ -1418,6 +1705,7 @@
     flex: none;
     display: flex;
     align-items: center;
+    gap: 8px;
     padding: 14px 18px;
     border-bottom: 1px solid var(--line);
   }
@@ -1425,6 +1713,17 @@
     font-size: var(--font-size-body);
     font-weight: 700;
     flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .dhead {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
   }
   .close {
     border: none;
@@ -1437,7 +1736,8 @@
   .close:hover {
     color: var(--fg);
   }
-  .form {
+  .form,
+  .dbody {
     min-height: 0;
     overflow-y: auto;
     padding: 14px 18px 18px;
@@ -1461,7 +1761,6 @@
     color: var(--muted);
   }
   .field input,
-  .field select,
   .field textarea {
     width: 100%;
     border: 1px solid var(--line);
@@ -1475,7 +1774,6 @@
     resize: vertical;
   }
   .field input:focus,
-  .field select:focus,
   .field textarea:focus {
     border-color: var(--accent);
   }
@@ -1510,14 +1808,6 @@
     border-color: var(--accent);
     color: var(--accent);
     font-weight: 500;
-  }
-  .seg.sub {
-    margin-top: -3px;
-  }
-  .seg.sub button {
-    padding: 3px 9px;
-    font-size: var(--font-size-small);
-    border-radius: 6px;
   }
   .endpointlist {
     display: flex;
@@ -1592,15 +1882,12 @@
   }
   .interval {
     display: flex;
+    align-items: center;
     gap: 6px;
   }
   .interval input {
     flex: 1;
     min-width: 0;
-  }
-  .interval select {
-    flex: none;
-    width: 88px;
   }
   .check {
     display: flex;
@@ -1609,6 +1896,127 @@
     font-size: var(--font-size-ui);
     color: var(--muted);
   }
+  .desc {
+    font-size: var(--font-size-ui);
+    line-height: 1.6;
+    color: var(--muted);
+  }
+
+  /* ── 任务详情 ── */
+  .dgrid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 8px 14px;
+    padding: 10px 12px;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    background: var(--bg-soft);
+  }
+  .dgrid > div {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    min-width: 0;
+  }
+  .dgrid span,
+  .dblock > span {
+    font-size: var(--font-size-small);
+    color: var(--faint);
+  }
+  .dgrid b {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: var(--font-size-ui);
+    font-weight: 500;
+    color: var(--fg);
+  }
+  .dblock {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .dblock pre {
+    max-height: 120px;
+    overflow: auto;
+    padding: 8px 10px;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: var(--bg-soft);
+    font-family: var(--font-mono);
+    font-size: var(--font-size-small);
+    line-height: 1.55;
+    color: var(--muted);
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+  .sechead.sub {
+    margin-top: 2px;
+  }
+  .sechead.sub h3 {
+    font-size: var(--font-size-section);
+    font-weight: 600;
+    color: var(--fg);
+  }
+  .runs {
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    overflow: hidden;
+  }
+  .runrow {
+    padding: 7px 10px;
+  }
+  .runrow + .runrow {
+    border-top: 1px solid var(--line);
+  }
+  .runrow:hover {
+    background: var(--bg-soft);
+  }
+  .runtop {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+    font-size: var(--font-size-small);
+    color: var(--muted);
+  }
+  .rstat {
+    flex: none;
+  }
+  .rstat.err {
+    color: var(--danger);
+  }
+  .rtargetline {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-family: var(--font-mono);
+    color: var(--faint);
+  }
+  .rdur {
+    flex: none;
+    font-family: var(--font-mono);
+    font-size: 10px;
+    color: var(--faint);
+  }
+  .rres {
+    margin-top: 2px;
+    font-size: var(--font-size-small);
+    line-height: 1.45;
+    color: var(--muted);
+    overflow: hidden;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow-wrap: anywhere;
+  }
+  .rres.err {
+    color: var(--danger);
+  }
+
   .alerttext {
     padding: 14px 18px;
     font-size: var(--font-size-ui);
@@ -1677,7 +2085,7 @@
     box-shadow: 0 8px 26px rgb(0 0 0 / 18%);
   }
 
-  @media (max-width: 920px) {
+  @media (max-width: 980px) {
     .page {
       padding: 24px 18px 48px;
     }
@@ -1686,6 +2094,38 @@
     }
     .fields2 {
       grid-template-columns: 1fr;
+    }
+    .thead {
+      display: none;
+    }
+    .taskrow {
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 5px 10px;
+      padding: 10px 12px;
+    }
+    .taskrow .tmain {
+      grid-column: 1;
+      grid-row: 1;
+    }
+    .taskrow .tact {
+      grid-column: 2;
+      grid-row: 1;
+    }
+    .taskrow .tmeta {
+      grid-column: 1 / 3;
+      grid-row: 2;
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 4px 10px;
+    }
+    .tschedule,
+    .ttarget {
+      max-width: 46vw;
+    }
+    .tnext {
+      flex-direction: row;
+      gap: 6px;
     }
     .rhead {
       display: none;
@@ -1720,6 +2160,9 @@
     }
     .rrow .rcontent {
       grid-row: 3;
+    }
+    .dgrid {
+      grid-template-columns: 1fr 1fr;
     }
   }
 </style>

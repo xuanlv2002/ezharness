@@ -25,7 +25,7 @@ const (
 
 /* 会话任务的目标模式。 */
 const (
-	ModeSession = "session" // 绑定创建任务时的当前会话
+	ModeSession = "session" // 绑定指定叶会话（缺省为调用方当前会话）
 	ModeNew     = "new"     // 每次触发新建会话再发消息
 )
 
@@ -82,17 +82,18 @@ type Run struct {
 	DurationMs int64  `json:"durationMs,omitempty"`
 }
 
-/* SessionTarget 是会话任务的投递目标（会话 ID 由服务在创建时绑定）。 */
+/* SessionTarget 是会话任务的投递目标（叶会话 ID 由服务在创建时落值）。 */
 type SessionTarget struct {
-	SessionID string `json:"sessionId,omitempty" desc:"创建任务时绑定的叶 session ID；归档/compact 换代后任务失败"`
-	Mode      string `json:"mode" desc:"session（当前会话）| new（每次新建会话）"`
+	SessionID string `json:"sessionId,omitempty" desc:"绑定的叶 session ID；归档/compact 换代后任务失败"`
+	Mode      string `json:"mode" desc:"session（指定会话）| new（每次新建会话）"`
 	Message   string `json:"message" desc:"到点后作为用户消息发送的正文"`
 }
 
-/* SessionInput 是创建/更新时的会话目标：只有两种模式，绑定会话由服务落值。 */
+/* SessionInput 是创建/更新时的会话目标；mode=session 时 sessionId 指定叶会话，缺省绑定调用方当前会话。 */
 type SessionInput struct {
-	Mode    string `json:"mode" desc:"session（绑定当前会话）| new（每次新建会话）"`
-	Message string `json:"message" desc:"到点后作为用户消息发送的正文"`
+	SessionID string `json:"sessionId,omitempty" desc:"mode=session 时要绑定的叶 session ID；缺省绑定调用方当前会话"`
+	Mode      string `json:"mode" desc:"session（绑定指定会话）| new（每次新建会话）"`
+	Message   string `json:"message" desc:"到点后作为用户消息发送的正文"`
 }
 
 /* AppTarget 是快应用任务的目标：触发时自动启动后端并调用声明端点。 */

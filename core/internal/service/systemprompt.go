@@ -184,7 +184,7 @@ func callbacksSection(ctx context.Context, fsys osfs.OS, sessionID string) strin
 	topics := hooks.NewTopics(fsys).Load()
 	var b strings.Builder
 	b.WriteString("<callbacks>\n（定时回调清单，以此为准，不要读取 callbacks.json 来发现；用 callback 工具 list/create/update/delete/enable/disable/run 管理。" +
-		"计划语法：once {at} / interval {every} / cron \"分 时 日 月 周\"（本机时区）；会话任务绑定创建时的当前会话，到点若正在跑轮由 chat 发送逻辑先打断，归档/compact 换代后该任务失败且不会继承到新会话；快应用任务触发时自动启动后端并调用声明端点；脚本任务在工作目录执行 shell 命令；轮内变更见 <resource_change>）")
+		"计划语法：once {at} / interval {every} / cron \"分 时 日 月 周\"（本机时区）；会话任务绑定 sessionId 指定的会话（工具缺省当前会话），到点若正在跑轮由 chat 发送逻辑先打断，归档/compact 换代后该任务失败且不会继承到新会话；快应用任务触发时自动启动后端并调用声明端点；脚本任务在工作目录执行 shell 命令；轮内变更见 <resource_change>）")
 	for _, t := range tasks {
 		kind := "会话"
 		switch t.Kind {
