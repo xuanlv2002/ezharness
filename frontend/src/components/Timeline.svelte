@@ -93,16 +93,15 @@
      达阈值拉出上一会话；指示器随拉动量渐显，内容展开动画 ── */
   let pull = $state(0)
   let loading = $state(false)
-  let noMore = $state(false) // 已到链尾的短暂提示
-  let noMoreTimer: ReturnType<typeof setTimeout> | undefined
   let settle = $state(false) // 松手回弹：换用更慢的缓动，跟着手指的拉动用短过渡
   let settleTimer: ReturnType<typeof setTimeout> | undefined
   const THRESHOLD = 64
   const MAX_PULL = 96
 
   const armed = $derived(pull >= THRESHOLD)
-  const showNoMore = $derived(noMore || (!store.hasPrev && pull > 0))
-  const indicatorHeight = $derived(noMore ? 28 : Math.max(pull, loading ? 40 : 0))
+  /* 没有更早内容只在拉动过程中可见，松手即随 pull 归零一起消失 */
+  const showNoMore = $derived(!store.hasPrev && pull > 0)
+  const showPull = $derived(pull > 0 || loading)
 
   function atTop(): boolean {
     return !!el && el.scrollTop <= 0
@@ -120,10 +119,6 @@
   function startPull() {
     clearTimeout(settleTimer)
     settle = false
-    if (noMore) {
-      noMore = false
-      clearTimeout(noMoreTimer)
-    }
   }
 
   let wheelTimer: ReturnType<typeof setTimeout> | undefined
@@ -141,9 +136,11 @@
       // deltaMode 归一成像素：行/页模式的小数值不能直接当像素累积
       const dy = e.deltaY * (e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? el.clientHeight || 1 : 1)
       pull = Math.min(MAX_PULL, pull + Math.max(2, Math.min(28, -dy * 0.35)))
+      /* 松手等待与回弹同一节奏：到阈值直接触发加载（trigger 内部先把
+         位移归零），未到阈值回弹；两者都不在顶部滞留 */
       wheelTimer = store.hasPrev && pull >= THRESHOLD
-        ? setTimeout(() => void trigger(), 180)
-        : setTimeout(cancelPull, 50)
+        ? setTimeout(() => void trigger(), 40)
+        : setTimeout(cancelPull, 40)
     } else if (e.deltaY > 0) {
       clearTimeout(wheelTimer)
       cancelPull()
@@ -176,21 +173,6 @@
     else cancelPull()
   }
 
-  function hintNoMore() {
-    clearTimeout(settleTimer)
-    settle = true
-    settleTimer = setTimeout(() => (settle = false), 200)
-    noMore = true
-    clearTimeout(noMoreTimer)
-    // 短促提示即收：连续滚动会不断重置计时，停留太久显得呆滞
-    noMoreTimer = setTimeout(() => {
-      settle = true
-      noMore = false
-      clearTimeout(settleTimer)
-      settleTimer = setTimeout(() => (settle = false), 200)
-    }, 900)
-  }
-
   async function trigger() {
     if (loading) return
     if (!store.hasPrev) {
@@ -199,18 +181,14 @@
     }
     clearTimeout(wheelTimer)
     loading = true
-    settle = true // 进入加载态也走短过渡，不硬跳
-    clearTimeout(settleTimer)
-    settleTimer = setTimeout(() => (settle = false), 200)
-    pull = THRESHOLD // 加载期间保持指示器可见
-    const prevHeight = el?.scrollHeight ?? 0
-    await store.loadPrev()
-    loading = false
-    settle = true // 收起加载态同样走回弹过渡
+    /* 加载态由悬浮指示器自己显示，拉起的正文立即回弹，不再保持位移 */
+    settle = true
     clearTimeout(settleTimer)
     settleTimer = setTimeout(() => (settle = false), 200)
     pull = 0
-    if (!store.hasPrev) hintNoMore()
+    const prevHeight = el?.scrollHeight ?? 0
+    await store.loadPrev()
+    loading = false
     // prepend 高度补偿：视口停在原有内容处，不跳顶
     if (el) el.scrollTop = el.scrollHeight - prevHeight
   }
@@ -269,20 +247,10 @@
 <div class="tlwrap">
   <div class="timeline" bind:this={el} onscroll={onScroll} onwheel={onWheel}
     ontouchstart={onTouchStart} ontouchmove={onTouchMove} ontouchend={onTouchEnd}>
-  <div class="inner">
-    <!-- 下拉指示器：常驻节点让高度过渡能从 0 开始/收回（条件渲染会让
-         首次出现和消失变成瞬间跳变）；文案三态 -->
-    <div
-      class="pullind"
-      class:armed={armed && store.hasPrev}
-      class:settle
-      style="height:{indicatorHeight}px"
-      aria-hidden={indicatorHeight <= 0}>
-      <span class="arrow" class:spin={loading}>{loading ? '⟳' : showNoMore ? '·' : '↓'}</span>
-      <span class="ptext">
-        {#if loading}加载上一话题…{:else if showNoMore}没有更早的会话了{:else if armed}松开加载上一话题{:else}下拉加载上一话题{/if}
-      </span>
-    </div>
+  <div
+    class="inner"
+    class:settle
+    style="transform:translateY({pull}px)">
     {#if !empty}
       <ThreadRows
         {rows}
@@ -320,6 +288,18 @@
       </div>
     {/if}
   </div>
+  </div>
+  <!-- 上拉指示器：脱离滚动内容悬浮在顶部，不参与布局；内容本身用
+       transform 跟手，回弹只动合成层，不触发整条时间线重排 -->
+  <div
+    class="pullind"
+    class:armed={armed && store.hasPrev}
+    class:show={showPull}
+    aria-hidden={!showPull}>
+    <span class="arrow" class:spin={loading}>{loading ? '⟳' : showNoMore ? '·' : '↓'}</span>
+    <span class="ptext">
+      {#if loading}加载上一话题…{:else if showNoMore}没有更早的会话了{:else if armed}松开加载上一话题{:else}下拉加载上一话题{/if}
+    </span>
   </div>
   {#if turns.length >= 2}
     <div class="turnnav">
@@ -509,24 +489,34 @@
     gap: 20px;
     min-height: 100%; /* 空状态时也撑满可视区，使欢迎语垂直居中 */
     --av-size: 48px; /* 头像列宽：组头像与用户行占位共用 */
+    /* 跟手阶段不做过渡：transform 直接跟 wheel 事件走，避免任何迟滞 */
   }
+  /* 松手回弹：只动 transform（合成层），不触发时间线重排 */
+  .inner.settle {
+    transition: transform 0.05s cubic-bezier(0.25, 0.8, 0.3, 1);
+  }
+  /* 提示悬浮在滚动区顶部，不占布局；内容由 .inner 的 transform 下拉 */
   .pullind {
+    position: absolute;
+    top: 10px;
+    left: 0;
+    right: 0;
+    z-index: 5;
     display: flex;
     align-items: center;
     justify-content: center;
     gap: 8px;
-    overflow: hidden;
+    pointer-events: none;
     font-size: var(--font-size-ui);
     color: var(--faint);
     font-family: var(--font-mono);
-    /* 拉动过程只做极短平滑，避免指针停下来后视觉高度还在追目标；
-       真正的回弹交给 .settle（松手/加载态切换时启用） */
-    transition: height 0.04s linear, opacity 0.08s var(--ease-out);
-    opacity: 0.85;
+    opacity: 0;
+    transform: translateY(-4px);
+    transition: opacity 0.06s var(--ease-out), transform 0.06s var(--ease-out);
   }
-  /* 松手回弹：短促的 ease-out，停下后立刻收回 */
-  .pullind.settle {
-    transition: height 0.12s var(--ease-out), opacity 0.1s var(--ease-out);
+  .pullind.show {
+    opacity: 0.85;
+    transform: translateY(0);
   }
   .pullind.armed {
     color: var(--accent, #2563eb);
