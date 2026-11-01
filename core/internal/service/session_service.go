@@ -55,6 +55,7 @@ type HistoryData struct {
 	RootID     string                 `json:"rootId"`
 	Busy       bool                   `json:"busy"`
 	Messages   []types.Message        `json:"messages"`           // 剥 system：与盘上快照同基准（分叉 msgIdx 对位）
+	Start      int                    `json:"start,omitempty"`    // tail 截取时的消息偏移（msgIdx = start + 下标）
 	TargetID   string                 `json:"targetId,omitempty"` // 向上边目标（compress 链上翻游标）
 	SeedKind   string                 `json:"seedKind,omitempty"` // new | fork | compress
 	CanPrev    bool                   `json:"canPrev"`            // 上翻是否还有上一级（后端判定，fork 换源后算）
@@ -150,11 +151,21 @@ func (s *SessionService) Snapshot(ctx context.Context) Status {
 	}
 }
 
-/* History 返回指定分支的当前历史（rootID 路由；未知分支返回空数据）。 */
-func (s *SessionService) History(ctx context.Context, rootID string) HistoryData {
+/*
+History 返回指定分支的当前历史（rootID 路由；未知分支返回空数据）。
+tail>0 时只回尾部 tail 条消息，并跳过决策/分身/计划/上翻判定
+（turn_end 回填锚点等只需要尾段的场景）。
+*/
+func (s *SessionService) History(ctx context.Context, rootID string, tail int) HistoryData {
 	sess := s.Hub.SessionOf(rootID)
 	if sess == nil {
 		return HistoryData{}
+	}
+	messages := hooks.StripSystem(sess.History())
+	start := 0
+	if tail > 0 && len(messages) > tail {
+		start = len(messages) - tail
+		messages = messages[start:]
 	}
 	edge := sess.Sess.Edge()
 	if edge.TargetID == "" {
@@ -168,26 +179,31 @@ func (s *SessionService) History(ctx context.Context, rootID string) HistoryData
 		ID:         sess.ID,
 		RootID:     sess.RootID,
 		Busy:       sess.Busy(),
-		Messages:   hooks.StripSystem(sess.History()),
+		Messages:   messages,
+		Start:      start,
 		TargetID:   edge.TargetID,
 		SeedKind:   edge.SeedKind,
-		CanPrev:    s.canPrev(ctx, sess.ID),
 		ForkedFrom: edge.ForkedFrom,
 	}
-	h.Decisions = hooks.LoadDecisions(ctx, sess.Fsys, h.ID)
-	h.Forks = hooks.ListForks(ctx, sess.Fsys, h.ID)
-	h.Plan, _ = hooks.LoadPlan(ctx, sess.Fsys, sess.RootID)
+	/* tail 模式只服务轮末锚点回填：决策/分身/计划/上翻判定都不参与，
+	   不读这些档案（否则每轮都要扫全部已结束分身的 trace）。 */
+	if tail <= 0 {
+		h.CanPrev = s.canPrev(ctx, sess.ID)
+		h.Decisions = hooks.LoadDecisions(ctx, sess.Fsys, h.ID)
+		h.Forks = hooks.ListForks(ctx, sess.Fsys, h.ID)
+		h.Plan, _ = hooks.LoadPlan(ctx, sess.Fsys, sess.RootID)
+	}
 	return h
 }
 
 /* canPrev 判定 id 上翻是否还有上一级（与 Prev 同规则：fork 换源后算）。 */
 func (s *SessionService) canPrev(ctx context.Context, id string) bool {
-	cur, err := hooks.LoadSnap(ctx, s.Hub.Fsys, id)
+	cur, err := hooks.LoadSnapMeta(ctx, s.Hub.Fsys, id)
 	if err != nil {
 		return false
 	}
 	if cur.SeedKind == "fork" && cur.TargetID != "" {
-		src, serr := hooks.LoadSnap(ctx, s.Hub.Fsys, cur.TargetID)
+		src, serr := hooks.LoadSnapMeta(ctx, s.Hub.Fsys, cur.TargetID)
 		if serr != nil {
 			return false
 		}
@@ -233,12 +249,12 @@ Prev 沿向上边取 id 的上一会话内容（向上滚动懒加载）。id �
 源无上级则到底。
 */
 func (s *SessionService) Prev(ctx context.Context, id string) (*PrevData, bool, error) {
-	cur, err := hooks.LoadSnap(ctx, s.Hub.Fsys, id)
+	cur, err := hooks.LoadSnapMeta(ctx, s.Hub.Fsys, id)
 	if err != nil {
 		return nil, false, err
 	}
 	if cur.SeedKind == "fork" && cur.TargetID != "" {
-		src, serr := hooks.LoadSnap(ctx, s.Hub.Fsys, cur.TargetID)
+		src, serr := hooks.LoadSnapMeta(ctx, s.Hub.Fsys, cur.TargetID)
 		if serr != nil {
 			return nil, false, nil
 		}

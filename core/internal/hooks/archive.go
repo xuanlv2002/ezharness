@@ -60,7 +60,7 @@ func ArchiveSession(ctx context.Context, p provider.ModelProvider, fsys fs.FileS
 	}
 
 	// 旧库封存：只翻 Archived 位（内容档案已是最新）
-	old, err := LoadSnap(ctx, fsys, oldID)
+	old, err := LoadSnapMeta(ctx, fsys, oldID) // 只翻 Archived 位：不重读消息档案
 	if err != nil {
 		return CompactInfo{}, err
 	}

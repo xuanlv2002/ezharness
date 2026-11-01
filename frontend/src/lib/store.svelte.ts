@@ -512,10 +512,12 @@ class AppStore {
   /* 历史重建：user/assistant/tool 消息序列，tool_calls 展开为工具块；决策记录映射为徽标。
      forks 摘要按 task 调用顺序插分身入口卡（forkID 升序与调用序一致）。
      owner=消息所属 session ID，与各消息下标配对供分叉定位。 */
-  private buildBlocks(messages: HistoryMessage[], decisions?: DecisionRecord[], forks?: ForkSummary[], owner?: string): Block[] {
+  private buildBlocks(messages: HistoryMessage[], decisions?: DecisionRecord[], forks?: ForkSummary[], owner?: string, msgStart = 0): Block[] {
     const dmap = new Map((decisions || []).map((d) => [d.callId, d.resolution]))
     const forkQueue = [...(forks || [])]
     const out: Block[] = []
+    /* 工具结果回填索引：大会话里按 call id 反查块（原先每条约 O(n) 全表扫） */
+    const toolByID = new Map<string, Extract<Block, { kind: 'tool' }>>()
     for (let mi = 0; mi < messages.length; mi++) {
       const m = messages[mi]
       if (m.role === 'user') {
@@ -586,7 +588,7 @@ class AppStore {
         } else if (!m.content.trim() && !m.images?.length) {
           // 空输入（纯附件轮，引用已由上一块独立呈现）：不渲染
         } else {
-          out.push({ kind: 'user', uid: this.nuid(), text: m.content, images: m.images, owner, msgIdx: mi })
+          out.push({ kind: 'user', uid: this.nuid(), text: m.content, images: m.images, owner, msgIdx: msgStart + mi })
         }
       } else if (m.role === 'assistant') {
         if (m.content || m.reasoning) {
@@ -597,7 +599,7 @@ class AppStore {
             reasoning: m.reasoning || '',
             streaming: false,
             owner,
-            msgIdx: mi,
+            msgIdx: msgStart + mi,
           })
         }
         // 展开工具调用：名称与参数来自 tool_calls（Args 序列化后是嵌套对象，非字符串）
@@ -617,6 +619,7 @@ class AppStore {
           const started = tc.Name === 'task' && forkQueue.length > 0
           if (started) tb.hidden = true
           out.push(tb)
+          if (tb.id) toolByID.set(tb.id, tb)
           if (started) {
             const f = forkQueue.shift()!
             out.push({ kind: 'fork', uid: this.nuid(), forkId: f.id })
@@ -624,12 +627,12 @@ class AppStore {
         }
       } else if (m.role === 'tool') {
         // 按调用 ID 回填结果到对应工具块
-        const target = [...out].reverse().find((b) => b.kind === 'tool' && b.id === m.tool_call_id)
-        if (target && target.kind === 'tool') {
+        const target = m.tool_call_id ? toolByID.get(m.tool_call_id) : undefined
+        if (target) {
           target.result = m.content || ''
           target.err = m.err || ''
         } else {
-          out.push({
+          const orphan: Extract<Block, { kind: 'tool' }> = {
             kind: 'tool',
             uid: this.nuid(),
             id: m.tool_call_id || '',
@@ -638,7 +641,9 @@ class AppStore {
             result: m.content || '',
             err: m.err || '',
             state: 'done',
-          })
+          }
+          out.push(orphan)
+          if (orphan.id) toolByID.set(orphan.id, orphan)
         }
       }
     }
@@ -652,9 +657,10 @@ class AppStore {
   文本对不上保守停止——只是按钮暂缺，切页重建自愈 */
   private async backfillForkAnchors(sessionId: string) {
     try {
-      const s = await api.getHistory(sessionId)
+      // 只要尾段：大会话不必为一轮锚点重拉全文（msgStart 把下标拉回绝对值）
+      const s = await api.getHistory(sessionId, 200)
       if (sessionId !== this.activeId) return // 等待期间已切分支：别写错时间线
-      const rebuilt = this.buildBlocks(s.messages, undefined, undefined, s.id)
+      const rebuilt = this.buildBlocks(s.messages, undefined, undefined, s.id, s.start ?? 0)
       let j = rebuilt.length - 1
       for (let i = this.blocks.length - 1; i >= 0 && j >= 0; i--) {
         const b = this.blocks[i]

@@ -3,6 +3,7 @@ package controller
 
 import (
 	"net/http"
+	"strconv"
 
 	"github.com/gin-gonic/gin"
 
@@ -29,9 +30,13 @@ func (c *SessionController) HourlyStats(g *gin.Context) {
 	g.JSON(http.StatusOK, gin.H{"hours": c.Svc.Hub.Stats.Hourly()})
 }
 
-/* History GET /api/sessions/:id（:id=分支根 ID，返回该线当前叶历史）。 */
+/*
+History GET /api/sessions/:id（:id=分支根 ID，返回该线当前叶历史；
+tail=N 只回尾部 N 条消息，start 给出偏移，锚点对齐用）。
+*/
 func (c *SessionController) History(g *gin.Context) {
-	g.JSON(http.StatusOK, c.Svc.History(g.Request.Context(), g.Param("id")))
+	tail, _ := strconv.Atoi(g.Query("tail"))
+	g.JSON(http.StatusOK, c.Svc.History(g.Request.Context(), g.Param("id"), tail))
 }
 
 /* Prev GET /api/sessions/:id/prev（compact 链上一会话，无上级 204）。 */

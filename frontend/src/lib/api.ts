@@ -352,7 +352,7 @@ export interface MemoryProjectDetail extends MemoryProjectEntry {
   content: string
 }
 
-/* 会话树节点（GET /api/memory/tree）：记忆页整树渲染 */
+/* 会话树节点（GET /api/memory/tree）：记忆页按层渲染 */
 export interface SessionNode {
   id: string
   title: string
@@ -360,11 +360,20 @@ export interface SessionNode {
   archived: boolean
   msgs: number
   createdAt: number
-  targetId?: string // 向上边（组树用）
+  targetId?: string // 向上边（压缩链游标）
+  parentId?: string // 展示父节点（空 = 顶层分支）
   forkedFrom?: ForkOrigin
   lineRoot?: string
   isLeaf: boolean // 所属线的当前叶（可切换进入）
   isActiveLine: boolean
+  childCount: number // 直接子代数（0 = 无展开箭头）
+}
+
+/* 会话树的一层：根层按分支分页，子层一次给全 */
+export interface SessionTreePage {
+  nodes: SessionNode[]
+  next?: string // 根层下一页游标（空 = 已到底）
+  total?: number // 根层分支总数
 }
 
 /* 调用链 span（GET /api/topics/:id/trace = trace.jsonl 原文） */
@@ -394,13 +403,15 @@ export const api = {
 
   status: () => fetch('/api/status').then(json<Status>),
 
-  getHistory: (id: string) =>
-    fetch(`/api/sessions/${id}`).then(
+  /* tail = 只取尾部 N 条消息（锚点回填等只要尾段的场景）；start = 截取偏移 */
+  getHistory: (id: string, tail?: number) =>
+    fetch(`/api/sessions/${id}${tail ? `?tail=${tail}` : ''}`).then(
       json<{
         id: string
         rootId?: string
         busy: boolean
         messages: HistoryMessage[]
+        start?: number
         targetId?: string
         seedKind?: 'new' | 'fork' | 'compress' | string
         canPrev?: boolean
@@ -586,8 +597,15 @@ export const api = {
   toggleSkill: (id: string, enabled: boolean) =>
     post<{ ok: boolean }>(`/api/memory/skills/${encodeURIComponent(id)}/enabled`, { enabled }),
 
-  /* 完整会话树（全部世代与分叉，记忆页渲染） */
-  getMemoryTree: () => fetch('/api/memory/tree').then(json<SessionNode[]>),
+  /* 会话树的一层：parent 空 = 顶层分支（before 翻页），否则该节点的直接子代 */
+  getMemoryTree: (parent = '', before = '', limit = 0) => {
+    const q = new URLSearchParams()
+    if (parent) q.set('parent', parent)
+    if (before) q.set('before', before)
+    if (limit > 0) q.set('limit', String(limit))
+    const qs = q.toString()
+    return fetch(`/api/memory/tree${qs ? `?${qs}` : ''}`).then(json<SessionTreePage>)
+  },
 
   /* 手动归档开关（活动/运行中的当前叶会被后端拒绝） */
   archiveSession: (id: string, archived: boolean) =>

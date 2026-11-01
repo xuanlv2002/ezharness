@@ -4,6 +4,7 @@ package controller
 import (
 	"errors"
 	"net/http"
+	"strconv"
 
 	"github.com/gin-gonic/gin"
 
@@ -123,9 +124,13 @@ func (c *TopicController) Activate(g *gin.Context) {
 	g.JSON(http.StatusOK, gin.H{"id": c.Svc.Hub.ActiveSession().RootID})
 }
 
-/* Tree GET /api/memory/tree（完整会话树：全部世代与分叉，记忆页渲染）。 */
+/*
+Tree GET /api/memory/tree（会话树的一层：parent 空 = 顶层分支，
+limit/before 只作用于根层分页；子层一次返回直接子代）。
+*/
 func (c *TopicController) Tree(g *gin.Context) {
-	g.JSON(http.StatusOK, c.Svc.Tree(g.Request.Context()))
+	limit, _ := strconv.Atoi(g.Query("limit"))
+	g.JSON(http.StatusOK, c.Svc.TreeLevel(g.Request.Context(), g.Query("parent"), g.Query("before"), limit))
 }
 
 /*
