@@ -81,10 +81,12 @@ export interface DecisionData {
   args: string
   question: string
   options: string[]
-  /* plan：待确认方案三段（只读展示；解析失败的兜底为空，由卡片提示） */
+  /* plan：待确认方案五段（只读展示；解析失败的兜底为空，由卡片提示） */
   goal: string
-  approach: string
+  context: string
+  design: string
   progress: PlanProgress[]
+  verify: string
   forkId: string
   resolved: boolean
   resolution: string
@@ -1840,8 +1842,10 @@ class AppStore {
           question: '',
           options: [],
           goal: '',
-          approach: '',
+          context: '',
+          design: '',
           progress: [],
+          verify: '',
           forkId: ev.forkId || '',
           resolved: false,
           resolution: '',
@@ -1886,15 +1890,19 @@ class AppStore {
         let question = ''
         let options: string[] = []
         let goal = ''
-        let approach = ''
+        let context = ''
+        let design = ''
+        let verify = ''
         let progress: PlanProgress[] = []
         try {
           const a = typeof args === 'string' && args ? JSON.parse(args) : {}
           question = a.question || ''
           if (Array.isArray(a.options)) options = a.options.filter((o: unknown) => typeof o === 'string')
-          /* plan.request：三段式计划（目标/方案/步骤），解析失败留空由卡片提示 */
+          /* plan.request：五段式计划（目标/背景/方案/步骤/验证），解析失败留空由卡片提示 */
           goal = typeof a.goal === 'string' ? a.goal : ''
-          approach = typeof a.approach === 'string' ? a.approach : ''
+          context = typeof a.context === 'string' ? a.context : ''
+          design = typeof a.design === 'string' ? a.design : ''
+          verify = typeof a.verify === 'string' ? a.verify : ''
           if (Array.isArray(a.progress)) {
             progress = a.progress.filter(
               (p: any) => p && typeof p.title === 'string' && ['pending', 'running', 'completed'].includes(p.status),
@@ -1915,8 +1923,10 @@ class AppStore {
           question,
           options,
           goal,
-          approach,
+          context,
+          design,
           progress,
+          verify,
           forkId: ev.forkId || '',
           resolved: false,
           resolution: '',

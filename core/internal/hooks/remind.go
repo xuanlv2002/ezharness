@@ -194,16 +194,32 @@ func renderStatus(d StatusData, plan *SessionPlan) string {
 	return b.String()
 }
 
-/* renderPlan 把计划三段追加进快照（多行压平，防模型伪造状态行）。 */
+/* renderPlan 把计划五段追加进快照（多行压平，防模型伪造状态行）。 */
 func renderPlan(b *strings.Builder, plan *SessionPlan) {
 	if plan.Goal != "" {
-		b.WriteString("\n当前任务计划：目标：" + oneLine(plan.Goal, 300))
+		b.WriteString("\n当前任务计划：目标：" + oneLine(plan.Goal, 200))
 	}
-	if plan.Approach != "" {
-		b.WriteString("\n方案：" + oneLine(plan.Approach, 1200))
+	if plan.Context != "" {
+		b.WriteString("\n背景：" + oneLine(plan.Context, 600))
+	}
+	if plan.Design != "" {
+		b.WriteString("\n方案：" + oneLine(plan.Design, 2000))
 	}
 	for _, p := range plan.Progress {
 		b.WriteString("\n- [" + planStatusLabel(p.Status) + "] " + oneLine(p.Title, 160))
+	}
+	if plan.Verify != "" {
+		b.WriteString("\n验证：" + oneLine(plan.Verify, 400))
+	}
+	// 已全部完成却没 clear 的计划不该滞留：随快照催模型收尾（目标达成 clear / 未完继续）
+	done := 0
+	for _, p := range plan.Progress {
+		if p.Status == PlanCompleted {
+			done++
+		}
+	}
+	if len(plan.Progress) > 0 && done == len(plan.Progress) {
+		b.WriteString("\n该计划已全部完成但未清除：目标达成请调用 plan action=clear；工作未结束请更新计划")
 	}
 }
 

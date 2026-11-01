@@ -81,8 +81,10 @@ export interface PlanProgress {
 
 export interface SessionPlan {
   goal: string
-  approach: string
+  context: string
+  design: string
   progress: PlanProgress[]
+  verify: string
   updatedAt?: string
 }
 

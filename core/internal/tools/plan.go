@@ -24,32 +24,39 @@ Plan 返回计划工具。rootID 决定计划归属的分支；onUpdate 在计�
 func Plan(fsys osfs.OS, rootID string, onUpdate func(*hooks.SessionPlan)) types.Tool {
 	return types.NewTool("plan",
 		"维护当前会话的任务计划与进度（输入框上方实时展示，并随每轮 agent_status 注入上下文）。"+
-			"复杂任务（≥3 个实质步骤）开始时用 action=new 提交方案，三段字段：\n"+
-			"goal：目标——要达成什么，一句话（≤200 字）\n"+
-			"approach：方案——采用的做法、选择理由与关键取舍（10–2000 字，不写工具名流水账）\n"+
-			"progress：步骤——2–12 步，title ≤60 字、动词开头、不带序号、不重复；status=pending|running|completed，最多一个 running。"+
-			"要求具体可执行，不复述用户原话、不写寒暄。"+
-			"new 提交后阻塞等用户确认（计划卡只读展示三段，用户可确认或提交反馈）；反馈会作为工具结果返回，按意见修改后重新 new；"+
+			"复杂任务（≥3 个实质步骤）开始时用 action=new 提交，五段字段：\n"+
+			"goal：目标——要达成什么、做成什么样算完成，一句话（≤200 字）\n"+
+			"context：背景——为什么做、现状与约束、明确不做什么划边界（10–1000 字）\n"+
+			"design：方案——具体怎么做：分节写关键设计与取舍、列出涉及文件（30–4000 字，不写工具调用流水账）\n"+
+			"progress：步骤——2–12 步，title ≤60 字、动词开头、不带序号、不重复；status=pending|running|completed，最多一个 running。\n"+
+			"verify：验证——怎么确认做对了：跑什么构建/测试、实测什么场景（5–800 字）\n"+
+			"标准是用户确认后照着做就能完成：方案写具体设计而不是口号，步骤可执行，验证可操作，不复述用户原话。"+
+			"new 提交后阻塞等用户确认（计划卡只读展示五段，用户可确认或提交反馈）；反馈会作为工具结果返回，按意见修改后重新 new；"+
 			"确认前计划不会落盘，也不要开始执行。"+
-			"action=update：完成或切换一步就提交，progress 必须传完整列表（整表替换），goal/approach 可缺省（保留原值）。"+
-			"action=clear：计划被放弃或不再适用时清除；任务完成保留全部 completed 即可，不必 clear。"+
+			"action=update：完成或切换一步就提交，progress 必须传完整列表（整表替换），goal/context/design/verify 可缺省（保留原值）。"+
+			"action=clear：清除计划，两种情况必须调用——"+
+			"一是目标已达成：把最后一步 update 成 completed 后随即 clear，不要保留已完成的计划；"+
+			"二是计划失效：用户改向、当前请求与计划无关、或方案不再成立时，及时 clear 掉失效计划。"+
+			"用户提出新的复杂任务时直接 new 提交新计划（覆盖旧计划），不必先 clear。"+
 			"一两步的简单任务不要用",
 		func(ctx context.Context, in *planArgs) (string, error) {
 			switch in.Action {
 			case "new":
 				goal := strings.TrimSpace(in.Goal)
-				approach := strings.TrimSpace(in.Approach)
-				if goal == "" || approach == "" {
-					return "", errors.New("new 需要 goal 与 approach：目标一句话，方案写清做法与取舍")
+				background := strings.TrimSpace(in.Context)
+				design := strings.TrimSpace(in.Design)
+				verify := strings.TrimSpace(in.Verify)
+				if goal == "" || background == "" || design == "" || verify == "" {
+					return "", errors.New("new 需要 goal/context/design/verify 四段：目标一句话，背景划边界，方案写清怎么做，验证写清怎么确认")
 				}
-				if err := validateText(goal, approach); err != nil {
+				if err := validateFields(goal, background, design, verify); err != nil {
 					return "", err
 				}
 				progress, err := normalizeProgress(in.Progress)
 				if err != nil {
 					return "", err
 				}
-				p := &hooks.SessionPlan{Goal: goal, Approach: approach, Progress: progress}
+				p := &hooks.SessionPlan{Goal: goal, Context: background, Design: design, Progress: progress, Verify: verify}
 				if err := hooks.SavePlan(ctx, fsys, rootID, p); err != nil {
 					return "", err
 				}
@@ -59,14 +66,16 @@ func Plan(fsys osfs.OS, rootID string, onUpdate func(*hooks.SessionPlan)) types.
 				return planSummary(p), nil
 			case "update":
 				goal := strings.TrimSpace(in.Goal)
-				approach := strings.TrimSpace(in.Approach)
-				hasText := goal != "" || approach != ""
+				background := strings.TrimSpace(in.Context)
+				design := strings.TrimSpace(in.Design)
+				verify := strings.TrimSpace(in.Verify)
+				hasText := goal != "" || background != "" || design != "" || verify != ""
 				hasProgress := in.Progress != nil
 				if !hasText && !hasProgress {
-					return "", errors.New("update 需要 goal、approach 或 progress")
+					return "", errors.New("update 需要 goal、context、design、verify 或 progress")
 				}
 				if hasText {
-					if err := validateText(goal, approach); err != nil {
+					if err := validateFields(goal, background, design, verify); err != nil {
 						return "", err
 					}
 				}
@@ -80,8 +89,14 @@ func Plan(fsys osfs.OS, rootID string, onUpdate func(*hooks.SessionPlan)) types.
 				if goal != "" {
 					current.Goal = goal
 				}
-				if approach != "" {
-					current.Approach = approach
+				if background != "" {
+					current.Context = background
+				}
+				if design != "" {
+					current.Design = design
+				}
+				if verify != "" {
+					current.Verify = verify
 				}
 				if hasProgress {
 					progress, err := normalizeProgress(in.Progress)
@@ -117,30 +132,47 @@ type planProgressArgs struct {
 
 type planArgs struct {
 	Action   string             `json:"action" enum:"new|update|clear" desc:"new=提交新方案（等用户确认）;update=更新进度;clear=清除计划"`
-	Goal     string             `json:"goal,omitempty" desc:"目标：要达成什么，一句话（new 必填，≤200 字；update 可选，缺省保留原值）"`
-	Approach string             `json:"approach,omitempty" desc:"方案：采用的做法、选择理由与关键取舍（new 必填，10–2000 字；update 可选，缺省保留原值）"`
+	Goal     string             `json:"goal,omitempty" desc:"目标：要达成什么、做成什么样算完成，一句话（new 必填，≤200 字；update 可选，缺省保留原值）"`
+	Context  string             `json:"context,omitempty" desc:"背景：为什么做、现状与约束、明确不做什么（new 必填，10–1000 字；update 可选，缺省保留原值）"`
+	Design   string             `json:"design,omitempty" desc:"方案：分节写关键设计与取舍、列出涉及文件（new 必填，30–4000 字；update 可选，缺省保留原值）"`
 	Progress []planProgressArgs `json:"progress,omitempty" desc:"步骤清单（2–12 步；new 必填，update 整表替换；最多一个 running）"`
+	Verify   string             `json:"verify,omitempty" desc:"验证：怎么确认做对了——构建/测试/实测（new 必填，5–800 字；update 可选，缺省保留原值）"`
 }
 
 /* 计划字段规范（超出范围直接报错回给模型自纠）。 */
 const (
-	goalMaxRunes     = 200
-	approachMinRunes = 10
-	approachMaxRunes = 2000
-	planMinSteps     = 2
-	planMaxSteps     = 12
-	stepMaxRunes     = 60
+	goalMaxRunes    = 200
+	contextMinRunes = 10
+	contextMaxRunes = 1000
+	designMinRunes  = 30
+	designMaxRunes  = 4000
+	verifyMinRunes  = 5
+	verifyMaxRunes  = 800
+	planMinSteps    = 2
+	planMaxSteps    = 12
+	stepMaxRunes    = 60
 )
 
-/* validateText 校验目标/方案长度（空串=不修改，跳过；new 的必填在调用处判）。 */
-func validateText(goal, approach string) error {
+/* validateFields 校验四段文本长度（空串=不修改，跳过；new 的必填在调用处判）。 */
+func validateFields(goal, background, design, verify string) error {
 	if n := len([]rune(goal)); n > goalMaxRunes {
 		return fmt.Errorf("goal 太长（%d 字，上限 %d）：目标一句话即可", n, goalMaxRunes)
 	}
-	if n := len([]rune(approach)); n > 0 && n < approachMinRunes {
-		return fmt.Errorf("approach 太短（%d 字，至少 %d 字）：写清做法与取舍", n, approachMinRunes)
-	} else if n > approachMaxRunes {
-		return fmt.Errorf("approach 太长（%d 字，上限 %d）：保留关键信息", n, approachMaxRunes)
+	if err := validateRange("context", "背景", background, contextMinRunes, contextMaxRunes); err != nil {
+		return err
+	}
+	if err := validateRange("design", "方案", design, designMinRunes, designMaxRunes); err != nil {
+		return err
+	}
+	return validateRange("verify", "验证", verify, verifyMinRunes, verifyMaxRunes)
+}
+
+/* validateRange 校验单段长度（空串=不修改，跳过）。 */
+func validateRange(field, label, s string, min, max int) error {
+	if n := len([]rune(s)); n > 0 && n < min {
+		return fmt.Errorf("%s 太短（%d 字，至少 %d 字）：%s要写实内容", field, n, min, label)
+	} else if n > max {
+		return fmt.Errorf("%s 太长（%d 字，上限 %d）：保留关键信息", field, n, max)
 	}
 	return nil
 }
@@ -201,6 +233,9 @@ func planSummary(p *hooks.SessionPlan) string {
 	s := fmt.Sprintf("计划已保存：%d/%d 步完成", done, len(p.Progress))
 	if running != "" {
 		s += "，正在：" + running
+	}
+	if len(p.Progress) > 0 && done == len(p.Progress) {
+		s += "。全部步骤已完成：目标达成就调用 plan action=clear 清除计划；工作未结束则先更新计划"
 	}
 	return s
 }

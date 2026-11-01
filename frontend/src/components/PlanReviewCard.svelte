@@ -46,10 +46,16 @@
       <p class="goal-text">{data.goal}</p>
     </section>
   {/if}
-  {#if data.approach}
+  {#if data.context}
+    <section>
+      <p class="label">背景</p>
+      <p class="doc">{data.context}</p>
+    </section>
+  {/if}
+  {#if data.design}
     <section>
       <p class="label">方案</p>
-      <p class="approach">{data.approach}</p>
+      <p class="doc">{data.design}</p>
     </section>
   {/if}
   {#if total}
@@ -66,7 +72,14 @@
         {/each}
       </ol>
     </section>
-  {:else if !data.goal && !data.approach}
+  {/if}
+  {#if data.verify}
+    <section>
+      <p class="label">验证</p>
+      <p class="doc">{data.verify}</p>
+    </section>
+  {/if}
+  {#if !data.goal && !data.context && !data.design && !total && !data.verify}
     <p class="err">计划内容解析失败：请提交反馈，让模型重新提交。</p>
   {/if}
   {#if err}
@@ -128,7 +141,10 @@
     white-space: pre-wrap;
     word-break: break-word;
   }
-  .approach {
+  /* 背景/方案/验证共用正文样式：长方案限高滚动，确认卡不把时间线撑穿 */
+  .doc {
+    max-height: 240px;
+    overflow-y: auto;
     font-size: var(--font-size-ui);
     line-height: 1.6;
     color: var(--muted);

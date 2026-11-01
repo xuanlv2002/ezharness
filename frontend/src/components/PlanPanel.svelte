@@ -1,8 +1,8 @@
 <script lang="ts">
   import { store } from '../lib/store.svelte'
 
-  /* 输入框上方的计划面板（只读）：折叠显示目标与进度，展开看目标/方案/步骤。
-     计划是结构化三段（goal/approach/progress），不再解析正文行。 */
+  /* 输入框上方的计划面板（只读）：折叠显示目标与进度，展开看五段全文
+     （目标/背景/方案/步骤/验证）。计划是结构化五段，不再解析正文行。 */
   const plan = $derived(store.plan)
   const running = $derived(plan?.progress.find((p) => p.status === 'running') ?? null)
   const done = $derived(plan?.progress.filter((p) => p.status === 'completed').length ?? 0)
@@ -12,7 +12,7 @@
   const peek = $derived(plan?.goal || '')
 </script>
 
-{#if plan && (plan.goal || plan.approach || total)}
+{#if plan && (plan.goal || plan.design || total)}
   <div class="plan" class:finished={allDone}>
     <button class="head" onclick={() => (open = !open)} title={open ? '收起计划' : '展开完整计划'}>
       <span class="label">任务计划</span>
@@ -34,10 +34,16 @@
             <p class="goal-text">{plan.goal}</p>
           </section>
         {/if}
-        {#if plan.approach}
+        {#if plan.context}
+          <section>
+            <p class="label">背景</p>
+            <p class="doc">{plan.context}</p>
+          </section>
+        {/if}
+        {#if plan.design}
           <section>
             <p class="label">方案</p>
-            <p class="approach">{plan.approach}</p>
+            <p class="doc">{plan.design}</p>
           </section>
         {/if}
         {#if total}
@@ -53,6 +59,12 @@
                 </li>
               {/each}
             </ol>
+          </section>
+        {/if}
+        {#if plan.verify}
+          <section>
+            <p class="label">验证</p>
+            <p class="doc">{plan.verify}</p>
           </section>
         {/if}
       </div>
@@ -172,7 +184,7 @@
     white-space: pre-wrap;
     word-break: break-word;
   }
-  .approach {
+  .doc {
     margin: 0;
     font-size: var(--font-size-ui);
     line-height: 1.55;

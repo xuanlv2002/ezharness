@@ -45,7 +45,7 @@ func runPlanCall(t *testing.T, h *PlanConfirm, ch chan<- PlanDecision, call *typ
 /* TestPlanConfirmProceeds：确认后参数保持原样，调用继续执行。 */
 func TestPlanConfirmProceeds(t *testing.T) {
 	h, ch := NewPlanConfirm()
-	args := `{"action":"new","goal":"目标","approach":"方案","progress":[{"title":"a","status":"pending"},{"title":"b","status":"pending"}]}`
+	args := `{"action":"new","goal":"目标","context":"背景","design":"方案","verify":"验证","progress":[{"title":"a","status":"pending"},{"title":"b","status":"pending"}]}`
 	call := planCall("c1", args)
 	act, err := runPlanCall(t, h, ch, call, PlanDecision{CallID: "c1", Action: PlanActionConfirm})
 	if err != nil {
@@ -62,7 +62,7 @@ func TestPlanConfirmProceeds(t *testing.T) {
 /* TestPlanConfirmFeedback：反馈短路调用，意见进工具结果。 */
 func TestPlanConfirmFeedback(t *testing.T) {
 	h, ch := NewPlanConfirm()
-	call := planCall("c2", `{"action":"new","goal":"目标","approach":"方案"}`)
+	call := planCall("c2", `{"action":"new","goal":"目标","design":"方案"}`)
 	act, err := runPlanCall(t, h, ch, call, PlanDecision{CallID: "c2", Action: PlanActionFeedback, Feedback: "步骤太粗"})
 	if err != nil {
 		t.Fatalf("OnToolStart: %v", err)
@@ -73,7 +73,7 @@ func TestPlanConfirmFeedback(t *testing.T) {
 	if !strings.Contains(act.Result, "步骤太粗") || !strings.Contains(act.Result, "重新提交") {
 		t.Fatalf("skip result = %q", act.Result)
 	}
-	if string(call.Args) != `{"action":"new","goal":"目标","approach":"方案"}` {
+	if string(call.Args) != `{"action":"new","goal":"目标","design":"方案"}` {
 		t.Fatalf("feedback must not rewrite args, got %s", call.Args)
 	}
 }
@@ -97,7 +97,7 @@ func TestPlanConfirmCtxCancel(t *testing.T) {
 	h, _ := NewPlanConfirm()
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	act, err := h.OnToolStart(ctx, newTestState(nil), planCall("c5", `{"action":"new","goal":"目标","approach":"方案"}`))
+	act, err := h.OnToolStart(ctx, newTestState(nil), planCall("c5", `{"action":"new","goal":"目标","design":"方案"}`))
 	if err == nil {
 		t.Fatalf("expect ctx error")
 	}
