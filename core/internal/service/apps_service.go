@@ -96,15 +96,18 @@ func (s *AppsService) List(ctx context.Context) []AppEntry {
 }
 
 /*
-renderAppsSection 组装 system 的 <apps> 段：应用清单与使用纪律。
+renderAppsSection 组装 system 的 <apps> 段：应用清单 + 使用/复用/目录
+约定的唯一归属（原 workspace 行为规则中的 app 条目并入此处）。
 每 session 固定；轮内新建/更新/删除后由 list_apps 刷新。
+段落分隔由 buildSystemBase 统一处理，本段不带前导空行。
 */
 func renderAppsSection(ctx context.Context, fsys osfs.OS) string {
 	apps := quickapp.Scan(ctx, fsys)
 	var b strings.Builder
-	b.WriteString("\n\n<apps>\n（快应用清单，以此为准，不要读取 apps 目录或 app.quick 来发现应用；应用由 save_app 构建。" +
-		"使用某个应用前先 load_app(name) 读它的调用文档：只有文档含「Agent 调用」一节（清单标〔可调用〕）才可按文档调用，否则仅面向用户，不要臆造接口。" +
-		"本段随会话固定，轮内新增/更新/移除见 <resource_change>；已有应用能满足就先复用，不要重复造功能相同的应用）")
+	b.WriteString("<apps>\n（快应用清单，以此为准，不要读取 apps 目录或 app.quick 来发现应用；应用由 save_app 构建。" +
+		"使用某个应用前先 load_app(name) 读它的调用文档：只有文档含「Agent 调用」一节（清单标〔可调用〕）才可按文档调用，否则仅面向用户，不要臆造接口；已有应用能满足就先复用，不要重复造功能相同的应用。" +
+		"目录约定：前端由 save_app 写，后端脚本等额外文件用 write_file 补进同目录（见 quick-app 技能），不要手改其他快应用的文件。" +
+		"本段随会话固定，轮内新增/更新/移除见 <resource_change>）")
 	if len(apps) == 0 {
 		b.WriteString("\n（暂无快应用）")
 	} else {

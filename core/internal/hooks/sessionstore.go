@@ -354,7 +354,8 @@ func (h *Store) OnEnd(ctx context.Context, state *types.LoopState) error {
 	}
 	if sys != nil {
 		base, summary := sys.Parts()
-		out.SystemPrompt, out.SystemBase, out.SummaryBlock = sys.Prompt(), base, summary
+		out.SystemBase, out.SummaryBlock = base, summary
+		out.SystemPrompt = finalSystem(state, sys)
 	}
 	if tool != "" {
 		out.Model = tool
@@ -478,6 +479,19 @@ func toolNames(state *types.LoopState) []string {
 		out = append(out, t.Name())
 	}
 	return out
+}
+
+/*
+finalSystem 取本轮实际发给模型的 system 全文：base+身份+摘要之外，引擎
+
+收集的 Guide 附录（系统环境与各 tool-guide）拼在消息本体上而不在
+SysPrompt 渲染值里——回顾要看到完整 system 必须取消息。异常缺席时回退。
+*/
+func finalSystem(state *types.LoopState, sys *SysPrompt) string {
+	if len(state.Messages) > 0 && state.Messages[0].Role == types.RoleSystem {
+		return state.Messages[0].Content
+	}
+	return sys.Prompt()
 }
 
 /*

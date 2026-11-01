@@ -10,6 +10,7 @@ import (
 	"github.com/xuanlv2002/ezloop/ext/hook/skill"
 	"github.com/xuanlv2002/ezloop/types"
 
+	"ezharness/core/internal/builtinskill"
 	"ezharness/core/internal/domain"
 	"ezharness/core/internal/hooks"
 )
@@ -106,14 +107,23 @@ func (s *SessionService) Snapshot(ctx context.Context) Status {
 	}
 	ctxTokens, ctxWindow := sess.Sess.CtxInfo()
 	skills := []string{}
+	all := builtinskill.Skills()
 	if entries, err := skill.LoadDir(ctx, s.Hub.Fsys, hooks.SkillsDir); err == nil {
-		disabled := s.Hub.SettingsSnapshot().DisabledSkills
+		// 与 <skills> 段同一归置：内建优先，同名用户技能让位
 		for _, e := range entries {
-			if slices.Contains(disabled, hooks.SkillDirOf(e.Path)) {
-				continue
+			if !slices.ContainsFunc(all, func(b skill.Skill) bool {
+				return hooks.SkillDirOf(b.Path) == hooks.SkillDirOf(e.Path)
+			}) {
+				all = append(all, e)
 			}
-			skills = append(skills, e.Name)
 		}
+	}
+	disabled := s.Hub.SettingsSnapshot().DisabledSkills
+	for _, e := range all {
+		if slices.Contains(disabled, hooks.SkillDirOf(e.Path)) {
+			continue
+		}
+		skills = append(skills, e.Name)
 	}
 	vision := false
 	modelName := ""

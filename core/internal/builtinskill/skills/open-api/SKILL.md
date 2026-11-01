@@ -5,7 +5,7 @@ description: 调用 ezharness core 的 OpenAPI——直调大模型、调 MCP �
 
 # core OpenAPI
 
-core 在本机暴露 HTTP API（`http://127.0.0.1:<port>`，端口见 system `<workspace>` 段），供脚本、快应用、外部程序调用，所有调用方同一套认证。
+core 在本机暴露 HTTP API（基址见 system `<local_api>` 段，形如 `http://127.0.0.1:5260`），供脚本、快应用、外部程序调用，所有调用方同一套认证。
 
 ## 判定
 

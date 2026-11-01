@@ -6,7 +6,7 @@ require (
 	github.com/aymanbagabas/go-pty v0.2.3
 	github.com/coder/websocket v1.8.14
 	github.com/gin-gonic/gin v1.12.0
-	github.com/xuanlv2002/ezloop v1.4.3
+	github.com/xuanlv2002/ezloop v1.5.0
 )
 
 require (
