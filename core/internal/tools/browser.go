@@ -107,7 +107,7 @@ func SharedBrowser(b BrowserIO) []types.Tool {
 		types.NewTool("browser_action",
 			"操作/观察一个浏览器标签页(tabId 必填,browser_tab list 可查)。只有 7 个 action:"+
 				"navigate 打开网址并等加载;"+
-				"read 读页面内容(mode=text 正文/elements 可交互元素清单含选择器/html/links/element 单元素/frames 子帧清单;选择器穿透 shadow DOM 与同源 iframe,跨域 iframe 只给帧地址);"+
+				"read 读页面内容(mode=text 正文/elements 可交互元素清单含选择器/html/links/element 单元素/frames 子帧清单;选择器穿透 shadow DOM 与同源 iframe,跨域 iframe 只给帧地址;动态内容 read 拿不到时,先 eval 里 await 一下或轮询再 read);"+
 				"screenshot 截图(默认当前视口——浏览器真实渲染的那一块,尺寸与用户所见一致;fullPage=true 截整页看整体结构,按视口高分段;给 selector 只截该元素。不做设备仿真,截的就是真实大小。经 image_loaded 转图片消息,多模态模型直接看图);"+
 				"截图是昂贵操作:每次必须在 note 写明这次要确认什么(验证哪个假设/看哪个区域),目的会随图片写进上下文;一次只改一个变量,改完再截;同一画面不要重复截——先复用已有截图,能用 read/eval 拿到数值判断的就不截图;"+
 				"eval 页面内执行 JS——**页面里的 DOM 操作都走这里**:找元素/点击/填值/滚动/断言都行(已注入 __ezOne/__ezAll 深查询辅助)。脚本自动按 async 函数包裹:顶层可直接 await,末尾表达式自动作为返回值(同浏览器 console),也可显式 return;执行异常带堆栈原样回传。点击用 __ezOne(选择器).click();填值设 value 后派发 input/change(React 受控组件用原生 value setter);滚动用 window.scrollTo 或容器的 scrollTop。改了 html/body 的 zoom/transform/filter 会持续污染后续截图与坐标,会当场警告。"+

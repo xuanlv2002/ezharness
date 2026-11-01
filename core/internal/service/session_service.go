@@ -10,13 +10,15 @@ import (
 	"github.com/xuanlv2002/ezloop/ext/hook/skill"
 	"github.com/xuanlv2002/ezloop/types"
 
+	"ezharness/core/internal/builtinskill"
 	"ezharness/core/internal/domain"
 	"ezharness/core/internal/hooks"
 )
 
 /* SessionService 会话查询用例。 */
 type SessionService struct {
-	Hub *domain.Hub
+	Hub       *domain.Hub
+	Callbacks *CallbackService // 可空：状态卡展示当前会话定时回调
 }
 
 /* BootstrapData 是前端启动所需的全量数据。 */
@@ -54,6 +56,7 @@ type HistoryData struct {
 	RootID     string                 `json:"rootId"`
 	Busy       bool                   `json:"busy"`
 	Messages   []types.Message        `json:"messages"`           // 剥 system：与盘上快照同基准（分叉 msgIdx 对位）
+	Start      int                    `json:"start,omitempty"`    // tail 截取时的消息偏移（msgIdx = start + 下标）
 	TargetID   string                 `json:"targetId,omitempty"` // 向上边目标（compress 链上翻游标）
 	SeedKind   string                 `json:"seedKind,omitempty"` // new | fork | compress
 	CanPrev    bool                   `json:"canPrev"`            // 上翻是否还有上一级（后端判定，fork 换源后算）
@@ -66,22 +69,23 @@ type HistoryData struct {
 
 /* Status 是右栏状态卡数据（命中率与用量为本会话口径，切会话/重启清零）。 */
 type Status struct {
-	Model         string   `json:"model"`
-	ModelVision   bool     `json:"modelVision"` // 主模型是否支持视觉输入（false 时带图发送前端提示省略）
-	SessionID     string   `json:"sessionId"`
-	RootID        string   `json:"rootId"`
-	SessionMsgs   int      `json:"sessionMsgs"`
-	Busy          bool     `json:"busy"`
-	ContextTokens int      `json:"contextTokens"`
-	ContextWindow int      `json:"contextWindow"` // 主模型窗口（水位条分母）
-	TrimPercent   int      `json:"trimPercent"`   // 自动整理阈值（窗口百分比，水位条阈值线；0=禁用）
-	CacheHitRate  float64  `json:"cacheHitRate"`
-	PromptTokens  int      `json:"promptTokens"` // 本会话累计输入（命中率分母）
-	Turns         int      `json:"turns"`
-	Tools         []string `json:"tools"`
-	McpServers    []string `json:"mcpServers"`
-	Skills        []string `json:"skills"`
-	TopicsCount   int      `json:"topicsCount"`
+	Model         string          `json:"model"`
+	ModelVision   bool            `json:"modelVision"` // 主模型是否支持视觉输入（false 时带图发送前端提示省略）
+	SessionID     string          `json:"sessionId"`
+	RootID        string          `json:"rootId"`
+	SessionMsgs   int             `json:"sessionMsgs"`
+	Busy          bool            `json:"busy"`
+	ContextTokens int             `json:"contextTokens"`
+	ContextWindow int             `json:"contextWindow"` // 主模型窗口（水位条分母）
+	TrimPercent   int             `json:"trimPercent"`   // 自动整理阈值（窗口百分比，水位条阈值线；0=禁用）
+	CacheHitRate  float64         `json:"cacheHitRate"`
+	PromptTokens  int             `json:"promptTokens"` // 本会话累计输入（命中率分母）
+	Turns         int             `json:"turns"`
+	Tools         []string        `json:"tools"`
+	McpServers    []string        `json:"mcpServers"`
+	Skills        []string        `json:"skills"`
+	TopicsCount   int             `json:"topicsCount"`
+	Callbacks     []CallbackBrief `json:"callbacks,omitempty"` // 绑定当前会话的定时回调
 }
 
 /* Snapshot 汇总活动会话状态。 */
@@ -106,19 +110,32 @@ func (s *SessionService) Snapshot(ctx context.Context) Status {
 	}
 	ctxTokens, ctxWindow := sess.Sess.CtxInfo()
 	skills := []string{}
+	all := builtinskill.Skills()
 	if entries, err := skill.LoadDir(ctx, s.Hub.Fsys, hooks.SkillsDir); err == nil {
-		disabled := s.Hub.SettingsSnapshot().DisabledSkills
+		// 与 <skills> 段同一归置：内建优先，同名用户技能让位
 		for _, e := range entries {
-			if slices.Contains(disabled, hooks.SkillDirOf(e.Path)) {
-				continue
+			if !slices.ContainsFunc(all, func(b skill.Skill) bool {
+				return hooks.SkillDirOf(b.Path) == hooks.SkillDirOf(e.Path)
+			}) {
+				all = append(all, e)
 			}
-			skills = append(skills, e.Name)
 		}
+	}
+	disabled := s.Hub.SettingsSnapshot().DisabledSkills
+	for _, e := range all {
+		if slices.Contains(disabled, hooks.SkillDirOf(e.Path)) {
+			continue
+		}
+		skills = append(skills, e.Name)
 	}
 	vision := false
 	modelName := ""
 	if m := s.Hub.ModelsSnapshot().ActiveMain(); m != nil {
 		vision, modelName = m.Vision, m.Name
+	}
+	var callbacks []CallbackBrief
+	if s.Callbacks != nil {
+		callbacks = s.Callbacks.Brief(sess.CurrentID())
 	}
 	return Status{
 		Model:         modelName,
@@ -137,14 +154,25 @@ func (s *SessionService) Snapshot(ctx context.Context) Status {
 		McpServers:    mcp,
 		Skills:        skills,
 		TopicsCount:   len(s.Hub.Topics.Load()),
+		Callbacks:     callbacks,
 	}
 }
 
-/* History 返回指定分支的当前历史（rootID 路由；未知分支返回空数据）。 */
-func (s *SessionService) History(ctx context.Context, rootID string) HistoryData {
+/*
+History 返回指定分支的当前历史（rootID 路由；未知分支返回空数据）。
+tail>0 时只回尾部 tail 条消息，并跳过决策/分身/计划/上翻判定
+（turn_end 回填锚点等只需要尾段的场景）。
+*/
+func (s *SessionService) History(ctx context.Context, rootID string, tail int) HistoryData {
 	sess := s.Hub.SessionOf(rootID)
 	if sess == nil {
 		return HistoryData{}
+	}
+	messages := hooks.StripSystem(sess.History())
+	start := 0
+	if tail > 0 && len(messages) > tail {
+		start = len(messages) - tail
+		messages = messages[start:]
 	}
 	edge := sess.Sess.Edge()
 	if edge.TargetID == "" {
@@ -158,26 +186,31 @@ func (s *SessionService) History(ctx context.Context, rootID string) HistoryData
 		ID:         sess.ID,
 		RootID:     sess.RootID,
 		Busy:       sess.Busy(),
-		Messages:   hooks.StripSystem(sess.History()),
+		Messages:   messages,
+		Start:      start,
 		TargetID:   edge.TargetID,
 		SeedKind:   edge.SeedKind,
-		CanPrev:    s.canPrev(ctx, sess.ID),
 		ForkedFrom: edge.ForkedFrom,
 	}
-	h.Decisions = hooks.LoadDecisions(ctx, sess.Fsys, h.ID)
-	h.Forks = hooks.ListForks(ctx, sess.Fsys, h.ID)
-	h.Plan, _ = hooks.LoadPlan(ctx, sess.Fsys, sess.RootID)
+	/* tail 模式只服务轮末锚点回填：决策/分身/计划/上翻判定都不参与，
+	   不读这些档案（否则每轮都要扫全部已结束分身的 trace）。 */
+	if tail <= 0 {
+		h.CanPrev = s.canPrev(ctx, sess.ID)
+		h.Decisions = hooks.LoadDecisions(ctx, sess.Fsys, h.ID)
+		h.Forks = hooks.ListForks(ctx, sess.Fsys, h.ID)
+		h.Plan, _ = hooks.LoadPlan(ctx, sess.Fsys, sess.RootID)
+	}
 	return h
 }
 
 /* canPrev 判定 id 上翻是否还有上一级（与 Prev 同规则：fork 换源后算）。 */
 func (s *SessionService) canPrev(ctx context.Context, id string) bool {
-	cur, err := hooks.LoadSnap(ctx, s.Hub.Fsys, id)
+	cur, err := hooks.LoadSnapMeta(ctx, s.Hub.Fsys, id)
 	if err != nil {
 		return false
 	}
 	if cur.SeedKind == "fork" && cur.TargetID != "" {
-		src, serr := hooks.LoadSnap(ctx, s.Hub.Fsys, cur.TargetID)
+		src, serr := hooks.LoadSnapMeta(ctx, s.Hub.Fsys, cur.TargetID)
 		if serr != nil {
 			return false
 		}
@@ -223,12 +256,12 @@ Prev 沿向上边取 id 的上一会话内容（向上滚动懒加载）。id �
 源无上级则到底。
 */
 func (s *SessionService) Prev(ctx context.Context, id string) (*PrevData, bool, error) {
-	cur, err := hooks.LoadSnap(ctx, s.Hub.Fsys, id)
+	cur, err := hooks.LoadSnapMeta(ctx, s.Hub.Fsys, id)
 	if err != nil {
 		return nil, false, err
 	}
 	if cur.SeedKind == "fork" && cur.TargetID != "" {
-		src, serr := hooks.LoadSnap(ctx, s.Hub.Fsys, cur.TargetID)
+		src, serr := hooks.LoadSnapMeta(ctx, s.Hub.Fsys, cur.TargetID)
 		if serr != nil {
 			return nil, false, nil
 		}

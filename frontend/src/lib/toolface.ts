@@ -7,7 +7,7 @@ export type ToolFace =
   | { kind: 'code'; path: string; content: string }
   | { kind: 'diff'; path: string; old: string; new: string }
   | { kind: 'cmd'; command: string }
-  | { kind: 'plan'; plan: string; progress: { title: string; status: string }[] }
+  | { kind: 'plan'; goal: string; context: string; design: string; progress: { title: string; status: string }[]; verify: string }
 
 export function toolFace(name: string, raw: string): ToolFace | null {
   let a: any
@@ -26,13 +26,18 @@ export function toolFace(name: string, raw: string): ToolFace | null {
     case 'term_action':
       return a.action === 'send' && typeof a.command === 'string' ? { kind: 'cmd', command: a.command } : null
     case 'plan': {
-      const plan = typeof a.plan === 'string' ? a.plan : ''
+      const goal = typeof a.goal === 'string' ? a.goal : ''
+      const context = typeof a.context === 'string' ? a.context : ''
+      const design = typeof a.design === 'string' ? a.design : ''
+      const verify = typeof a.verify === 'string' ? a.verify : ''
       const progress = Array.isArray(a.progress)
         ? a.progress
             .filter((p: any) => p && typeof p.title === 'string')
             .map((p: any) => ({ title: String(p.title), status: String(p.status || 'pending') }))
         : []
-      return a.action === 'new' || plan || progress.length ? { kind: 'plan', plan, progress } : null
+      return a.action === 'new' || goal || context || design || verify || progress.length
+        ? { kind: 'plan', goal, context, design, progress, verify }
+        : null
     }
   }
   return null

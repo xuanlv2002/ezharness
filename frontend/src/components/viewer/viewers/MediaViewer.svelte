@@ -6,12 +6,11 @@
   */
 
   import type { ResTab } from '../registry'
-  import { authUrl } from '../../../lib/auth'
 
   let { tab }: { tab: ResTab; active?: boolean } = $props()
 
   const isAudio = /\.(mp3|wav|ogg|flac|m4a|aac)$/i.test(tab.path ?? '')
-  const url = authUrl('/api/workspace/file?path=' + encodeURIComponent(tab.path ?? ''))
+  const url = '/api/workspace/file?path=' + encodeURIComponent(tab.path ?? '')
   let err = $state('')
 </script>
 

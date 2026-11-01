@@ -30,6 +30,17 @@
   const tools = $derived(s?.tools ?? [])
   const mcp = $derived(s?.mcpServers ?? [])
   const skills = $derived(s?.skills ?? [])
+  const callbacks = $derived(s?.callbacks ?? [])
+
+  /* 下次运行时间：今天只显示时刻，跨天带月-日 */
+  function fmtTime(ts?: number): string {
+    if (!ts) return '-'
+    const d = new Date(ts)
+    const now = new Date()
+    const pad = (n: number) => String(n).padStart(2, '0')
+    const hm = `${pad(d.getHours())}:${pad(d.getMinutes())}`
+    return d.toDateString() === now.toDateString() ? hm : `${d.getMonth() + 1}-${d.getDate()} ${hm}`
+  }
 </script>
 
   <aside class="card">
@@ -84,6 +95,19 @@
     <span class="label">Skill</span>
     {#if skills.length}
       <div class="chips">{#each skills as k (k)}<i class="chip">{k}</i>{/each}</div>
+    {:else}<span class="none">-</span>{/if}
+  </div>
+  <div class="caps">
+    <span class="label">定时回调</span>
+    {#if callbacks.length}
+      <div class="chips">
+        {#each callbacks as c (c.id)}
+          <i class="chip" class:off={!c.enabled}
+            title={`${c.schedule}${c.enabled && c.nextRunAt ? ` · 下次 ${fmtTime(c.nextRunAt)}` : ''}${c.enabled ? '' : ' · 已停用'}`}>
+            {c.title}{#if c.enabled && c.nextRunAt} · {fmtTime(c.nextRunAt)}{/if}
+          </i>
+        {/each}
+      </div>
     {:else}<span class="none">-</span>{/if}
   </div>
   </aside>
@@ -223,5 +247,8 @@
     border-radius: 5px;
     padding: 1.5px 6px;
     white-space: nowrap;
+  }
+  .chip.off {
+    opacity: 0.55;
   }
 </style>

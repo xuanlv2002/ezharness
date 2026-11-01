@@ -6,6 +6,12 @@
     <title>ezharness</title>
   </head>
   <!-- 拖放遮罩反馈由前端 dropzone 承担（浏览器/桌面壳一套 UI） -->
+  <!-- 主题预置：首帧前定好 data-theme（记忆值优先，无记忆跟系统），晚设会闪一下浅色 -->
+  <script>
+    document.documentElement.dataset.theme =
+      localStorage.getItem('ez-theme') ||
+      (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')
+  </script>
   <body>
     <div id="app"></div>
     <script type="module" src="/src/main.ts"></script>

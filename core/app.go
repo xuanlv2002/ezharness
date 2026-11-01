@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"ezharness/core/internal/config"
+	"ezharness/core/internal/controller"
 	"ezharness/core/internal/domain"
 	"ezharness/core/internal/osfs"
 	"ezharness/core/internal/service"
@@ -30,13 +31,14 @@ import (
 type app struct {
 	mu        sync.Mutex
 	cfg       config.Config
-	token     string                   // API 访问令牌（进程级常量，换代沿用）
+	tokens    *controller.TokenStore   // 双令牌：会话（进程内）+ openapi（落盘 openapi.json）
 	hub       *domain.Hub              // 当前代领域根（换代重建；退出/换代收尾用）
 	srv       *http.Server             // 当前代 HTTP 服务
 	term      *service.TerminalService // 当前代共享终端（换代重建；收尾杀全部 shell）
 	browser   *service.BrowserService  // 共享浏览器桥（端无关，跨代复用；真实浏览器在 desktop 壳）
 	mcpRouter *mcp.Router              // 系统级 MCP router（全局唯一：agent hook 与页面/API 共用连接池，跨代复用）
 	mcpAuth   *service.McpAuthManager  // MCP OAuth 认证管理器（全局单例：令牌落盘 + loopback 回调，跨代复用）
+	callbacks *service.CallbackService // 当前代定时回调调度器（换代重建；停机先停它）
 	boot      atomic.Int64             // 服务代际（换代重启递增，跨代共享）
 }
 
@@ -44,6 +46,13 @@ type app struct {
 func (a *app) setTerm(t *service.TerminalService) {
 	a.mu.Lock()
 	a.term = t
+	a.mu.Unlock()
+}
+
+/* setCallbacks 记录当前代定时回调调度器（buildRouter 装配时调用）。 */
+func (a *app) setCallbacks(c *service.CallbackService) {
+	a.mu.Lock()
+	a.callbacks = c
 	a.mu.Unlock()
 }
 
@@ -62,7 +71,9 @@ func newApp(c config.Config, token string) (*app, error) {
 	if len(created) > 0 {
 		log.Printf("数据目录初始化：新建 %d 个配置文件（%s）", len(created), strings.Join(created, "、"))
 	}
-	return &app{cfg: c, token: token}, nil
+	// openapi 令牌随数据目录（换代切目录时在 restart 重新加载）
+	tokens := controller.NewTokenStore(token, service.LoadOrCreateOpenapiToken())
+	return &app{cfg: c, tokens: tokens}, nil
 }
 
 /* start 启动第一代 server（端口占用失败即退出）。 */
@@ -112,6 +123,8 @@ func (a *app) restart(port int, listen, dataDir string, ln net.Listener) {
 		}
 	}
 	config.FollowDataDir(dataDir) // 日志文件跟随数据目录换代
+	// 换代可能切数据目录：openapi 令牌随新目录的 openapi.json（缺则新建）
+	a.tokens.SetOpenapi(service.LoadOrCreateOpenapiToken())
 	engine := a.buildRouter()
 	srv := &http.Server{Handler: engine}
 	a.mu.Lock()
@@ -158,10 +171,15 @@ OnEnd 落盘，不等待直接退出会丢整轮），再直接 Close 关 HTTP�
 */
 func (a *app) shutdownGeneration() {
 	a.mu.Lock()
-	hub, srv, term := a.hub, a.srv, a.term
+	hub, srv, term, callbacks := a.hub, a.srv, a.term, a.callbacks
 	a.srv = nil
 	a.term = nil
+	a.callbacks = nil
 	a.mu.Unlock()
+	// 先停调度再收尾会话：否则停机/换代期间还会触发新轮或写 callbacks.json
+	if callbacks != nil {
+		callbacks.Stop()
+	}
 	if term != nil {
 		term.Shutdown(3 * time.Second) // 换代=换数据目录:杀全部终端 shell
 	}
@@ -193,7 +211,7 @@ func syncDrained(dataDir, activeID string) {
 	if activeID == "" || filepath.Clean(cwd) == filepath.Clean(dataDir) {
 		return
 	}
-	for _, f := range []string{"stats.json", "topics.json"} {
+	for _, f := range []string{"stats.json", "topics.json", "callbacks.json"} {
 		if data, err := os.ReadFile(filepath.Join(cwd, f)); err == nil {
 			if wErr := os.WriteFile(filepath.Join(dataDir, f), data, 0o644); wErr != nil {
 				log.Printf("换代同步 %s 失败: %v", f, wErr)

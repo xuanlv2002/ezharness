@@ -2,6 +2,7 @@
   import { store } from '../lib/store.svelte'
   import type { DecisionData } from '../lib/store.svelte'
   import ToolFace from './ToolFace.svelte'
+  import PlanReviewCard from './PlanReviewCard.svelte'
 
   let { data }: { data: DecisionData } = $props()
 
@@ -33,9 +34,17 @@
       if (data.resolved) open = collapsed
     }}
   >
-    {#if data.dtype === 'approve'}
+    {#if data.dtype === 'plan'}
+      <span class="icon plan">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M4 6h9M4 12h9M4 18h9" />
+          <path d="M17 6l1.6 1.6L21.5 4.6" />
+        </svg>
+      </span>
+      <span class="title">任务计划待确认</span>
+    {:else if data.dtype === 'approve'}
       <span class="icon approve">?</span>
-      <span class="title">{data.name === 'plan' ? '计划待批准' : '审批请求'}</span>
+      <span class="title">审批请求</span>
     {:else if data.dtype === 'mcp-auth'}
       <span class="icon auth">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
@@ -58,6 +67,9 @@
   </div>
 
   {#if !collapsed}
+  {#if data.dtype === 'plan'}
+    <PlanReviewCard {data} />
+  {:else}
   <div class="content">
     {#if data.dtype === 'mcp-auth'}
       <p class="question">
@@ -85,12 +97,20 @@
 
   {#if !data.resolved}
     {#if data.dtype === 'approve'}
+      <!-- 键位提示常驻：回车在填了理由时 = 带理由拒绝，不静默改键 -->
+      <p class="hint">填写理由后按 Enter 拒绝；点「批准」放行</p>
       <div class="actions">
         <input
           type="text"
           placeholder="拒绝理由（可选）"
           bind:value={input}
-          onkeydown={(e) => e.stopPropagation()}
+          onkeydown={(e) => {
+            e.stopPropagation()
+            if (e.key === 'Enter' && !e.isComposing && input.trim()) {
+              e.preventDefault()
+              approve(false)
+            }
+          }}
         />
         <button class="btn ghost" onclick={() => approve(false)}>拒绝</button>
         <button class="btn solid" onclick={() => approve(true)}>批准</button>
@@ -110,12 +130,13 @@
           bind:value={input}
           onkeydown={(e) => {
             e.stopPropagation()
-            if (e.key === 'Enter' && input.trim()) answer()
+            if (e.key === 'Enter' && !e.isComposing && input.trim()) answer()
           }}
         />
         <button class="btn solid" onclick={answer}>回答</button>
       </div>
     {/if}
+  {/if}
   {/if}
   {/if}
 </div>
@@ -167,6 +188,10 @@
     height: 11px;
   }
   .icon.auth {
+    color: var(--accent);
+    border-color: color-mix(in srgb, var(--accent) 40%, var(--line-strong));
+  }
+  .icon.plan {
     color: var(--accent);
     border-color: color-mix(in srgb, var(--accent) 40%, var(--line-strong));
   }
@@ -238,6 +263,12 @@
     font-family: var(--font-mono);
     font-size: var(--font-size-section);
     font-weight: 700;
+  }
+  /* 键位提示：常驻一行小字，让「回车=拒绝」可见 */
+  .hint {
+    padding: 0 14px 8px;
+    font-size: var(--font-size-small);
+    color: var(--faint);
   }
   .actions {
     display: flex;

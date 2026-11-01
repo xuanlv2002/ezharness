@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"ezharness/core/internal/callback"
 	"ezharness/core/internal/domain"
 	"ezharness/core/internal/hooks"
 	"ezharness/core/internal/osfs"
@@ -60,6 +61,9 @@ func EnsureLayout() ([]string, error) {
 		}},
 		{hooks.TopicsJson, func(ctx context.Context, fsys osfs.OS) error {
 			return fsys.Write(ctx, hooks.TopicsJson, []byte("[]\n"))
+		}},
+		{callback.FileName, func(ctx context.Context, fsys osfs.OS) error {
+			return fsys.Write(ctx, callback.FileName, []byte("[]\n"))
 		}},
 		{"mcp.json", func(ctx context.Context, fsys osfs.OS) error {
 			data, err := json.MarshalIndent(McpFile{Servers: []McpServerFile{}}, "", "  ")

@@ -11,6 +11,7 @@ import {
   type HistoryMessage,
   type ImagePayload,
   type ModelEntry,
+  type PlanProgress,
   type ReasoningEffort,
   type Settings,
   type SessionPlan,
@@ -18,8 +19,28 @@ import {
   type Status,
   type StatusPayload,
 } from './api'
+import { parseCallbackMessage, type CallbackMessageMeta } from './callbackMessage'
 import { filePane } from './filePaneState'
 import { openExternal } from './desktop'
+import pkg from '../../package.json'
+
+/* newerVersion：a 是否比 b 新（v 前缀可有可无，按点分段数值比较，缺段补 0）。
+   本地版本 = pkg.version（与页脚同源）；设置页版本检查共用。 */
+export function newerVersion(a: string, b: string): boolean {
+  const parts = (s: string) =>
+    s
+      .trim()
+      .replace(/^v/, '')
+      .split('.')
+      .map((n) => parseInt(n, 10) || 0)
+  const x = parts(a)
+  const y = parts(b)
+  for (let i = 0; i < Math.max(x.length, y.length); i++) {
+    const d = (x[i] ?? 0) - (y[i] ?? 0)
+    if (d !== 0) return d > 0
+  }
+  return false
+}
 
 /* 输入框附件（一切皆资源）：path = 真身路径（引用，发送不复制）；
    空 = 拖入暂存中占位 */
@@ -56,11 +77,17 @@ export interface ForkState {
 
 export interface DecisionData {
   id: string
-  dtype: 'approve' | 'ask' | 'mcp-auth'
+  dtype: 'approve' | 'ask' | 'plan' | 'mcp-auth'
   name: string
   args: string
   question: string
   options: string[]
+  /* plan：待确认方案五段（只读展示；解析失败的兜底为空，由卡片提示） */
+  goal: string
+  context: string
+  design: string
+  progress: PlanProgress[]
+  verify: string
   forkId: string
   resolved: boolean
   resolution: string
@@ -71,7 +98,7 @@ export interface DecisionData {
 export interface NoticeData {
   id: string // 决策回传键（工具调用 ID）
   rootId: string // 所属分支根（跳转与决策端点路由键）
-  kind: 'approve' | 'ask' | 'info' | 'mcp_auth' | 'memory'
+  kind: 'approve' | 'ask' | 'plan' | 'info' | 'callback' | 'mcp_auth' | 'memory'
   source: string // 'agent'、分支名或 fork 标识
   forkId: string // 非空＝分身请求：跳转打开分身抽屉而非主时间线
   title: string
@@ -79,7 +106,7 @@ export interface NoticeData {
   time: string
   status: 'pending' | 'done'
   resolution: string
-  target: string // 时间线跳转锚点（decision-<id>）；本地记忆通知用 'memory-view'
+  target: string // 跳转目标：decision-<id> / memory-view / callback-session:<root> / callback-task:<id>
   local?: boolean // 本地生成（非后端轮询来源）：refreshNotices 不覆盖、dismiss 不回传
 }
 
@@ -94,6 +121,8 @@ export type Block = { uid: number } & (
       /* 文件引用 chips（文件页「添加到对话」→<reference_file>）：count
          = 标注条数（历史重建不还原片段全文，chip 点击回跳文件页） */
       fileRefs?: { path: string; count: number }[]
+      /* 定时回调消息：标签元数据（text 已去掉包装，只留任务正文） */
+      callback?: CallbackMessageMeta
       owner?: string
       msgIdx?: number
     }
@@ -201,10 +230,16 @@ class AppStore {
   blocks = $state<Block[]>([])
   forks = $state<Record<string, ForkState>>({})
   notices = $state<NoticeData[]>([])
+  /* 回调投递即前台：启动后新出现的会话投递通知自动开标签切过去
+     （bootedAt 过滤启动前的旧通知，刷新页面不重放抢屏）。 */
+  private autoOpenSeen = new Set<string>()
+  private readonly bootedAt = Date.now()
   /* 本轮已处理的记忆待确认操作（op id → 结果）：通知栏与聊天记忆卡共用的确认入口，
      本地记录结果给卡片落定状态（后端返回后待确认项即消失） */
   memoryDecisions = $state<Record<string, 'accept' | 'cancel'>>({})
-  jumpView = $state<'' | 'memory'>('') // 通知跳页请求（App 消费后清空）
+  jumpView = $state<'' | 'chat' | 'memory' | 'callbacks'>('') // 通知跳页请求（App 消费后清空）
+  /* 定时回调通知要展开的任务（回调页消费后清空） */
+  callbackFocus = $state('')
   jumpAnchor = $state('') // 顶栏搜索跳转目标（view:anchor，目标视图消费后清空）
   lastTool = $state('')
   busy = $state(false)
@@ -262,6 +297,11 @@ class AppStore {
   private modelsFetched = false
   settings = $state<Settings | null>(null)
   total = $state<TotalUsage>({ prompt: 0, completion: 0, cached: 0 })
+  /* 版本检查（启动静默查一次 + 设置页手动查共用）：updateAvailable 非空 =
+     有新版本，侧栏设置钮与设置页版本区的红点、前往下载入口都由它驱动；
+     updateChecked 标记首查已完成（设置页首屏直接给"已是最新"结论） */
+  updateAvailable = $state<{ latest: string; url: string } | null>(null)
+  updateChecked = $state(false)
 
   /* 懒加载：compact 链上是否还有旧会话可翻、是否正在加载 */
   hasPrev = $state(false)
@@ -314,6 +354,7 @@ class AppStore {
     this.unsub?.()
     this.unsub = subscribe(this.activeId, (ev) => this.apply(ev))
     this.refreshNotices()
+    void this.refreshUpdate() // 启动静默查版本：有新版 → 侧栏设置钮红点
     setInterval(() => {
       // 未决通知出没联动分支拉取（待审批角标数据源）：出现期间持续拉、
       // 消失后补拉一轮收尾；后台标签活跃照旧拉
@@ -332,6 +373,23 @@ class AppStore {
       const b = this.branches.find((x) => x.id === t.rootId)
       return !!b && !!(b.running || b.waiting)
     })
+  }
+
+  /* refreshUpdate 查一次最新版本：网络失败静默（启动路径不提示，设置页
+  手动路径由调用方展示 err）。返回 {err, latest} 供设置页渲染结论。 */
+  async refreshUpdate(): Promise<{ err: string; latest: boolean }> {
+    try {
+      const r = await api.checkUpdate()
+      this.updateChecked = true
+      if (newerVersion(r.latest, pkg.version)) {
+        this.updateAvailable = r
+        return { err: '', latest: false }
+      }
+      this.updateAvailable = null
+      return { err: '', latest: true }
+    } catch (e) {
+      return { err: (e as Error).message, latest: false }
+    }
   }
 
   async refreshStatus() {
@@ -463,13 +521,23 @@ class AppStore {
   /* 历史重建：user/assistant/tool 消息序列，tool_calls 展开为工具块；决策记录映射为徽标。
      forks 摘要按 task 调用顺序插分身入口卡（forkID 升序与调用序一致）。
      owner=消息所属 session ID，与各消息下标配对供分叉定位。 */
-  private buildBlocks(messages: HistoryMessage[], decisions?: DecisionRecord[], forks?: ForkSummary[], owner?: string): Block[] {
+  private buildBlocks(messages: HistoryMessage[], decisions?: DecisionRecord[], forks?: ForkSummary[], owner?: string, msgStart = 0): Block[] {
     const dmap = new Map((decisions || []).map((d) => [d.callId, d.resolution]))
     const forkQueue = [...(forks || [])]
     const out: Block[] = []
+    /* 工具结果回填索引：大会话里按 call id 反查块（原先每条约 O(n) 全表扫） */
+    const toolByID = new Map<string, Extract<Block, { kind: 'tool' }>>()
     for (let mi = 0; mi < messages.length; mi++) {
       const m = messages[mi]
       if (m.role === 'user') {
+        const cbMsg = parseCallbackMessage(m.content)
+        if (cbMsg) {
+          out.push({
+            kind: 'user', uid: this.nuid(), text: cbMsg.body, callback: cbMsg.meta,
+            images: m.images, owner, msgIdx: msgStart + mi,
+          })
+          continue
+        }
         const d = parseStatus(m.content) // JSON 载荷
         if (d) {
           // 状态记录仅水位异常时入时间线，平时只在右上角
@@ -537,7 +605,7 @@ class AppStore {
         } else if (!m.content.trim() && !m.images?.length) {
           // 空输入（纯附件轮，引用已由上一块独立呈现）：不渲染
         } else {
-          out.push({ kind: 'user', uid: this.nuid(), text: m.content, images: m.images, owner, msgIdx: mi })
+          out.push({ kind: 'user', uid: this.nuid(), text: m.content, images: m.images, owner, msgIdx: msgStart + mi })
         }
       } else if (m.role === 'assistant') {
         if (m.content || m.reasoning) {
@@ -548,7 +616,7 @@ class AppStore {
             reasoning: m.reasoning || '',
             streaming: false,
             owner,
-            msgIdx: mi,
+            msgIdx: msgStart + mi,
           })
         }
         // 展开工具调用：名称与参数来自 tool_calls（Args 序列化后是嵌套对象，非字符串）
@@ -568,6 +636,7 @@ class AppStore {
           const started = tc.Name === 'task' && forkQueue.length > 0
           if (started) tb.hidden = true
           out.push(tb)
+          if (tb.id) toolByID.set(tb.id, tb)
           if (started) {
             const f = forkQueue.shift()!
             out.push({ kind: 'fork', uid: this.nuid(), forkId: f.id })
@@ -575,12 +644,12 @@ class AppStore {
         }
       } else if (m.role === 'tool') {
         // 按调用 ID 回填结果到对应工具块
-        const target = [...out].reverse().find((b) => b.kind === 'tool' && b.id === m.tool_call_id)
-        if (target && target.kind === 'tool') {
+        const target = m.tool_call_id ? toolByID.get(m.tool_call_id) : undefined
+        if (target) {
           target.result = m.content || ''
           target.err = m.err || ''
         } else {
-          out.push({
+          const orphan: Extract<Block, { kind: 'tool' }> = {
             kind: 'tool',
             uid: this.nuid(),
             id: m.tool_call_id || '',
@@ -589,7 +658,9 @@ class AppStore {
             result: m.content || '',
             err: m.err || '',
             state: 'done',
-          })
+          }
+          out.push(orphan)
+          if (orphan.id) toolByID.set(orphan.id, orphan)
         }
       }
     }
@@ -603,9 +674,10 @@ class AppStore {
   文本对不上保守停止——只是按钮暂缺，切页重建自愈 */
   private async backfillForkAnchors(sessionId: string) {
     try {
-      const s = await api.getHistory(sessionId)
+      // 只要尾段：大会话不必为一轮锚点重拉全文（msgStart 把下标拉回绝对值）
+      const s = await api.getHistory(sessionId, 200)
       if (sessionId !== this.activeId) return // 等待期间已切分支：别写错时间线
-      const rebuilt = this.buildBlocks(s.messages, undefined, undefined, s.id)
+      const rebuilt = this.buildBlocks(s.messages, undefined, undefined, s.id, s.start ?? 0)
       let j = rebuilt.length - 1
       for (let i = this.blocks.length - 1; i >= 0 && j >= 0; i--) {
         const b = this.blocks[i]
@@ -1013,6 +1085,20 @@ class AppStore {
     }
   }
 
+  /* openSession 打开会话并切到对话页（通知与回调记录跳转共用）。 */
+  async openSession(rootId: string) {
+    if (!rootId) return
+    await this.openTab(rootId)
+    if (this.activeId === rootId) this.jumpView = 'chat'
+  }
+
+  /* openCallbackTask 从回调消息卡跳到对应任务详情。 */
+  openCallbackTask(taskId: string) {
+    if (!taskId) return
+    this.callbackFocus = taskId
+    this.jumpView = 'callbacks'
+  }
+
   /* closeTab：关标签即停会话（关掉的线在跑就取消当前轮，别让它悄悄在
      列表里继续跑）；关活动标签激活右邻（退化左邻，浏览器惯例）；最后
      一个 → 空状态（退订 SSE、清视图——会话本身留在列表，仅停轮）。 */
@@ -1144,6 +1230,18 @@ class AppStore {
     this.markToolDecision(block.id, block.resolution)
     this.removeResolvedDecisions(block.id)
     await api.decideAnswer(this.activeId, block.id, input).catch(() => {})
+  }
+
+  /* decidePlan 计划确认卡：confirm 放行，feedback 带意见；
+     与 approve 同款先乐观结算卡片再回传，失败静默（通知栏轮询兜底） */
+  async decidePlan(block: DecisionData, action: 'confirm' | 'feedback', feedback: string) {
+    if (!this.activeId) return
+    const fb = feedback.trim()
+    block.resolved = true
+    block.resolution = action === 'confirm' ? '已确认计划' : fb ? `已反馈：${fb}` : '已反馈'
+    this.markToolDecision(block.id, block.resolution)
+    this.removeResolvedDecisions(block.id)
+    await api.decidePlan(this.activeId, block.id, action, fb).catch(() => {})
   }
 
   /* ── MCP OAuth 授权（会话内 = 时间线里的决策卡，同 approve/ask） ── */
@@ -1297,10 +1395,13 @@ class AppStore {
         for (const it of g.items) {
           let question = ''
           let info = ''
+          let jump = ''
           try {
             const a = it.args ? JSON.parse(it.args) : {}
-            question = a.question || ''
+            /* 计划通知用「目标」当摘要（计划参数里没有 question） */
+            question = a.question || (it.kind === 'plan' && typeof a.goal === 'string' ? a.goal : '')
             info = a.detail || ''
+            jump = typeof a.target === 'string' ? a.target : ''
           } catch {
             /* 非法 JSON 忽略 */
           }
@@ -1309,15 +1410,24 @@ class AppStore {
             id: it.callId,
             rootId: g.rootId,
             kind: it.kind,
-            source: it.forkId ? '分身' : name || 'agent',
+            source: g.rootId === 'callbacks' ? '定时回调' : it.forkId ? '分身' : name || 'agent',
             forkId: it.forkId || '',
-            title: it.tool,
+            title: it.kind === 'plan' ? '任务计划待确认' : it.tool,
             detail: done ? info : question,
             time: new Date(it.ts || Date.now()).toTimeString().slice(0, 5),
             status: done ? 'done' : 'pending',
             resolution: done ? '已完成' : '',
-            target: done || it.kind === 'memory' ? '' : `decision-${it.callId}`,
+            target: done || it.kind === 'callback' ? jump : it.kind === 'memory' ? '' : `decision-${it.callId}`,
           })
+          if (
+            it.kind === 'callback' &&
+            jump.startsWith('callback-session:') &&
+            it.ts > this.bootedAt - 5000 &&
+            !this.autoOpenSeen.has(it.callId)
+          ) {
+            this.autoOpenSeen.add(it.callId)
+            void this.openSession(jump.slice('callback-session:'.length))
+          }
         }
       }
       const local = this.notices.filter((n) => n.local)
@@ -1362,22 +1472,40 @@ class AppStore {
     this.notices = this.notices.filter((x) => !(x.id === n.id && x.rootId === n.rootId))
     try {
       if (n.kind === 'approve') await api.decideApprove(n.rootId, n.id, action === 'approve', '')
+      else if (n.kind === 'plan') await api.decidePlan(n.rootId, n.id, 'confirm', '')
       else await api.decideAnswer(n.rootId, n.id, input ?? '')
     } catch {
       await this.refreshNotices()
     }
   }
 
-  /* jumpToNoticeRef 跳转到通知来源（外部窗口传入的裸标识）：跨分支先
-  切换（等待历史加载），分身请求打开抽屉定位，主时间线经 jumpMain 锚点
-  由 ChatView 滚动。 */
+  /* jumpToNoticeRef 跳转到通知来源（外部窗口传入的裸标识）：回调通知
+  按 target 打开会话或回调页任务，其他跨分支先切换（等待历史加载），
+  分身请求打开抽屉定位，主时间线经 jumpMain 锚点由 ChatView 滚动。 */
   async jumpToNoticeRef(ref: Pick<NoticeData, 'rootId' | 'forkId' | 'id' | 'target'>) {
-    if (ref.target === 'memory-view') {
+    const target = ref.target || ''
+    if (target.startsWith('callback-session:')) {
+      // 会话回调投递成功：直接打开触发的会话
+      await this.openSession(target.slice('callback-session:'.length))
+      return
+    }
+    if (target.startsWith('callback-task:')) {
+      // 快应用/脚本/失败回调：打开回调页并展开该任务
+      this.callbackFocus = target.slice('callback-task:'.length)
+      this.jumpView = 'callbacks'
+      return
+    }
+    if (target === 'memory-view') {
       // 本地记忆通知：打开记忆页（用户查看即确认，关闭通知条即已读）
       this.jumpView = 'memory'
       return
     }
-    if (ref.rootId && ref.rootId !== this.activeId) await this.openTab(ref.rootId)
+    if (ref.rootId === 'callbacks') {
+      // 无任务锚点的回调通知：打开回调页
+      this.jumpView = 'callbacks'
+      return
+    }
+    if (ref.rootId) await this.openSession(ref.rootId)
     if (!ref.target) return // 完成通知：切到该会话即可，无时间线锚点
     if (ref.forkId) {
       this.openFork(ref.forkId, ref.id)
@@ -1395,7 +1523,9 @@ class AppStore {
     const n = this.notices.find((x) => x.id === id)
     this.notices = this.notices.filter((x) => x.id !== id)
     // 完成通知（info）在服务端置空——否则下一轮轮询又拉回来；本地通知无服务端对应
-    if (n?.kind === 'info' && !n.local) void api.dismissNotification(n.rootId, n.id).catch(() => this.refreshNotices())
+    if ((n?.kind === 'info' || n?.kind === 'callback') && !n.local) {
+      void api.dismissNotification(n.rootId, n.id).catch(() => this.refreshNotices())
+    }
   }
 
   /* activate 切换活动会话（分支三操作/分叉/新建/引导都走它）：该会话的完成
@@ -1454,6 +1584,7 @@ class AppStore {
         const d = ev.data
         const obj = d && typeof d === 'object' ? d : null
         const text = typeof d === 'string' ? d : (obj?.text ?? '')
+        const cbMsg = parseCallbackMessage(text)
         // 新一轮开始：清空上一轮的资源变更（右上角只挂本轮）（resource.change 按需推送不自动清）
         if (!ev.forkId) this.liveChanges = []
         if (ev.forkId) {
@@ -1485,7 +1616,8 @@ class AppStore {
           }
           if (rebuildText) {
             const uid = this.nuid()
-            this.blocks.push({ kind: 'user', uid, text })
+            if (cbMsg) this.blocks.push({ kind: 'user', uid, text: cbMsg.body, callback: cbMsg.meta })
+            else this.blocks.push({ kind: 'user', uid, text })
             if (!firstUid) firstUid = uid
           }
           this.pendingUserUid = firstUid
@@ -1615,6 +1747,9 @@ class AppStore {
         const last = this.lastStreaming(bs)
         if (last) {
           last.streaming = false
+          /* 慢消费丢帧时增量正文可能不全：以聚合帧的完整内容为准校准 */
+          if (ev.data?.content) last.text = ev.data.content
+          if (ev.data?.reasoning) last.reasoning = ev.data.reasoning
         } else if (!ev.forkId && (ev.data?.content || ev.data?.reasoning)) {
           // 回放重建：无流式块时按聚合帧补完整回复（实时路径 chunk 已建块）
           this.blocks.push({
@@ -1689,11 +1824,28 @@ class AppStore {
       case 'tool_end': {
         const d = ev.data || {}
         const bs = ev.forkId ? this.ensureFork(ev.forkId).blocks : this.blocks
-        const t = bs.find((b) => b.kind === 'tool' && b.id === d.callId)
-        if (t && t.kind === 'tool') {
+        const findTool = (fn: (b: Extract<Block, { kind: 'tool' }>) => boolean) =>
+          bs.find((b): b is Extract<Block, { kind: 'tool' }> => b.kind === 'tool' && fn(b))
+        let t = findTool((b) => b.id === d.callId)
+        // tool_start 丢失时按构建期同名块认领，避免卡片永远停在「构造中」
+        if (!t) t = findTool((b) => b.state === 'building' && !!d.name && b.name === d.name)
+        if (t) {
+          t.id = d.callId || t.id
           t.result = d.content || ''
           t.err = d.err || ''
           t.state = 'done'
+        } else {
+          // 起始帧彻底丢失：补一张完成态卡片，至少保留执行痕迹与结果
+          bs.push({
+            kind: 'tool',
+            uid: this.nuid(),
+            id: d.callId || '',
+            name: d.name || '',
+            args: '',
+            result: d.content || '',
+            err: d.err || '',
+            state: 'done',
+          })
         }
         // 工具结果携带图片加载标记：实时渲染缩略图行（历史路径走
         // <image_loaded> user 消息，两条路径渲染同一 imgload 块）
@@ -1758,6 +1910,11 @@ class AppStore {
           args: '',
           question: '',
           options: [],
+          goal: '',
+          context: '',
+          design: '',
+          progress: [],
+          verify: '',
           forkId: ev.forkId || '',
           resolved: false,
           resolution: '',
@@ -1769,7 +1926,8 @@ class AppStore {
         break
       }
       case 'approve.request':
-      case 'askuser.request': {
+      case 'askuser.request':
+      case 'plan.request': {
         const d = ev.data || {}
         const id = d.id || ''
         let args = d.args
@@ -1800,14 +1958,30 @@ class AppStore {
         }
         let question = ''
         let options: string[] = []
+        let goal = ''
+        let context = ''
+        let design = ''
+        let verify = ''
+        let progress: PlanProgress[] = []
         try {
           const a = typeof args === 'string' && args ? JSON.parse(args) : {}
           question = a.question || ''
           if (Array.isArray(a.options)) options = a.options.filter((o: unknown) => typeof o === 'string')
+          /* plan.request：五段式计划（目标/背景/方案/步骤/验证），解析失败留空由卡片提示 */
+          goal = typeof a.goal === 'string' ? a.goal : ''
+          context = typeof a.context === 'string' ? a.context : ''
+          design = typeof a.design === 'string' ? a.design : ''
+          verify = typeof a.verify === 'string' ? a.verify : ''
+          if (Array.isArray(a.progress)) {
+            progress = a.progress.filter(
+              (p: any) => p && typeof p.title === 'string' && ['pending', 'running', 'completed'].includes(p.status),
+            )
+          }
         } catch {
           /* 非法 JSON 忽略 */
         }
-        const dtype: DecisionData['dtype'] = ev.type === 'approve.request' ? 'approve' : 'ask'
+        const dtype: DecisionData['dtype'] =
+          ev.type === 'approve.request' ? 'approve' : ev.type === 'plan.request' ? 'plan' : 'ask'
         const card: Block = {
           kind: 'decision',
           uid: this.nuid(),
@@ -1817,6 +1991,11 @@ class AppStore {
           args: typeof args === 'string' ? args : '',
           question,
           options,
+          goal,
+          context,
+          design,
+          progress,
+          verify,
           forkId: ev.forkId || '',
           resolved: false,
           resolution: '',

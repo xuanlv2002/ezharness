@@ -112,8 +112,7 @@
       {/if}
       <ThreadRows
         {rows}
-        avatarSize={36}
-        avatarKind="task"
+        showAvatar={false}
         liveBusy={fork.status === 'running'}
         {openGroups}
         onToggleGroup={toggleGroup}
@@ -139,14 +138,18 @@
     top: 0;
     right: 0;
     bottom: 0;
-    width: min(520px, 48vw);
+    /* 宽屏保持半开（主对话仍可见）；窄窗给内容留最低可读宽度，
+       48vw 在手机上只剩两百来像素，正文会被挤扁 */
+    width: min(520px, max(48vw, 360px), 92vw);
     /* 高于 brand-foot（fixed z50）：打开期间盖住右下角脚标，关闭恢复 */
     z-index: 55;
     display: flex;
     flex-direction: column;
+    overflow: hidden;
     background: var(--glass);
     backdrop-filter: var(--glass-blur);
     border-left: 1px solid var(--line);
+    border-radius: 16px 0 0 16px;
     box-shadow: -12px 0 32px rgb(0 0 0 / 10%);
     animation: slide-in var(--dur, 0.22s) var(--ease-out, ease-out) both;
   }
@@ -243,6 +246,7 @@
     min-height: 0;
     overflow-y: auto;
     overflow-x: hidden; /* 长路径/长参数只换行不横滚 */
+    overscroll-behavior: contain;
     scrollbar-gutter: stable; /* 预留滚动条槽：内容加载不因滚动条出现而晃动 */
     padding: 14px 16px;
     display: flex;

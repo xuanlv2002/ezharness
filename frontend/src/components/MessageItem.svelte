@@ -3,8 +3,8 @@
   import DOMPurify from 'dompurify'
   import { api, type ImagePayload } from '../lib/api'
   import { fileBaseName, isImagePath } from '../lib/textfile'
-  import { authUrl } from '../lib/auth'
   import { launchApp } from '../lib/apps'
+  import type { CallbackMessageMeta } from '../lib/callbackMessage'
   import { store } from '../lib/store.svelte'
 
   let {
@@ -16,6 +16,7 @@
     streaming = false,
     role,
     bare = false,
+    callback,
     onFork,
   }: {
     text: string
@@ -26,10 +27,17 @@
     streaming?: boolean
     role: 'user' | 'assistant'
     bare?: boolean /* 无头像形态：回复组内由组头提供唯一头像 */
+    callback?: CallbackMessageMeta /* 定时回调投递的用户消息：特殊卡头 */
     onFork?: () => void
   } = $props()
 
   marked.setOptions({ breaks: true, gfm: true })
+
+  /* 回调卡头的时间：元数据是后端本机时区 YYYY-MM-DD HH:MM:SS，列表里缩到分。 */
+  function callbackTime(at: string): string {
+    const m = at.match(/^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})/)
+    return m ? `${m[2]}-${m[3]} ${m[4]}:${m[5]}` : at
+  }
 
   /* <$supper_url> 特殊渲染语法（占位）：闭合标签解析为可点击 chip——
      http(s) 经系统浏览器打开（复用外链拦截）；term://<终端id> 拉开
@@ -242,7 +250,7 @@
 
   /* 附件预览地址（工作目录文件服务；带版本参数——画板写回后强制刷新） */
   const fileUrl = (p?: string) =>
-    p ? authUrl(`/api/workspace/file?path=${encodeURIComponent(p)}${(store.imgVer[p] ?? 0) ? `&v=${store.imgVer[p]}` : ''}`) : ''
+    p ? `/api/workspace/file?path=${encodeURIComponent(p)}${(store.imgVer[p] ?? 0) ? `&v=${store.imgVer[p]}` : ''}` : ''
 </script>
 
 {#if role === 'user'}
@@ -250,7 +258,21 @@
     {#if onFork}
       <button class="forkbtn" onclick={onFork} title="从这条消息分叉：复制到此为止的对话，开一条新分支继续">⑂ 分叉</button>
     {/if}
-    <div class="ucontent">
+    <div class="ucontent" class:cb={!!callback}>
+      {#if callback}
+        <div class="cbbar">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="9" />
+            <path d="M12 7v5l3 2" />
+          </svg>
+          <span class="cblabel">定时回调</span>
+          <span class="cbtitle" title={callback.title}>{callback.title}</span>
+          {#if callback.at}<span class="cbtime">{callbackTime(callback.at)}</span>{/if}
+          {#if callback.taskId}
+            <button class="cbopen" onclick={() => store.openCallbackTask(callback.taskId)} title="打开回调任务详情">查看任务</button>
+          {/if}
+        </div>
+      {/if}
       {#if files?.length}
         <div class="fchips">
           {#each files as f, i (i)}
@@ -459,6 +481,60 @@
     min-width: 0;
     /* 与助手输出同宽：气泡最大占满内容列 */
     max-width: 100%;
+  }
+  /* 定时回调消息：卡头 + 左侧强调线的正文气泡，与普通用户输入区分 */
+  .cbbar {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    max-width: 100%;
+    padding: 3px 9px;
+    border: 1px solid color-mix(in srgb, var(--accent) 28%, transparent);
+    border-radius: 8px;
+    background: var(--accent-soft);
+    color: var(--accent);
+    font-size: var(--font-size-small);
+    line-height: 1.5;
+  }
+  .cbbar svg {
+    flex: none;
+    width: 12px;
+    height: 12px;
+  }
+  .cblabel {
+    flex: none;
+    font-weight: 600;
+  }
+  .cbtitle {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--fg);
+  }
+  .cbtime {
+    flex: none;
+    font-family: var(--font-mono);
+    color: color-mix(in srgb, var(--accent) 62%, var(--faint));
+  }
+  .cbopen {
+    flex: none;
+    padding: 0;
+    border: none;
+    background: transparent;
+    color: var(--accent);
+    font: inherit;
+    font-size: var(--font-size-small);
+    text-decoration: underline dotted;
+    text-underline-offset: 2px;
+    cursor: pointer;
+  }
+  .cbopen:hover {
+    text-decoration-style: solid;
+  }
+  .ucontent.cb .bubble {
+    border-left: 3px solid color-mix(in srgb, var(--accent) 55%, transparent);
+    border-radius: 4px 12px 12px 4px;
   }
   .imgs {
     display: flex;

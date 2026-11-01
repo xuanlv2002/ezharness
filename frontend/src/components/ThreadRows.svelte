@@ -3,7 +3,6 @@
      保证两处块类型、工具卡、记忆 diff、资源变更、图片与收尾提示完全一致。
      两处差异只有头像尺寸/神态和是否播放历史入场动画，由 props 控制。 */
   import { store } from '../lib/store.svelte'
-  import { authUrl } from '../lib/auth'
   import { TOOL_GROUP_MIN, type Row } from '../lib/rows'
   import EzAvatar from './EzAvatar.svelte'
   import MessageItem from './MessageItem.svelte'
@@ -19,6 +18,7 @@
     avatarSize = 48,
     avatarKind = 'main',
     avatarOutside = false,
+    showAvatar = true,
     liveBusy = false,
     reveal,
     openGroups,
@@ -28,6 +28,7 @@
     avatarSize?: number
     avatarKind?: 'main' | 'task'
     avatarOutside?: boolean
+    showAvatar?: boolean
     liveBusy?: boolean
     reveal?: Set<number>
     openGroups: Set<number>
@@ -45,13 +46,14 @@
           images={ub.images}
           files={ub.files}
           fileRefs={ub.fileRefs}
+          callback={ub.callback}
           role="user"
           onFork={ub.owner && ub.msgIdx !== undefined ? () => void store.forkFrom(ub.owner!, ub.msgIdx!) : undefined}
         />
       </div>
     {:else}
       <div class="grp" class:leader={row.kind === 'leader'} class:avatar-out={avatarOutside}>
-        {#if row.kind === 'group'}
+        {#if row.kind === 'group' && showAvatar}
           {@const live = i === rows.length - 1}
           <span class="tag">
             <EzAvatar size={avatarSize} kind={avatarKind} run={live && liveBusy} animate={live}>ez</EzAvatar>
@@ -121,7 +123,7 @@
                   <img
                     src={snap
                       ? `data:${snap.mimeType};base64,${snap.data}`
-                      : authUrl(`/api/workspace/file?path=${encodeURIComponent(p)}`)}
+                      : `/api/workspace/file?path=${encodeURIComponent(p)}`}
                     alt={p}
                     loading="lazy"
                     onclick={() => store.openFileAt(p)}

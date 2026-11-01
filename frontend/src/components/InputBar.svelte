@@ -2,7 +2,6 @@
   import { onDestroy, onMount, tick, untrack } from 'svelte'
   import { store, type Attachment, type FileRef } from '../lib/store.svelte'
   import { fileBaseName, isImagePath } from '../lib/textfile'
-  import { authUrl } from '../lib/auth'
   import type { ReasoningEffort } from '../lib/api'
   import PlanPanel from './PlanPanel.svelte'
   import SessionStatus from './SessionStatus.svelte'
@@ -32,6 +31,7 @@
   let text = $state('')
   let focused = $state(false)
   let el: HTMLTextAreaElement | undefined = $state()
+  let ro: ResizeObserver | undefined
 
   /* 每标签草稿：切换标签时换出者存草稿、换入者恢复（读 text 须 untrack，
   写回自身状态再读会成环）；销毁时也存——切视图页再回来输入不丢 */
@@ -50,6 +50,7 @@
     })
   })
   onDestroy(() => {
+    ro?.disconnect()
     if (lastTabId) store.drafts[lastTabId] = text
   })
 
@@ -78,7 +79,7 @@
         name: a.name,
         path: a.path,
         isImage,
-        url: isImage && a.path ? authUrl(`/api/workspace/file?path=${encodeURIComponent(a.path)}${v ? `&v=${v}` : ''}`) : '',
+        url: isImage && a.path ? `/api/workspace/file?path=${encodeURIComponent(a.path)}${v ? `&v=${v}` : ''}` : '',
         ready: !!a.path,
       }
     }),
@@ -93,6 +94,17 @@
       el.style.height = 'auto'
       el.style.height = el.scrollHeight + 'px'
     }
+    /* 宽度变化（弹抽屉挤压主栏等）重算高度：autosize 只挂 oninput，
+    布局变窄引起的换行没人管，内容溢出就出滚动条。只认宽度变化防自触发成环 */
+    let lastW = 0
+    ro = new ResizeObserver((entries) => {
+      const w = entries[0]?.contentRect.width ?? 0
+      if (!w || w === lastW || !el) return
+      lastW = w
+      el.style.height = 'auto'
+      el.style.height = Math.min(el.scrollHeight, 200) + 'px'
+    })
+    ro.observe(el)
   })
 
   async function send() {

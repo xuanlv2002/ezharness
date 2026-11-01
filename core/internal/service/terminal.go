@@ -161,21 +161,30 @@ func shellPath() string {
 	return "/bin/sh"
 }
 
-/* Create 启动一个新终端(id 形如 t1/t2);name 是简短标识,desc 是用途描述。 */
-func (s *TerminalService) Create(name, desc, origin string) (*TermInfo, error) {
-	return s.create(s.workDir, name, desc, origin)
+/*
+Create 启动一个新终端(id 形如 t1/t2);name 是简短标识,desc 是用途描述。
+
+	cols/rows 是观看端实际列行数(0 用默认 120x30):PTY 一开始就按它排版,
+	zsh 首屏提示符的部分行标记(%)按同宽擦除,窄窗下不会残留。
+*/
+func (s *TerminalService) Create(name, desc, origin string, cols, rows int) (*TermInfo, error) {
+	return s.create(s.workDir, name, desc, origin, cols, rows)
 }
 
 /* create 是 Create 与 Launch 的公共实现;dir 是 shell 的初始目录,空则用服务 workDir。 */
-func (s *TerminalService) create(dir, name, desc, origin string) (*TermInfo, error) {
+func (s *TerminalService) create(dir, name, desc, origin string, cols, rows int) (*TermInfo, error) {
 	if dir == "" {
 		dir = s.workDir
+	}
+	/* 与 Resize 同界:越界(含 0)退回默认,不接受离谱尺寸 */
+	if cols < 2 || rows < 2 || cols > 500 || rows > 300 {
+		cols, rows = 120, 30
 	}
 	p, err := pty.New()
 	if err != nil {
 		return nil, fmt.Errorf("pty: %w", err)
 	}
-	if err := p.Resize(120, 30); err != nil {
+	if err := p.Resize(cols, rows); err != nil {
 		_ = p.Close()
 		return nil, fmt.Errorf("pty resize: %w", err)
 	}
@@ -198,7 +207,7 @@ func (s *TerminalService) create(dir, name, desc, origin string) (*TermInfo, err
 	}
 	sess := &TermSession{
 		ID: id, Name: name, Desc: desc, Origin: origin,
-		pty: p, cmd: cmd, ring: newRing(termRingSize), screen: newTermScreen(120, 30),
+		pty: p, cmd: cmd, ring: newRing(termRingSize), screen: newTermScreen(cols, rows),
 		lastOut: time.Now(), condCh: make(chan struct{}),
 	}
 	s.sessions[id] = sess
@@ -319,7 +328,7 @@ func (s *TerminalService) ListTermsJSON() string {
 返回 termResult JSON。
 */
 func (s *TerminalService) NewTerm(name, desc string) (string, error) {
-	info, err := s.Create(name, desc, "AI")
+	info, err := s.Create(name, desc, "AI", 0, 0)
 	if err != nil {
 		return "", err
 	}
@@ -333,7 +342,7 @@ Launch 在 dir 目录新建终端并写入 command，不等输出返回——给
 要看就趁早）。
 */
 func (s *TerminalService) Launch(dir, name, desc, origin, command string) (*TermInfo, error) {
-	info, err := s.create(dir, name, desc, origin)
+	info, err := s.create(dir, name, desc, origin, 0, 0)
 	if err != nil {
 		return nil, err
 	}

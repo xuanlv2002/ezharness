@@ -92,17 +92,19 @@ func NewTrim(p provider.ModelProvider, trace *Trace, threshold, window int,
 
 func (t *Trim) Name() string { return "trim" }
 
-/* OnStart 注册 trim_context 工具并注入使用说明（sys 首位重写 base 后追加，幂等）。 */
+/* OnStart 注册 trim_context 工具（使用说明走 Guide 声明）。 */
 func (t *Trim) OnStart(_ context.Context, state *types.LoopState) error {
 	state.Tools.Register(trimTool{})
-	if len(state.Messages) > 0 && state.Messages[0].Role == types.RoleSystem {
-		state.Messages[0].Content += "\n\n<tool-guide>\ntrim_context：把早期对话就地折叠为结构化摘要" +
-			"（已完成/正在做/待办/关键事实），并写入进度档案 progress.md（路径见 <session> 块），" +
-			"上下文立即变小，会话与历史档案不变。感觉上下文过长影响专注或质量时主动调用，无需用户同意。" +
-			"整理会保留任务衔接信息，调用后直接继续当前任务，不要重述将被折叠的过程细节；" +
-			"整理后需要更大范围的回忆时先读进度档案。\n</tool-guide>"
-	}
 	return nil
+}
+
+/* Guide 声明 trim_context 的使用说明（引擎组装期统一追加，顺序与幂等由引擎保证）。 */
+func (t *Trim) Guide() string {
+	return "<tool-guide>\ntrim_context：把早期对话就地折叠为结构化摘要" +
+		"（已完成/正在做/待办/关键事实），并写入进度档案 progress.md（路径见 <session> 块），" +
+		"上下文立即变小，会话与历史档案不变。感觉上下文过长影响专注或质量时主动调用，无需用户同意。" +
+		"整理会保留任务衔接信息，调用后直接继续当前任务，不要重述将被折叠的过程细节；" +
+		"整理后需要更大范围的回忆时先读进度档案。\n</tool-guide>"
 }
 
 /*

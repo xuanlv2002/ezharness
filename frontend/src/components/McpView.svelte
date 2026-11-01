@@ -1142,8 +1142,8 @@
     color: var(--fg);
   }
   .op.danger:hover {
-    border-color: #c0392b;
-    color: #c0392b;
+    border-color: var(--danger);
+    color: var(--danger);
   }
   .op-label {
     display: inline-flex;
@@ -1272,7 +1272,7 @@
     margin: 0;
   }
   .result.err {
-    color: #c0392b;
+    color: var(--danger);
   }
   .edit-form {
     display: flex;
@@ -1330,7 +1330,7 @@
   }
   .hdr-x:hover {
     background: var(--bg-soft);
-    color: #c0392b;
+    color: var(--danger);
   }
   .hdr-x svg {
     width: 10px;

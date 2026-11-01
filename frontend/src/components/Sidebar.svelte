@@ -1,7 +1,8 @@
 <script lang="ts">
   import Logo from './Logo.svelte'
+  import { store } from '../lib/store.svelte'
 
-  type View = 'chat' | 'models' | 'memory' | 'tools' | 'mcp' | 'security' | 'settings'
+  type View = 'chat' | 'models' | 'memory' | 'tools' | 'callbacks' | 'mcp' | 'security' | 'settings'
 
   let {
     view,
@@ -37,6 +38,11 @@
       icon: '<path d="M13 2L4.5 13h6L11 22l8.5-11h-6L13 2z"/>',
     },
     {
+      key: 'callbacks',
+      label: '回调',
+      icon: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
+    },
+    {
       key: 'mcp',
       label: 'MCP',
       icon: '<circle cx="5" cy="12" r="2"/><circle cx="19" cy="5" r="2"/><circle cx="19" cy="19" r="2"/><path d="M7 12h4M11 12l6-6M11 12l6 6"/>',
@@ -50,7 +56,7 @@
 
   /* 工作面（对话 + agent 产出的快应用）与 harness 配置分两组；
   设置不入数组——底部固定钮独立渲染 */
-  const work = items.filter((i) => i.key === 'chat' || i.key === 'tools')
+  const work = items.filter((i) => i.key === 'chat' || i.key === 'tools' || i.key === 'callbacks')
   const config = items.filter((i) => !work.includes(i))
 </script>
 
@@ -99,10 +105,13 @@
     onclick={() => onNavigate('settings')}
     title="设置"
   >
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-      <circle cx="12" cy="12" r="3" />
-      <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h.01a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51h.01a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v.01a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
-    </svg>
+    <span class="navicon">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="12" cy="12" r="3" />
+        <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h.01a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51h.01a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v.01a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+      </svg>
+      {#if store.updateAvailable}<i class="updot" title="有新版本，进设置查看"></i>{/if}
+    </span>
     <span class="label">设置</span>
   </button>
 
@@ -183,6 +192,21 @@
     flex: none;
     width: 18px;
     height: 18px;
+  }
+  /* 设置钮图标容器：有新版本时图标右上角挂红点（收起/展开两态都在图标角上） */
+  .navicon {
+    position: relative;
+    display: inline-flex;
+    flex: none;
+  }
+  .updot {
+    position: absolute;
+    top: -3px;
+    right: -5px;
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: #e74c3c;
   }
   .nav:hover {
     background: var(--line);

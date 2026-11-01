@@ -96,11 +96,18 @@ func Load() (Config, error) {
 	return loadLocked()
 }
 
+// defaultConfig 是首次运行/配置损坏重建时的默认配置。Listen 必须走
+// normalizeListen：落盘文件会被归一，但首次进程若直接返回未归一的空值，
+// 设置页的监听地址会显示为空（第二次启动读文件才恢复）。
+func defaultConfig() Config {
+	return Config{Port: DefaultPort, Listen: normalizeListen(""), DataDir: ResolveDataDir("data")}
+}
+
 func loadLocked() (Config, error) {
 	path := filepath.Join(Root(), "ezharness.json")
 	data, err := os.ReadFile(path)
 	if os.IsNotExist(err) {
-		c := Config{Port: DefaultPort, DataDir: ResolveDataDir("data")}
+		c := defaultConfig()
 		if err := saveLocked(c); err != nil {
 			return c, fmt.Errorf("创建配置文件 %s 失败（应用目录不可写？）: %w", path, err)
 		}
@@ -113,7 +120,7 @@ func loadLocked() (Config, error) {
 	if err := json.Unmarshal(data, &af); err != nil {
 		fmt.Printf("ezharness.json 损坏（%v），已备份为 ezharness.json.bak 并重建默认\n", err)
 		_ = os.Rename(path, path+".bak")
-		c := Config{Port: DefaultPort, DataDir: ResolveDataDir("data")}
+		c := defaultConfig()
 		if err := saveLocked(c); err != nil {
 			return c, err
 		}

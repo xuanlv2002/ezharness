@@ -36,7 +36,7 @@ type AppendFS interface {
 }
 
 /* resSnapV 是资源基线格式版本：V 不等的旧快照视为未建（静默重建，不报变更）。 */
-const resSnapV = 6
+const resSnapV = 9
 
 /* ResSnapshot 是 agent_status 的变更对比快照（skill/mcp/主模型/长期记忆 基线；启停分列）。 */
 type ResSnapshot struct {
@@ -51,6 +51,7 @@ type ResSnapshot struct {
 	Memory    []string `json:"memory,omitempty"`    // user/soul 条目签名（"目标 id|text"，增删改进 resource_change）
 	Projects  []string `json:"projects,omitempty"`  // 项目索引签名（"id|name"，增删/改名进 resource_change）
 	Apps      []string `json:"apps,omitempty"`      // 快应用签名（"id|title|version|callable|description"，增删改进 resource_change）
+	Callbacks []string `json:"callbacks,omitempty"` // 定时回调签名（"id|title|kind|enabled|schedule|target|hash"，增删改进 resource_change）
 }
 
 /* ForkOrigin 是 fork 线的展示元数据（时间线渲染"分叉自 X"，非结构依赖）。 */
@@ -75,6 +76,7 @@ type SessionSnap struct {
 	Title          string          `json:"title,omitempty"` // session 自己的名称（本代首条 user；与线标题独立）
 	Input          string          `json:"input,omitempty"`
 	Messages       []types.Message `json:"-"`                      // 运行时合成：trace.jsonl 消息行（剥 system）
+	MsgCount       int             `json:"msgCount,omitempty"`     // 消息条数（树/列表免读 trace 全文）
 	SystemPrompt   string          `json:"systemPrompt"`           // 渲染后完整 system（恢复零逻辑）
 	SystemBase     string          `json:"systemBase"`             // 基础段（人格+记忆+skill/mcp 列表）
 	SummaryBlock   string          `json:"summaryBlock,omitempty"` // compact 摘要段
@@ -86,6 +88,7 @@ type SessionSnap struct {
 	SeedKind       string          `json:"seedKind,omitempty"`       // new | fork | compress
 	LineRoot       string          `json:"lineRoot,omitempty"`       // 所属分支根 ID（冗余，链操作 O(1)）
 	ForkedFrom     *ForkOrigin     `json:"forkedFrom,omitempty"`     // 分叉出处（展示元数据）
+	ForkAnswer     string          `json:"forkAnswer,omitempty"`     // 分身的最终回答（列表摘要免读 trace）
 	LastOutputAt   int64           `json:"lastOutputAt,omitempty"`   // agent_status 距上次输出用
 	Snapshot       *ResSnapshot    `json:"snapshot,omitempty"`       // 资源清单快照（nil = 基线未建）
 	Usage          types.Usage     `json:"usage"`                    // 本会话累计用量（状态卡展示）
@@ -335,6 +338,7 @@ func (h *Store) OnEnd(ctx context.Context, state *types.LoopState) error {
 		Title:        title,
 		Input:        state.Input,
 		Messages:     msgs,
+		MsgCount:     len(msgs),
 		Tools:        toolNames(state),
 		Iterations:   state.Iteration,
 		StopReason:   string(state.StopReason),
@@ -354,7 +358,8 @@ func (h *Store) OnEnd(ctx context.Context, state *types.LoopState) error {
 	}
 	if sys != nil {
 		base, summary := sys.Parts()
-		out.SystemPrompt, out.SystemBase, out.SummaryBlock = sys.Prompt(), base, summary
+		out.SystemBase, out.SummaryBlock = base, summary
+		out.SystemPrompt = finalSystem(state, sys)
 	}
 	if tool != "" {
 		out.Model = tool
@@ -375,6 +380,13 @@ func (h *Store) OnEnd(ctx context.Context, state *types.LoopState) error {
 	}
 	if fork {
 		out.ID = state.ForkID
+		// 分身列表摘要要最终回答：落盘时顺手存下，后续列表不再扫 trace
+		for i := len(msgs) - 1; i >= 0; i-- {
+			if msgs[i].Role == types.RoleAssistant {
+				out.ForkAnswer = msgs[i].Content
+				break
+			}
+		}
 	}
 
 	// 状态覆盖写（Messages 不入 json）：marshal 失败时清洗消息里非法
@@ -456,18 +468,29 @@ func LoadMessages(ctx context.Context, fsys fs.FileSystem, id, forkID string) []
 		if len(bytes.TrimSpace(line)) == 0 {
 			continue
 		}
-		var probe struct {
-			Kind string `json:"kind"`
-		}
-		if json.Unmarshal(line, &probe) != nil || probe.Kind != "message" {
-			continue
-		}
+		// 消息行与 span 行同文件：一次解码即可判类（两趟会在长会话上翻倍）
 		var ml msgLine
-		if json.Unmarshal(line, &ml) == nil {
+		if json.Unmarshal(line, &ml) == nil && ml.Kind == "message" {
 			out = append(out, ml.Message)
 		}
 	}
 	return out
+}
+
+/* CountMessages 统计 trace.jsonl 里的消息行数（只认行首结构前缀，不解析消息体）。 */
+func CountMessages(ctx context.Context, fsys fs.FileSystem, id string) int {
+	data, err := fsys.Read(ctx, tracePath(id, ""))
+	if err != nil {
+		return 0
+	}
+	n := 0
+	for _, line := range bytes.Split(data, []byte("\n")) {
+		// 序列化时 kind 恒为首字段；嵌套在工具参数里的同名字串不算
+		if bytes.HasPrefix(bytes.TrimSpace(line), []byte(`{"kind":"message"`)) {
+			n++
+		}
+	}
+	return n
 }
 
 /* toolNames 从注册表提取本轮全部工具名。 */
@@ -478,6 +501,19 @@ func toolNames(state *types.LoopState) []string {
 		out = append(out, t.Name())
 	}
 	return out
+}
+
+/*
+finalSystem 取本轮实际发给模型的 system 全文：base+身份+摘要之外，引擎
+
+收集的 Guide 附录（系统环境与各 tool-guide）拼在消息本体上而不在
+SysPrompt 渲染值里——回顾要看到完整 system 必须取消息。异常缺席时回退。
+*/
+func finalSystem(state *types.LoopState, sys *SysPrompt) string {
+	if len(state.Messages) > 0 && state.Messages[0].Role == types.RoleSystem {
+		return state.Messages[0].Content
+	}
+	return sys.Prompt()
 }
 
 /*
@@ -542,6 +578,16 @@ func LoadDecisions(ctx context.Context, fsys fs.FileSystem, id string) []Decisio
 
 /* LoadSnap 读取指定会话快照：session.json 状态 + trace.jsonl 消息行合成。 */
 func LoadSnap(ctx context.Context, fsys fs.FileSystem, id string) (*SessionSnap, error) {
+	s, err := LoadSnapMeta(ctx, fsys, id)
+	if err != nil {
+		return nil, err
+	}
+	s.Messages = LoadMessages(ctx, fsys, id, "")
+	return s, nil
+}
+
+/* LoadSnapMeta 只读 session.json 状态，不解析 trace 消息档案（会话树等只看元数据的场景）。 */
+func LoadSnapMeta(ctx context.Context, fsys fs.FileSystem, id string) (*SessionSnap, error) {
 	data, err := fsys.Read(ctx, SessionsDir+"/"+id+"/session.json")
 	if err != nil {
 		return nil, fmt.Errorf("sessionstore: load %s: %w", id, err)
@@ -550,12 +596,44 @@ func LoadSnap(ctx context.Context, fsys fs.FileSystem, id string) (*SessionSnap,
 	if err := json.Unmarshal(data, &s); err != nil {
 		return nil, fmt.Errorf("sessionstore: decode %s: %w", id, err)
 	}
-	s.Messages = LoadMessages(ctx, fsys, id, "")
 	return &s, nil
 }
 
-/* SaveSnap 写回会话状态（sessions/<snap.ID>/session.json；Messages 在 trace.jsonl，不在此写）。 */
+/*
+RepairForkSnap 补齐 fork 分支缺失的前缀档案：fork 开新线时复制的前缀
+只存内存（session.json 不落消息，trace.jsonl 当时不建），重启后
+LoadSnap 合成出空历史。这里沿 TargetID→Anchor 回源复制（源可能是同样
+的空 fork，递归处理），补写 trace 后内存态同步可用；trace 已有内容的
+正常 fork 原样返回（前缀首轮已随消息落盘，无需修）。
+*/
+func RepairForkSnap(ctx context.Context, fsys AppendFS, snap *SessionSnap) *SessionSnap {
+	if snap.SeedKind != "fork" || snap.TargetID == "" || snap.Anchor <= 0 || len(snap.Messages) > 0 {
+		return snap
+	}
+	src, err := LoadSnap(ctx, fsys, snap.TargetID)
+	if err != nil {
+		return snap
+	}
+	src = RepairForkSnap(ctx, fsys, src)
+	if snap.Anchor > len(src.Messages) {
+		return snap // 源也没了或锚点越界：退化为现状，不挡加载
+	}
+	prefix := append([]types.Message(nil), src.Messages[:snap.Anchor]...)
+	if err := AppendMessages(ctx, fsys, snap.ID, "", prefix); err != nil {
+		return snap // 落盘失败不挡本次加载（下次再修）
+	}
+	snap.Messages = prefix
+	return snap
+}
+
+/*
+SaveSnap 写回会话状态（sessions/<snap.ID>/session.json；Messages 在 trace.jsonl，不在此写）。
+带 Messages 的快照顺手补 MsgCount（旧快照字段缺失时）。
+*/
 func SaveSnap(ctx context.Context, fsys fs.FileSystem, s *SessionSnap) error {
+	if s.MsgCount == 0 && s.Messages != nil {
+		s.MsgCount = len(s.Messages)
+	}
 	data, err := json.MarshalIndent(s, "", "  ")
 	if err != nil {
 		return err
@@ -591,14 +669,20 @@ func ListForks(ctx context.Context, fsys fs.FileSystem, id string) []ForkSummary
 	sort.Strings(names)
 	out := make([]ForkSummary, 0, len(names))
 	for _, name := range names {
-		snap, err := LoadFork(ctx, fsys, id, name)
+		// 摘要只要状态与最终回答：不整档解码分身消息（分身多的长会话历史加载变快）
+		snap, err := LoadForkMeta(ctx, fsys, id, name)
 		if err != nil {
 			continue
+		}
+		answer := snap.ForkAnswer
+		if answer == "" {
+			// 旧分身快照没有存回答：从档案尾部补读
+			answer = lastAssistantContent(ctx, fsys, id, name)
 		}
 		out = append(out, ForkSummary{
 			ID:         snap.ID,
 			Task:       strings.TrimPrefix(snap.Input, task.TaskInputPrefix),
-			Answer:     snapLastAssistant(snap.Messages),
+			Answer:     answer,
 			StopReason: snap.StopReason,
 			Iterations: snap.Iterations,
 		})
@@ -606,12 +690,31 @@ func ListForks(ctx context.Context, fsys fs.FileSystem, id string) []ForkSummary
 	return out
 }
 
+/* forkMetaPath 返回分身状态文件路径（fid 只允许目录名，防路径穿越）。 */
+func forkMetaPath(id, fid string) (string, error) {
+	if fid == "" || strings.Contains(fid, "/") || strings.Contains(fid, "\\") || strings.Contains(fid, "..") {
+		return "", fmt.Errorf("sessionstore: bad fork id %q", fid)
+	}
+	return SessionsDir + "/" + id + "/forks/" + fid + "/session.json", nil
+}
+
 /* LoadFork 读取 fork 分身快照（状态 + forks/ 子目录的增量消息行）。 */
 func LoadFork(ctx context.Context, fsys fs.FileSystem, id, fid string) (*SessionSnap, error) {
-	if fid == "" || strings.Contains(fid, "/") || strings.Contains(fid, "\\") || strings.Contains(fid, "..") {
-		return nil, fmt.Errorf("sessionstore: bad fork id %q", fid)
+	s, err := LoadForkMeta(ctx, fsys, id, fid)
+	if err != nil {
+		return nil, err
 	}
-	data, err := fsys.Read(ctx, SessionsDir+"/"+id+"/forks/"+fid+"/session.json")
+	s.Messages = LoadMessages(ctx, fsys, id, fid)
+	return s, nil
+}
+
+/* LoadForkMeta 只读分身状态（不解析增量消息档案）。 */
+func LoadForkMeta(ctx context.Context, fsys fs.FileSystem, id, fid string) (*SessionSnap, error) {
+	path, err := forkMetaPath(id, fid)
+	if err != nil {
+		return nil, err
+	}
+	data, err := fsys.Read(ctx, path)
 	if err != nil {
 		return nil, fmt.Errorf("sessionstore: load fork %s/%s: %w", id, fid, err)
 	}
@@ -619,15 +722,28 @@ func LoadFork(ctx context.Context, fsys fs.FileSystem, id, fid string) (*Session
 	if err := json.Unmarshal(data, &s); err != nil {
 		return nil, fmt.Errorf("sessionstore: decode fork %s/%s: %w", id, fid, err)
 	}
-	s.Messages = LoadMessages(ctx, fsys, id, fid)
 	return &s, nil
 }
 
-/* snapLastAssistant 取最后一条 assistant 消息正文。 */
-func snapLastAssistant(msgs []types.Message) string {
-	for i := len(msgs) - 1; i >= 0; i-- {
-		if msgs[i].Role == types.RoleAssistant {
-			return msgs[i].Content
+/*
+lastAssistantContent 从档案尾部向前找最后一条 assistant 正文（摘要用，不解析历史其余行）。
+Message 序列化时 role 为首字段，行首前缀即判类。
+*/
+func lastAssistantContent(ctx context.Context, fsys fs.FileSystem, id, forkID string) string {
+	data, err := fsys.Read(ctx, tracePath(id, forkID))
+	if err != nil {
+		return ""
+	}
+	lines := bytes.Split(data, []byte("\n"))
+	prefix := []byte(`{"kind":"message","message":{"role":"assistant",`)
+	for i := len(lines) - 1; i >= 0; i-- {
+		line := bytes.TrimSpace(lines[i])
+		if !bytes.HasPrefix(line, prefix) {
+			continue
+		}
+		var ml msgLine
+		if json.Unmarshal(line, &ml) == nil {
+			return ml.Message.Content
 		}
 	}
 	return ""
@@ -663,11 +779,14 @@ func LatestMainSnap(ctx context.Context, fsys fs.FileSystem) *SessionSnap {
 	}
 	sort.Slice(cands, func(i, j int) bool { return cands[i].mt > cands[j].mt })
 	for _, c := range cands {
-		snap, err := LoadSnap(ctx, fsys, c.id)
-		if err != nil || snap.Archived {
+		// 先看元数据挑候选：封存世代不重读消息档案
+		meta, err := LoadSnapMeta(ctx, fsys, c.id)
+		if err != nil || meta.Archived {
 			continue
 		}
-		return snap
+		if snap, err := LoadSnap(ctx, fsys, c.id); err == nil && !snap.Archived {
+			return snap
+		}
 	}
 	return nil
 }

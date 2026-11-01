@@ -2,6 +2,7 @@
 AppsService 快应用用例：按 app.quick 协议扫描 apps/ 下的目录应用（含该
 声明文件的目录才是快应用），并执行启动——开窗由调用方（desktop 壳/web
 新标签页）做，声明了 backend 的应用在这里把后端送进内置终端跑起来。
+卸载也在这里：停后端终端、删应用目录、清钉选残留。
 */
 package service
 
@@ -37,15 +38,25 @@ var ErrAppNotFound = errors.New("app not found")
 
 /* AppEntry 是快应用卡片数据。 */
 type AppEntry struct {
-	Name        string `json:"name"` // 应用目录名（应用的稳定身份）
-	Title       string `json:"title"`
-	Description string `json:"description,omitempty"` // 一句话描述
-	Version     string `json:"version,omitempty"`     // 语义化版本
-	Kind        string `json:"kind"`
-	Mtime       string `json:"mtime"`
-	Icon        string `json:"icon,omitempty"` // 卡片头像（同源 URL /apps/<名>/<icon>，空=未声明或越界）
-	Pinned      bool   `json:"pinned"`         // 已钉到桌面小助手
-	Callable    bool   `json:"callable"`       // 应用文档含「Agent 调用」一节
+	Name        string        `json:"name"` // 应用目录名（应用的稳定身份）
+	Title       string        `json:"title"`
+	Description string        `json:"description,omitempty"` // 一句话描述
+	Version     string        `json:"version,omitempty"`     // 语义化版本
+	Kind        string        `json:"kind"`
+	Mtime       string        `json:"mtime"`
+	Icon        string        `json:"icon,omitempty"`      // 卡片头像（同源 URL /apps/<名>/<icon>，空=未声明或越界）
+	Pinned      bool          `json:"pinned"`              // 已钉到桌面小助手
+	Callable    bool          `json:"callable"`            // 应用文档含「Agent 调用」一节
+	Callbacks   []AppCallback `json:"callbacks,omitempty"` // 定时调用端点（回调中心按名引用）
+}
+
+/* AppCallback 是卡片页展示用的回调端点精简视图（不携带 headers/body）。 */
+type AppCallback struct {
+	Name        string `json:"name"`
+	Title       string `json:"title,omitempty"`
+	Description string `json:"description,omitempty"`
+	Method      string `json:"method"`
+	URL         string `json:"url"`
 }
 
 /* AppView 是一次启动的结果：前端入口路径 + 后端终端（无后端时为空）。 */
@@ -57,12 +68,14 @@ type AppView struct {
 }
 
 /*
-appTerm 是快应用启动所需的终端能力（TerminalService 实现；测试注入假实现，
-不必真起 PTY）。Launch 只写入命令不等输出，后端日志留在那个终端里。
+appTerm 是快应用所需的终端能力（TerminalService 实现；测试注入假实现，
+不必真起 PTY）。Launch 只写入命令不等输出，后端日志留在那个终端里；
+Close 供卸载收掉仍在跑的后端。
 */
 type appTerm interface {
 	Launch(dir, name, desc, origin, command string) (*TermInfo, error)
 	List() []TermInfo
+	Close(id string)
 }
 
 /* AppsService 快应用扫描与启动。 */
@@ -87,21 +100,25 @@ func (s *AppsService) List(ctx context.Context) []AppEntry {
 			Icon:        iconURL(a.Name, a.Spec.Icon),
 			Pinned:      s.Hub != nil && slices.Contains(s.Hub.SettingsSnapshot().PinnedApps, a.Name),
 			Callable:    a.Callable,
+			Callbacks:   appCallbacks(a.Callbacks),
 		})
 	}
 	return out
 }
 
 /*
-renderAppsSection 组装 system 的 <apps> 段：应用清单与使用纪律。
+renderAppsSection 组装 system 的 <apps> 段：应用清单 + 使用/复用/目录
+约定的唯一归属（原 workspace 行为规则中的 app 条目并入此处）。
 每 session 固定；轮内新建/更新/删除后由 list_apps 刷新。
+段落分隔由 buildSystemBase 统一处理，本段不带前导空行。
 */
 func renderAppsSection(ctx context.Context, fsys osfs.OS) string {
 	apps := quickapp.Scan(ctx, fsys)
 	var b strings.Builder
-	b.WriteString("\n\n<apps>\n（快应用清单，以此为准，不要读取 apps 目录或 app.quick 来发现应用；应用由 save_app 构建。" +
-		"使用某个应用前先 load_app(name) 读它的调用文档：只有文档含「Agent 调用」一节（清单标〔可调用〕）才可按文档调用，否则仅面向用户，不要臆造接口。" +
-		"本段随会话固定，轮内新增/更新/移除见 <resource_change>；已有应用能满足就先复用，不要重复造功能相同的应用）")
+	b.WriteString("<apps>\n（快应用清单，以此为准，不要读取 apps 目录或 app.quick 来发现应用；应用由 save_app 构建。" +
+		"使用某个应用前先 load_app(name) 读它的调用文档：只有文档含「Agent 调用」一节（清单标〔可调用〕）才可按文档调用，否则仅面向用户，不要臆造接口；已有应用能满足就先复用，不要重复造功能相同的应用。" +
+		"目录约定：前端由 save_app 写，后端脚本等额外文件用 write_file 补进同目录（见 quick-app 技能），不要手改其他快应用的文件。" +
+		"本段随会话固定，轮内新增/更新/移除见 <resource_change>）")
 	if len(apps) == 0 {
 		b.WriteString("\n（暂无快应用）")
 	} else {
@@ -115,6 +132,13 @@ func renderAppsSection(ctx context.Context, fsys osfs.OS) string {
 			}
 			if a.Callable {
 				b.WriteString("〔可调用〕")
+			}
+			if len(a.Callbacks) > 0 {
+				names := make([]string, 0, len(a.Callbacks))
+				for _, c := range a.Callbacks {
+					names = append(names, c.Name)
+				}
+				b.WriteString("〔定时回调端点 " + strings.Join(names, "、") + "〕")
 			}
 			desc := a.Description
 			if desc == "" {
@@ -154,6 +178,53 @@ func (s *AppsService) TogglePin(ctx context.Context, name string) (bool, error) 
 	}
 	s.Hub.ApplySettings(st)
 	return slices.Contains(st.PinnedApps, name), nil
+}
+
+/*
+Uninstall 卸载快应用：先收掉该应用仍在跑的后端终端（文件被后端占用时
+目录删不掉），再删除 apps/<名>/ 整个目录，最后清掉钉选列表里的残留。
+名单校验同 Launch（名字不可穿越）；不存在的应用报 ErrAppNotFound。
+*/
+func (s *AppsService) Uninstall(ctx context.Context, name string) error {
+	if _, err := s.load(ctx, name); err != nil {
+		return err
+	}
+	if s.Term != nil {
+		if id := liveTerm(s.Term.List(), AppOrigin(name)); id != "" {
+			s.Term.Close(id)
+		}
+	}
+	if err := os.RemoveAll(filepath.Join(AppsDir, name)); err != nil {
+		return fmt.Errorf("删除应用目录失败: %w", err)
+	}
+	if s.Hub == nil {
+		return nil
+	}
+	st := s.Hub.SettingsSnapshot()
+	if !slices.Contains(st.PinnedApps, name) {
+		return nil
+	}
+	st.PinnedApps = slices.DeleteFunc(st.PinnedApps, func(p string) bool { return p == name })
+	if err := SaveSettings(ctx, s.Hub.Fsys, st); err != nil {
+		return err
+	}
+	s.Hub.ApplySettings(st)
+	return nil
+}
+
+/* appCallbacks 把声明端点转成卡片/表单用的精简视图。 */
+func appCallbacks(list []quickapp.Callback) []AppCallback {
+	if len(list) == 0 {
+		return nil
+	}
+	out := make([]AppCallback, 0, len(list))
+	for _, c := range list {
+		out = append(out, AppCallback{
+			Name: c.Name, Title: c.Title, Description: c.Description,
+			Method: c.Method, URL: c.URL,
+		})
+	}
+	return out
 }
 
 /* iconURL 校验声明的 icon（同 entry 的相对路径约束）并拼成同源 URL；空/越界返回空串。 */

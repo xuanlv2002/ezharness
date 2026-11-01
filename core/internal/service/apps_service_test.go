@@ -5,15 +5,18 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
+	"ezharness/core/internal/domain"
 	"ezharness/core/internal/osfs"
 )
 
-/* fakeTerm 记录 Launch 的入参并按需回放会话清单（不起真 PTY）。 */
+/* fakeTerm 记录 Launch/Close 的入参并按需回放会话清单（不起真 PTY）。 */
 type fakeTerm struct {
 	calls    []launchCall
+	closed   []string
 	sessions []TermInfo
 }
 
@@ -27,6 +30,11 @@ func (f *fakeTerm) Launch(dir, name, desc, origin, command string) (*TermInfo, e
 }
 
 func (f *fakeTerm) List() []TermInfo { return f.sessions }
+
+func (f *fakeTerm) Close(id string) {
+	f.closed = append(f.closed, id)
+	f.sessions = slices.DeleteFunc(f.sessions, func(t TermInfo) bool { return t.ID == id })
+}
 
 /* makeApp 造一个应用目录：app.quick 声明 + entry 前端。 */
 func makeApp(t *testing.T, name, spec, entry, html string) {
@@ -147,5 +155,42 @@ func TestAppsLaunchWithoutTerminal(t *testing.T) {
 	makeApp(t, "svc", `{"backend":"python probe.py"}`, "index.html", "<html></html>")
 	if _, err := (&AppsService{Fsys: osfs.OS{}}).Launch(context.Background(), "svc"); err == nil {
 		t.Fatal("Term 为空必须报错")
+	}
+}
+
+/* 卸载：删目录、收掉仍在跑的后端终端、清钉选残留；名单外名字报不存在。 */
+func TestAppsUninstall(t *testing.T) {
+	t.Chdir(t.TempDir())
+	_ = os.MkdirAll("apps", 0o755)
+	makeApp(t, "svc", `{"backend":"python probe.py"}`, "index.html", "<html></html>")
+
+	hub := domain.NewHub()
+	hub.Settings.PinnedApps = []string{"svc", "keep"}
+	term := &fakeTerm{}
+	svc := &AppsService{Fsys: osfs.OS{}, Term: term, Hub: hub}
+
+	if _, err := svc.Launch(context.Background(), "svc"); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.Uninstall(context.Background(), "svc"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join("apps", "svc")); !os.IsNotExist(err) {
+		t.Fatalf("应用目录未删除: %v", err)
+	}
+	if !slices.Equal(term.closed, []string{"t1"}) {
+		t.Fatalf("后端终端未收掉: %v", term.closed)
+	}
+	if got := hub.SettingsSnapshot().PinnedApps; !slices.Equal(got, []string{"keep"}) {
+		t.Fatalf("钉选残留未清: %v", got)
+	}
+	if len(svc.List(context.Background())) != 0 {
+		t.Fatal("卸载后清单应为空")
+	}
+
+	for _, name := range []string{"", "nope", "..", "../x", "a/b"} {
+		if err := svc.Uninstall(context.Background(), name); !errors.Is(err, ErrAppNotFound) {
+			t.Fatalf("Uninstall(%q) = %v; want ErrAppNotFound", name, err)
+		}
 	}
 }

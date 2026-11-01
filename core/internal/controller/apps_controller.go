@@ -63,3 +63,19 @@ func (c *AppsController) Pin(g *gin.Context) {
 	}
 	g.JSON(http.StatusOK, gin.H{"ok": true, "pinned": pinned})
 }
+
+/*
+Uninstall DELETE /api/apps/:name：用户卸载快应用——停仍在跑的后端终端、
+删 apps/<名>/ 目录、清钉选残留。名单校验在 service（名字不可穿越）。
+*/
+func (c *AppsController) Uninstall(g *gin.Context) {
+	if err := c.Svc.Uninstall(g.Request.Context(), g.Param("name")); err != nil {
+		if errors.Is(err, service.ErrAppNotFound) {
+			g.JSON(http.StatusNotFound, gin.H{"error": "app not found"})
+			return
+		}
+		g.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	g.JSON(http.StatusOK, gin.H{"ok": true})
+}

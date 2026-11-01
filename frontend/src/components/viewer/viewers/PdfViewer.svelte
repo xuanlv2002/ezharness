@@ -5,7 +5,6 @@
   */
 
   import type { ResTab } from '../registry'
-  import { authUrl } from '../../../lib/auth'
 
   let { tab }: { tab: ResTab } = $props()
 </script>
@@ -17,7 +16,7 @@
     <iframe
       class="frame"
       title="PDF 查看"
-      src={authUrl('/api/workspace/file?path=' + encodeURIComponent(tab.path ?? ''))}
+      src={'/api/workspace/file?path=' + encodeURIComponent(tab.path ?? '')}
     ></iframe>
   {/if}
 </div>

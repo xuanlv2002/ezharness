@@ -20,9 +20,7 @@ Bridge GET /api/browser/bridge:desktop 桥连入(同源校验与终端 WS 一致
 handler 阻塞至桥断开。单连接语义:新连接顶替旧连接。
 */
 func (c *BrowserController) Bridge(g *gin.Context) {
-	conn, err := websocket.Accept(g.Writer, g.Request, &websocket.AcceptOptions{
-		OriginPatterns: []string{"localhost:*", "127.0.0.1:*"},
-	})
+	conn, err := websocket.Accept(g.Writer, g.Request, wsAcceptOptions(g))
 	if err != nil {
 		return
 	}

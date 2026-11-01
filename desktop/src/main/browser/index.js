@@ -19,6 +19,8 @@ CDP 截图与上传）后回执。页面里的点击/填值/滚动不设独立�
 */
 const path = require('path')
 const { BrowserWindow, WebContentsView, ipcMain, session } = require('electron')
+/* 主进程用 ws 客户端：可设请求头，令牌不再拼进 bridge URL */
+const WebSocket = require('ws')
 const { attachInspectMenu } = require('../inspect')
 const devtools = require('./devtools')
 const acorn = require('../../vendor/acorn')
@@ -864,7 +866,9 @@ function delay(ms) {
 
 function connectBridge() {
   if (bridge) return
-  const ws = new WebSocket(`ws://127.0.0.1:${corePort}/api/browser/bridge?token=${encodeURIComponent(coreToken)}`)
+  const ws = new WebSocket(`ws://127.0.0.1:${corePort}/api/browser/bridge`, {
+    headers: { 'X-EZ-Token': coreToken },
+  })
   bridge = ws
   ws.onmessage = async (ev) => {
     let req

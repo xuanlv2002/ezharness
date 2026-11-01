@@ -4,8 +4,9 @@
   import TopSearch from './TopSearch.svelte'
   import TopRail from './TopRail.svelte'
 
-  /* 顶部通栏：搜索框所有形态都渲染；三键/关闭流程仅桌面壳
-     （?desktop=1）渲染，走 preload IPC（window.ez）。拖拽由 app-region 处理 */
+  /* 顶部通栏：搜索框所有形态都渲染；三键仅桌面壳（?desktop=1）且非 macOS
+     渲染——macOS 用系统原生红绿灯（主进程 titleBarStyle: hiddenInset），
+     关闭流程（原生红钮/系统快捷键）仍走 preload IPC。拖拽由 app-region 处理 */
   const desktop = isDesktop
   let {
     onNavigate,
@@ -20,6 +21,10 @@
   function ezWindow(): any | undefined {
     return (window as any).ez?.window
   }
+
+  /* macOS 用原生红绿灯（壳里 hiddenInset，按钮在左侧）：前端不再自绘三键，
+     避免和系统按钮重复；Windows/Linux 保持右侧自绘 */
+  const nativeTrafficLights = desktop && (window as any).ez?.platform === 'darwin'
 
   let maximized = $state(false)
 
@@ -76,7 +81,7 @@
   </div>
   <div class="right">
     <TopRail />
-    {#if desktop}
+    {#if desktop && !nativeTrafficLights}
       <div class="btns">
       <button class="tbtn" onclick={() => ezWindow()?.minimize()} title="最小化">
         <svg viewBox="0 0 12 12"><path d="M1 6h10" stroke="currentColor" stroke-width="1.2" /></svg>

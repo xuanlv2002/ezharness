@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte'
+  import pkg from '../../package.json'
   import { api, type AppConfig } from '../lib/api'
   import { getToken } from '../lib/auth'
   import { store } from '../lib/store.svelte'
@@ -41,9 +42,27 @@
   let debugMode = $state(false)
   let savingDebug = $state(false)
 
-  /* API 访问令牌（外部客户端 curl 等用；展示 + 复制） */
+  /* 版本检查：结论在 store（启动静默查一次，这里手动查刷新它）——侧栏设置钮
+     红点与下方版本区同源；本地仅留手动检查的转圈与失败原因 */
+  let checking = $state(false)
+  let updErr = $state('')
+  const updNewer = $derived(store.updateAvailable)
+  const updLatest = $derived(store.updateChecked && !store.updateAvailable)
+
+  async function checkUpdate() {
+    checking = true
+    updErr = ''
+    const r = await store.refreshUpdate()
+    if (r.err) updErr = r.err
+    checking = false
+  }
+
+  /* 会话令牌（前端↔core；展示 + 复制）与 OpenAPI 令牌（脚本/快应用用；展示 + 复制 + 重置） */
   let apiToken = $state('')
   let tokenCopied = $state(false)
+  let oaToken = $state('')
+  let oaCopied = $state(false)
+  let oaResetting = $state(false)
 
   /* 单轮最大迭代次数（模型工具循环上限；0 = 默认 64，上限 128，随 Reassemble 生效） */
   let iters = $state<number | ''>('')
@@ -51,7 +70,7 @@
   let savingIters = $state(false)
   let itersMsg = $state('')
 
-  /* 工具结果卸载阈值（字节；超过即卸载到文件只留摘要头部，0 = 默认 4096，随 Reassemble 生效） */
+  /* 工具结果卸载阈值（字节；超过即卸载到文件只留摘要头，0 = 默认 4096，摘要头随阈值分档封顶 1KB，随 Reassemble 生效） */
   let offload = $state<number | ''>('')
   let origOffload = $state<number | null>(null)
   let savingOffload = $state(false)
@@ -111,6 +130,7 @@
       /* 上下文配置加载失败不阻塞页面 */
     }
     api.appToken().then((r) => (apiToken = r.token)).catch(() => {})
+    api.openapiToken().then((r) => (oaToken = r.token)).catch(() => {})
   })
 
   /* 复制令牌：clipboard 失败（非安全上下文等）时选中文本让用户 Ctrl+C。 */
@@ -122,6 +142,30 @@
       setTimeout(() => (tokenCopied = false), 1500)
     } catch {
       input.select()
+    }
+  }
+
+  async function copyOaToken(input: HTMLInputElement) {
+    if (!oaToken) return
+    try {
+      await navigator.clipboard.writeText(oaToken)
+      oaCopied = true
+      setTimeout(() => (oaCopied = false), 1500)
+    } catch {
+      input.select()
+    }
+  }
+
+  /* 重置 OpenAPI 令牌：旧令牌即时作废，硬编码它的快应用/脚本需重新生成 */
+  async function resetOaToken() {
+    oaResetting = true
+    try {
+      const r = await api.resetOpenapiToken()
+      oaToken = r.token
+    } catch {
+      /* 失败保持现状，下次进页面重查 */
+    } finally {
+      oaResetting = false
     }
   }
 
@@ -251,10 +295,16 @@
           if (h.boot === res.boot) {
             if (res.url === location.origin) location.reload()
             else {
-              // 换端口跳转：桌面标题栏靠 ?desktop=1 渲染、鉴权靠 token，跳转目标都补上
-              const desktop = new URLSearchParams(location.search).has('desktop')
-              const t = getToken()
-              location.assign(`${res.url}/?${desktop ? 'desktop=1&' : ''}token=${encodeURIComponent(t)}`)
+              /* 换端口跳转：cookie 按 host 生效（不看端口），同 host 无需再带令牌；
+                 跨 host（如 Vite dev 的 localhost 页面跳到 127.0.0.1）才带一次引导令牌 */
+              const q = new URLSearchParams()
+              if (new URLSearchParams(location.search).has('desktop')) q.set('desktop', '1')
+              if (new URL(res.url).hostname !== location.hostname) {
+                const t = getToken()
+                if (t) q.set('token', t)
+              }
+              const qs = q.toString()
+              location.assign(`${res.url}/${qs ? `?${qs}` : ''}`)
             }
             return
           }
@@ -297,12 +347,22 @@
       <p class="err">{restartErr}</p>
     {/if}
     <label class="field">
-      <span>API 访问令牌（所有请求都需携带：X-EZ-Token 头或 ?token=；主界面与快应用打开时自动传入）</span>
+      <span>会话令牌（本次启动内有效；REST/SSE 用 X-EZ-Token 头，浏览器自动发起的导航、图片、PDF 请求用 ez_token cookie）</span>
       <span class="tokenRow">
         <input type="text" bind:value={apiToken} readonly placeholder="加载中…" />
         <button onclick={(e) => copyToken((e.currentTarget as HTMLButtonElement).previousElementSibling as HTMLInputElement)}>
           {tokenCopied ? '已复制' : '复制'}
         </button>
+      </span>
+    </label>
+    <label class="field">
+      <span>OpenAPI 令牌（脚本/快应用/外部程序调 /api/open/* 用；持久有效，重置后旧令牌立即作废）</span>
+      <span class="tokenRow">
+        <input type="text" bind:value={oaToken} readonly placeholder="加载中…" />
+        <button onclick={(e) => copyOaToken((e.currentTarget as HTMLButtonElement).previousElementSibling as HTMLInputElement)}>
+          {oaCopied ? '已复制' : '复制'}
+        </button>
+        <button onclick={resetOaToken} disabled={oaResetting || !oaToken}>{oaResetting ? '重置中…' : '重置'}</button>
       </span>
     </label>
   </section>
@@ -338,7 +398,7 @@
       <p class="msg">{itersMsg}</p>
     {/if}
     <label class="field">
-      <span>工具结果卸载阈值/字节（超过即卸载到文件、上下文只留摘要；0 = 默认 4096，上限 1MB）</span>
+      <span>工具结果卸载阈值/字节（超过即卸载到文件、上下文只留摘要头；0 = 默认 4096，上限 1MB；摘要头默认 512 字节、随阈值放宽但封顶 1KB）</span>
       <input type="number" bind:value={offload} min="0" max="1048576" />
     </label>
     <button
@@ -406,6 +466,35 @@
         onchange={(e) => saveDebug((e.currentTarget as HTMLInputElement).checked)}
       />
     </label>
+  </section>
+
+  <section id="set-update">
+    <h2 class:dot={!!updNewer} title="启动时自动检查一次，也可手动检查 GitHub 最新 release；只报版本与发布页入口，下载安装仍在发布页完成，应用内不自动更新。">
+      版本与更新
+      {#if updNewer}<i class="updot"></i>{/if}
+    </h2>
+    <div class="updaterow">
+      <span class="ver">
+        <i>ezharness-{pkg.version}</i>
+        {#if updNewer}
+          <b class="state new">发现新版本 {updNewer.latest}</b>
+        {:else if updLatest}
+          <b class="state ok">✓ 已是最新</b>
+        {/if}
+      </span>
+      <span class="actions">
+        {#if updNewer}
+          <a class="dl" href={updNewer.url} target="_blank" rel="noreferrer">前往下载</a>
+        {/if}
+        <button class="check" onclick={() => void checkUpdate()} disabled={checking}>
+          {#if checking}<i class="spin"></i>{/if}
+          {checking ? '检查中…' : '检查更新'}
+        </button>
+      </span>
+    </div>
+    {#if updErr}
+      <p class="err">检查失败：{updErr}</p>
+    {/if}
   </section>
 
   <section id="set-paths">
@@ -476,6 +565,20 @@
     font-weight: 600;
     color: var(--muted);
   }
+  /* 有新版本：标题旁红点（与侧栏设置钮红点同源同款） */
+  h2.dot {
+    position: relative;
+    color: var(--fg);
+  }
+  .updot {
+    position: absolute;
+    top: -1px;
+    margin-left: 6px;
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: #e74c3c;
+  }
   .section-head {
     display: flex;
     align-items: center;
@@ -487,7 +590,95 @@
   }
   .err {
     font-size: var(--font-size-ui);
-    color: #c0392b;
+    color: var(--danger);
+  }
+  /* 版本检查行：与开关行同款 bordered 行——左版本号+状态，右操作；
+     「前往下载」实底主按钮、「检查更新」细边次按钮 */
+  .updaterow {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 10px 14px;
+  }
+  .ver {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 10px;
+    min-width: 0;
+  }
+  .ver i {
+    font-family: var(--font-mono);
+    font-style: normal;
+    font-size: var(--font-size-section);
+    color: var(--fg);
+  }
+  .state {
+    font-size: var(--font-size-small);
+    font-weight: 600;
+    white-space: nowrap;
+  }
+  .state.ok {
+    color: var(--muted);
+  }
+  .state.new {
+    color: #f0883e;
+  }
+  .actions {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    flex: none;
+  }
+  .check {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    border: 1px solid var(--line-strong);
+    border-radius: 8px;
+    padding: 6px 14px;
+    font-size: var(--font-size-ui);
+    line-height: 1.35;
+    color: var(--fg);
+    transition:
+      border-color var(--dur-fast) var(--ease-out),
+      background var(--dur-fast) var(--ease-out);
+  }
+  .check:not(:disabled):hover {
+    background: var(--bg-soft);
+  }
+  .check:disabled {
+    cursor: default;
+  }
+  /* 手动检查转圈：与 ToolBlock 同款 spinner */
+  .spin {
+    flex: none;
+    width: 10px;
+    height: 10px;
+    border: 1.5px solid color-mix(in srgb, var(--fg) 25%, transparent);
+    border-top-color: var(--fg);
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+  }
+  @keyframes spin {
+    to {
+      transform: rotate(1turn);
+    }
+  }
+  .dl {
+    display: inline-flex;
+    align-items: center;
+    border: 1px solid var(--line-strong);
+    border-radius: 8px;
+    padding: 6px 14px;
+    font-size: var(--font-size-ui);
+    line-height: 1.35;
+    font-weight: 500;
+    background: var(--bg-invert);
+    color: var(--fg-invert);
+    text-decoration: none;
   }
   .grid2 {
     display: grid;

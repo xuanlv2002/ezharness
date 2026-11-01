@@ -1,23 +1,46 @@
 <script lang="ts">
   import { onMount } from 'svelte'
-  import { api, type AppEntry } from '../lib/api'
+  import { api, type AppEntry, type CallbackTask } from '../lib/api'
   import { store } from '../lib/store.svelte'
   import { launchApp } from '../lib/apps'
 
   /* 快应用 = apps/<名>/ 目录应用（app.quick 声明）。desktop 壳 = IPC 开独立
   子窗口；浏览器访问 = 新标签页直开。声明了后端的应用由后端把终端拉进侧边栏。 */
   let apps = $state<AppEntry[]>([])
+  let callbacks = $state<CallbackTask[]>([])
   let loaded = $state(false)
+
+  /* 应用与定时回调一起拉：卡片上直接展示关联任务与声明的端点 */
+  async function loadAll() {
+    const [{ apps: list }, cb] = await Promise.all([
+      api.getApps(),
+      api.listCallbacks().catch(() => ({ callbacks: [] as CallbackTask[] })),
+    ])
+    apps = list ?? []
+    callbacks = cb.callbacks ?? []
+  }
 
   onMount(async () => {
     try {
-      const { apps: list } = await api.getApps()
-      apps = list ?? []
+      await loadAll()
     } catch {
       /* 后端不可达时空列表 */
     }
     loaded = true
   })
+
+  /* appTasks 返回关联到该应用的定时任务。 */
+  function appTasks(name: string): CallbackTask[] {
+    return callbacks.filter((t) => t.kind === 'app' && t.app?.name === name)
+  }
+
+  /* cbSchedule 是卡片 tooltip 里的计划摘要。 */
+  function cbSchedule(t: CallbackTask): string {
+    const s = t.schedule
+    if (s.kind === 'once') return `一次性 ${s.at ?? ''}`
+    if (s.kind === 'interval') return `每 ${s.every ?? ''}`
+    return `cron ${s.cron ?? ''}`
+  }
 
   /* 启动：desktop 壳子窗口（IPC），web 端新标签页；带后端的应用把它的
   终端拉到侧边栏（后端可能起不来，失败要出声） */
@@ -35,10 +58,24 @@
   async function togglePin(a: AppEntry) {
     try {
       await api.pinApp(a.name)
-      const { apps: list } = await api.getApps()
-      apps = list ?? []
+      await loadAll()
     } catch (err) {
       store.lastStatus = `操作失败：${(err as Error).message}`
+    }
+  }
+
+  /* 卸载确认弹窗：原生 confirm 在 WebView 里贴顶，自制居中确认框 */
+  let delTarget = $state<AppEntry | null>(null)
+
+  async function doUninstall() {
+    const a = delTarget
+    delTarget = null
+    if (!a) return
+    try {
+      await api.uninstallApp(a.name)
+      await loadAll()
+    } catch (err) {
+      store.lastStatus = `卸载失败：${(err as Error).message}`
     }
   }
 </script>
@@ -75,6 +112,19 @@
           </div>
           <h2>{a.title}</h2>
           <p class="desc">{a.name}</p>
+          {#if appTasks(a.name).length}
+            <p class="cbline" title={appTasks(a.name).map((t) => `${t.title} · ${cbSchedule(t)}${t.enabled ? '' : ' · 已停用'}`).join('\n')}>
+              ⏱ {appTasks(a.name).length} 个定时回调：{appTasks(a.name)
+                .slice(0, 2)
+                .map((t) => t.title)
+                .join('、')}{appTasks(a.name).length > 2 ? '…' : ''}
+            </p>
+          {/if}
+          {#if a.callbacks?.length}
+            <p class="cbline" title={a.callbacks?.map((c) => `${c.name}: ${c.method} ${c.url}`).join('\n')}>
+              端点：{a.callbacks?.map((c) => c.name).join('、')}
+            </p>
+          {/if}
           <div class="foot">
             <span class="time">{a.mtime}</span>
             <span class="footbtns">
@@ -83,6 +133,13 @@
                 <svg viewBox="0 0 24 24" fill={a.pinned ? 'currentColor' : 'none'} stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
                   <path d="M12 17v5" />
                   <path d="M9 3h6l-1 6 3 3v2H7v-2l3-3-1-6z" />
+                </svg>
+              </button>
+              <button class="del" onclick={() => (delTarget = a)} title="卸载快应用（删除 apps 目录，不可恢复）">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M3 6h18" />
+                  <path d="M8 6V4h8v2" />
+                  <path d="M6 6l1 14h10l1-14" />
                 </svg>
               </button>
               <button class="run" onclick={() => launch(a)}>
@@ -111,6 +168,19 @@
     {/if}
   </div>
 </div>
+
+<!-- 卸载确认弹窗（居中） -->
+{#if delTarget}
+  <div class="mask" onclick={() => (delTarget = null)}></div>
+  <div class="confirm">
+    <h3>卸载快应用</h3>
+    <p class="hint">确定卸载「{delTarget.title}」？应用目录（apps/{delTarget.name}/）将被删除，运行中的后端一并停止，不可恢复。</p>
+    <footer>
+      <button class="btn" onclick={() => (delTarget = null)}>取消</button>
+      <button class="btn danger" onclick={() => void doUninstall()}>卸载</button>
+    </footer>
+  </div>
+{/if}
 
 <style>
   .page {
@@ -143,7 +213,8 @@
   }
   .grid {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(196px, 1fr));
+    /* 最小列宽要容得下底行：日期 + 图钉 + 卸载 + 启动（更窄会把启动压成竖排） */
+    grid-template-columns: repeat(auto-fill, minmax(232px, 1fr));
     gap: 14px;
     margin-top: 4px;
   }
@@ -222,6 +293,14 @@
     overflow: hidden;
     flex: 1;
   }
+  .cbline {
+    font-size: var(--font-size-small);
+    line-height: 1.5;
+    color: var(--muted);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
   .foot {
     display: flex;
     align-items: center;
@@ -232,6 +311,7 @@
     font-family: var(--font-mono);
     font-size: var(--font-size-small);
     color: var(--faint);
+    white-space: nowrap; // 日期断行比溢出更难看
   }
   .footbtns {
     display: inline-flex;
@@ -263,6 +343,27 @@
     width: 13px;
     height: 13px;
   }
+  /* 卸载：与图钉同规格的图标键，hover 点红提示不可逆 */
+  .del {
+    display: grid;
+    place-items: center;
+    width: 26px;
+    height: 26px;
+    padding: 0;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: transparent;
+    color: var(--faint);
+    cursor: pointer;
+  }
+  .del:hover {
+    background: var(--bg-soft);
+    color: var(--danger);
+  }
+  .del svg {
+    width: 13px;
+    height: 13px;
+  }
   .run {
     display: inline-flex;
     align-items: center;
@@ -274,6 +375,8 @@
     padding: 5px 12px;
     font-size: var(--font-size-ui);
     font-weight: 500;
+    white-space: nowrap; // 底行拥挤时「启动」不许竖排
+    flex-shrink: 0;
   }
   .run svg {
     width: 11px;
@@ -293,5 +396,66 @@
   }
   .card.ghost h2 {
     color: var(--muted);
+  }
+
+  /* ── 卸载确认弹窗 ── */
+  .mask {
+    position: fixed;
+    inset: 0;
+    z-index: 58;
+    background: rgb(0 0 0 / 18%);
+  }
+  .confirm {
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    z-index: 59;
+    width: min(340px, 92vw);
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    background: var(--bg);
+    border: 1px solid var(--line-strong);
+    border-radius: 14px;
+    box-shadow: 0 12px 40px rgb(0 0 0 / 18%);
+    padding: 18px 20px;
+  }
+  .confirm h3 {
+    font-size: var(--font-size-body);
+    font-weight: 700;
+    color: var(--fg);
+  }
+  .hint {
+    font-size: var(--font-size-small);
+    line-height: 1.6;
+    color: var(--faint);
+  }
+  .confirm footer {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+  }
+  .btn {
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: transparent;
+    color: var(--muted);
+    font: inherit;
+    font-size: var(--font-size-ui);
+    padding: 7px 16px;
+    cursor: pointer;
+    transition:
+      border-color var(--dur-fast) var(--ease-out),
+      color var(--dur-fast) var(--ease-out);
+  }
+  .btn:hover {
+    border-color: var(--line-strong);
+    color: var(--fg);
+  }
+  .btn.danger {
+    background: #c0392b;
+    border-color: #c0392b;
+    color: #fff;
   }
 </style>

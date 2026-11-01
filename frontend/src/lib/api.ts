@@ -1,5 +1,6 @@
 /* API 封装：REST + SSE。v0.2：bootstrap 模式（会话对用户隐藏）。 */
-import { authUrl } from './auth'
+import { fetchEventSource } from '@microsoft/fetch-event-source'
+import { getToken } from './auth'
 
 /* 人机决策持久化记录（后端 hooks.DecisionRecord 的 JSON 形状） */
 export interface DecisionRecord {
@@ -79,9 +80,20 @@ export interface PlanProgress {
 }
 
 export interface SessionPlan {
-  plan: string
+  goal: string
+  context: string
+  design: string
   progress: PlanProgress[]
+  verify: string
   updatedAt?: string
+}
+
+export interface AppCallbackSpec {
+  name: string
+  title?: string
+  description?: string
+  method: string
+  url: string
 }
 
 export interface AppEntry {
@@ -91,6 +103,94 @@ export interface AppEntry {
   mtime: string
   icon?: string // 卡片头像（同源 URL，未声明/越界时缺省）
   pinned?: boolean // 已钉到桌面小助手
+  callbacks?: AppCallbackSpec[] // app.quick 声明的定时调用端点
+}
+
+/* 定时回调计划（后端 callback.Schedule 的 JSON 形状；本机时区） */
+export interface CallbackSchedule {
+  kind: 'once' | 'interval' | 'cron'
+  at?: string // once：2026-11-01 09:00 / RFC3339
+  every?: string // interval：Go duration，如 30m、2h
+  cron?: string // cron：分 时 日 月 周
+}
+
+export interface CallbackSessionTarget {
+  sessionId?: string // session 模式：创建任务时的叶 session ID（归档/compact 换代后失败）
+  mode: 'session' | 'new'
+  message: string
+}
+
+/* 创建/更新的会话目标：sessionId 指定叶会话，缺省由后端绑定当前会话 */
+export interface CallbackSessionInput {
+  sessionId?: string
+  mode: 'session' | 'new'
+  message: string
+}
+
+export interface CallbackAppTarget {
+  name: string
+  callback: string // app.quick callbacks[].name
+}
+
+export interface CallbackScriptTarget {
+  command: string // 工作目录里执行的 shell 命令
+}
+
+/* 一次触发记录（后端 callback.Run，新的在前） */
+export interface CallbackRun {
+  at: number
+  status: 'ok' | 'error' | 'skipped' | 'missed' | 'running' | string
+  manual?: boolean
+  target: string
+  targetId?: string
+  content?: string
+  result?: string
+  durationMs?: number
+}
+
+/* 定时回调任务（后端 callback.Task） */
+export interface CallbackTask {
+  id: string
+  title: string
+  description?: string
+  kind: 'session' | 'app' | 'script'
+  enabled: boolean
+  schedule: CallbackSchedule
+  session?: CallbackSessionTarget
+  app?: CallbackAppTarget
+  script?: CallbackScriptTarget
+  createdAt: number
+  updatedAt: number
+  finishedAt?: number // 一次性任务终态时间：使命结束，不可编辑，仅可查看/手动触发/删除
+  nextRunAt?: number
+  lastRunAt?: number
+  lastStatus?: 'ok' | 'error' | 'skipped' | 'missed' | 'running' | string
+  lastResult?: string
+  runCount?: number
+  runs?: CallbackRun[]
+}
+
+/* 创建/更新的配置面（运行态由后端维护） */
+export interface CallbackSpec {
+  title: string
+  description?: string
+  kind: 'session' | 'app' | 'script'
+  enabled?: boolean
+  schedule: CallbackSchedule
+  session?: CallbackSessionInput
+  app?: CallbackAppTarget
+  script?: CallbackScriptTarget
+}
+
+/* 状态卡用的当前会话任务摘要 */
+export interface CallbackBrief {
+  id: string
+  title: string
+  kind: string
+  schedule: string
+  enabled: boolean
+  nextRunAt?: number
+  lastStatus?: string
 }
 
 export interface McpOAuthConfig {
@@ -233,6 +333,7 @@ export interface Status {
   mcpServers: string[]
   skills: string[]
   topicsCount: number
+  callbacks?: CallbackBrief[] // 绑定当前会话的定时回调
 }
 
 /* fork 线的分叉源展示元数据（后端 hooks.ForkOrigin） */
@@ -259,7 +360,7 @@ export interface TopicEntry {
    通知栏轮询数据源；kind=info 是完成通知，非待处理） */
 export interface NotificationGroup {
   rootId: string
-  items: { callId: string; forkId?: string; kind: 'approve' | 'ask' | 'info' | 'mcp_auth' | 'memory'; tool: string; args?: string; ts: number }[]
+  items: { callId: string; forkId?: string; kind: 'approve' | 'ask' | 'plan' | 'info' | 'callback' | 'mcp_auth' | 'memory'; tool: string; args?: string; ts: number }[]
 }
 
 /* 分支面板条目（GET /api/topics 响应，含运行态合成） */
@@ -288,7 +389,13 @@ export interface Bootstrap {
 const json = async <T>(res: Response): Promise<T> => {
   if (!res.ok) {
     const body = await res.text().catch(() => '')
-    throw new Error(`${res.status}: ${body || res.statusText}`)
+    let msg = body || res.statusText
+    try {
+      msg = JSON.parse(body).error ?? msg // 后端失败统一 {"error": "…"}，取一句话
+    } catch {
+      /* 非 JSON 体原样 */
+    }
+    throw new Error(msg)
   }
   return res.json()
 }
@@ -342,7 +449,7 @@ export interface MemoryProjectDetail extends MemoryProjectEntry {
   content: string
 }
 
-/* 会话树节点（GET /api/memory/tree）：记忆页整树渲染 */
+/* 会话树节点（GET /api/memory/tree）：记忆页按层渲染 */
 export interface SessionNode {
   id: string
   title: string
@@ -350,11 +457,20 @@ export interface SessionNode {
   archived: boolean
   msgs: number
   createdAt: number
-  targetId?: string // 向上边（组树用）
+  targetId?: string // 向上边（压缩链游标）
+  parentId?: string // 展示父节点（空 = 顶层分支）
   forkedFrom?: ForkOrigin
   lineRoot?: string
   isLeaf: boolean // 所属线的当前叶（可切换进入）
   isActiveLine: boolean
+  childCount: number // 直接子代数（0 = 无展开箭头）
+}
+
+/* 会话树的一层：根层按分支分页，子层一次给全 */
+export interface SessionTreePage {
+  nodes: SessionNode[]
+  next?: string // 根层下一页游标（空 = 已到底）
+  total?: number // 根层分支总数
 }
 
 /* 调用链 span（GET /api/topics/:id/trace = trace.jsonl 原文） */
@@ -384,13 +500,15 @@ export const api = {
 
   status: () => fetch('/api/status').then(json<Status>),
 
-  getHistory: (id: string) =>
-    fetch(`/api/sessions/${id}`).then(
+  /* tail = 只取尾部 N 条消息（锚点回填等只要尾段的场景）；start = 截取偏移 */
+  getHistory: (id: string, tail?: number) =>
+    fetch(`/api/sessions/${id}${tail ? `?tail=${tail}` : ''}`).then(
       json<{
         id: string
         rootId?: string
         busy: boolean
         messages: HistoryMessage[]
+        start?: number
         targetId?: string
         seedKind?: 'new' | 'fork' | 'compress' | string
         canPrev?: boolean
@@ -448,6 +566,10 @@ export const api = {
   decideAnswer: (id: string, callId: string, input: string) =>
     post<{ ok: boolean }>(`/api/sessions/${id}/decisions/answer`, { callId, input }),
 
+  /* 计划确认：confirm 放行落盘；feedback 带意见（走工具结果回模型） */
+  decidePlan: (id: string, callId: string, action: 'confirm' | 'feedback', feedback: string) =>
+    post<{ ok: boolean }>(`/api/sessions/${id}/decisions/plan`, { callId, action, feedback }),
+
   decideMcpAuth: (id: string, callId: string, ok: boolean, reason: string) =>
     post<{ ok: boolean }>(`/api/sessions/${id}/decisions/mcp-auth`, { callId, ok, reason }),
 
@@ -465,6 +587,9 @@ export const api = {
 
   getApps: () => fetch('/api/apps').then(json<{ apps: AppEntry[] }>),
 
+  /* 版本检查：后端带超时代查 GitHub 最新 release，是否可升级由前端比对本地版本 */
+  checkUpdate: () => fetch('/api/app/update-check').then(json<{ latest: string; url: string }>),
+
   /* 启动快应用（chip 的 id 来自模型输出不可信，名单校验在后端）：返回前端
      入口路径、标题与后端终端 id；开窗由调用方执行：desktop 壳 IPC 子窗口 /
      web 新标签页 */
@@ -474,6 +599,33 @@ export const api = {
   /* 钉到桌面小助手/取消（toggle），返回新状态 */
   pinApp: (name: string) =>
     post<{ ok: boolean; pinned: boolean }>(`/api/apps/${encodeURIComponent(name)}/pin`, {}),
+
+  /* 卸载快应用：后端停掉运行中的后端终端、删 apps/<名>/ 目录、清钉选残留 */
+  uninstallApp: (name: string) =>
+    fetch(`/api/apps/${encodeURIComponent(name)}`, { method: 'DELETE' }).then(json<{ ok: boolean }>),
+
+  /* 定时回调中心：sessionId 过滤当前会话任务，app 过滤快应用关联任务 */
+  listCallbacks: (sessionId?: string, app?: string) => {
+    const q = new URLSearchParams()
+    if (sessionId) q.set('sessionId', sessionId)
+    if (app) q.set('app', app)
+    const suffix = q.toString() ? `?${q}` : ''
+    return fetch(`/api/callbacks${suffix}`).then(json<{ callbacks: CallbackTask[] }>)
+  },
+
+  createCallback: (c: CallbackSpec) => post<{ callback: CallbackTask }>('/api/callbacks', c),
+
+  updateCallback: (id: string, c: Partial<CallbackSpec>) =>
+    post<{ callback: CallbackTask }>(`/api/callbacks/${encodeURIComponent(id)}`, c),
+
+  deleteCallback: (id: string) =>
+    fetch(`/api/callbacks/${encodeURIComponent(id)}`, { method: 'DELETE' }).then(json<{ ok: boolean }>),
+
+  setCallbackEnabled: (id: string, enabled: boolean) =>
+    post<{ callback: CallbackTask }>(`/api/callbacks/${encodeURIComponent(id)}/enabled`, { enabled }),
+
+  runCallback: (id: string) =>
+    post<{ ok: boolean }>(`/api/callbacks/${encodeURIComponent(id)}/run`, {}),
 
   /* 文本文件保存（file:// 编辑器）；按绝对路径写，与 /api/workspace/file 同源 */
   saveFile: (path: string, content: string) =>
@@ -499,10 +651,10 @@ export const api = {
 
   disconnectMcp: (name: string) => post<{ ok: boolean }>('/api/mcp/disconnect', { name }),
 
-  /* callMcp 调用 MCP 工具；需要 OAuth 时后端回 401 + needs_auth，
+  /* callMcp 调用 MCP 工具（OpenAPI 面）；需要 OAuth 时后端回 401 + needs_auth，
      这里抛出携带 server/auth_url/metadata_url 的 McpAuthError 供调用方引导认证。 */
   callMcp: async (server: string, tool: string, args: unknown) => {
-    const res = await fetch('/api/mcp/call', {
+    const res = await fetch('/api/open/mcp/call', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ server, tool, args }),
@@ -514,16 +666,17 @@ export const api = {
     return json<{ result: string }>(res)
   },
 
-  /* MCP OAuth：取授权 URL（前端用系统浏览器打开）/ 探测是否需 OAuth / 轮询状态 / 取消 / 注销 */
+  /* MCP OAuth：取授权 URL（前端用系统浏览器打开）/ 探测是否需 OAuth / 轮询状态 / 取消 / 注销。
+     start/status/cancel 在 OpenAPI 面（会话凭证同样可过），probe/logout 在会话面。 */
   oauthStart: (name: string, metadataUrl = '') =>
-    post<{ url: string }>('/api/mcp/oauth/start', metadataUrl ? { name, metadata_url: metadataUrl } : { name }),
+    post<{ url: string }>('/api/open/mcp/oauth/start', metadataUrl ? { name, metadata_url: metadataUrl } : { name }),
 
   oauthProbe: (name: string) => post<{ oauth: boolean }>('/api/mcp/oauth/probe', { name }),
 
   oauthStatus: (name: string) =>
-    fetch(`/api/mcp/oauth/status?name=${encodeURIComponent(name)}`).then(json<{ authorized: boolean; pending: boolean }>),
+    fetch(`/api/open/mcp/oauth/status?name=${encodeURIComponent(name)}`).then(json<{ authorized: boolean; pending: boolean }>),
 
-  oauthCancel: (name: string) => post<{ ok: boolean }>('/api/mcp/oauth/cancel', { name }),
+  oauthCancel: (name: string) => post<{ ok: boolean }>('/api/open/mcp/oauth/cancel', { name }),
 
   oauthLogout: (name: string) => post<{ ok: boolean }>('/api/mcp/oauth/logout', { name }),
 
@@ -546,9 +699,9 @@ export const api = {
   setReasoningEffort: (effort: ReasoningEffort) =>
     post<{ ok: boolean; effort: string }>('/api/settings/reasoning', { effort }),
 
-  /* 直调大模型（快应用/脚本；与 /api/mcp/call 同级的内置能力） */
+  /* 直调大模型（OpenAPI 面，与 mcp/call 同级） */
   callModel: (prompt: string, model = '', images: string[] = []) =>
-    post<{ result: string }>('/api/model/call', { model, prompt, images }),
+    post<{ result: string }>('/api/open/model/call', { model, prompt, images }),
 
   getMemoryConfig: () => fetch('/api/memory/config').then(json<MemoryConfig>),
 
@@ -564,8 +717,15 @@ export const api = {
   toggleSkill: (id: string, enabled: boolean) =>
     post<{ ok: boolean }>(`/api/memory/skills/${encodeURIComponent(id)}/enabled`, { enabled }),
 
-  /* 完整会话树（全部世代与分叉，记忆页渲染） */
-  getMemoryTree: () => fetch('/api/memory/tree').then(json<SessionNode[]>),
+  /* 会话树的一层：parent 空 = 顶层分支（before 翻页），否则该节点的直接子代 */
+  getMemoryTree: (parent = '', before = '', limit = 0) => {
+    const q = new URLSearchParams()
+    if (parent) q.set('parent', parent)
+    if (before) q.set('before', before)
+    if (limit > 0) q.set('limit', String(limit))
+    const qs = q.toString()
+    return fetch(`/api/memory/tree${qs ? `?${qs}` : ''}`).then(json<SessionTreePage>)
+  },
 
   /* 手动归档开关（活动/运行中的当前叶会被后端拒绝） */
   archiveSession: (id: string, archived: boolean) =>
@@ -620,28 +780,69 @@ export const api = {
 
   appToken: () => fetch('/api/app/token').then(json<{ token: string }>),
 
+  /* OpenAPI 令牌：脚本/快应用/外部程序调 /api/open/* 用的持久令牌（设置页展示/重置） */
+  openapiToken: () => fetch('/api/app/openapi-token').then(json<{ token: string }>),
+
+  resetOpenapiToken: () => post<{ token: string }>('/api/app/openapi-token/reset', {}),
+
   appRestart: (req: { port?: number; listen?: string; dataDir?: string }) =>
     post<{ url: string; boot: number }>('/api/app/restart', req),
 
   appHealth: (base = '') => fetch(`${base}/api/app/health`).then(json<{ ok: boolean; boot: number }>),
 }
 
+/* SSE 致命错误（鉴权失败/响应类型不符）：不重试，避免用同一个坏令牌刷请求 */
+class SseFatalError extends Error {}
+
 /* subscribe 建立 SSE 订阅，返回断开函数。
-window 级单连接：HMR/重复订阅先关旧连接，防泄漏挤占同域连接池。 */
+window 级单连接：HMR/重复订阅先关旧连接，防泄漏挤占同域连接池。
+用 fetch-event-source 而不是原生 EventSource：EventSource 不能设置请求头，
+过去只能把 token 拼进 URL；现在走 X-EZ-Token 头。 */
 export function subscribe(id: string, onEvent: (ev: SseEvent) => void): () => void {
-  const w = window as unknown as { __ezSSE?: EventSource }
-  w.__ezSSE?.close()
-  const es = new EventSource(authUrl(`/api/sessions/${id}/events`))
-  w.__ezSSE = es
-  es.onmessage = (m) => {
-    try {
-      onEvent(JSON.parse(m.data))
-    } catch {
-      /* 忽略坏帧 */
-    }
+  const w = window as unknown as { __ezSSE?: AbortController }
+  w.__ezSSE?.abort()
+  const ac = new AbortController()
+  w.__ezSSE = ac
+  const url = `/api/sessions/${id}/events`
+  const headers = { 'X-EZ-Token': getToken() }
+
+  const connect = () => {
+    void fetchEventSource(url, {
+      headers,
+      signal: ac.signal,
+      /* 原生 EventSource 切后台不断连；库默认会在 document.hidden 时断开，
+         这里保持常连，避免 agent 运行中丢事件 */
+      openWhenHidden: true,
+      onopen(res) {
+        const ct = res.headers.get('content-type') || ''
+        if (!res.ok || !ct.startsWith('text/event-stream')) {
+          throw new SseFatalError(`SSE ${res.status} ${ct}`)
+        }
+        return Promise.resolve()
+      },
+      onmessage(m) {
+        try {
+          onEvent(JSON.parse(m.data))
+        } catch {
+          /* 忽略坏帧 */
+        }
+      },
+      onclose() {
+        /* 服务端正常关流（重启/换代）：稍后重连，保持原生 EventSource 语义 */
+        if (!ac.signal.aborted) window.setTimeout(connect, 1000)
+      },
+      onerror(err) {
+        /* 网络类错误交给库重连；鉴权/协议错误直接终止 */
+        if (err instanceof SseFatalError) throw err
+        return 1000
+      },
+    }).catch((err) => {
+      if (!ac.signal.aborted) console.warn('[sse] 订阅终止', err)
+    })
   }
+  connect()
   return () => {
-    es.close()
-    if (w.__ezSSE === es) w.__ezSSE = undefined
+    ac.abort()
+    if (w.__ezSSE === ac) w.__ezSSE = undefined
   }
 }

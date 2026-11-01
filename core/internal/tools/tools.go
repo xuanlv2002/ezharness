@@ -86,7 +86,9 @@ func (saveAppTool) Description() string {
 		"文档含「Agent 调用」一节才开放给 agent（用 load_app 读取）。" +
 		"需要后端进程时给 backend（在应用目录里执行的命令，如 python probe.py），" +
 		"卡片头像给 icon（应用目录内的图片文件名，如 icon.svg，先用 write_file 写进同目录）；" +
-		"后端脚本等其余文件同样用 write_file 补进同一目录"
+		"需要被定时回调调用时给 callbacks（端点声明，回调任务按 name 引用；不影响文档调用面）；" +
+		"后端脚本等其余文件同样用 write_file 补进同一目录。" +
+		"注意：save_app 整页重建 app.quick——省略 callbacks/document/backend/icon 会清掉对应声明"
 }
 
 func (t saveAppTool) ArgsSchema() json.RawMessage {
@@ -100,7 +102,24 @@ func (t saveAppTool) ArgsSchema() json.RawMessage {
 			"document": {"type": "string", "description": "应用文档路径（默认 APP.md；写清 agent 调用方式，含「Agent 调用」一节才开放调用）"},
 			"html": {"type": "string", "description": "完整 html 文档内容（前端入口 index.html）"},
 			"backend": {"type": "string", "description": "后端启动命令（可选；cwd 是应用目录，如 python probe.py）"},
-			"icon": {"type": "string", "description": "卡片头像：应用目录内的图片文件名（可选，如 icon.svg/png，先用 write_file 写好）"}
+			"icon": {"type": "string", "description": "卡片头像：应用目录内的图片文件名（可选，如 icon.svg/png，先用 write_file 写好）"},
+			"callbacks": {
+				"type": "array",
+				"description": "定时调用端点声明（可选；回调中心按 name 引用）",
+				"items": {
+					"type": "object",
+					"properties": {
+						"name": {"type": "string", "description": "稳定标识（app 内唯一，字母数字 -_.）"},
+						"title": {"type": "string", "description": "人可读名称"},
+						"description": {"type": "string", "description": "一句话说明"},
+						"method": {"type": "string", "description": "HTTP 方法（缺省 POST）"},
+						"url": {"type": "string", "description": "绝对 http(s) 地址"},
+						"headers": {"type": "object", "additionalProperties": {"type": "string"}, "description": "附加请求头"},
+						"body": {"description": "JSON 请求体（对象/数组/标量）"}
+					},
+					"required": ["name", "url"]
+				}
+			}
 		},
 		"required": ["name", "html"]
 	}`)
@@ -108,17 +127,21 @@ func (t saveAppTool) ArgsSchema() json.RawMessage {
 
 func (t saveAppTool) Invoke(ctx context.Context, args json.RawMessage) (string, error) {
 	var a struct {
-		Name        string `json:"name"`
-		Title       string `json:"title"`
-		Description string `json:"description"`
-		Version     string `json:"version"`
-		Document    string `json:"document"`
-		HTML        string `json:"html"`
-		Backend     string `json:"backend"`
-		Icon        string `json:"icon"`
+		Name        string              `json:"name"`
+		Title       string              `json:"title"`
+		Description string              `json:"description"`
+		Version     string              `json:"version"`
+		Document    string              `json:"document"`
+		HTML        string              `json:"html"`
+		Backend     string              `json:"backend"`
+		Icon        string              `json:"icon"`
+		Callbacks   []quickapp.Callback `json:"callbacks"`
 	}
 	if err := json.Unmarshal(args, &a); err != nil {
 		return "", err
+	}
+	if err := quickapp.ValidateCallbacks(a.Callbacks); err != nil {
+		return "", fmt.Errorf("callbacks %w", err)
 	}
 	name := strings.TrimSuffix(strings.TrimSpace(a.Name), ".html")
 	if !quickapp.ValidName(name) {
@@ -147,6 +170,7 @@ func (t saveAppTool) Invoke(ctx context.Context, args json.RawMessage) (string, 
 		Backend:     strings.TrimSpace(a.Backend),
 		Icon:        strings.TrimSpace(a.Icon),
 		Document:    document,
+		Callbacks:   a.Callbacks,
 	}
 	meta, err := spec.Marshal()
 	if err != nil {
@@ -168,6 +192,14 @@ func (t saveAppTool) Invoke(ctx context.Context, args json.RawMessage) (string, 
 	if spec.HasBackend() {
 		backend = fmt.Sprintf("；已声明后端，用户点启动会在内置终端执行 `%s`，后端脚本等文件写进 %s/", spec.Backend, abs)
 	}
-	return fmt.Sprintf("快应用已保存：%s（前端 %s/%s，用户可一键启动）%s",
-		name, abs, quickapp.DefaultEntry, backend), nil
+	callbacks := ""
+	if len(spec.Callbacks) > 0 {
+		names := make([]string, 0, len(spec.Callbacks))
+		for _, c := range spec.Callbacks {
+			names = append(names, c.Name)
+		}
+		callbacks = "；定时回调端点：" + strings.Join(names, "、")
+	}
+	return fmt.Sprintf("快应用已保存：%s（前端 %s/%s，用户可一键启动）%s%s",
+		name, abs, quickapp.DefaultEntry, backend, callbacks), nil
 }

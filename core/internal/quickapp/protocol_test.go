@@ -49,6 +49,55 @@ func TestSpecDefaults(t *testing.T) {
 	}
 }
 
+/* callbacks 声明：解析、默认方法、查找与校验；未识别字段仍忽略。 */
+func TestCallbacks(t *testing.T) {
+	s, err := Parse([]byte(`{
+		"title": "定时源",
+		"callbacks": [
+			{"name": "sync", "title": "同步", "url": "http://127.0.0.1:18731/api/sync",
+			 "headers": {"X-Key": "k"}, "body": {"full": true}, "未来字段": 1}
+		]
+	}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ValidateCallbacks(s.Callbacks); err != nil {
+		t.Fatal(err)
+	}
+	if len(s.Callbacks) != 1 || s.Callbacks[0].Method != "POST" {
+		t.Fatalf("callbacks = %+v", s.Callbacks)
+	}
+	cb, ok := s.FindCallback("sync")
+	if !ok || cb.Title != "同步" || cb.Headers["X-Key"] != "k" {
+		t.Fatalf("FindCallback = %+v ok=%v", cb, ok)
+	}
+	if _, ok := s.FindCallback("nope"); ok {
+		t.Fatal("unknown callback must not resolve")
+	}
+
+	bad := []Callback{
+		{Name: "", URL: "http://127.0.0.1/x"},
+		{Name: "a b", URL: "http://127.0.0.1/x"},
+		{Name: "x", URL: "ftp://127.0.0.1/x"},
+		{Name: "x", URL: "http:///x"},
+		{Name: "x", URL: "http://127.0.0.1/x", Method: "TRACE"},
+		{Name: "x", URL: "http://127.0.0.1/x", Body: []byte("{bad")},
+	}
+	for _, c := range bad {
+		c.Normalize()
+		if err := ValidateCallback(c); err == nil {
+			t.Fatalf("callback %+v must fail", c)
+		}
+	}
+	dup := []Callback{
+		{Name: "x", URL: "http://127.0.0.1/a"},
+		{Name: "x", URL: "http://127.0.0.1/b"},
+	}
+	if err := ValidateCallbacks(dup); err == nil {
+		t.Fatal("duplicate callback names must fail")
+	}
+}
+
 /* SafeEntry：只放行应用目录内的相对路径。 */
 func TestSafeEntry(t *testing.T) {
 	ok := map[string]string{"": DefaultEntry, "index.html": "index.html",

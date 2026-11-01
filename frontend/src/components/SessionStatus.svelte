@@ -8,6 +8,12 @@
 
   let open = $state(false)
 
+  /* 打开时拉一次状态：会话定时回调与用量随外部操作变化，弹层要现查 */
+  function toggle() {
+    open = !open
+    if (open) void store.refreshStatus()
+  }
+
   const s = $derived(store.status)
   const live = $derived(store.live)
   const ctx = $derived(live?.ctxTokens || s?.contextTokens || 0)
@@ -20,7 +26,7 @@
   <button
     class="status-btn"
     class:on={open}
-    onclick={() => (open = !open)}
+    onclick={toggle}
     title={win > 0 ? `上下文 ${pct.toFixed(0)}% · 点击查看运行状态` : '运行状态'}
   >
     <svg class="ring" viewBox="0 0 24 24" aria-hidden="true">

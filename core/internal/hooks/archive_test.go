@@ -40,7 +40,7 @@ func TestArchiveSession(t *testing.T) {
 		{Role: types.RoleUser, Content: "近期问题"},
 	}
 	info, err := ArchiveSession(ctx, fakeProvider{"交接摘要"}, fsys, store, sys, topics, trace,
-		func() string { return "rebuilt base" }, oldSnap.Messages, view, "C:/work/ezharness")
+		func(string) string { return "rebuilt base" }, oldSnap.Messages, view, "C:/work/ezharness")
 	if err != nil {
 		t.Fatal(err)
 	}

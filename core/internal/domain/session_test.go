@@ -3,6 +3,7 @@ package domain
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -136,7 +137,7 @@ func TestFinishRunMergesTrimmedArchive(t *testing.T) {
 */
 func TestStreamSnapshotReplay(t *testing.T) {
 	s := &Session{
-		subs:        map[chan []byte]struct{}{},
+		subs:        map[chan Frame]struct{}{},
 		pending:     map[string]Event{},
 		snapAcc:     map[string]*StreamSnapshot{},
 		snapIdx:     map[string]int{},
@@ -179,5 +180,57 @@ func TestStreamSnapshotReplay(t *testing.T) {
 		if json.Unmarshal(b, &e) == nil && e.Type == "stream.snapshot" {
 			t.Fatal("model_end 后快照帧应丢弃")
 		}
+	}
+}
+
+/*
+慢消费者满缓冲：高频增量可丢，生命周期帧必须挤掉旧帧送达。丢了
+tool_start/model_end 前端会一直停在「模型思考中」且看不到工具卡。
+*/
+func TestPublishKeepsLifecycleFrames(t *testing.T) {
+	s := &Session{
+		subs:        map[chan Frame]struct{}{},
+		pending:     map[string]Event{},
+		snapAcc:     map[string]*StreamSnapshot{},
+		snapIdx:     map[string]int{},
+		snapFlushed: map[string]int{},
+	}
+	ch := make(chan Frame, subBuffer)
+	s.subs[ch] = struct{}{}
+
+	for i := 0; i < subBuffer; i++ {
+		s.Publish(Event{Type: "model_chunk", Data: Raw("x")})
+	}
+	s.Publish(Event{Type: "tool_start", Data: Raw(ToolStartData{ID: "c1", Name: "terminal"})})
+	// 满缓冲时增量直接丢弃，不能把刚送达的 tool_start 挤掉
+	s.Publish(Event{Type: "reasoning_chunk", Data: Raw("y")})
+
+	if len(ch) != subBuffer {
+		t.Fatalf("buffer len = %d, want %d", len(ch), subBuffer)
+	}
+	var last Frame
+	sawTool := false
+	for i := 0; i < subBuffer; i++ {
+		f := <-ch
+		if f.Type == "tool_start" {
+			sawTool = true
+		}
+		last = f
+	}
+	if !sawTool {
+		t.Fatal("tool_start must not be dropped")
+	}
+	if last.Type != "tool_start" {
+		t.Fatalf("delta must be dropped when buffer is full, last frame = %s", last.Type)
+	}
+}
+
+/* StartRunFor 按叶 ID 投递：compact 换代后拒绝，不写到新会话。 */
+func TestStartRunForRejectsChangedSession(t *testing.T) {
+	s := &Session{}
+	s.SetIdentity("s1")
+	_, _, err := s.StartRunFor("s2", context.Background(), "hello", nil)
+	if !errors.Is(err, ErrSessionChanged) {
+		t.Fatalf("StartRunFor changed session = %v", err)
 	}
 }

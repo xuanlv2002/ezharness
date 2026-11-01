@@ -5,7 +5,7 @@ core 伺服的页面；托盘常驻；关闭语义（托盘隐藏/确认退出�
 用子窗口；共享浏览器（WebContentsView，browser 模块）。
 core 是唯一业务后端——本进程只做壳与桌面资产，不做业务。
 */
-const { app, BrowserWindow, Tray, Menu, ipcMain, shell, nativeImage, screen, dialog } = require('electron')
+const { app, BrowserWindow, Tray, Menu, ipcMain, shell, nativeImage, screen, dialog, session } = require('electron')
 const path = require('path')
 const fs = require('fs')
 const http = require('http')
@@ -33,6 +33,10 @@ let corePort = 5260
 let petWindow = null
 let noticeWindow = null
 const PET_SIZE = 288
+/* 头像（悬浮球）在宠物窗内的可见尺寸与居中偏移：拖拽钳制以「球」为准，
+   窗口可以越过屏幕顶，但球必须留在工作区内 */
+const PET_AVATAR = 72
+const PET_AVATAR_OFFSET = (PET_SIZE - PET_AVATAR) / 2
 /* 工作区 pane（浏览器 / 终端 / 资源）共用的最小内容尺寸。抽屉底宽、
    主窗口与弹出窗的最小尺寸都以它为基准——pane 被压成细条后页面会错位 */
 const PANE_MIN_WIDTH = 640
@@ -49,9 +53,34 @@ function pageBase() {
   return process.env.EZHARNESS_DEV_URL || `http://127.0.0.1:${corePort}`
 }
 
-/* 带令牌的页面地址。 */
+/* 页面地址：令牌不再进 URL，由 setCoreCookie 写进 HttpOnly cookie。 */
 function pageUrl(suffix) {
-  return `${pageBase()}${suffix}${suffix.includes('?') ? '&' : '?'}token=${coreToken}`
+  return `${pageBase()}${suffix}`
+}
+
+/*
+setCoreCookie 把 API 令牌写进默认会话的 HttpOnly cookie。浏览器自动发起的
+请求——页面导航、<img>/<video>/PDF、快应用页的 fetch——没法加自定义请求头，
+只能靠 cookie 鉴权；REST/SSE/WS 仍走 X-EZ-Token 头（或子协议）。
+*/
+async function setCoreCookie() {
+  let origin = ''
+  try {
+    origin = new URL(pageBase()).origin
+  } catch {
+    return
+  }
+  try {
+    await session.defaultSession.cookies.set({
+      url: `${origin}/`,
+      name: 'ez_token',
+      value: coreToken,
+      httpOnly: true,
+      sameSite: 'strict',
+    })
+  } catch {
+    /* 设置失败不阻塞启动：前端会再用入口令牌换一次 cookie */
+  }
 }
 
 /* failStart 打包环境没有终端可看：启动失败弹系统对话框，细节留在日志里。 */
@@ -276,7 +305,8 @@ function startCore() {
   })
 }
 
-/* createMainWindow 主窗口：无边框（前端 TitleBar 自绘 + app-region 拖拽） */
+/* createMainWindow 主窗口：Windows/Linux 无边框（前端 TitleBar 自绘 +
+   app-region 拖拽）；macOS 保留原生红绿灯并放到左侧，贴合系统习惯 */
 function createMainWindow() {
   const cfg = readCoreConfig()
   mainWindow = new BrowserWindow({
@@ -285,10 +315,15 @@ function createMainWindow() {
     /* 侧栏 64 + 聊天主列 480 + 抽屉 pane 底宽；高度 = 标题栏 + pane 头部 + 内容 */
     minWidth: 64 + 480 + PANE_MIN_WIDTH,
     minHeight: PANE_MIN_HEIGHT + 120,
-    frame: false,
+    /* macOS：hiddenInset 隐藏标题栏但保留原生交通灯（前端不再自绘三键）；
+       位置按 34px 自绘标题栏垂直居中、与侧栏 logo 左缘对齐 */
+    ...(process.platform === 'darwin'
+      ? { titleBarStyle: 'hiddenInset', trafficLightPosition: { x: 16, y: 11 } }
+      : { frame: false }),
     /* 不可全屏：共享浏览器标签里的页面 requestFullscreen（双击视频/图片常见）
        会把承载它的窗口整个拉成全屏——主窗本就无边框、独立窗全屏后框也没了，
-       用户拿不到关闭入口。禁掉窗口全屏后页面改在视图框内铺满，不接管整屏。 */
+       用户拿不到关闭入口。禁掉窗口全屏后页面改在视图框内铺满，不接管整屏。
+       macOS 下该选项同时让绿灯执行「最大化」而非全屏，与前端自绘按钮语义一致。 */
     fullscreenable: false,
     show: false,
     autoHideMenuBar: true,
@@ -354,6 +389,10 @@ function createPetWindow() {
     resizable: false,
     skipTaskbar: true,
     alwaysOnTop: true,
+    /* macOS 默认把窗口 y 钳制在菜单栏下方；头像在 288 窗内居中（y=108），
+       不加这个拖到最上方仍会留约 108px 空隙。放开后窗口可越过屏幕顶，
+       悬浮球才能贴到菜单栏（仅 macOS 生效，其他平台无副作用） */
+    enableLargerThanScreen: true,
     hasShadow: false,
     show: false,
     autoHideMenuBar: true,
@@ -560,11 +599,22 @@ function registerIpc() {
     }, 60)
   }
   /* 宠物拖拽移动：渲染层 pointermove 上报屏幕坐标（指针采样频率），
-     主进程即时 setPosition——比轮询移窗平滑得多 */
+     主进程即时 setPosition——比轮询移窗平滑得多。窗口开了
+     enableLargerThanScreen（macOS 下才能贴到菜单栏），系统钳制随之失效，
+     所以这里自己把可见头像限制在工作区内：球可以贴住菜单栏/屏幕边缘，
+     但不会越过去（也不会被拖出屏幕丢球） */
   ipcMain.on('ez:pet-dragmove', (_e, x, y) => {
     const win = petWindow
     if (!win || win.isDestroyed() || !petDrag) return
-    win.setPosition(Math.round(x - petDrag.dx), Math.round(y - petDrag.dy))
+    const wa = screen.getDisplayNearestPoint({ x: Math.round(x), y: Math.round(y) }).workArea
+    const minX = wa.x - PET_AVATAR_OFFSET
+    const maxX = wa.x + wa.width - PET_AVATAR_OFFSET - PET_AVATAR
+    const minY = wa.y - PET_AVATAR_OFFSET
+    const maxY = wa.y + wa.height - PET_AVATAR_OFFSET - PET_AVATAR
+    win.setPosition(
+      Math.min(Math.max(Math.round(x - petDrag.dx), minX), maxX),
+      Math.min(Math.max(Math.round(y - petDrag.dy), minY), maxY),
+    )
   })
   /* 宠物 JS 拖拽：按下记光标与窗口左上角偏移
      （不用 app-region:drag——那会把右键变成系统窗口菜单） */
@@ -673,6 +723,7 @@ function registerIpc() {
 app.whenReady().then(async () => {
   installAppMenu()
   await startCore()
+  await setCoreCookie()
   createMainWindow()
   createTray()
   registerIpc()

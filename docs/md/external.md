@@ -47,6 +47,7 @@ __ezAll('.item .title').map((el) => el.textContent.trim())
 | `memory` | `action`（add / update / remove / project-save / project-remove / project-read）、`target?`、`id?`、`text?` 等 | 待确认操作 JSON | 免审；变更须用户确认 |
 | `model_call` | `prompt`、`model?`、`images?` | 模型文本；最多 4 张图、5 分钟 | 免审 |
 | `sleep` | `seconds`（1–900） | 等待 | 免审 |
+| `callback` | `action`（list / create / update / delete / enable / disable / run）、`id?`、`title?`、`kind?`、`schedule?`、`session?`、`app?`、`script?` | 任务清单 / 变更结果；会话任务绑定选定会话（缺省当前会话），归档/换代后失败 | list 免审，其余审批 |
 
 ## 四、技能、MCP 与上下文
 
@@ -85,7 +86,7 @@ __ezAll('.item .title').map((el) => el.textContent.trim())
 
 ## 六、结果多大才会被卸载
 
-超过阈值（默认 4096 字节）的工具结果会被卸载到文件，上下文只保留 512 字节头与绝对路径。豁免：`ask_user`、`task`、`load_skill`、`read_file`（回放工具）。阈值可在设置页调整，上限 1MB。
+超过阈值（默认 4096 字节）的工具结果会被卸载到文件，上下文只保留摘要头（默认 512 字节，随阈值放宽但封顶 1KB）与绝对路径。豁免：`ask_user`、`task`、`load_skill`、`read_file`（回放工具）。阈值可在设置页调整，上限 1MB。
 
 详见[上下文管理](上下文设计.md)。
 

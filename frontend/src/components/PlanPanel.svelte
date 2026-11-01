@@ -1,17 +1,18 @@
 <script lang="ts">
   import { store } from '../lib/store.svelte'
 
+  /* 输入框上方的计划面板（只读）：折叠显示目标与进度，展开看五段全文
+     （目标/背景/方案/步骤/验证）。计划是结构化五段，不再解析正文行。 */
   const plan = $derived(store.plan)
   const running = $derived(plan?.progress.find((p) => p.status === 'running') ?? null)
   const done = $derived(plan?.progress.filter((p) => p.status === 'completed').length ?? 0)
   const total = $derived(plan?.progress.length ?? 0)
   const allDone = $derived(total > 0 && done === total)
-  /* 完整方案可能几百字：默认折叠，只留一行摘要；点头部展开全文与步骤 */
   let open = $state(false)
-  const peek = $derived((plan?.plan || '').split('\n').find((l) => l.trim())?.trim() || '')
+  const peek = $derived(plan?.goal || '')
 </script>
 
-{#if plan && (plan.plan || total)}
+{#if plan && (plan.goal || plan.design || total)}
   <div class="plan" class:finished={allDone}>
     <button class="head" onclick={() => (open = !open)} title={open ? '收起计划' : '展开完整计划'}>
       <span class="label">任务计划</span>
@@ -23,20 +24,50 @@
         <span class="now idle">等待推进</span>
       {/if}
       <span class="count">{done}/{total}</span>
-      <span class="arrow" class:open>{open ? '▾' : '▸'}</span>
+      <span class="arrow">{open ? '▾' : '▸'}</span>
     </button>
     {#if open}
-      {#if plan.plan}<pre class="goal">{plan.plan}</pre>{/if}
-      {#if total}
-        <ol class="steps">
-          {#each plan.progress as p, i (i)}
-            <li class:running={p.status === 'running'} class:done={p.status === 'completed'}>
-              <span class="ico">{p.status === 'completed' ? '✓' : p.status === 'running' ? '●' : '○'}</span>
-              <span class="tt">{p.title}</span>
-            </li>
-          {/each}
-        </ol>
-      {/if}
+      <div class="detail">
+        {#if plan.goal}
+          <section class="goal">
+            <p class="label">目标</p>
+            <p class="goal-text">{plan.goal}</p>
+          </section>
+        {/if}
+        {#if plan.context}
+          <section>
+            <p class="label">背景</p>
+            <p class="doc">{plan.context}</p>
+          </section>
+        {/if}
+        {#if plan.design}
+          <section>
+            <p class="label">方案</p>
+            <p class="doc">{plan.design}</p>
+          </section>
+        {/if}
+        {#if total}
+          <section>
+            <p class="label">步骤</p>
+            <ol class="steps">
+              {#each plan.progress as p, i (i)}
+                <li class:running={p.status === 'running'} class:done={p.status === 'completed'}>
+                  <span class="idx">
+                    {#if p.status === 'running'}<i class="dot"></i>{:else if p.status === 'completed'}✓{:else}{i + 1}{/if}
+                  </span>
+                  <span class="tt">{p.title}</span>
+                </li>
+              {/each}
+            </ol>
+          </section>
+        {/if}
+        {#if plan.verify}
+          <section>
+            <p class="label">验证</p>
+            <p class="doc">{plan.verify}</p>
+          </section>
+        {/if}
+      </div>
     {:else if peek}
       <p class="peek">{peek}</p>
     {/if}
@@ -127,11 +158,34 @@
     font-size: var(--font-size-ui);
     color: var(--muted);
   }
-  .goal {
-    margin: 0;
-    padding: 0 10px 8px;
-    max-height: 200px;
+  .detail {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    max-height: 260px;
     overflow-y: auto;
+    padding: 0 10px 10px;
+  }
+  .detail .label {
+    margin-bottom: 4px;
+  }
+  .goal {
+    padding: 8px 10px;
+    border-radius: 8px;
+    background: color-mix(in srgb, var(--accent) 6%, var(--bg));
+    border: 1px solid color-mix(in srgb, var(--accent) 16%, var(--line));
+  }
+  .goal-text {
+    margin: 0;
+    font-size: var(--font-size-ui);
+    font-weight: 600;
+    line-height: 1.5;
+    color: var(--fg);
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+  .doc {
+    margin: 0;
     font-size: var(--font-size-ui);
     line-height: 1.55;
     color: var(--muted);
@@ -141,16 +195,15 @@
   .steps {
     list-style: none;
     margin: 0;
-    padding: 6px 10px 8px;
-    border-top: 1px solid var(--line);
-    max-height: 180px;
-    overflow-y: auto;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
   }
   .steps li {
     display: flex;
     align-items: flex-start;
-    gap: 7px;
-    padding: 2px 0;
+    gap: 8px;
     font-size: var(--font-size-ui);
     line-height: 1.45;
     color: var(--muted);
@@ -161,21 +214,41 @@
   .steps li.done {
     color: var(--faint);
   }
-  .steps li.done .tt {
-    text-decoration: line-through;
-    text-decoration-color: var(--line-strong);
-  }
-  .ico {
+  .idx {
     flex: none;
-    width: 12px;
-    text-align: center;
-    font-size: var(--font-size-small);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 16px;
+    height: 16px;
+    margin-top: 1px;
+    border: 1px solid var(--line-strong);
+    border-radius: 50%;
+    font-family: var(--font-ui);
+    font-size: 9px;
+    font-weight: 600;
+    line-height: 1;
+    font-variant-numeric: tabular-nums;
+    color: var(--faint);
   }
-  li.running .ico {
+  /* 进行中用实心圆点而不是 ● 字形：字形基线在不同字体里偏移，圆点永远居中 */
+  .idx .dot {
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+    background: currentColor;
+  }
+  li.running .idx {
+    border-color: var(--accent);
     color: var(--accent);
   }
-  li.done .ico {
+  li.done .idx {
+    border-color: color-mix(in srgb, #3fb950 45%, var(--line));
     color: #3fb950;
+  }
+  li.done .tt {
+    text-decoration: line-through;
+    text-decoration-color: var(--line-strong);
   }
   .tt {
     min-width: 0;

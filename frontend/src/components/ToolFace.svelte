@@ -38,7 +38,8 @@
   </div>
 {:else if face?.kind === 'plan'}
   <div class="tf">
-    {#if face.plan}<pre class="tf-plan">{face.plan}</pre>{/if}
+    {#if face.goal}<p class="tf-goal">{face.goal}</p>{/if}
+    {#if face.design}<pre class="tf-plan">{face.design}</pre>{/if}
     {#if face.progress.length}
       <ul class="tf-steps">
         {#each face.progress as step, i (i)}
@@ -48,7 +49,7 @@
           </li>
         {/each}
       </ul>
-    {:else if !face.plan}
+    {:else if !face.goal && !face.design}
       <span class="tf-empty">清除当前计划</span>
     {/if}
   </div>
@@ -125,9 +126,13 @@
   .tf-cmd {
     color: var(--fg);
   }
+  .tf-goal {
+    font-weight: 600;
+    color: var(--fg);
+  }
   .tf-plan {
     white-space: pre-wrap;
-    color: var(--fg);
+    color: var(--muted);
   }
   .tf-steps {
     list-style: none;

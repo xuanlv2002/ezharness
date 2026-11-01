@@ -27,8 +27,9 @@ const sseHeartbeatInterval = 20 * time.Second
 
 /* ChatController 对话表现层。 */
 type ChatController struct {
-	Svc    *service.ChatService
-	Memory *service.MemoryService // 通知聚合：记忆待确认操作（跨会话全局）
+	Svc       *service.ChatService
+	Memory    *service.MemoryService   // 通知聚合：记忆待确认操作（跨会话全局）
+	Callbacks *service.CallbackService // 通知聚合：快应用触发（全局）
 }
 
 /*
@@ -135,6 +136,13 @@ func (c *ChatController) Events(g *gin.Context) {
 		g.JSON(http.StatusInternalServerError, gin.H{"error": "streaming unsupported"})
 		return
 	}
+	/* 订阅与回放快照必须在同一把锁内完成：先回放后订阅会把两步之间
+	   发布的 tool_start/model_end 等生命周期帧丢掉，前端因此一直停在
+	   「模型思考中」且看不到工具卡。订阅先于写响应，回放期间的新帧
+	   在 channel 里排队，顺序仍然正确。 */
+	frames, turnActive, ch, unsub := sess.SubscribeWithReplay()
+	defer unsub()
+
 	g.Header("Content-Type", "text/event-stream")
 	g.Header("Cache-Control", "no-cache")
 	g.Header("Connection", "keep-alive")
@@ -142,16 +150,13 @@ func (c *ChatController) Events(g *gin.Context) {
 
 	/* 建连首帧：当前轮运行态（前端复位 busy / 截断本地本轮块，配合
 	随后的整轮回放干净重建——防断线重连导致的重复块与卡死） */
-	if data, err := json.Marshal(domain.ReplaySync(sess.TurnActive())); err == nil {
+	if data, err := json.Marshal(domain.ReplaySync(turnActive)); err == nil {
 		fmt.Fprintf(g.Writer, "data: %s\n\n", data)
 	}
-	for _, frame := range sess.ReplayFrames() {
+	for _, frame := range frames {
 		fmt.Fprintf(g.Writer, "data: %s\n\n", frame)
 	}
 	fl.Flush()
-
-	ch, unsub := sess.Subscribe()
-	defer unsub()
 
 	hb := g.Request.Context()
 	// 心跳注释帧：SSE 经代理（Vite dev proxy 等）空闲约 200s 被断，
@@ -168,7 +173,7 @@ func (c *ChatController) Events(g *gin.Context) {
 			}
 			fl.Flush()
 		case frame := <-ch:
-			if _, err := fmt.Fprintf(g.Writer, "data: %s\n\n", frame); err != nil {
+			if _, err := fmt.Fprintf(g.Writer, "data: %s\n\n", frame.Data); err != nil {
 				return
 			}
 			fl.Flush()
@@ -191,6 +196,28 @@ func (c *ChatController) DecideApprove(g *gin.Context) {
 	g.JSON(http.StatusOK, gin.H{"ok": true})
 }
 
+/*
+DecidePlan POST /api/sessions/:id/decisions/plan（:id=分支根 ID）。
+confirm 放行落盘；feedback 带意见交回模型重做。
+*/
+func (c *ChatController) DecidePlan(g *gin.Context) {
+	var body struct {
+		CallID   string `json:"callId" binding:"required"`
+		Action   string `json:"action" binding:"required"`
+		Feedback string `json:"feedback"`
+	}
+	if err := g.ShouldBindJSON(&body); err != nil {
+		g.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	if body.Action != hooks.PlanActionConfirm && body.Action != hooks.PlanActionFeedback {
+		g.JSON(http.StatusBadRequest, gin.H{"error": "action 需为 confirm 或 feedback"})
+		return
+	}
+	c.Svc.DecidePlan(g.Param("id"), body.CallID, body.Action, body.Feedback)
+	g.JSON(http.StatusOK, gin.H{"ok": true})
+}
+
 /* DecideMcpAuth POST /api/sessions/:id/decisions/mcp-auth（:id=分支根 ID）。 */
 func (c *ChatController) DecideMcpAuth(g *gin.Context) {
 	var body struct {
@@ -207,10 +234,11 @@ func (c *ChatController) DecideMcpAuth(g *gin.Context) {
 }
 
 /*
-	Notifications GET /api/notifications：全分支未决人机请求汇总（通知栏
+	Notifications GET /api/notifications：全分支未决人机请求、完成通知、
 
-全局轮询数据源；纯读无状态，后台分支的请求也在此可达）。组间按最新
-请求时间排序（Hub.Sessions 遍历序随机），保证轮询结果顺序稳定。
+记忆待确认与定时回调触发汇总（通知栏全局轮询数据源；纯读无状态，后台
+分支的请求也在此可达）。组间按最新条目时间排序（Hub.Sessions 遍历序
+随机），保证轮询结果顺序稳定。
 */
 func (c *ChatController) Notifications(g *gin.Context) {
 	type noticeGroup struct {
@@ -238,20 +266,37 @@ func (c *ChatController) Notifications(g *gin.Context) {
 			out = append(out, noticeGroup{RootID: "memory", Items: items})
 		}
 	}
+	// 定时回调触发通知同样是全局的：独立一组，点击跳会话或任务详情
+	if c.Callbacks != nil {
+		if items := c.Callbacks.Notices(); len(items) > 0 {
+			out = append(out, noticeGroup{RootID: "callbacks", Items: items})
+		}
+	}
 	sort.Slice(out, func(i, j int) bool {
 		return out[i].Items[0].Ts > out[j].Items[0].Ts
 	})
 	g.JSON(http.StatusOK, out)
 }
 
-/* DismissNotification POST /api/sessions/:id/notifications/dismiss：关闭该
-会话的完成通知（:id=分支根 ID；仅完成通知可关，未决请求走决策端点）。 */
+/*
+	DismissNotification POST /api/sessions/:id/notifications/dismiss：关闭该
+
+会话的完成通知或全局定时回调通知（:id=分支根 ID / callbacks；仅完成/
+回调通知可关，未决请求走决策端点）。
+*/
 func (c *ChatController) DismissNotification(g *gin.Context) {
 	var body struct {
 		CallID string `json:"callId" binding:"required"`
 	}
 	if err := g.ShouldBindJSON(&body); err != nil {
 		g.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	if g.Param("id") == "callbacks" {
+		if c.Callbacks != nil {
+			c.Callbacks.DismissNotice(body.CallID)
+		}
+		g.JSON(http.StatusOK, gin.H{"ok": true})
 		return
 	}
 	if s := c.Svc.Hub.SessionOf(g.Param("id")); s != nil {

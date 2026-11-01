@@ -17,14 +17,65 @@
   /*
   记忆 = 长期记忆/能力记忆两个文件夹（GET /api/memory/config）+ 会话树
   （GET /api/memory/tree）：话题记忆展示完整会话树——每条分支（线）从根
-  到当前叶，compact 旧世代标"已归档"，fork 分叉可见；操作：回顾（只读
-  展开）、切到分支（跳对话页）、手动归档、删整条线。
+  到当前叶，compact 旧世代标"已归档"，fork 分叉可见。树按层懒加载：
+  根层分页，子代展开时再拉，列表查询只读元数据。操作：回顾（只读展开）、
+  切到分支（跳对话页）、手动归档、删整条线。
   */
   let { onNavigate }: { onNavigate?: (v: string) => void } = $props()
 
   let cfg = $state<MemoryConfig | null>(null)
-  let tree = $state<SessionNode[] | null>(null)
   let message = $state('')
+
+  /* 会话树按层懒加载：根层每页 TREE_PAGE 条（“加载更多”翻页），
+     子代点开哪层拉哪层；已拉过的层缓存在 tree 里，收起再展开不重拉。 */
+  const TREE_PAGE = 30
+  let tree = $state<SessionNode[] | null>(null) // 已加载节点（按层/页累积）
+  let rootsLoaded = $state(false)
+  let rootNext = $state('')
+  let rootTotal = $state(0)
+  let loadedChildren = $state<Set<string>>(new Set())
+  let loadingParent = $state<string | null>(null) // 正在拉哪一层（'' = 根层）
+  let treeErr = $state('')
+
+  async function loadRoots(more = false) {
+    if (loadingParent !== null || (more && !rootNext)) return
+    loadingParent = ''
+    try {
+      const page = await api.getMemoryTree('', more ? rootNext : '', TREE_PAGE)
+      const have = new Set((tree ?? []).map((n) => n.id))
+      const incoming = page.nodes.filter((n) => !have.has(n.id))
+      tree = more ? [...(tree ?? []), ...incoming] : incoming
+      rootNext = page.next ?? ''
+      rootTotal = page.total ?? (tree?.length ?? 0)
+      rootsLoaded = true
+      treeErr = ''
+    } catch {
+      treeErr = '会话树加载失败（后端不可达）'
+    } finally {
+      loadingParent = null
+    }
+  }
+
+  async function loadChildren(parent: string): Promise<boolean> {
+    if (loadingParent !== null || loadedChildren.has(parent)) return false
+    loadingParent = parent
+    try {
+      const page = await api.getMemoryTree(parent)
+      const have = new Set((tree ?? []).map((n) => n.id))
+      // 子代数以本层实际返回为准（期间删除节点时箭头随之收敛）
+      tree = [
+        ...(tree ?? []).map((n) => (n.id === parent ? { ...n, childCount: page.nodes.length } : n)),
+        ...page.nodes.filter((n) => !have.has(n.id)),
+      ]
+      loadedChildren = new Set(loadedChildren).add(parent)
+      return true
+    } catch {
+      treeErr = '会话树加载失败（后端不可达）'
+      return false
+    } finally {
+      loadingParent = null
+    }
+  }
 
   /* 回顾侧边抽屉：目标节点 + 双页签——「消息」= 只读全文 + 压缩摘要，
      「调用链」= 该会话 trace.jsonl 的 otel span（瀑布图 + 汇总） */
@@ -35,21 +86,11 @@
   let reviewSystem = $state('')
   let reviewSpans = $state<TraceSpan[]>([])
   let reviewLoading = $state(false)
+  let sysOpen = $state(false) // 系统提示词折叠态（换节点/关抽屉时复位）
   let pickedSpan = $state<TraceSpan | null>(null)
   /* 瀑布图上的分身调用链默认折起：fork 内部的模型/工具调用属于细节，
      默认只留一行标识，需要时再展开 */
   let openForks = $state<Set<string>>(new Set())
-
-  async function loadTree() {
-    try {
-      const t = await api.getMemoryTree()
-      tree = t
-      // 默认全展开（树规模桌面尺度；有孩子才需要进集合；虚拟根默认张开）
-      expanded = new Set(['null', ...t.filter((n) => t.some((k) => k.targetId === n.id)).map((n) => n.id)])
-    } catch {
-      message = '会话树加载失败（后端不可达）'
-    }
-  }
 
   /* 顶栏搜索跳转：滚动到能力记忆分区（消费后清空锚点） */
   $effect(() => {
@@ -60,10 +101,10 @@
     requestAnimationFrame(() => el?.scrollIntoView({ block: 'start', behavior: 'smooth' }))
   })
 
-  /* 三段数据互不依赖：并发拉取（串行时长期记忆要等会话树，进页面空等） */
+  /* 三段数据互不依赖：并发拉取；会话树先拉根层第一页，子代按需展开 */
   onMount(() => {
     void loadConfig()
-    void loadTree()
+    void loadRoots()
     void loadLongterm()
   })
 
@@ -263,37 +304,68 @@
   }
 
   /* 回顾：侧边抽屉只读全文；压缩新叶几乎无消息，摘要段给上下文。
-     调用链独立取（无 trace.jsonl 的旧会话返回空，不拖垮消息回顾） */
+     调用链不在打开时预取，切到“调用链”页签再读（大 trace 不拖慢消息回顾） */
+  let traceLoaded = $state(false)
+  let traceLoading = $state(false)
+  /* 请求序号：抽屉快速开关/切换节点时，旧响应不得覆盖新节点 */
+  let reviewSeq = 0
+
   async function reviewTopic(n: SessionNode) {
+    const seq = ++reviewSeq
     reviewNode = n
     reviewTab = 'msgs'
+    sysOpen = false
     pickedSpan = null
     openForks = new Set()
+    reviewSpans = []
+    traceLoaded = false
+    traceLoading = false
     reviewLoading = true
     try {
-      const [d, tr] = await Promise.all([
-        api.getTopic(n.id),
-        api.getTopicTrace(n.id).catch(() => [] as TraceSpan[]),
-      ])
+      const d = await api.getTopic(n.id)
+      if (seq !== reviewSeq) return
       reviewMsgs = d.messages || []
       reviewSummary = (d.summary || '').replace(/<\/?compact-summary>/g, '').trim()
       reviewSystem = d.systemPrompt || ''
-      reviewSpans = tr
     } catch (e) {
-      message = `回顾失败：${(e as Error).message}`
+      if (seq === reviewSeq) message = `回顾失败：${(e as Error).message}`
     } finally {
-      reviewLoading = false
+      if (seq === reviewSeq) reviewLoading = false
+    }
+  }
+
+  async function openTraceTab() {
+    reviewTab = 'trace'
+    if (!reviewNode || traceLoaded || traceLoading) return
+    const seq = reviewSeq
+    const id = reviewNode.id
+    traceLoading = true
+    try {
+      const spans = await api.getTopicTrace(id)
+      if (seq !== reviewSeq) return
+      reviewSpans = spans
+    } catch {
+      if (seq === reviewSeq) reviewSpans = []
+    } finally {
+      if (seq === reviewSeq) {
+        traceLoading = false
+        traceLoaded = true
+      }
     }
   }
 
   function closeReview() {
+    reviewSeq++
     reviewNode = null
     reviewMsgs = []
     reviewSummary = ''
     reviewSystem = ''
+    sysOpen = false
     reviewSpans = []
     pickedSpan = null
     openForks = new Set()
+    traceLoaded = false
+    traceLoading = false
   }
 
   /* ── 调用链视图：按轮分块的瀑布图与汇总 ── */
@@ -603,59 +675,82 @@
   }
 
   /* 会话树（目录式，节点树模型）：
-     虚拟 null 根 → 顶层 = new 根（每条新线一个根节点）；归档世代沿
-     compress 边向下成链（每代是上一代的子，树的纵深）；fork 挂在
-     fork 源会话的父下（兄弟位：与源同级，⑂ 徽标标出处）。叶子节点
-     即当前可进入的分支。guides 是各级祖先的竖向导轨列。 */
+     虚拟 null 根 → 顶层 = 各条线（parentId 空）；归档世代沿 compress
+     边向下成链；fork 挂在分叉源的父下（兄弟位，⑂ 徽标标出处）。
+     parentId 由后端按同一规则算好，前端只按它分组；根层分页，子层
+     展开时再拉。guides 是各级祖先的竖向导轨列。 */
   type Row = {
-    n: SessionNode | null // null = 虚拟根
+    n: SessionNode | null // null = 虚拟根 / 加载行 / 加载更多
     depth: number
     kids: number
     open: boolean
     guides: number
     parentTitle?: string
+    loading?: boolean
+    more?: boolean
   }
-  let expanded = $state<Set<string>>(new Set())
+  /* 根层默认展开（进页面就显示最近一页分支）；子代默认收起 */
+  let expanded = $state<Set<string>>(new Set(['null']))
 
-  function toggle(id: string) {
-    const next = new Set(expanded)
-    if (next.has(id)) next.delete(id)
-    else next.add(id)
-    expanded = next
+  /* 根部展开：第一次展开拉根层，之后用缓存；先展开再拉，让“加载中…”立即可见 */
+  async function toggleRoot() {
+    if (expanded.has('null')) {
+      expanded = new Set()
+      return
+    }
+    expanded = new Set([...expanded, 'null'])
+    if (!rootsLoaded) await loadRoots()
+  }
+
+  /* 节点展开：第一次展开拉该节点直接子代；收起保留缓存，再展开不重拉 */
+  async function toggleNode(n: SessionNode) {
+    if (expanded.has(n.id)) {
+      const next = new Set(expanded)
+      next.delete(n.id)
+      expanded = next
+      return
+    }
+    expanded = new Set([...expanded, n.id])
+    if (!loadedChildren.has(n.id) && n.childCount > 0 && !(await loadChildren(n.id))) {
+      const next = new Set(expanded)
+      next.delete(n.id)
+      expanded = next
+    }
   }
 
   const treeRows = $derived.by(() => {
-    if (!tree) return [] as Row[]
-    const byId = new Map(tree.map((n) => [n.id, n]))
-    const kids = new Map<string, SessionNode[]>() // parent id → 子节点（compress 子代 + fork 兄弟）
+    const nodes = tree ?? []
+    const kids = new Map<string, SessionNode[]>() // 展示父 id → 子节点
     const roots: SessionNode[] = []
-    for (const n of tree) {
-      let parent = ''
-      if (n.seedKind === 'compress' && n.targetId) {
-        parent = n.targetId // 归档换代：挂在旧代之下（纵深链）
-      } else if (n.seedKind === 'fork' && n.targetId) {
-        // 兄弟位：fork 与源会话同父（源是根则 fork 也是顶层）
-        const src = byId.get(n.targetId)
-        parent = src?.seedKind === 'compress' && src.targetId ? src.targetId : ''
-      }
-      if (parent && byId.has(parent)) {
-        kids.set(parent, [...(kids.get(parent) || []), n])
-      } else {
-        roots.push(n)
-      }
+    for (const n of nodes) {
+      if (n.parentId) kids.set(n.parentId, [...(kids.get(n.parentId) || []), n])
+      else roots.push(n)
     }
-    roots.sort((a, b) => b.createdAt - a.createdAt)
     const out: Row[] = []
     const nullOpen = expanded.has('null')
     out.push({ n: null, depth: 0, kids: roots.length, open: nullOpen, guides: 0 })
     if (!nullOpen) return out
+    const loadRow = (depth: number): Row => ({
+      n: null, depth, kids: 0, open: false, guides: depth - 1, loading: true,
+    })
+    if (loadingParent === '' && !rootsLoaded) {
+      out.push(loadRow(1))
+      return out
+    }
     const walk = (n: SessionNode, depth: number, parentTitle: string) => {
-      const ch = (kids.get(n.id) || []).sort((a, b) => b.createdAt - a.createdAt)
+      const ch = kids.get(n.id) || []
       const open = expanded.has(n.id)
       out.push({ n, depth, kids: ch.length, open, guides: depth - 1, parentTitle })
-      if (open) for (const c of ch) walk(c, depth + 1, n.title)
+      if (!open) return
+      if (ch.length === 0 && n.childCount > 0 && loadingParent === n.id) {
+        out.push(loadRow(depth + 1))
+        return
+      }
+      for (const c of ch) walk(c, depth + 1, n.title)
     }
     for (const r of roots) walk(r, 1, '')
+    if (loadingParent === '') out.push(loadRow(1))
+    else if (rootNext) out.push({ n: null, depth: 1, kids: 0, open: false, guides: 0, more: true })
     return out
   })
 
@@ -873,53 +968,60 @@
     </header>
     <p class="dir"><svg class="dirico" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" /></svg>{cfg ? cfg.topics.dir : '—'}</p>
     <div class="treelist">
-      {#if treeRows.length > 0}
-        {#each treeRows as row, i (`${row.n?.id ?? 'null'}-${i}`)}
-          {#if row.n === null}
-            <div class="trow root">
-              <button class="tw" onclick={() => toggle('null')} title={row.open ? '收起全部分支' : '展开全部分支'}>
+      {#each treeRows as row, i (`${row.n?.id ?? 'null'}-${i}`)}
+        {#if row.loading}
+          <div class="trow tload" style="padding-left:{8 + row.guides * 18}px">
+            <span class="desc">加载中…</span>
+          </div>
+        {:else if row.more}
+          <div class="trow" style="padding-left:26px">
+            <button class="loadmore" onclick={() => void loadRoots(true)}>加载更多</button>
+          </div>
+        {:else if row.n === null}
+          <div class="trow root">
+            <button class="tw" onclick={toggleRoot} title={row.open ? '收起分支列表' : '展开分支列表'}>
+              <span class="farrow" class:open={row.open}>{row.open ? '▾' : '▸'}</span>
+            </button>
+            <span class="name mono">sessions</span>
+            <span class="desc">{rootsLoaded ? `${row.kids}${rootTotal > row.kids ? ` / ${rootTotal}` : ''} 条分支` : ''}</span>
+          </div>
+        {:else}
+          {@const n = row.n}
+          <div class="trow" class:cur={n.isActiveLine && n.isLeaf}>
+            {#each Array(row.guides) as _, g (g)}
+              <span class="guide"></span>
+            {/each}
+            {#if row.kids > 0 || n.childCount > 0}
+              <button class="tw" onclick={() => void toggleNode(n)} title={row.open ? '收起世代' : '展开世代'}>
                 <span class="farrow" class:open={row.open}>{row.open ? '▾' : '▸'}</span>
               </button>
-              <span class="name mono">sessions</span>
-              <span class="desc">{row.kids} 条分支</span>
+            {:else}
+              <span class="tw dot">·</span>
+            {/if}
+            <div class="info">
+              <span class="name">
+                <span class="n-text">{n.title || '未命名会话'}</span>
+                {#if n.archived}<span class="kbadge arc">已归档</span>{/if}
+                {#if n.seedKind === 'fork'}<span class="kbadge" title={n.forkedFrom?.title ? `来自 session：${n.forkedFrom.title}` : 'fork 产生的 session'}>⑂ {shortTitle(n.forkedFrom?.title)}</span>{/if}
+                {#if n.seedKind === 'compress'}<span class="kbadge" title={row.parentTitle ? `来自「${row.parentTitle}」压缩生成` : '压缩生成'}>⇪ 压缩生成</span>{/if}
+                {#if n.msgs === 0}<span class="kbadge mut">空</span>{/if}
+              </span>
+              <span class="desc">{fmtDate(n.createdAt)} · {n.msgs} 条消息</span>
             </div>
-          {:else}
-            {@const n = row.n}
-            <div class="trow" class:cur={n.isActiveLine && n.isLeaf}>
-              {#each Array(row.guides) as _, g (g)}
-                <span class="guide"></span>
-              {/each}
-              {#if row.kids > 0}
-                <button class="tw" onclick={() => toggle(n.id)} title={row.open ? '收起世代' : '展开世代'}>
-                  <span class="farrow" class:open={row.open}>{row.open ? '▾' : '▸'}</span>
-                </button>
-              {:else}
-                <span class="tw dot">·</span>
+            <div class="ops">
+              <button class="op" onclick={() => reviewTopic(n)}>回顾</button>
+              {#if n.isLeaf && n.lineRoot && !(n.isActiveLine)}
+                <button class="op" onclick={() => switchLine(n)} title="切到该分支的当前叶继续">切到分支</button>
               {/if}
-              <div class="info">
-                <span class="name">
-                  <span class="n-text">{n.title || '未命名会话'}</span>
-                  {#if n.archived}<span class="kbadge arc">已归档</span>{/if}
-                  {#if n.seedKind === 'fork'}<span class="kbadge" title={n.forkedFrom?.title ? `来自 session：${n.forkedFrom.title}` : 'fork 产生的 session'}>⑂ {shortTitle(n.forkedFrom?.title)}</span>{/if}
-                  {#if n.seedKind === 'compress'}<span class="kbadge" title={row.parentTitle ? `来自「${row.parentTitle}」压缩生成` : '压缩生成'}>⇪ 压缩生成</span>{/if}
-                  {#if n.msgs === 0}<span class="kbadge mut">空</span>{/if}
-                </span>
-                <span class="desc">{fmtDate(n.createdAt)} · {n.msgs} 条消息</span>
-              </div>
-              <div class="ops">
-                <button class="op" onclick={() => reviewTopic(n)}>回顾</button>
-                {#if n.isLeaf && n.lineRoot && !(n.isActiveLine)}
-                  <button class="op" onclick={() => switchLine(n)} title="切到该分支的当前叶继续">切到分支</button>
-                {/if}
-                <button class="op" disabled title="手动归档：后续版本开放">归档</button>
-              </div>
+              <button class="op" disabled title="手动归档：后续版本开放">归档</button>
             </div>
-          {/if}
-        {/each}
-      {:else if tree}
+          </div>
+        {/if}
+      {/each}
+      {#if treeErr}
+        <div class="empty">{treeErr}</div>
+      {:else if rootsLoaded && rootTotal === 0 && expanded.has('null')}
         <div class="empty">暂无会话——在对话页开聊后会沉淀到这里。</div>
-      {:else}
-        <div class="empty">会话树加载中…</div>
       {/if}
     </div>
   </section>
@@ -940,26 +1042,30 @@
     </header>
     <div class="dtabs">
       <button class="dtab" class:on={reviewTab === 'msgs'} onclick={() => (reviewTab = 'msgs')}>消息</button>
-      <button class="dtab" class:on={reviewTab === 'trace'} onclick={() => (reviewTab = 'trace')}>调用链</button>
+      <button class="dtab" class:on={reviewTab === 'trace'} onclick={() => void openTraceTab()}>调用链</button>
       {#if reviewTab === 'trace' && reviewSpans.length > 0}
         <span class="dtab-hint">{reviewSpans.length} spans</span>
       {/if}
     </div>
 
     {#if reviewTab === 'msgs'}
-      {#if reviewSystem}
-        <details class="dsys">
-          <summary>系统提示词<span class="dsys-hint">{reviewSystem.length.toLocaleString()} 字符 · 点击展开</span></summary>
-          <pre class="dsys-text">{reviewSystem}</pre>
-        </details>
-      {/if}
-      {#if reviewSummary}
-        <div class="dsum">
-          <div class="dsum-tag">⇪ 压缩摘要（本会话开始前的上下文）</div>
-          <div class="dsum-text">{reviewSummary}</div>
-        </div>
-      {/if}
       <div class="dmsgs">
+        {#if reviewSystem}
+          <details class="dsys" bind:open={sysOpen}>
+            <summary>
+              <span class="dsys-caret" class:open={sysOpen}>▸</span>
+              <span class="dsys-title">系统提示词</span>
+              <span class="dsys-hint">{reviewSystem.length.toLocaleString()} 字符 · {sysOpen ? '收起' : '展开'}</span>
+            </summary>
+            <pre class="dsys-text">{reviewSystem}</pre>
+          </details>
+        {/if}
+        {#if reviewSummary}
+          <div class="dsum">
+            <div class="dsum-tag">⇪ 压缩摘要（本会话开始前的上下文）</div>
+            <div class="dsum-text">{reviewSummary}</div>
+          </div>
+        {/if}
         {#if reviewLoading}
           <div class="rv">加载中…</div>
         {:else}
@@ -976,7 +1082,7 @@
       </div>
     {:else}
       <div class="dmsgs">
-        {#if reviewLoading}
+        {#if traceLoading}
           <div class="rv">加载中…</div>
         {:else if traceBlocks.all.length === 0}
           <div class="rv">（该会话无调用链记录）</div>
@@ -1242,7 +1348,7 @@
     margin-top: -24px;
   }
   .lead.err {
-    color: #c0392b;
+    color: var(--danger);
   }
   section {
     display: flex;
@@ -1537,7 +1643,7 @@
   }
   .micon.danger:hover {
     background: color-mix(in srgb, #c0392b 10%, var(--bg));
-    color: #c0392b;
+    color: var(--danger);
   }
   .memeditwrap {
     flex: 1;
@@ -1879,7 +1985,7 @@
   }
   .del:hover {
     background: color-mix(in srgb, #c0392b 10%, var(--bg));
-    color: #c0392b;
+    color: var(--danger);
   }
   .toggle {
     position: relative;
@@ -1970,7 +2076,7 @@
     color: var(--faint);
   }
   .modal-hint.err {
-    color: #c0392b;
+    color: var(--danger);
   }
   .modal footer {
     display: flex;
@@ -2050,6 +2156,24 @@
     max-height: 50vh;
     overflow-x: hidden;
     overflow-y: auto;
+  }
+  /* 某一层正在拉取时的占位行 */
+  .tload {
+    color: var(--faint);
+    font-size: var(--font-size-small);
+  }
+  .loadmore {
+    border: none;
+    background: transparent;
+    color: var(--accent);
+    font: inherit;
+    font-size: var(--font-size-ui);
+    padding: 4px 8px;
+    border-radius: 6px;
+    cursor: pointer;
+  }
+  .loadmore:hover {
+    background: var(--accent-soft);
   }
   .trow {
     display: flex;
@@ -2198,8 +2322,10 @@
     width: min(460px, 92vw);
     display: flex;
     flex-direction: column;
+    overflow: hidden;
     background: var(--bg);
     border-left: 1px solid var(--line-strong);
+    border-radius: 16px 0 0 16px;
     box-shadow: -8px 0 24px rgb(0 0 0 / 12%);
     animation: drawer-in 0.22s var(--ease-out) both;
   }
@@ -2233,6 +2359,12 @@
     font-weight: 600;
     color: var(--fg);
     overflow-wrap: anywhere;
+  }
+  /* 抽屉头部徽标用中性色：回顾页正文已去掉高饱和大段蓝字 */
+  .dtitle .kbadge {
+    color: var(--muted);
+    background: var(--bg-soft);
+    border: 1px solid var(--line);
   }
   .dclose {
     flex: none;
@@ -2278,7 +2410,7 @@
     color: var(--fg);
   }
   .dtab.on {
-    color: var(--accent);
+    color: var(--fg);
     border-bottom-color: var(--accent);
   }
   .dtab-hint {
@@ -2287,24 +2419,49 @@
     font-size: var(--font-size-small);
     color: var(--faint);
   }
-  /* 系统提示词：默认折叠（通常很长），展开后限高内部滚动 */
+  /* 系统提示词：默认折叠（通常很长）。展开后随消息区一起滚动，
+     不再单独限高，避免抽屉里套第二根滚动条 */
   .dsys {
     flex: none;
-    margin: 12px 16px 0;
+    margin: 0;
     border: 1px solid var(--line);
-    border-radius: 8px;
+    border-radius: 10px;
     background: var(--bg-soft);
+    overflow: hidden;
   }
   .dsys summary {
     display: flex;
-    align-items: baseline;
-    gap: 8px;
+    align-items: center;
+    gap: 6px;
     padding: 8px 12px;
     font-size: var(--font-size-small);
     font-weight: 600;
-    color: var(--accent);
+    color: var(--fg);
     cursor: pointer;
     user-select: none;
+    list-style: none;
+  }
+  .dsys summary::-webkit-details-marker {
+    display: none;
+  }
+  /* 鼠标点击不留焦点环；键盘聚焦用主题色描边（系统强调色外框与界面不搭） */
+  .dsys:focus,
+  .dsys summary:focus {
+    outline: none;
+  }
+  .dsys:focus-visible,
+  .dsys summary:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: -2px;
+  }
+  .dsys-caret {
+    flex: none;
+    font-size: var(--font-size-small);
+    color: var(--faint);
+    transition: transform var(--dur-fast) var(--ease-out);
+  }
+  .dsys-caret.open {
+    transform: rotate(90deg);
   }
   .dsys-hint {
     font-size: var(--font-size-small);
@@ -2316,6 +2473,7 @@
     padding: 0 12px 10px;
     max-height: 320px;
     overflow-y: auto;
+    overscroll-behavior: contain;
     font-family: var(--font-mono);
     font-size: var(--font-size-small);
     line-height: 1.65;
@@ -2325,16 +2483,15 @@
   }
   .dsum {
     flex: none;
-    margin: 12px 16px 0;
+    margin: 0;
     padding: 10px 12px;
     border: 1px solid var(--line);
-    border-left: 3px solid var(--accent);
     border-radius: 8px;
     background: var(--bg-soft);
   }
   .dsum-tag {
     font-size: var(--font-size-small);
-    color: var(--accent);
+    color: var(--muted);
     font-weight: 600;
     margin-bottom: 6px;
   }
@@ -2344,17 +2501,18 @@
     color: var(--muted);
     white-space: pre-wrap;
     word-break: break-word;
-    max-height: 180px;
-    overflow-y: auto;
   }
+  /* 消息区是抽屉唯一的滚动容器：系统提示词、摘要、消息一起滚 */
   .dmsgs {
     flex: 1;
     min-height: 0;
     overflow-y: auto;
+    overscroll-behavior: contain;
+    scrollbar-gutter: stable;
     padding: 12px 16px 20px;
     display: flex;
     flex-direction: column;
-    gap: 10px;
+    gap: 12px;
   }
 
   /* ── 调用链视图：汇总卡片 ── */
@@ -2597,8 +2755,8 @@
   }
   .tdet-kind {
     font-size: var(--font-size-small);
-    color: var(--accent);
-    background: var(--accent-soft);
+    color: var(--muted);
+    background: var(--line);
     border-radius: 5px;
     padding: 1px 6px;
   }
@@ -2635,7 +2793,7 @@
     width: 96px;
     font-family: var(--font-mono);
     font-size: var(--font-size-small);
-    color: var(--accent);
+    color: var(--muted);
     padding-top: 1px;
   }
   .tav {
@@ -2648,9 +2806,12 @@
     white-space: pre-wrap;
     word-break: break-word;
   }
+  /* 消息行：角色标签在上、正文占满整行。窄抽屉里不做固定角色列，
+     否则正文整体右移、可用宽度被吃掉 */
   .rv {
     display: flex;
-    gap: 10px;
+    flex-direction: column;
+    gap: 2px;
     font-size: var(--font-size-ui);
     line-height: 1.5;
   }
@@ -2658,15 +2819,15 @@
     color: var(--muted);
   }
   .rrole {
-    flex: none;
-    width: 44px;
     font-family: var(--font-mono);
     font-size: var(--font-size-small);
+    line-height: 1.3;
     color: var(--faint);
     text-transform: uppercase;
-    padding-top: 2px;
+    letter-spacing: 0.04em;
   }
   .rtext {
+    min-width: 0;
     white-space: pre-wrap;
     word-break: break-word;
   }
