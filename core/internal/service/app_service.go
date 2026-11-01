@@ -9,14 +9,20 @@ server 的 health 报告同一值——前端轮询 health.boot 与之匹配即�
 package service
 
 import (
-	"ezharness/core/internal/osfs"
+	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"net"
+	"net/http"
 	"os"
 	"path/filepath"
 	"sync/atomic"
+	"time"
 
 	"ezharness/core/internal/config"
+	"ezharness/core/internal/osfs"
 )
 
 /*
@@ -42,6 +48,52 @@ type AppStatus struct {
 func (s *AppService) Status() AppStatus {
 	c := s.Cfg()
 	return AppStatus{Port: c.Port, Listen: c.Listen, DataDir: c.DataDir, Boot: s.Boot.Load()}
+}
+
+/* updateFeed 是版本检查数据源（GitHub 最新 release；pre-release/draft 不计入）。 */
+const updateFeed = "https://api.github.com/repos/xuanlv2002/ezharness/releases/latest"
+
+/* ReleaseInfo 是最新 release 摘要（是否可升级由前端拿本地版本比对）。 */
+type ReleaseInfo struct {
+	Latest string `json:"latest"` // 最新版本 tag（v1.0.2 形态）
+	URL    string `json:"url"`    // 发布页
+}
+
+/*
+LatestRelease 查 GitHub 最新 release。8 秒超时：这是设置页手动触发的
+检查，网络不可达（离线/被墙）要尽快回话而不是挂住页面；失败归因为
+用户可读的一句话（细节不透传，前端只展示这句话）。
+*/
+func (s *AppService) LatestRelease(ctx context.Context) (ReleaseInfo, error) {
+	ctx, cancel := context.WithTimeout(ctx, 8*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, updateFeed, nil)
+	if err != nil {
+		return ReleaseInfo{}, err
+	}
+	req.Header.Set("Accept", "application/vnd.github+json")
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		if errors.Is(err, context.DeadlineExceeded) {
+			return ReleaseInfo{}, errors.New("网络超时，请检查网络后重试")
+		}
+		return ReleaseInfo{}, errors.New("网络不可达，请检查网络后重试")
+	}
+	defer res.Body.Close()
+	if res.StatusCode != http.StatusOK {
+		return ReleaseInfo{}, fmt.Errorf("GitHub 返回 %s", res.Status)
+	}
+	var feed struct {
+		TagName string `json:"tag_name"`
+		HTMLURL string `json:"html_url"`
+	}
+	if err := json.NewDecoder(io.LimitReader(res.Body, 1<<20)).Decode(&feed); err != nil {
+		return ReleaseInfo{}, errors.New("GitHub 响应异常，请稍后重试")
+	}
+	if feed.TagName == "" {
+		return ReleaseInfo{}, fmt.Errorf("尚无发布版本")
+	}
+	return ReleaseInfo{Latest: feed.TagName, URL: feed.HTMLURL}, nil
 }
 
 /* PathEntry 是数据/配置文件路径条目（设置页路径区）。 */

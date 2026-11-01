@@ -20,6 +20,25 @@ import {
 } from './api'
 import { filePane } from './filePaneState'
 import { openExternal } from './desktop'
+import pkg from '../../package.json'
+
+/* newerVersion：a 是否比 b 新（v 前缀可有可无，按点分段数值比较，缺段补 0）。
+   本地版本 = pkg.version（与页脚同源）；设置页版本检查共用。 */
+export function newerVersion(a: string, b: string): boolean {
+  const parts = (s: string) =>
+    s
+      .trim()
+      .replace(/^v/, '')
+      .split('.')
+      .map((n) => parseInt(n, 10) || 0)
+  const x = parts(a)
+  const y = parts(b)
+  for (let i = 0; i < Math.max(x.length, y.length); i++) {
+    const d = (x[i] ?? 0) - (y[i] ?? 0)
+    if (d !== 0) return d > 0
+  }
+  return false
+}
 
 /* 输入框附件（一切皆资源）：path = 真身路径（引用，发送不复制）；
    空 = 拖入暂存中占位 */
@@ -262,6 +281,11 @@ class AppStore {
   private modelsFetched = false
   settings = $state<Settings | null>(null)
   total = $state<TotalUsage>({ prompt: 0, completion: 0, cached: 0 })
+  /* 版本检查（启动静默查一次 + 设置页手动查共用）：updateAvailable 非空 =
+     有新版本，侧栏设置钮与设置页版本区的红点、前往下载入口都由它驱动；
+     updateChecked 标记首查已完成（设置页首屏直接给"已是最新"结论） */
+  updateAvailable = $state<{ latest: string; url: string } | null>(null)
+  updateChecked = $state(false)
 
   /* 懒加载：compact 链上是否还有旧会话可翻、是否正在加载 */
   hasPrev = $state(false)
@@ -314,6 +338,7 @@ class AppStore {
     this.unsub?.()
     this.unsub = subscribe(this.activeId, (ev) => this.apply(ev))
     this.refreshNotices()
+    void this.refreshUpdate() // 启动静默查版本：有新版 → 侧栏设置钮红点
     setInterval(() => {
       // 未决通知出没联动分支拉取（待审批角标数据源）：出现期间持续拉、
       // 消失后补拉一轮收尾；后台标签活跃照旧拉
@@ -332,6 +357,23 @@ class AppStore {
       const b = this.branches.find((x) => x.id === t.rootId)
       return !!b && !!(b.running || b.waiting)
     })
+  }
+
+  /* refreshUpdate 查一次最新版本：网络失败静默（启动路径不提示，设置页
+  手动路径由调用方展示 err）。返回 {err, latest} 供设置页渲染结论。 */
+  async refreshUpdate(): Promise<{ err: string; latest: boolean }> {
+    try {
+      const r = await api.checkUpdate()
+      this.updateChecked = true
+      if (newerVersion(r.latest, pkg.version)) {
+        this.updateAvailable = r
+        return { err: '', latest: false }
+      }
+      this.updateAvailable = null
+      return { err: '', latest: true }
+    } catch (e) {
+      return { err: (e as Error).message, latest: false }
+    }
   }
 
   async refreshStatus() {

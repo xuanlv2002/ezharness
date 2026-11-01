@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte'
+  import pkg from '../../package.json'
   import { api, type AppConfig } from '../lib/api'
   import { getToken } from '../lib/auth'
   import { store } from '../lib/store.svelte'
@@ -40,6 +41,21 @@
   /* 调试模式（模型完整输入进日志；后端实时开关，即改即生效） */
   let debugMode = $state(false)
   let savingDebug = $state(false)
+
+  /* 版本检查：结论在 store（启动静默查一次，这里手动查刷新它）——侧栏设置钮
+     红点与下方版本区同源；本地仅留手动检查的转圈与失败原因 */
+  let checking = $state(false)
+  let updErr = $state('')
+  const updNewer = $derived(store.updateAvailable)
+  const updLatest = $derived(store.updateChecked && !store.updateAvailable)
+
+  async function checkUpdate() {
+    checking = true
+    updErr = ''
+    const r = await store.refreshUpdate()
+    if (r.err) updErr = r.err
+    checking = false
+  }
 
   /* 会话令牌（前端↔core；展示 + 复制）与 OpenAPI 令牌（脚本/快应用用；展示 + 复制 + 重置） */
   let apiToken = $state('')
@@ -452,6 +468,35 @@
     </label>
   </section>
 
+  <section id="set-update">
+    <h2 class:dot={!!updNewer} title="启动时自动检查一次，也可手动检查 GitHub 最新 release；只报版本与发布页入口，下载安装仍在发布页完成，应用内不自动更新。">
+      版本与更新
+      {#if updNewer}<i class="updot"></i>{/if}
+    </h2>
+    <div class="updaterow">
+      <span class="ver">
+        <i>ezharness-{pkg.version}</i>
+        {#if updNewer}
+          <b class="state new">发现新版本 {updNewer.latest}</b>
+        {:else if updLatest}
+          <b class="state ok">✓ 已是最新</b>
+        {/if}
+      </span>
+      <span class="actions">
+        {#if updNewer}
+          <a class="dl" href={updNewer.url} target="_blank" rel="noreferrer">前往下载</a>
+        {/if}
+        <button class="check" onclick={() => void checkUpdate()} disabled={checking}>
+          {#if checking}<i class="spin"></i>{/if}
+          {checking ? '检查中…' : '检查更新'}
+        </button>
+      </span>
+    </div>
+    {#if updErr}
+      <p class="err">检查失败：{updErr}</p>
+    {/if}
+  </section>
+
   <section id="set-paths">
     <button
       class="fold"
@@ -520,6 +565,20 @@
     font-weight: 600;
     color: var(--muted);
   }
+  /* 有新版本：标题旁红点（与侧栏设置钮红点同源同款） */
+  h2.dot {
+    position: relative;
+    color: var(--fg);
+  }
+  .updot {
+    position: absolute;
+    top: -1px;
+    margin-left: 6px;
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: #e74c3c;
+  }
   .section-head {
     display: flex;
     align-items: center;
@@ -532,6 +591,94 @@
   .err {
     font-size: var(--font-size-ui);
     color: #c0392b;
+  }
+  /* 版本检查行：与开关行同款 bordered 行——左版本号+状态，右操作；
+     「前往下载」实底主按钮、「检查更新」细边次按钮 */
+  .updaterow {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 10px 14px;
+  }
+  .ver {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 10px;
+    min-width: 0;
+  }
+  .ver i {
+    font-family: var(--font-mono);
+    font-style: normal;
+    font-size: var(--font-size-section);
+    color: var(--fg);
+  }
+  .state {
+    font-size: var(--font-size-small);
+    font-weight: 600;
+    white-space: nowrap;
+  }
+  .state.ok {
+    color: var(--muted);
+  }
+  .state.new {
+    color: #f0883e;
+  }
+  .actions {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    flex: none;
+  }
+  .check {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    border: 1px solid var(--line-strong);
+    border-radius: 8px;
+    padding: 6px 14px;
+    font-size: var(--font-size-ui);
+    line-height: 1.35;
+    color: var(--fg);
+    transition:
+      border-color var(--dur-fast) var(--ease-out),
+      background var(--dur-fast) var(--ease-out);
+  }
+  .check:not(:disabled):hover {
+    background: var(--bg-soft);
+  }
+  .check:disabled {
+    cursor: default;
+  }
+  /* 手动检查转圈：与 ToolBlock 同款 spinner */
+  .spin {
+    flex: none;
+    width: 10px;
+    height: 10px;
+    border: 1.5px solid color-mix(in srgb, var(--fg) 25%, transparent);
+    border-top-color: var(--fg);
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+  }
+  @keyframes spin {
+    to {
+      transform: rotate(1turn);
+    }
+  }
+  .dl {
+    display: inline-flex;
+    align-items: center;
+    border: 1px solid var(--line-strong);
+    border-radius: 8px;
+    padding: 6px 14px;
+    font-size: var(--font-size-ui);
+    line-height: 1.35;
+    font-weight: 500;
+    background: var(--bg-invert);
+    color: var(--fg-invert);
+    text-decoration: none;
   }
   .grid2 {
     display: grid;

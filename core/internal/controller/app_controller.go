@@ -33,6 +33,19 @@ func (c *AppController) Config(g *gin.Context) {
 	g.JSON(http.StatusOK, c.Svc.ConfigView())
 }
 
+/*
+UpdateCheck GET /api/app/update-check：查 GitHub 最新 release（带超时）。
+只回最新版本与发布页，是否可升级由前端拿本地版本比对。
+*/
+func (c *AppController) UpdateCheck(g *gin.Context) {
+	info, err := c.Svc.LatestRelease(g.Request.Context())
+	if err != nil {
+		g.JSON(http.StatusBadGateway, gin.H{"error": err.Error()})
+		return
+	}
+	g.JSON(http.StatusOK, info)
+}
+
 /* Restart 换代重启：port/dataDir 零值不改；失败时旧服务不受影响。 */
 func (c *AppController) Restart(g *gin.Context) {
 	var req service.RestartRequest

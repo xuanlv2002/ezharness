@@ -7,6 +7,8 @@
 #   script/dev.sh              自动选端口（5260 被占用则递增）
 #   script/dev.sh --port 5270  指定端口
 #   script/dev.sh --no-build   跳过构建，直接启动（只改前端/Go 后想快速重启时用）
+#   script/dev.sh --version 1.0.0  覆盖本次构建的版本号（测版本检查；只进
+#                                 构建产物，version.yaml 与工作区不动）
 set -euo pipefail
 
 # 打开 modeldump（每次模型请求全量输入的打印，进终端与 data/logs/）；正式版不设即关闭
@@ -17,11 +19,13 @@ cd "$ROOT"
 
 PORT=""
 DO_BUILD=1
+DEV_VERSION=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --port) PORT="${2:-}"; shift 2 ;;
     --no-build) DO_BUILD=0; shift ;;
-    -h|--help) sed -n '2,9p' "${BASH_SOURCE[0]}"; exit 0 ;;
+    --version) DEV_VERSION="${2:-}"; shift 2 ;;
+    -h|--help) sed -n '2,11p' "${BASH_SOURCE[0]}"; exit 0 ;;
     *) echo "[dev] 未知参数: $1" >&2; exit 1 ;;
   esac
 done
@@ -48,8 +52,20 @@ DEV_DIR="$ROOT/release/dev"
 CORE_EXE="$DEV_DIR/ezharness-core.exe"   # 内核按该文件名查找 core，macOS 下沿用
 
 if [ "$DO_BUILD" = 1 ]; then
+  # 版本覆盖：临时改 frontend/package.json 让 Vite 把指定版本打进产物，
+  # 构建后立即还原（构建失败也还原——RC 延迟退出兜在还原之后）
+  VER_PATCHED=0
+  if [ -n "$DEV_VERSION" ]; then
+    echo "[dev] 版本覆盖：v${DEV_VERSION}（仅本次构建产物，version.yaml 不动）"
+    cp frontend/package.json frontend/package.json.devbak
+    VER_PATCHED=1
+    node -e 'const fs=require("fs");const p="frontend/package.json";const j=JSON.parse(fs.readFileSync(p,"utf8"));j.version="v"+process.argv[1];fs.writeFileSync(p,JSON.stringify(j,null,2)+"\n")' "$DEV_VERSION"
+  fi
   echo "[dev] building frontend..."
-  ( cd frontend && npm run build )
+  RC=0
+  ( cd frontend && npm run build ) || RC=$?
+  if [ "$VER_PATCHED" = 1 ]; then mv frontend/package.json.devbak frontend/package.json; fi
+  if [ "$RC" != 0 ]; then exit "$RC"; fi
 
   echo "[dev] copying dist -> core/web/dist..."
   rm -rf core/web/dist
@@ -58,6 +74,10 @@ if [ "$DO_BUILD" = 1 ]; then
   echo "[dev] building core..."
   mkdir -p "$DEV_DIR"
   ( cd core && go build -o "$CORE_EXE" . )
+else
+  if [ -n "$DEV_VERSION" ]; then
+    echo "[dev] --version 只在构建时生效（--no-build 跳过了构建，忽略）"
+  fi
 fi
 
 [ -x "$CORE_EXE" ] || { echo "[dev] core 不存在: ${CORE_EXE}（去掉 --no-build 重新构建）" >&2; exit 1; }

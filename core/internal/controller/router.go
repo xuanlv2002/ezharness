@@ -108,6 +108,7 @@ func NewRouter(c Controllers, dist fs.FS, tokens *TokenStore) *gin.Engine {
 	api := r.Group("/api", authRequired(tokens))
 	{
 		api.GET("/app/config", c.App.Config)
+		api.GET("/app/update-check", c.App.UpdateCheck) // 版本检查：最新 release 摘要（比对在前端）
 		api.POST("/app/restart", c.App.Restart)
 		/* 令牌管理（设置页展示/复制/重置；能过鉴权者才可见） */
 		api.GET("/app/token", c.App.SessionToken)

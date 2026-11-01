@@ -289,7 +289,13 @@ export interface Bootstrap {
 const json = async <T>(res: Response): Promise<T> => {
   if (!res.ok) {
     const body = await res.text().catch(() => '')
-    throw new Error(`${res.status}: ${body || res.statusText}`)
+    let msg = body || res.statusText
+    try {
+      msg = JSON.parse(body).error ?? msg // 后端失败统一 {"error": "…"}，取一句话
+    } catch {
+      /* 非 JSON 体原样 */
+    }
+    throw new Error(msg)
   }
   return res.json()
 }
@@ -465,6 +471,9 @@ export const api = {
   getSecurity: () => fetch('/api/security').then(json<{ rules: ToolRule[] }>),
 
   getApps: () => fetch('/api/apps').then(json<{ apps: AppEntry[] }>),
+
+  /* 版本检查：后端带超时代查 GitHub 最新 release，是否可升级由前端比对本地版本 */
+  checkUpdate: () => fetch('/api/app/update-check').then(json<{ latest: string; url: string }>),
 
   /* 启动快应用（chip 的 id 来自模型输出不可信，名单校验在后端）：返回前端
      入口路径、标题与后端终端 id；开窗由调用方执行：desktop 壳 IPC 子窗口 /
