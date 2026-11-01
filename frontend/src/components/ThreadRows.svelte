@@ -18,6 +18,7 @@
     avatarSize = 48,
     avatarKind = 'main',
     avatarOutside = false,
+    showAvatar = true,
     liveBusy = false,
     reveal,
     openGroups,
@@ -27,6 +28,7 @@
     avatarSize?: number
     avatarKind?: 'main' | 'task'
     avatarOutside?: boolean
+    showAvatar?: boolean
     liveBusy?: boolean
     reveal?: Set<number>
     openGroups: Set<number>
@@ -50,7 +52,7 @@
       </div>
     {:else}
       <div class="grp" class:leader={row.kind === 'leader'} class:avatar-out={avatarOutside}>
-        {#if row.kind === 'group'}
+        {#if row.kind === 'group' && showAvatar}
           {@const live = i === rows.length - 1}
           <span class="tag">
             <EzAvatar size={avatarSize} kind={avatarKind} run={live && liveBusy} animate={live}>ez</EzAvatar>

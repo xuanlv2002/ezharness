@@ -95,41 +95,55 @@
   let loading = $state(false)
   let noMore = $state(false) // 已到链尾的短暂提示
   let noMoreTimer: ReturnType<typeof setTimeout> | undefined
+  let settle = $state(false) // 松手回弹：换用更慢的缓动，跟着手指的拉动用短过渡
+  let settleTimer: ReturnType<typeof setTimeout> | undefined
   const THRESHOLD = 64
   const MAX_PULL = 96
 
   const armed = $derived(pull >= THRESHOLD)
+  const showNoMore = $derived(noMore || (!store.hasPrev && pull > 0))
+  const indicatorHeight = $derived(noMore ? 28 : Math.max(pull, loading ? 40 : 0))
 
   function atTop(): boolean {
     return !!el && el.scrollTop <= 0
   }
 
+  /* 松手回弹：切到更慢的回弹缓动后归零；再次拉动时恢复跟手过渡 */
   function cancelPull() {
+    if (pull <= 0) return
+    clearTimeout(settleTimer)
+    settle = true
     pull = 0
+    settleTimer = setTimeout(() => (settle = false), 200)
+  }
+
+  function startPull() {
+    clearTimeout(settleTimer)
+    settle = false
+    if (noMore) {
+      noMore = false
+      clearTimeout(noMoreTimer)
+    }
   }
 
   let wheelTimer: ReturnType<typeof setTimeout> | undefined
 
-  /* wheel 无松手事件：每格小幅累积出拉动感，停顿即"松手"——
-     未达阈值停顿弹回；达阈值进入 armed，停止滚动 450ms 加载 */
+  /* wheel 无松手事件：按滚动量连续累积拉动（不再一格跳 14px），
+     停顿即"松手"——未达阈值立刻回弹；达阈值停顿后加载。没有上一级
+     时同样跟手拉出提示，停下即回弹，不再弹出一块固定高度的提示条 */
   function onWheel(e: WheelEvent) {
     if (!el) return
     if (e.deltaY < 0) stick = false /* 向上滚 = 明确脱离跟随：别等距离阈值，下一个流式 tick 就不该再被拉回底部 */
     if (e.deltaY < 0 && atTop()) {
-      if (!store.hasPrev || loading) {
-        if (!store.hasPrev) hintNoMore()
-        return
-      }
+      if (loading) return
       clearTimeout(wheelTimer)
-      if (pull >= THRESHOLD) {
-        // 已 armed：继续滚只是保持拉动，重置停顿计时
-        wheelTimer = setTimeout(() => void trigger(), 200)
-        return
-      }
-      pull = Math.min(MAX_PULL, pull + 14)
-      wheelTimer = pull >= THRESHOLD
-        ? setTimeout(() => void trigger(), 200)
-        : setTimeout(() => cancelPull(), 250)
+      startPull()
+      // deltaMode 归一成像素：行/页模式的小数值不能直接当像素累积
+      const dy = e.deltaY * (e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? el.clientHeight || 1 : 1)
+      pull = Math.min(MAX_PULL, pull + Math.max(2, Math.min(28, -dy * 0.35)))
+      wheelTimer = store.hasPrev && pull >= THRESHOLD
+        ? setTimeout(() => void trigger(), 180)
+        : setTimeout(cancelPull, 50)
     } else if (e.deltaY > 0) {
       clearTimeout(wheelTimer)
       cancelPull()
@@ -143,42 +157,58 @@
     if (!atTop()) return
     touching = true
     touchY = e.touches[0].clientY
+    startPull()
   }
 
   function onTouchMove(e: TouchEvent) {
-    if (!touching) return
+    if (!touching || loading) return
     const d = e.touches[0].clientY - touchY
     if (d <= 0) {
       cancelPull()
       return
     }
-    if (!store.hasPrev || loading) {
-      if (!store.hasPrev) hintNoMore()
-      return
-    }
-    pull = Math.min(MAX_PULL, d * 0.4) // 阻尼
+    pull = Math.min(MAX_PULL, d * 0.4) // 阻尼；没有上一级也跟手拉出提示
   }
 
   function onTouchEnd() {
     touching = false
-    if (armed) void trigger()
+    if (store.hasPrev && armed) void trigger()
     else cancelPull()
   }
 
   function hintNoMore() {
+    clearTimeout(settleTimer)
+    settle = true
+    settleTimer = setTimeout(() => (settle = false), 200)
     noMore = true
     clearTimeout(noMoreTimer)
     // 短促提示即收：连续滚动会不断重置计时，停留太久显得呆滞
-    noMoreTimer = setTimeout(() => (noMore = false), 550)
+    noMoreTimer = setTimeout(() => {
+      settle = true
+      noMore = false
+      clearTimeout(settleTimer)
+      settleTimer = setTimeout(() => (settle = false), 200)
+    }, 900)
   }
 
   async function trigger() {
     if (loading) return
+    if (!store.hasPrev) {
+      cancelPull()
+      return
+    }
+    clearTimeout(wheelTimer)
     loading = true
+    settle = true // 进入加载态也走短过渡，不硬跳
+    clearTimeout(settleTimer)
+    settleTimer = setTimeout(() => (settle = false), 200)
     pull = THRESHOLD // 加载期间保持指示器可见
     const prevHeight = el?.scrollHeight ?? 0
     await store.loadPrev()
     loading = false
+    settle = true // 收起加载态同样走回弹过渡
+    clearTimeout(settleTimer)
+    settleTimer = setTimeout(() => (settle = false), 200)
     pull = 0
     if (!store.hasPrev) hintNoMore()
     // prepend 高度补偿：视口停在原有内容处，不跳顶
@@ -240,15 +270,19 @@
   <div class="timeline" bind:this={el} onscroll={onScroll} onwheel={onWheel}
     ontouchstart={onTouchStart} ontouchmove={onTouchMove} ontouchend={onTouchEnd}>
   <div class="inner">
-    <!-- 下拉指示器：随拉动量展开，文案三态（noMore 固定高度让"没有更早"可见） -->
-    {#if pull > 0 || loading || noMore}
-      <div class="pullind" style="height:{noMore ? 28 : Math.max(pull, loading ? 40 : 0)}px" class:armed>
-        <span class="arrow" class:spin={loading}>{loading ? '⟳' : noMore ? '·' : '↓'}</span>
-        <span class="ptext">
-          {#if loading}加载上一话题…{:else if noMore}没有更早的会话了{:else if armed}松开加载上一话题{:else}下拉加载上一话题{/if}
-        </span>
-      </div>
-    {/if}
+    <!-- 下拉指示器：常驻节点让高度过渡能从 0 开始/收回（条件渲染会让
+         首次出现和消失变成瞬间跳变）；文案三态 -->
+    <div
+      class="pullind"
+      class:armed={armed && store.hasPrev}
+      class:settle
+      style="height:{indicatorHeight}px"
+      aria-hidden={indicatorHeight <= 0}>
+      <span class="arrow" class:spin={loading}>{loading ? '⟳' : showNoMore ? '·' : '↓'}</span>
+      <span class="ptext">
+        {#if loading}加载上一话题…{:else if showNoMore}没有更早的会话了{:else if armed}松开加载上一话题{:else}下拉加载上一话题{/if}
+      </span>
+    </div>
     {#if !empty}
       <ThreadRows
         {rows}
@@ -485,8 +519,14 @@
     font-size: var(--font-size-ui);
     color: var(--faint);
     font-family: var(--font-mono);
-    transition: height 0.12s var(--ease-out), opacity 0.12s var(--ease-out);
+    /* 拉动过程只做极短平滑，避免指针停下来后视觉高度还在追目标；
+       真正的回弹交给 .settle（松手/加载态切换时启用） */
+    transition: height 0.04s linear, opacity 0.08s var(--ease-out);
     opacity: 0.85;
+  }
+  /* 松手回弹：短促的 ease-out，停下后立刻收回 */
+  .pullind.settle {
+    transition: height 0.12s var(--ease-out), opacity 0.1s var(--ease-out);
   }
   .pullind.armed {
     color: var(--accent, #2563eb);

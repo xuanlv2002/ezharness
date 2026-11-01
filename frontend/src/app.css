@@ -89,32 +89,34 @@ body {
   margin-inline: auto;
 }
 
-/* 滚动容器（主时间线与各管理页）：滚动条贴容器右缘，细而淡，
-   不抢内容的视觉重心 */
+/* 主时间线与各管理页：滚动条槽常驻，内容加载不横向晃动 */
 .page,
 .timeline {
   scrollbar-gutter: stable;
 }
-.page::-webkit-scrollbar,
-.timeline::-webkit-scrollbar {
+
+/* 全站统一滚动条：6px、透明轨道、低对比拇指，悬停加深。抽屉、面板、
+   代码块等内嵌滚动容器同款，避免原生粗滚动条破坏界面样式；需要隐藏
+   滚动条的局部（时间线轮次导航等）以更高优先级的类选择器自行覆盖 */
+::-webkit-scrollbar {
   width: 6px;
+  height: 6px;
 }
-.page::-webkit-scrollbar-track,
-.timeline::-webkit-scrollbar-track {
+::-webkit-scrollbar-track {
   background: transparent;
 }
-.page::-webkit-scrollbar-thumb,
-.timeline::-webkit-scrollbar-thumb {
+::-webkit-scrollbar-thumb {
   border-radius: 3px;
   background: color-mix(in srgb, var(--fg) 14%, transparent);
 }
-.page::-webkit-scrollbar-thumb:hover,
-.timeline::-webkit-scrollbar-thumb:hover {
+::-webkit-scrollbar-thumb:hover {
   background: color-mix(in srgb, var(--fg) 30%, transparent);
 }
-.page::-webkit-scrollbar-button,
-.timeline::-webkit-scrollbar-button {
+::-webkit-scrollbar-button {
   display: none;
+}
+::-webkit-scrollbar-corner {
+  background: transparent;
 }
 
 /* 标题行高统一收紧：正文的 1.65 行距放在标题上会松散发虚 */

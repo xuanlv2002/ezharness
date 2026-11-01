@@ -86,6 +86,7 @@
   let reviewSystem = $state('')
   let reviewSpans = $state<TraceSpan[]>([])
   let reviewLoading = $state(false)
+  let sysOpen = $state(false) // 系统提示词折叠态（换节点/关抽屉时复位）
   let pickedSpan = $state<TraceSpan | null>(null)
   /* 瀑布图上的分身调用链默认折起：fork 内部的模型/工具调用属于细节，
      默认只留一行标识，需要时再展开 */
@@ -313,6 +314,7 @@
     const seq = ++reviewSeq
     reviewNode = n
     reviewTab = 'msgs'
+    sysOpen = false
     pickedSpan = null
     openForks = new Set()
     reviewSpans = []
@@ -358,6 +360,7 @@
     reviewMsgs = []
     reviewSummary = ''
     reviewSystem = ''
+    sysOpen = false
     reviewSpans = []
     pickedSpan = null
     openForks = new Set()
@@ -1046,19 +1049,23 @@
     </div>
 
     {#if reviewTab === 'msgs'}
-      {#if reviewSystem}
-        <details class="dsys">
-          <summary>系统提示词<span class="dsys-hint">{reviewSystem.length.toLocaleString()} 字符 · 点击展开</span></summary>
-          <pre class="dsys-text">{reviewSystem}</pre>
-        </details>
-      {/if}
-      {#if reviewSummary}
-        <div class="dsum">
-          <div class="dsum-tag">⇪ 压缩摘要（本会话开始前的上下文）</div>
-          <div class="dsum-text">{reviewSummary}</div>
-        </div>
-      {/if}
       <div class="dmsgs">
+        {#if reviewSystem}
+          <details class="dsys" bind:open={sysOpen}>
+            <summary>
+              <span class="dsys-caret" class:open={sysOpen}>▸</span>
+              <span class="dsys-title">系统提示词</span>
+              <span class="dsys-hint">{reviewSystem.length.toLocaleString()} 字符 · {sysOpen ? '收起' : '展开'}</span>
+            </summary>
+            <pre class="dsys-text">{reviewSystem}</pre>
+          </details>
+        {/if}
+        {#if reviewSummary}
+          <div class="dsum">
+            <div class="dsum-tag">⇪ 压缩摘要（本会话开始前的上下文）</div>
+            <div class="dsum-text">{reviewSummary}</div>
+          </div>
+        {/if}
         {#if reviewLoading}
           <div class="rv">加载中…</div>
         {:else}
@@ -2315,8 +2322,10 @@
     width: min(460px, 92vw);
     display: flex;
     flex-direction: column;
+    overflow: hidden;
     background: var(--bg);
     border-left: 1px solid var(--line-strong);
+    border-radius: 16px 0 0 16px;
     box-shadow: -8px 0 24px rgb(0 0 0 / 12%);
     animation: drawer-in 0.22s var(--ease-out) both;
   }
@@ -2350,6 +2359,12 @@
     font-weight: 600;
     color: var(--fg);
     overflow-wrap: anywhere;
+  }
+  /* 抽屉头部徽标用中性色：回顾页正文已去掉高饱和大段蓝字 */
+  .dtitle .kbadge {
+    color: var(--muted);
+    background: var(--bg-soft);
+    border: 1px solid var(--line);
   }
   .dclose {
     flex: none;
@@ -2395,7 +2410,7 @@
     color: var(--fg);
   }
   .dtab.on {
-    color: var(--accent);
+    color: var(--fg);
     border-bottom-color: var(--accent);
   }
   .dtab-hint {
@@ -2404,24 +2419,49 @@
     font-size: var(--font-size-small);
     color: var(--faint);
   }
-  /* 系统提示词：默认折叠（通常很长），展开后限高内部滚动 */
+  /* 系统提示词：默认折叠（通常很长）。展开后随消息区一起滚动，
+     不再单独限高，避免抽屉里套第二根滚动条 */
   .dsys {
     flex: none;
-    margin: 12px 16px 0;
+    margin: 0;
     border: 1px solid var(--line);
-    border-radius: 8px;
+    border-radius: 10px;
     background: var(--bg-soft);
+    overflow: hidden;
   }
   .dsys summary {
     display: flex;
-    align-items: baseline;
-    gap: 8px;
+    align-items: center;
+    gap: 6px;
     padding: 8px 12px;
     font-size: var(--font-size-small);
     font-weight: 600;
-    color: var(--accent);
+    color: var(--fg);
     cursor: pointer;
     user-select: none;
+    list-style: none;
+  }
+  .dsys summary::-webkit-details-marker {
+    display: none;
+  }
+  /* 鼠标点击不留焦点环；键盘聚焦用主题色描边（系统强调色外框与界面不搭） */
+  .dsys:focus,
+  .dsys summary:focus {
+    outline: none;
+  }
+  .dsys:focus-visible,
+  .dsys summary:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: -2px;
+  }
+  .dsys-caret {
+    flex: none;
+    font-size: var(--font-size-small);
+    color: var(--faint);
+    transition: transform var(--dur-fast) var(--ease-out);
+  }
+  .dsys-caret.open {
+    transform: rotate(90deg);
   }
   .dsys-hint {
     font-size: var(--font-size-small);
@@ -2433,6 +2473,7 @@
     padding: 0 12px 10px;
     max-height: 320px;
     overflow-y: auto;
+    overscroll-behavior: contain;
     font-family: var(--font-mono);
     font-size: var(--font-size-small);
     line-height: 1.65;
@@ -2442,16 +2483,15 @@
   }
   .dsum {
     flex: none;
-    margin: 12px 16px 0;
+    margin: 0;
     padding: 10px 12px;
     border: 1px solid var(--line);
-    border-left: 3px solid var(--accent);
     border-radius: 8px;
     background: var(--bg-soft);
   }
   .dsum-tag {
     font-size: var(--font-size-small);
-    color: var(--accent);
+    color: var(--muted);
     font-weight: 600;
     margin-bottom: 6px;
   }
@@ -2461,17 +2501,18 @@
     color: var(--muted);
     white-space: pre-wrap;
     word-break: break-word;
-    max-height: 180px;
-    overflow-y: auto;
   }
+  /* 消息区是抽屉唯一的滚动容器：系统提示词、摘要、消息一起滚 */
   .dmsgs {
     flex: 1;
     min-height: 0;
     overflow-y: auto;
+    overscroll-behavior: contain;
+    scrollbar-gutter: stable;
     padding: 12px 16px 20px;
     display: flex;
     flex-direction: column;
-    gap: 10px;
+    gap: 12px;
   }
 
   /* ── 调用链视图：汇总卡片 ── */
@@ -2714,8 +2755,8 @@
   }
   .tdet-kind {
     font-size: var(--font-size-small);
-    color: var(--accent);
-    background: var(--accent-soft);
+    color: var(--muted);
+    background: var(--line);
     border-radius: 5px;
     padding: 1px 6px;
   }
@@ -2752,7 +2793,7 @@
     width: 96px;
     font-family: var(--font-mono);
     font-size: var(--font-size-small);
-    color: var(--accent);
+    color: var(--muted);
     padding-top: 1px;
   }
   .tav {
@@ -2765,9 +2806,12 @@
     white-space: pre-wrap;
     word-break: break-word;
   }
+  /* 消息行：角色标签在上、正文占满整行。窄抽屉里不做固定角色列，
+     否则正文整体右移、可用宽度被吃掉 */
   .rv {
     display: flex;
-    gap: 10px;
+    flex-direction: column;
+    gap: 2px;
     font-size: var(--font-size-ui);
     line-height: 1.5;
   }
@@ -2775,15 +2819,15 @@
     color: var(--muted);
   }
   .rrole {
-    flex: none;
-    width: 44px;
     font-family: var(--font-mono);
     font-size: var(--font-size-small);
+    line-height: 1.3;
     color: var(--faint);
     text-transform: uppercase;
-    padding-top: 2px;
+    letter-spacing: 0.04em;
   }
   .rtext {
+    min-width: 0;
     white-space: pre-wrap;
     word-break: break-word;
   }
