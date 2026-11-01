@@ -495,6 +495,30 @@ export interface ToolRule {
   list: string[]
 }
 
+/* 资源页目录树：一层条目 + 所在 git 仓库工作区变更（git=null = 目录不在
+   仓库内；git.status=null = 状态获取失败（git 缺失/锁冲突），非"无变更"） */
+export interface TreeEntry {
+  name: string
+  dir: boolean
+}
+export interface GitInfo {
+  root: string
+  status: Record<string, string> | null // 仓库相对斜杠路径 → porcelain 两字符状态码
+}
+export interface TreeView {
+  path: string
+  entries: TreeEntry[]
+  git: GitInfo | null
+}
+
+/* porcelain 两字符码 → 徽标字母（U=未跟踪/A=新增/D=删除/其余按修改）。 */
+export function statusLetter(code: string): string {
+  if (code === '??') return 'U'
+  if (code.includes('D')) return 'D'
+  if (code.includes('A')) return 'A'
+  return 'M'
+}
+
 export const api = {
   bootstrap: () => fetch('/api/bootstrap').then(json<Bootstrap>),
 
@@ -630,6 +654,21 @@ export const api = {
   /* 文本文件保存（file:// 编辑器）；按绝对路径写，与 /api/workspace/file 同源 */
   saveFile: (path: string, content: string) =>
     post<{ ok: boolean }>('/api/workspace/save', { path, content }),
+
+  /* 资源页目录树：path 缺省 = 工作目录 */
+  tree: (path?: string) =>
+    fetch(`/api/workspace/tree${path ? `?path=${encodeURIComponent(path)}` : ''}`).then(json<TreeView>),
+
+  /* 解析后的工作目录（目录树默认根） */
+  workdir: () => fetch('/api/workspace/workdir').then(json<{ path: string }>),
+
+  /* 文件在 HEAD 的原文（变更对比左侧）；404 = 未纳入 git（按空串 = 新文件） */
+  gitBlob: async (path: string) => {
+    const res = await fetch('/api/workspace/git-blob?path=' + encodeURIComponent(path), { cache: 'no-store' })
+    if (res.status === 404) return ''
+    if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error ?? res.statusText)
+    return res.text()
+  },
 
   getMcp: () => fetch('/api/mcp').then(json<{ servers: McpServerView[] }>),
 

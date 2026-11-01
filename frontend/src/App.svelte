@@ -54,6 +54,7 @@
       }
       ez?.popout?.onSignal((name: string, value: string) => {
         if (name === 'file') store.fileFocus = value
+        else if (name === 'draft') store.fileDraftSrc = value
         else if (name === 'term') store.termFocus = value
       })
       return

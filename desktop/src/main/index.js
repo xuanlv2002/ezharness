@@ -537,6 +537,12 @@ function registerIpc() {
   ipcMain.on('ez:reveal', (_e, p) => {
     if (typeof p === 'string' && p) shell.showItemInFolder(p)
   })
+  /* 原生目录选择对话框（资源页目录树的「选择目录」），取消返回 null */
+  ipcMain.handle('ez:pick-dir', async () => {
+    const win = BrowserWindow.getFocusedWindow() ?? mainWindow
+    const r = await dialog.showOpenDialog(win, { properties: ['openDirectory'] })
+    return r.canceled || r.filePaths.length === 0 ? null : r.filePaths[0]
+  })
   /* 打开文件夹：是目录就在资源管理器直接打开,返回是否已处理 */
   ipcMain.handle('ez:open-dir', async (_e, p) => {
     if (typeof p !== 'string' || !p) return false

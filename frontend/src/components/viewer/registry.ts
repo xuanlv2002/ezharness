@@ -62,9 +62,14 @@ export interface ResTab {
   warn: string
   savedAt: string
   lastMod: string
+  diff?: boolean // 变更对比视图（文本系 + 所在目录是 git 仓库时可用）
   /* 跨窗口回流后递增：图片 tab 据此重挂（画布状态在内存里，不重挂就
      读不到另一个窗口写回的新图） */
   rev?: number
+  /* 内存草稿底图（dataURL）：画笔钮新建的画板先不落盘，保存（写回/
+     添加到对话）时才 stash 成 tmp 真身并回填 path。可序列化——跨窗口
+     弹出/回流照常搬运 */
+  draftSrc?: string
 }
 
 export const MAX_BYTES = 2 << 20 // 与后端 maxSaveContent 一致

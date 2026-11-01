@@ -1151,20 +1151,10 @@
     flex: 1;
     min-height: 0;
     overflow-y: auto;
-    padding: 36px 48px 60px;
+    padding: 40px 48px 60px;
     display: flex;
     flex-direction: column;
     gap: 16px;
-  }
-  .head,
-  .overview,
-  .toolbar,
-  .list,
-  .records {
-    width: 100%;
-    max-width: 1040px;
-    margin-left: auto;
-    margin-right: auto;
   }
   .head {
     display: flex;

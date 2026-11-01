@@ -306,7 +306,7 @@
       oninput={autoResize}
       disabled={!store.activeId}
     ></textarea>
-    <button class="board-btn" onclick={() => void store.openImageDraft()} title="画板（画图/标注，添加到对话；落盘在工作目录 tmp）">
+    <button class="board-btn" onclick={() => void store.openImageDraft()} title="画板（画图/标注——内存草稿，保存后落盘 tmp，可添加到对话发送）">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
         <path d="M12 19l7-7a4.95 4.95 0 1 0-7-7l-7 7v7h7z" />
         <path d="M16 8l1.5 1.5" />
