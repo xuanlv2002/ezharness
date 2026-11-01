@@ -1,11 +1,12 @@
 <script lang="ts">
   import { onDestroy, onMount } from 'svelte'
-  import { Terminal } from '@xterm/xterm'
+  import { Terminal, type ITheme } from '@xterm/xterm'
   import { FitAddon } from '@xterm/addon-fit'
   import { Unicode11Addon } from '@xterm/addon-unicode11'
   import '@xterm/xterm/css/xterm.css'
   import { termManager, type TermInfo } from '../../lib/term'
   import { store } from '../../lib/store.svelte'
+  import { theme, type Theme } from '../../lib/theme.svelte'
 
   /*
   魔法看板·终端 tab:顶部切换条(全部终端,含 AI 新建的,来源在 tooltip)
@@ -29,36 +30,73 @@
 
   const enc = new TextEncoder()
 
-  function newTerm(id: string) {
-    const term = new Terminal({
+  /* 终端双色板：跟应用主题（暗板取 GitHub Dark 系，ANSI 全段在深底上可辨）。 */
+  const TERM_THEMES: Record<Theme, ITheme> = {
+    light: {
+      background: '#ffffff',
+      foreground: '#0a0a0a',
+      cursor: '#0a0a0a',
+      selectionBackground: '#dbeafe',
+      black: '#0a0a0a',
+      red: '#c0392b',
+      green: '#1e8449',
+      yellow: '#b7950b',
+      blue: '#2563eb',
+      magenta: '#8e44ad',
+      cyan: '#148f77',
+      white: '#58d68d',
+      brightBlack: '#7f8c8d',
+      brightRed: '#e74c3c',
+      brightGreen: '#2ecc71',
+      brightYellow: '#f1c40f',
+      brightBlue: '#5dade2',
+      brightMagenta: '#af7ac5',
+      brightCyan: '#48c9b0',
+      brightWhite: '#ffffff',
+    },
+    dark: {
+      background: '#1e2025',
+      foreground: '#d7dbe2',
+      cursor: '#d7dbe2',
+      selectionBackground: '#2c5a92',
+      black: '#454b54',
+      red: '#ff7b72',
+      green: '#3fb950',
+      yellow: '#d29922',
+      blue: '#58a6ff',
+      magenta: '#bc8cff',
+      cyan: '#39c5cf',
+      white: '#b9bfc9',
+      brightBlack: '#6e7681',
+      brightRed: '#ffa198',
+      brightGreen: '#56d364',
+      brightYellow: '#e3b341',
+      brightMagenta: '#d2a8ff',
+      brightCyan: '#56d4dd',
+      brightWhite: '#e6e8eb',
+    },
+  }
+
+  /* 主题切换时给所有已建实例换肤（新建实例在 newTerm 里取当下主题） */
+  $effect(() => {
+    const t = TERM_THEMES[theme.current]
+    for (const { term } of terms.values()) term.options.theme = t
+  })
+
+  /* 实例选项：真实终端与测尺寸的探针共用同一套字体，列行数才对得上 */
+  function termOptions() {
+    return {
       allowProposedApi: true, // unicode.activeVersion 是 proposed API,不开会抛异常中断 open
       fontSize: 13,
       fontFamily: getComputedStyle(document.documentElement).getPropertyValue('--font-mono') || 'Consolas, monospace',
       cursorBlink: true,
       scrollback: 5000,
-      theme: {
-        background: '#ffffff',
-        foreground: '#0a0a0a',
-        cursor: '#0a0a0a',
-        selectionBackground: '#dbeafe',
-        black: '#0a0a0a',
-        red: '#c0392b',
-        green: '#1e8449',
-        yellow: '#b7950b',
-        blue: '#2563eb',
-        magenta: '#8e44ad',
-        cyan: '#148f77',
-        white: '#58d68d',
-        brightBlack: '#7f8c8d',
-        brightRed: '#e74c3c',
-        brightGreen: '#2ecc71',
-        brightYellow: '#f1c40f',
-        brightBlue: '#5dade2',
-        brightMagenta: '#af7ac5',
-        brightCyan: '#48c9b0',
-        brightWhite: '#ffffff',
-      },
-    })
+      theme: TERM_THEMES[theme.current],
+    }
+  }
+
+  function newTerm(id: string) {
+    const term = new Terminal(termOptions())
     const fit = new FitAddon()
     const uni = new Unicode11Addon()
     term.loadAddon(fit)
@@ -359,7 +397,7 @@
     min-height: 0;
     border: 1px solid var(--line);
     border-radius: 12px;
-    background: #fff;
+    background: var(--bg);
     overflow: hidden;
     padding: 6px 8px;
   }

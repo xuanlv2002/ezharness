@@ -316,7 +316,7 @@
   }
   .del:hover {
     background: var(--bg-soft);
-    color: #c0392b;
+    color: var(--danger);
   }
   .del svg {
     width: 13px;

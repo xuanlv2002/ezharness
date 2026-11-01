@@ -1242,7 +1242,7 @@
     margin-top: -24px;
   }
   .lead.err {
-    color: #c0392b;
+    color: var(--danger);
   }
   section {
     display: flex;
@@ -1537,7 +1537,7 @@
   }
   .micon.danger:hover {
     background: color-mix(in srgb, #c0392b 10%, var(--bg));
-    color: #c0392b;
+    color: var(--danger);
   }
   .memeditwrap {
     flex: 1;
@@ -1879,7 +1879,7 @@
   }
   .del:hover {
     background: color-mix(in srgb, #c0392b 10%, var(--bg));
-    color: #c0392b;
+    color: var(--danger);
   }
   .toggle {
     position: relative;
@@ -1970,7 +1970,7 @@
     color: var(--faint);
   }
   .modal-hint.err {
-    color: #c0392b;
+    color: var(--danger);
   }
   .modal footer {
     display: flex;

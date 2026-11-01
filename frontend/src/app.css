@@ -1,4 +1,5 @@
 :root {
+  color-scheme: light; /* 原生控件（滚动条/输入框）随主题走 */
   --bg: #fbfcfe;
   --bg-soft: #f3f5f9;
   --bg-invert: #2e3138;
@@ -11,6 +12,8 @@
   --line-strong: #43474f;
   --accent: #2563eb;
   --accent-soft: #dbeafe;
+  /* 危险文字（错误提示/危险操作名）：填充底的危险按钮仍直接用饱和红，不在此管 */
+  --danger: #c0392b;
 
   /* 玻璃面板：悬浮卡片/输入框的柔滑底（backdrop-filter 需与半透明底同用） */
   --glass: color-mix(in srgb, var(--bg) 72%, transparent);
@@ -32,6 +35,27 @@
   --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
   --dur-in: 240ms;
   --dur-fast: 160ms;
+}
+
+/*
+暗色主题：只翻转变量，组件层零改动。基调是 VSCode 式的深灰而非纯黑
+（大面积纯黑与亮字反差过强会扎眼）；正文/辅助文字对深底保持 7:1 与
+4:1 以上的对比，主按钮按 GitHub 暗色惯例翻成近白底深字。
+*/
+html[data-theme='dark'] {
+  color-scheme: dark;
+  --bg: #1e2025;
+  --bg-soft: #262930;
+  --bg-invert: #e8eaef;
+  --fg: #d7dbe2;
+  --fg-invert: #24262b;
+  --muted: #9fa7b5;
+  --faint: #737d8e;
+  --line: #2f333a;
+  --line-strong: #9aa1af;
+  --accent: #3d8bfd;
+  --accent-soft: #223245;
+  --danger: #ff7b72;
 }
 
 * {
@@ -167,4 +191,8 @@ button {
 .ezfh-cur {
   background: #ff9632;
   color: #1c1c1c;
+}
+/* 暗色下高亮降透明度：全黄盖在深底上会把亮字压成低对比的泥黄 */
+html[data-theme='dark'] .ezfh {
+  background: rgb(255 213 79 / 30%);
 }

@@ -2,6 +2,7 @@
   import { onMount } from 'svelte'
   import { api, type ModelEntry, type ModelsConfig, type HourStats } from '../lib/api'
   import { store } from '../lib/store.svelte'
+  import { theme } from '../lib/theme.svelte'
   import * as echarts from 'echarts/core'
   import { LineChart } from 'echarts/charts'
   import { GridComponent, LegendComponent, TooltipComponent } from 'echarts/components'
@@ -157,6 +158,7 @@
   const escapeHtml = (s: string) => s.replace(/[&<>"']/g, (c) => HTML_ESCAPES[c] ?? c)
 
   function buildOption(t: NonNullable<typeof trend>) {
+    void theme.current // 读一下主题：切换时下面 cssVar 取到的已是新色，effect 依赖它整图重绘
     const line = cssVar('--line', '#e8eaf1')
     const faint = cssVar('--faint', '#a6acba')
     const muted = cssVar('--muted', '#626a78')
@@ -768,7 +770,7 @@
     opacity: 1;
   }
   .del:hover {
-    color: #c0392b;
+    color: var(--danger);
     background: color-mix(in srgb, #c0392b 8%, transparent);
   }
   .none {
@@ -899,7 +901,7 @@
   }
   .hdr-x:hover {
     background: var(--bg-soft);
-    color: #c0392b;
+    color: var(--danger);
   }
   .hdr-x svg {
     width: 10px;

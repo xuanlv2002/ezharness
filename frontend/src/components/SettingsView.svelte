@@ -590,7 +590,7 @@
   }
   .err {
     font-size: var(--font-size-ui);
-    color: #c0392b;
+    color: var(--danger);
   }
   /* 版本检查行：与开关行同款 bordered 行——左版本号+状态，右操作；
      「前往下载」实底主按钮、「检查更新」细边次按钮 */
