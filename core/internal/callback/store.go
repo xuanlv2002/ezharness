@@ -197,8 +197,8 @@ func (s *Store) saveLocked(ctx context.Context) error {
 
 /*
 Normalize 在启动装配时校正运行态：上一次进程中断的 running 归为
-skipped；错过的一次性任务标记 missed 并停用；间隔/cron 错过不补跑，
-从 now 重新计算下次。
+skipped；一次性任务触发过/错过/停用后过期都转终态（FinishedAt）；
+间隔/cron 错过不补跑，从 now 重新计算下次。
 */
 func (s *Store) Normalize(now time.Time) error {
 	s.mu.Lock()
@@ -216,6 +216,13 @@ func (s *Store) Normalize(now time.Time) error {
 				t.NextRunAt = 0
 				changed = true
 			}
+			// 停用的一次性任务时间已过：永远无法再启用，直接终态收档
+			if t.Schedule.Kind == ScheduleOnce && t.FinishedAt == 0 {
+				if at, err := parseOnce(t.Schedule.At); err == nil && !at.After(now) {
+					t.FinishedAt = now.UnixMilli()
+					changed = true
+				}
+			}
 			continue
 		}
 		next := t.NextRunAt
@@ -223,9 +230,12 @@ func (s *Store) Normalize(now time.Time) error {
 			continue // 下次时间仍有效（间隔/cron 可保留）
 		}
 		if t.Schedule.Kind == ScheduleOnce {
-			// 已触发过（有 LastRunAt）或已过期：一次性任务不再重排
+			// 已触发过（有 LastRunAt）或已过期：一次性任务不再重排，终态收档
 			t.Enabled = false
 			t.NextRunAt = 0
+			if t.FinishedAt == 0 {
+				t.FinishedAt = now.UnixMilli()
+			}
 			if t.LastStatus == "" {
 				t.LastStatus = StatusMissed
 				t.LastResult = "计划时间已过（应用未运行）"

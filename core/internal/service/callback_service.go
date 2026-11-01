@@ -8,7 +8,8 @@ CallbackService 是全局定时回调中心：callbacks.json 的 CRUD、每秒�
 绑定创建时的当前叶 session ID，投递复用 ChatService 的打断式发送：
 正在跑轮先取消再发送，归档/compact 换代后该会话不可用，任务失败，不
 继承到新会话。脚本任务在工作目录执行，输出尾部与退出码进运行记录。
-一次性任务执行后自动停用；间隔/cron 从完成时刻重新计下一轮。
+一次性任务按计划触发后转终态（FinishedAt）：不再进清单与状态卡、不可
+编辑启停（手动触发与删除仍可用）。间隔/cron 从完成时刻重新计下一轮。
 每次触发（含失败/跳过）写一条运行记录并进通知栏（待用户确认）：会话
 投递成功时点通知直达目标会话，其余点通知打开回调页并展开该任务。
 */
@@ -40,6 +41,9 @@ var ErrCallbackInvalid = errors.New("定时回调配置无效")
 
 /* ErrCallbackRunning 表示任务正在执行，不能重复手动触发。 */
 var ErrCallbackRunning = errors.New("定时回调正在执行")
+
+/* ErrCallbackFinished 表示一次性任务已终态，不能再修改或启停（手动触发与删除不受限）。 */
+var ErrCallbackFinished = errors.New("定时回调已完成")
 
 /* callbackTick 是调度器扫描周期。 */
 const callbackTick = time.Second
@@ -240,12 +244,16 @@ func (s *CallbackService) run(ctx context.Context, task callback.Task, manual bo
 			Target: outcome.Target, TargetID: outcome.TargetID,
 			Content: oneLine(outcome.Content, 300), Result: result, DurationMs: duration,
 		})
-		if manual || !t.Enabled {
-			return
-		}
-		if t.Schedule.Kind == callback.ScheduleOnce {
+		if t.Schedule.Kind == callback.ScheduleOnce && !manual {
+			// 按计划触发即终态：使命结束收档（手动 run 不消耗计划）
 			t.Enabled = false
 			t.NextRunAt = 0
+			if t.FinishedAt == 0 {
+				t.FinishedAt = s.now().UnixMilli()
+			}
+			return
+		}
+		if manual || !t.Enabled {
 			return
 		}
 		next, nerr := t.Schedule.Next(s.now())
@@ -524,8 +532,12 @@ func (b *tailBuffer) Write(p []byte) (int, error) {
 
 func (b *tailBuffer) String() string { return string(b.data) }
 
-/* List 返回全部任务。 */
-func (s *CallbackService) List() []callback.Task { return s.Store.List() }
+/* List 返回全部任务（启用中置顶，组内按创建时间新→旧）。 */
+func (s *CallbackService) List() []callback.Task {
+	tasks := s.Store.List()
+	callback.SortTasks(tasks)
+	return tasks
+}
 
 /*
 Create 校验并创建任务：enabled 缺省 true；session 模式优先绑定显式
@@ -553,6 +565,9 @@ func (s *CallbackService) Update(ctx context.Context, id string, in callback.Upd
 	now := s.now()
 	var out callback.Task
 	_, err := s.Store.Update(ctx, id, func(t *callback.Task) error {
+		if t.Finished() {
+			return fmt.Errorf("%w: 一次性任务已完成，使命结束；如需再来一个请新建", ErrCallbackFinished)
+		}
 		oldKind := t.Kind
 		if in.Title != nil {
 			t.Title = *in.Title
@@ -614,6 +629,9 @@ func (s *CallbackService) SetEnabled(ctx context.Context, id string, enabled boo
 	now := s.now()
 	var out callback.Task
 	_, err := s.Store.Update(ctx, id, func(t *callback.Task) error {
+		if t.Finished() {
+			return fmt.Errorf("%w: 一次性任务已完成，不能再启停；如需再来一个请新建", ErrCallbackFinished)
+		}
 		if enabled {
 			next, err := t.Schedule.Next(now)
 			if err != nil {
@@ -722,7 +740,7 @@ func (s *CallbackService) addRunNotice(task callback.Task, status string, outcom
 	s.mu.Unlock()
 }
 
-/* Brief 返回绑定到指定会话的任务（状态卡数据源）。 */
+/* Brief 返回绑定到指定会话的未终态任务（状态卡数据源）。 */
 func (s *CallbackService) Brief(sessionID string) []CallbackBrief {
 	if sessionID == "" {
 		return nil
@@ -730,7 +748,8 @@ func (s *CallbackService) Brief(sessionID string) []CallbackBrief {
 	var out []CallbackBrief
 	for _, t := range s.Store.List() {
 		if t.Kind != callback.KindSession || t.Session == nil ||
-			t.Session.Mode != callback.ModeSession || t.Session.SessionID != sessionID {
+			t.Session.Mode != callback.ModeSession || t.Session.SessionID != sessionID ||
+			t.Finished() {
 			continue
 		}
 		out = append(out, CallbackBrief{

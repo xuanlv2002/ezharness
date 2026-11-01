@@ -51,7 +51,8 @@ func Callback(api CallbackAPI, currentSession func() string) types.Tool {
 			"kind=app 定时触发快应用——app.callback 填 app.quick 的 callbacks[].name，触发时自动启动后端并调用该端点（先用 load_app 查看可用端点）；"+
 			"kind=script 在工作目录执行 shell 命令——script.command 写完整命令（如 './sync.sh'、'python tools/sync.py'），捕获输出尾部与退出码。"+
 			"计划 schedule：once {at:'2026-11-01 09:00'} | interval {every:'30m'} | cron {cron:'0 9 * * *'}（分 时 日 月 周，本机时区）。"+
-			"每次触发（含失败/跳过）写运行记录并进通知栏，页面可看触发时间、目标、内容与结果。一次性任务执行后自动停用。"+
+			"每次触发（含失败/跳过）写运行记录并进通知栏，页面可看触发时间、目标、内容与结果。"+
+			"一次性任务按计划触发后转已完成：不再进 list 与 system 清单、不可 update/启停，run 手动触发与 delete 仍可用。"+
 			"create 需要 title/kind/schedule 与对应目标；update 只改传入字段；list 看全部任务与下次时间；enable/disable 启停；run 立即执行一次（不改变计划）。"+
 			"不要手改 callbacks.json",
 		func(ctx context.Context, in *callbackArgs) (string, error) {
@@ -131,14 +132,20 @@ func Callback(api CallbackAPI, currentSession func() string) types.Tool {
 		})
 }
 
-/* renderCallbackList 渲染任务清单（标注绑定当前会话的会话任务）。 */
+/* renderCallbackList 渲染任务清单（已完成的一次性任务不进；标注绑定当前会话的会话任务）。 */
 func renderCallbackList(tasks []callback.Task, currentSession string) string {
-	if len(tasks) == 0 {
+	alive := make([]callback.Task, 0, len(tasks))
+	for _, t := range tasks {
+		if !t.Finished() {
+			alive = append(alive, t)
+		}
+	}
+	if len(alive) == 0 {
 		return "暂无定时回调。用 action=create 创建。"
 	}
 	var b strings.Builder
-	fmt.Fprintf(&b, "定时回调共 %d 个：", len(tasks))
-	for _, t := range tasks {
+	fmt.Fprintf(&b, "定时回调共 %d 个：", len(alive))
+	for _, t := range alive {
 		title := strings.ReplaceAll(strings.ReplaceAll(t.Title, "\r", ""), "\n", " ")
 		b.WriteString("\n- [" + t.ID + "] " + title + "（" + t.Summary())
 		if t.Kind == callback.KindSession && t.Session != nil &&

@@ -117,10 +117,14 @@ func (h *Remind) buildChanges(ctx context.Context) (items []string, skills, mcps
 		appSigs = append(appSigs, appSignature(a))
 	}
 
-	// 定时回调基线（任务配置与启停；运行态不进签名，避免每次触发都报变更）
-	callbacks = callback.LoadTasks(ctx, h.fsys)
-	callbackSigs := make([]string, 0, len(callbacks))
-	for _, t := range callbacks {
+	// 定时回调基线（任务配置与启停；运行态不进签名，避免每次触发都报变更）。
+	// 已完成的一次性任务不算资源：不进签名与清单，完成当轮按「移除」报告一次。
+	callbackSigs := make([]string, 0)
+	for _, t := range callback.LoadTasks(ctx, h.fsys) {
+		if t.Finished() {
+			continue
+		}
+		callbacks = append(callbacks, t)
 		callbackSigs = append(callbackSigs, t.Signature())
 	}
 

@@ -163,8 +163,11 @@ func TestEnsureSessionUsesExactSession(t *testing.T) {
 	}
 }
 
-/* 按计划执行的一次性任务无论成败都停用；失败原因留在 lastResult。 */
-func TestCallbackOnceDisablesAfterRun(t *testing.T) {
+/*
+按计划执行的一次性任务无论成败都转终态（FinishedAt）：不再编辑/启停，
+触发记录保留；手动 run 不消耗计划。
+*/
+func TestCallbackOnceFinishesAfterRun(t *testing.T) {
 	chdirTemp(t)
 	ctx := context.Background()
 	hub := newTestHub()
@@ -184,11 +187,39 @@ func TestCallbackOnceDisablesAfterRun(t *testing.T) {
 	if !ok {
 		t.Fatal("task missing")
 	}
-	if got.Enabled || got.NextRunAt != 0 || got.LastStatus != callback.StatusError || got.LastResult == "" {
+	if got.Enabled || !got.Finished() || got.NextRunAt != 0 ||
+		got.LastStatus != callback.StatusError || got.LastResult == "" {
 		t.Fatalf("once after run = %+v", got)
 	}
 	if len(got.Runs) != 1 || got.Runs[0].Status != callback.StatusError || got.Runs[0].Target == "" {
 		t.Fatalf("failed run record = %+v", got.Runs)
+	}
+	// 终态后拒绝编辑与启停（删除不受限）
+	title := "改名"
+	if _, err := svc.Update(ctx, task.ID, callback.UpdateInput{Title: &title}); !errors.Is(err, ErrCallbackFinished) {
+		t.Fatalf("update finished = %v", err)
+	}
+	if _, err := svc.SetEnabled(ctx, task.ID, true); !errors.Is(err, ErrCallbackFinished) {
+		t.Fatalf("enable finished = %v", err)
+	}
+
+	// 手动 run 不消耗计划：终态保持，只追加记录
+	manual, err := store.Create(ctx, callback.Task{
+		ID: "cb-manual", Title: "手动", Kind: callback.KindApp, Enabled: true,
+		Schedule:  callback.Schedule{Kind: callback.ScheduleOnce, At: "2099-01-01 09:00"},
+		App:       &callback.AppTarget{Name: "nope", Callback: "run"},
+		NextRunAt: time.Now().Add(time.Hour).UnixMilli(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc.run(ctx, manual, true)
+	got, _ = store.Get(manual.ID)
+	if got.Finished() || got.Enabled != true || got.NextRunAt == 0 {
+		t.Fatalf("manual run must not finish once task: %+v", got)
+	}
+	if len(got.Runs) != 1 {
+		t.Fatalf("manual run record = %+v", got.Runs)
 	}
 }
 

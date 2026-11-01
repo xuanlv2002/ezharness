@@ -6,10 +6,12 @@ task 是定时回调任务的领域模型：配置（标题/计划/目标）与�
 package callback
 
 import (
+	"cmp"
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
 	"hash/crc32"
+	"slices"
 	"strings"
 	"time"
 
@@ -59,6 +61,7 @@ type Task struct {
 
 	CreatedAt  int64  `json:"createdAt"`
 	UpdatedAt  int64  `json:"updatedAt"`
+	FinishedAt int64  `json:"finishedAt,omitempty"` // 一次性任务终态时间：使命结束，不再进清单、不可编辑
 	NextRunAt  int64  `json:"nextRunAt,omitempty"` // 0 = 无下次（停用/一次性已完成）
 	LastRunAt  int64  `json:"lastRunAt,omitempty"`
 	LastStatus string `json:"lastStatus,omitempty"`
@@ -369,6 +372,28 @@ func PushRun(runs []Run, r Run) []Run {
 		out = out[:RunHistoryLimit]
 	}
 	return out
+}
+
+/* Finished 报告一次性任务是否已终态（触发过、错过或过期）：不再进清单、不可编辑，仍可手动触发与删除。 */
+func (t Task) Finished() bool { return t.FinishedAt > 0 }
+
+/*
+SortTasks 就地排序任务清单：启用中的置顶，其余（停用/已完成）殿后，
+组内按创建时间新→旧。system 清单、工具 list 与页面共用同一顺序。
+*/
+func SortTasks(tasks []Task) {
+	slices.SortStableFunc(tasks, func(a, b Task) int {
+		if a.Enabled != b.Enabled {
+			if b.Enabled {
+				return 1
+			}
+			return -1
+		}
+		if c := cmp.Compare(b.CreatedAt, a.CreatedAt); c != 0 {
+			return c
+		}
+		return strings.Compare(b.ID, a.ID)
+	})
 }
 
 /* NewID 生成任务 ID（时间 + 短随机，便于人读与排障）。 */

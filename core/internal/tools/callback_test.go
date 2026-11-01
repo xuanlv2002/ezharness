@@ -45,12 +45,17 @@ func (f *fakeCallbackAPI) RunNow(id string) error {
 	return nil
 }
 
-/* list 标注绑定当前分支的任务，并带上计划与目标。 */
+/* list 标注绑定当前分支的任务，并带上计划与目标；已完成的一次性任务不进清单。 */
 func TestCallbackToolList(t *testing.T) {
 	api := &fakeCallbackAPI{tasks: []callback.Task{{
 		ID: "cb-1", Title: "每日总结", Kind: callback.KindSession, Enabled: true,
 		Schedule: callback.Schedule{Kind: callback.ScheduleCron, Cron: "0 9 * * *"},
 		Session:  &callback.SessionTarget{SessionID: "s1", Mode: callback.ModeSession, Message: "hi"},
+	}, {
+		ID: "cb-done", Title: "已完成提醒", Kind: callback.KindScript, Enabled: false,
+		Schedule:   callback.Schedule{Kind: callback.ScheduleOnce, At: "2026-01-01 09:00"},
+		Script:     &callback.ScriptTarget{Command: "./once.sh"},
+		FinishedAt: 1735689600000,
 	}}}
 	out, err := Callback(api, func() string { return "s1" }).Invoke(context.Background(), []byte(`{"action":"list"}`))
 	if err != nil {
@@ -60,6 +65,9 @@ func TestCallbackToolList(t *testing.T) {
 		if !strings.Contains(out, want) {
 			t.Fatalf("list output missing %q: %s", want, out)
 		}
+	}
+	if strings.Contains(out, "cb-done") || strings.Contains(out, "已完成提醒") {
+		t.Fatalf("finished task leaked into list: %s", out)
 	}
 }
 

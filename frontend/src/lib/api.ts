@@ -161,6 +161,7 @@ export interface CallbackTask {
   script?: CallbackScriptTarget
   createdAt: number
   updatedAt: number
+  finishedAt?: number // 一次性任务终态时间：使命结束，不可编辑，仅可查看/手动触发/删除
   nextRunAt?: number
   lastRunAt?: number
   lastStatus?: 'ok' | 'error' | 'skipped' | 'missed' | 'running' | string

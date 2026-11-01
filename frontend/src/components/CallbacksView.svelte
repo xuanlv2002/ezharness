@@ -14,7 +14,7 @@
   */
 
   type KindFilter = 'all' | 'session' | 'app' | 'script'
-  type StatusFilter = 'all' | 'active' | 'paused' | 'error'
+  type StatusFilter = 'all' | 'active' | 'paused' | 'done' | 'error'
   type IntervalUnit = 's' | 'm' | 'h' | 'd'
 
   const TASK_PAGE_SIZE = 8
@@ -75,16 +75,18 @@
     let script = 0
     let active = 0
     let paused = 0
+    let done = 0
     let error = 0
     for (const t of tasks) {
       if (t.kind === 'session') session++
       else if (t.kind === 'app') app++
       else script++
-      if (t.enabled) active++
+      if (t.finishedAt) done++
+      else if (t.enabled) active++
       else paused++
       if (t.lastStatus === 'error') error++
     }
-    return { all: tasks.length, session, app, script, active, paused, error }
+    return { all: tasks.length, session, app, script, active, paused, done, error }
   })
 
   const kindOptions = $derived([
@@ -98,6 +100,7 @@
     { value: 'all', label: '全部状态' },
     { value: 'active', label: `启用中（${counts.active}）` },
     { value: 'paused', label: `已停用（${counts.paused}）` },
+    { value: 'done', label: `已完成（${counts.done}）` },
     { value: 'error', label: `上次失败（${counts.error}）` },
   ])
 
@@ -112,8 +115,9 @@
     const q = query.trim().toLowerCase()
     return tasks.filter((t) => {
       if (kindFilter !== 'all' && t.kind !== kindFilter) return false
-      if (statusFilter === 'active' && !t.enabled) return false
-      if (statusFilter === 'paused' && t.enabled) return false
+      if (statusFilter === 'active' && (!t.enabled || t.finishedAt)) return false
+      if (statusFilter === 'paused' && (t.enabled || t.finishedAt)) return false
+      if (statusFilter === 'done' && !t.finishedAt) return false
       if (statusFilter === 'error' && t.lastStatus !== 'error') return false
       if (!q) return true
       const hay = [
@@ -167,6 +171,7 @@
     return { today, failures }
   })
 
+  /* 发送到：与分支列表同一份、同一顺序（当前分支仅在原位标注），另加「每次新建会话」。 */
   const sessionOptions = $derived.by(() => {
     const out: { value: string; label: string; hint: string }[] = []
     const seen = new Set<string>()
@@ -175,9 +180,6 @@
       seen.add(id)
       out.push({ value: id, label, hint })
     }
-    const active = store.branches.find((b) => b.id === store.activeId)
-    if (active) add(active.leafId || active.id, active.title || '当前会话', '当前会话')
-    else if (store.activeId) add(store.leafId || store.activeId, '当前会话', '当前会话')
     for (const b of store.branches) {
       const leaf = b.leafId || b.id
       add(leaf, b.title || '未命名会话', b.id === store.activeId ? '当前会话' : shortId(leaf))
@@ -673,7 +675,7 @@
     <div class="stat">
       <span>启用中</span>
       <b>{counts.active}</b>
-      <small>{counts.paused} 已停用</small>
+      <small>{counts.paused} 已停用 · {counts.done} 已完成</small>
     </div>
     <div class="stat">
       <span>今日触发</span>
@@ -737,7 +739,7 @@
               <div class="ttop">
                 <span class="kind" class:app={t.kind === 'app'} class:script={t.kind === 'script'}>{kindLabel(t.kind)}</span>
                 <button class="tasktitle" onclick={() => openDetail(t)} title="查看任务详情与回调记录">{t.title}</button>
-                {#if !t.enabled}<em class="tag">停用</em>{/if}
+                {#if t.finishedAt}<em class="tag done">已完成</em>{:else if !t.enabled}<em class="tag">停用</em>{/if}
               </div>
               {#if t.description}<span class="tdesc" title={t.description}>{t.description}</span>{/if}
             </div>
@@ -749,7 +751,7 @@
                   <span class="nline next">执行中…</span>
                 {:else}
                   <span class="nline next" class:off={!t.enabled} class:err={t.enabled && t.lastStatus === 'error' && !t.nextRunAt}>
-                    {#if t.enabled && t.nextRunAt}下次 {nextText(t.nextRunAt)}{:else if !t.enabled}已停用{:else}未排期{/if}
+                    {#if t.finishedAt}已完成{:else if t.enabled && t.nextRunAt}下次 {nextText(t.nextRunAt)}{:else if !t.enabled}已停用{:else}未排期{/if}
                   </span>
                   {#if t.lastStatus}
                     <span class="nline" class:err={t.lastStatus === 'error'} class:skip={t.lastStatus === 'skipped' || t.lastStatus === 'missed'}>
@@ -761,10 +763,12 @@
               <span class="tcell tcreated" title={`创建于 ${fmtDateTime(t.createdAt)}`}>{dateShort(t.createdAt)}</span>
             </div>
             <div class="tact">
-              <label class="switch" title={t.enabled ? '停用' : '启用'}>
-                <input type="checkbox" checked={t.enabled} onchange={() => void toggle(t)} />
-                <span class="slider"></span>
-              </label>
+              {#if !t.finishedAt}
+                <label class="switch" title={t.enabled ? '停用' : '启用'}>
+                  <input type="checkbox" checked={t.enabled} onchange={() => void toggle(t)} />
+                  <span class="slider"></span>
+                </label>
+              {/if}
               <button class="iconbtn" disabled={t.lastStatus === 'running'} onclick={() => void runNow(t)} title="立即运行（不改变计划）">
                 <svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5.5v13l11-6.5z" /></svg>
               </button>
@@ -773,12 +777,14 @@
                   <path d="M4 6h16M4 12h16M4 18h10" />
                 </svg>
               </button>
-              <button class="iconbtn" onclick={() => startEdit(t)} title="编辑">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-                  <path d="M4 20h4L19 9l-4-4L4 16v4z" />
-                  <path d="M13.5 6.5l4 4" />
-                </svg>
-              </button>
+              {#if !t.finishedAt}
+                <button class="iconbtn" onclick={() => startEdit(t)} title="编辑">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M4 20h4L19 9l-4-4L4 16v4z" />
+                    <path d="M13.5 6.5l4 4" />
+                  </svg>
+                </button>
+              {/if}
               <button class="iconbtn danger" onclick={() => (delTarget = t)} title="删除">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
                   <path d="M6 6l12 12M18 6L6 18" />
@@ -949,7 +955,7 @@
           <span>时间</span>
           <input type="datetime-local" bind:value={form.at} />
         </label>
-        <p class="hint">执行一次后自动停用；停机错过会标记为「错过」。</p>
+        <p class="hint">按计划执行一次后自动完成：不再进入 agent 清单，页面仍可查看、手动触发或删除；停机错过会标记为「错过」。</p>
       {:else if form.scheduleKind === 'interval'}
         <div class="field">
           <span>固定间隔</span>
@@ -1000,7 +1006,7 @@
       <div class="dhead">
         <span class="kind" class:app={t.kind === 'app'} class:script={t.kind === 'script'}>{kindLabel(t.kind)}</span>
         <h2 title={t.title}>{t.title}</h2>
-        <span class="state" class:off={!t.enabled}>{t.enabled ? '启用中' : '已停用'}</span>
+        <span class="state" class:off={!t.enabled}>{t.finishedAt ? '已完成' : t.enabled ? '启用中' : '已停用'}</span>
       </div>
       <button class="close" onclick={() => (detailId = '')} title="关闭">✕</button>
     </header>
@@ -1016,8 +1022,8 @@
           <b title={targetText(t)}>{targetText(t)}</b>
         </div>
         <div>
-          <span>下次运行</span>
-          <b>{t.lastStatus === 'running' ? '执行中…' : t.enabled && t.nextRunAt ? nextText(t.nextRunAt) : '—'}</b>
+          <span>{t.finishedAt ? '完成时间' : '下次运行'}</span>
+          <b>{t.finishedAt ? fmtDateTime(t.finishedAt) : t.lastStatus === 'running' ? '执行中…' : t.enabled && t.nextRunAt ? nextText(t.nextRunAt) : '—'}</b>
         </div>
         <div>
           <span>创建时间</span>
@@ -1084,7 +1090,9 @@
     <footer>
       <button class="btn danger" onclick={() => { detailId = ''; delTarget = t }}>删除</button>
       <button class="btn" disabled={t.lastStatus === 'running'} onclick={() => void runNow(t)}>立即运行</button>
-      <button class="btn" onclick={() => startEdit(t)}>编辑</button>
+      {#if !t.finishedAt}
+        <button class="btn" onclick={() => startEdit(t)}>编辑</button>
+      {/if}
       <button class="btn primary" onclick={() => (detailId = '')}>关闭</button>
     </footer>
   </div>
@@ -1368,6 +1376,11 @@
     border: 1px solid var(--line);
     border-radius: 4px;
     padding: 0 3px;
+  }
+  /* 已完成（一次性终态）与普通停用区分：绿字示任务善终 */
+  .tag.done {
+    color: #2f855a;
+    border-color: color-mix(in srgb, #2f855a 45%, transparent);
   }
   .tmeta {
     display: contents;

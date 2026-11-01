@@ -174,18 +174,27 @@ func skillsSection(ctx context.Context, fsys osfs.OS, st domain.Settings, dataDi
 
 /*
 callbacksSection 定时回调清单段：任务标题/计划/目标/运行态 + 当前会话标注。
-清单为空时整段缺席（与 mcp 同规）；创建与管理入口唯一归属 callback 工具。
+已完成的一次性任务不进清单（使命结束，页面可查可删）；清单为空时整段
+缺席（与 mcp 同规）；创建与管理入口唯一归属 callback 工具。
 */
 func callbacksSection(ctx context.Context, fsys osfs.OS, sessionID string) string {
 	tasks := callback.LoadTasks(ctx, fsys)
-	if len(tasks) == 0 {
+	alive := tasks[:0]
+	for _, t := range tasks {
+		if !t.Finished() {
+			alive = append(alive, t)
+		}
+	}
+	if len(alive) == 0 {
 		return ""
 	}
+	callback.SortTasks(alive)
 	topics := hooks.NewTopics(fsys).Load()
 	var b strings.Builder
 	b.WriteString("<callbacks>\n（定时回调清单，以此为准，不要读取 callbacks.json 来发现；用 callback 工具 list/create/update/delete/enable/disable/run 管理。" +
+		"已完成的一次性任务不进本清单（页面「回调」可见，可删除）；循环任务停用的也在列。" +
 		"计划语法：once {at} / interval {every} / cron \"分 时 日 月 周\"（本机时区）；会话任务绑定 sessionId 指定的会话（工具缺省当前会话），到点若正在跑轮由 chat 发送逻辑先打断，归档/compact 换代后该任务失败且不会继承到新会话；投递到会话的回调消息以 <scheduled_callback>{json}</scheduled_callback> 开头，标签后是任务正文，按正文执行；快应用任务触发时自动启动后端并调用声明端点；脚本任务在工作目录执行 shell 命令；轮内变更见 <resource_change>）")
-	for _, t := range tasks {
+	for _, t := range alive {
 		kind := "会话"
 		switch t.Kind {
 		case callback.KindApp:

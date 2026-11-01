@@ -3,6 +3,7 @@ package callback
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -75,7 +76,7 @@ func TestStoreLifecycle(t *testing.T) {
 	}
 }
 
-/* 启动校正：中断的 running 归 skipped、错过的 once 停用、间隔从 now 重算、停用清下次。 */
+/* 启动校正：中断的 running 归 skipped、错过的 once 转终态、间隔从 now 重算、停用清下次。 */
 func TestStoreNormalize(t *testing.T) {
 	t.Chdir(t.TempDir())
 	now := time.Date(2026, 11, 1, 8, 30, 0, 0, time.Local)
@@ -105,6 +106,18 @@ func TestStoreNormalize(t *testing.T) {
 			App:       &AppTarget{Name: "a", Callback: "run"},
 			NextRunAt: 123,
 		},
+		{
+			// 停用的一次性任务时间已过：永远无法再启用，启动即转终态
+			ID: "offonce", Title: "off once", Kind: KindApp, Enabled: false,
+			Schedule: Schedule{Kind: ScheduleOnce, At: "2026-01-01 09:00"},
+			App:      &AppTarget{Name: "a", Callback: "run"},
+		},
+		{
+			// 停用的一次性任务时间在未来：保留（用户可能重新启用）
+			ID: "offfuture", Title: "off future", Kind: KindApp, Enabled: false,
+			Schedule: Schedule{Kind: ScheduleOnce, At: "2099-01-01 09:00"},
+			App:      &AppTarget{Name: "a", Callback: "run"},
+		},
 	}
 	if err := st.Normalize(now); err != nil {
 		t.Fatal(err)
@@ -119,13 +132,39 @@ func TestStoreNormalize(t *testing.T) {
 	if byID["run"].NextRunAt <= now.UnixMilli() {
 		t.Fatalf("interval next not recomputed: %+v", byID["run"])
 	}
-	if byID["once"].Enabled || byID["once"].LastStatus != StatusMissed || byID["once"].NextRunAt != 0 {
+	if byID["once"].Enabled || !byID["once"].Finished() ||
+		byID["once"].LastStatus != StatusMissed || byID["once"].NextRunAt != 0 {
 		t.Fatalf("once missed: %+v", byID["once"])
+	}
+	if !byID["offonce"].Finished() {
+		t.Fatalf("past disabled once not finished: %+v", byID["offonce"])
+	}
+	if byID["offfuture"].Finished() {
+		t.Fatalf("future disabled once must stay open: %+v", byID["offfuture"])
 	}
 	if byID["int"].NextRunAt <= now.UnixMilli() {
 		t.Fatalf("interval next not recomputed: %+v", byID["int"])
 	}
 	if byID["off"].NextRunAt != 0 {
 		t.Fatalf("disabled next not cleared: %+v", byID["off"])
+	}
+}
+
+/* SortTasks：启用中置顶，组内创建时间新→旧。 */
+func TestSortTasks(t *testing.T) {
+	tasks := []Task{
+		{ID: "old-off", Enabled: false, CreatedAt: 100},
+		{ID: "new-en", Enabled: true, CreatedAt: 300},
+		{ID: "old-en", Enabled: true, CreatedAt: 200},
+		{ID: "new-off", Enabled: false, CreatedAt: 400},
+	}
+	SortTasks(tasks)
+	got := make([]string, len(tasks))
+	for i, t := range tasks {
+		got[i] = t.ID
+	}
+	want := []string{"new-en", "old-en", "new-off", "old-off"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("order = %v want %v", got, want)
 	}
 }

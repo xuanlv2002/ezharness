@@ -105,7 +105,7 @@ func writeCallbackErr(g *gin.Context, err error) {
 	switch {
 	case errors.Is(err, callback.ErrNotFound):
 		g.JSON(http.StatusNotFound, gin.H{"error": "定时回调不存在"})
-	case errors.Is(err, service.ErrCallbackInvalid):
+	case errors.Is(err, service.ErrCallbackInvalid), errors.Is(err, service.ErrCallbackFinished):
 		g.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 	case errors.Is(err, service.ErrCallbackRunning):
 		g.JSON(http.StatusConflict, gin.H{"error": "回调正在执行，稍后再试"})

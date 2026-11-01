@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
 	"ezharness/core/internal/callback"
 	"ezharness/core/internal/domain"
@@ -85,5 +86,38 @@ func TestCallbacksSectionRendersScript(t *testing.T) {
 	got := callbacksSection(ctx, fsys, "s1")
 	if !strings.Contains(got, "每日同步") || !strings.Contains(got, "脚本 ./sync.sh") {
 		t.Fatalf("script section = %s", got)
+	}
+}
+
+/* 已完成的一次性任务不进清单；全部完成时整段缺席。 */
+func TestCallbacksSectionSkipsFinished(t *testing.T) {
+	chdirTemp(t)
+	ctx := context.Background()
+	fsys := osfs.OS{}
+	st := callback.New(fsys)
+	if _, err := st.Create(ctx, callback.Task{
+		ID: "cb-done", Title: "已完成提醒", Kind: callback.KindScript, Enabled: false,
+		Schedule:   callback.Schedule{Kind: callback.ScheduleOnce, At: "2026-01-01 09:00"},
+		Script:     &callback.ScriptTarget{Command: "./once.sh"},
+		FinishedAt: time.Now().UnixMilli(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if got := callbacksSection(ctx, fsys, "s1"); got != "" {
+		t.Fatalf("all finished must omit section: %s", got)
+	}
+	if _, err := st.Create(ctx, callback.Task{
+		ID: "cb-live", Title: "存活任务", Kind: callback.KindScript, Enabled: true,
+		Schedule: callback.Schedule{Kind: callback.ScheduleInterval, Every: "24h"},
+		Script:   &callback.ScriptTarget{Command: "./sync.sh"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	got := callbacksSection(ctx, fsys, "s1")
+	if strings.Contains(got, "已完成提醒") {
+		t.Fatalf("finished task leaked into section: %s", got)
+	}
+	if !strings.Contains(got, "存活任务") {
+		t.Fatalf("live task missing: %s", got)
 	}
 }
