@@ -4,7 +4,7 @@
   import { fileBaseName, normFileKey } from '../../lib/textfile'
   import { store } from '../../lib/store.svelte'
   import { filePane } from '../../lib/filePaneState'
-  import { autoDiffOn, explorer, hasGitChange } from '../../lib/explorerState.svelte'
+  import { explorer, explorerUI, setExplorerOpen } from '../../lib/explorerState.svelte'
   import { kindOf, VIEWERS, MAX_BYTES, type ResTab } from './registry'
   import KindIcon from './KindIcon.svelte'
   import ExplorerTree from './ExplorerTree.svelte'
@@ -27,16 +27,16 @@
   Last-Modified（AI 改盘后），干净 tab 自动重载，dirty tab 只提示。
   */
 
-  /* push 仅弹出窗口传入：状态变化即上报主进程（关窗回流取最新快照） */
-  let { active = false, push }: { active?: boolean; push?: (json: string) => void } = $props()
+  /* push 仅弹出窗口传入：状态变化即上报主进程（关窗回流取最新快照）。
+     hosted = 挂在抽屉里（标题栏 Hosting 目录开关）：面板内不重复出钮，
+     工具条无 tab 时整行收掉；弹出独立窗没有标题栏，钮留在面板内 */
+  let { active = false, push, hosted = false }: { active?: boolean; push?: (json: string) => void; hosted?: boolean } = $props()
 
   let tabs = $state<ResTab[]>([])
   let current = $state('')
   let pendingClose = $state('')
   let sending = $state(false)
   let textViewer = $state<TextViewer>()
-  /* 目录树（悬浮面板）显隐：不占布局宽，默认收起；记忆上次选择 */
-  let explorerOpen = $state(localStorage.getItem('ez-explorer-open') === '1')
 
   const tab = $derived(tabs.find((t) => t.key === current))
   const dirty = $derived(!!tab && tab.kind !== 'image' && tab.content !== tab.saved)
@@ -152,12 +152,12 @@
     }
   }
 
-  /* 目录树点开文件：当前根目录开着自动对比时，有未提交变更的文本文件
-     直接进对比视图（开关在树头部的 git chip 上，按目录各自记忆）；
-     面板保持开着（连续浏览多个文件），当前文件在树内高亮 */
-  function openFromTree(abs: string) {
+  /* 目录树点开文件：树里点永远正常打开（要不要对比在变更清单里手动选）；
+     opts.diff = 变更清单点的，直接进 HEAD 对比。面板保持开着（连续
+     浏览多个文件），当前文件在树内高亮 */
+  function openFromTree(abs: string, opts?: { diff?: boolean }) {
     void openTab(abs)
-    if (autoDiffOn(explorer.dir) && hasGitChange(abs) && ['text', 'markdown', 'html'].includes(kindOf(abs))) {
+    if (opts?.diff) {
       const t = tabs.find((x) => x.key === normFileKey(abs))
       if (t) t.diff = true
     }
@@ -316,31 +316,38 @@
 
 <svelte:window onpointerdown={onGlobalDown} onkeydown={(e) => e.key === 'Escape' && (menu = null)} />
 
-<div class="file-pane">
-  <div class="strip">
-    <button
-      class="exptoggle"
-      class:open={explorerOpen}
-      onpointerdown={(e) => e.stopPropagation()}
-      onclick={() => {
-        explorerOpen = !explorerOpen
-        localStorage.setItem('ez-explorer-open', explorerOpen ? '1' : '0')
-      }}
-      title={explorerOpen ? '收起目录面板' : '打开目录面板'}
-    >
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-        <rect x="3" y="4" width="18" height="16" rx="2" />
-        <path d="M9 4v16" />
-      </svg>
-    </button>
-    {#each tabs as t (t.key)}
+<div class="file-pane" class:docked={explorerUI.docked} class:treeopen={explorerUI.open && explorerUI.docked}>
+  <!-- 目录面板：悬浮（absolute 盖在预览区左侧）或钉住（grid 左列整列
+       全高，tab 条与内容只占右列）。挂在这里而非 .body——钉住时 tab 条
+       不再压在目录头上，树与内容等高。常驻挂载不随显隐销毁（展开/收起
+       是动画不是重挂，目录缓存也因此秒开） -->
+  <!-- 收起时不轮询（常驻挂载后 active 会一直为真，须与显隐合取） -->
+  <ExplorerTree active={active && explorerUI.open} open={explorerUI.open} docked={explorerUI.docked} onopen={openFromTree} onclose={() => setExplorerOpen(false)} />
+  {#if !hosted || tabs.length}
+    <div class="strip">
+      {#if !hosted}
+        <!-- 弹出独立窗：没有标题栏 Hosting 开关，面板内自留一枚 -->
+        <button
+          class="exptoggle"
+          class:open={explorerUI.open}
+          onclick={() => setExplorerOpen(!explorerUI.open)}
+          title={explorerUI.open ? '收起目录面板' : '打开目录面板'}
+        >
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="3" y="4" width="18" height="16" rx="2" />
+            <path d="M9 4v16" />
+          </svg>
+        </button>
+      {/if}
+      {#each tabs as t (t.key)}
       <button
         class="strip-item"
         class:active={current === t.key}
         onclick={() => (current = t.key)}
+        ondblclick={() => setExplorerOpen(true)}
         onauxclick={(e) => e.button === 1 && closeTab(t.key)}
         oncontextmenu={(e) => openMenu(e, t.key)}
-        title={t.path || '画板草稿（未保存）'}
+        title={(t.path || '画板草稿（未保存）') + '（双击打开目录面板）'}
       >
         <span class="kind"><KindIcon kind={t.kind} /></span>
         <span class="name">{t.name}</span>
@@ -352,21 +359,17 @@
         </span>
       </button>
     {/each}
-  </div>
-
-  {#if pendingClose}
-    <div class="confirm">
-      <span>有未保存的修改</span>
-      <button onclick={() => void saveAndClose(pendingClose)}>保存并关闭</button>
-      <button class="ghost" onclick={() => removeTab(pendingClose)}>放弃修改</button>
-      <button class="ghost" onclick={() => (pendingClose = '')}>取消</button>
     </div>
   {/if}
 
   <div class="body">
-    <!-- 目录悬浮面板：absolute 盖在预览区左侧，不占布局宽（选完文件自动收起） -->
-    {#if explorerOpen}
-      <ExplorerTree {active} onopen={openFromTree} onclose={() => (explorerOpen = false)} />
+    {#if pendingClose}
+      <div class="confirm">
+        <span>有未保存的修改</span>
+        <button onclick={() => void saveAndClose(pendingClose)}>保存并关闭</button>
+        <button class="ghost" onclick={() => removeTab(pendingClose)}>放弃修改</button>
+        <button class="ghost" onclick={() => (pendingClose = '')}>取消</button>
+      </div>
     {/if}
     <!-- 文本系：单编辑器 + tab 状态数据化（单实例重绑）；diff=变更对比视图 -->
     {#if tab && textish && tab.diff}
@@ -452,14 +455,15 @@
 
 <style>
   .file-pane {
+    position: relative; /* 目录悬浮面板（absolute）的定位上下文 */
     display: flex;
     flex-direction: column;
     height: 100%;
     min-height: 0;
     gap: 8px;
   }
-  /* 目录面板开关：tab 条最左的常驻小钮（pointerdown 不冒泡——
-     面板的"点外部关闭"以此识别开关钮，避免点按即关又立即重开） */
+  /* 目录面板开关：tab 条最左的常驻小钮（面板本体不再点外部即收，
+     这里是显式开关之一，与面板头部 X 等价） */
   .exptoggle {
     flex: none;
     display: grid;
@@ -523,7 +527,6 @@
     font-weight: 600;
   }
   .body {
-    position: relative; /* 目录悬浮面板的定位上下文 */
     flex: 1;
     min-height: 0;
     display: flex;
@@ -532,6 +535,42 @@
   .body > :global(*) {
     flex: 1;
     min-height: 0;
+  }
+  /* 目录面板钉住：file-pane 恒为 grid——树占左列整列全高（tab 条不再
+     压在目录头上），strip 与内容只占右列。列宽随树的展开/收起动画收放
+     （0 列时树不可见）；grid 不能随 open 切换回 flex，否则树收起瞬间
+     以 auto 高度参与列布局，把内容顶到半屏 */
+  .file-pane.docked {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr);
+    gap: 0;
+    transition: row-gap 0.26s var(--ease-out);
+  }
+  /* 树收起：内容列保持原来的上下呼吸（flex 时代 strip 与 body 的 8px 间距） */
+  .file-pane.docked:not(.treeopen) {
+    row-gap: 8px;
+  }
+  .file-pane.docked :global(.tree) {
+    grid-column: 1;
+    grid-row: 1 / 3;
+  }
+  .file-pane.docked > .strip {
+    grid-column: 2;
+    grid-row: 1;
+  }
+  .file-pane.docked > .body {
+    grid-column: 2;
+    grid-row: 2;
+  }
+  /* 树展开时 tab 条成栏、内容是一块整面（去圆角贴齐树缘与 tab 条） */
+  .file-pane.docked.treeopen > .strip {
+    padding: 6px 8px;
+    border-bottom: 1px solid var(--line);
+  }
+  .file-pane.docked.treeopen > .body > :global(*) {
+    border-radius: 0;
+    border: none;
   }
   .img-slot {
     display: flex;
@@ -640,6 +679,8 @@
     align-items: center;
     justify-content: center;
     gap: 6px;
+    padding: 0 24px; /* 窄列（目录钉住）下描述别贴着树缘分隔线 */
+    text-align: center;
     color: var(--faint);
     font-size: var(--font-size-section);
   }

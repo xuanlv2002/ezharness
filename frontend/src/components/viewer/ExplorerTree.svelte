@@ -1,25 +1,36 @@
 <script lang="ts">
   /*
-  资源页目录树（悬浮面板，盖在预览区左侧，不占预览宽度）：浏览文件
-  系统，点击文件交给 ResourcePane 打开（面板随之收起）。默认根 = 工作
+  资源页目录树（悬浮面板，从抽屉标题栏正下方展开盖在预览区左侧，不占
+  预览宽度；开关在标题栏，弹出独立窗在面板内）：浏览文件系统，点击
+  文件交给 ResourcePane 打开（树里点永远正常打开，要不要对比在变更
+  清单里手动选）。默认根 = 工作
   目录（可换：桌面壳原生对话框 / web 端手输路径）；选择过的目录进
   「最近」清单快速切换，当前根置顶打勾。目录懒加载按层展开（点目录
   只展开子层，树根不切换）；所在目录是 git 仓库时条目带工作区变更徽标
-  （U 新 / M 改 / D 删——纯观测，不做任何 git 操作）。激活期 3s 轮询
-  根目录与已展开目录，AI 改盘后徽标与列表自动跟进。
+  （U 新 / M 改 / D 删——纯观测，不做任何 git 操作），git chip 把面板
+  原地切成变更视图（点文件直接进 HEAD 对比，再点切回目录）。激活期 3s
+  轮询根目录与已展开目录，AI 改盘后徽标与列表自动跟进。
   */
 
   import { onMount } from 'svelte'
   import { api, statusLetter, type TreeEntry } from '../../lib/api'
-  import { autoDiffOn, explorer, removeAutoDiffDir, setAutoDiff } from '../../lib/explorerState.svelte'
+  import { explorer, setExplorerDocked } from '../../lib/explorerState.svelte'
   import KindIcon from './KindIcon.svelte'
   import { kindOf } from './registry'
 
   let {
     active = false,
+    open = true,
+    docked = false,
     onopen,
     onclose,
-  }: { active?: boolean; onopen?: (path: string) => void; onclose?: () => void } = $props()
+  }: {
+    active?: boolean
+    open?: boolean
+    docked?: boolean
+    onopen?: (path: string, opts?: { diff?: boolean }) => void
+    onclose?: () => void
+  } = $props()
 
   interface Listing {
     entries: TreeEntry[]
@@ -33,6 +44,7 @@
   let inputMode = $state(false) // web 端手输路径行
   let typedPath = $state('')
   let menuOpen = $state(false) // 根目录下拉（最近目录 + 选择目录）
+  let changesOpen = $state(false) // git 变更清单（chip 展开，点文件进对比）
   let rootEl = $state<HTMLElement | undefined>()
 
   function safeRecent(): string[] {
@@ -56,8 +68,24 @@
     return items
   })
 
-  /* 当前根目录的自动对比开关态（按目录各自记忆，git chip 上切换） */
-  const dirAutoDiff = $derived(!!explorer.repo && autoDiffOn(explorer.dir))
+  /* 变更清单（git chip 展开）：当前根目录子树内的未提交文件，文件名 +
+     所在目录（仓库相对），点条目直接进 HEAD 对比；删除项只陈列不可点 */
+  const changeList = $derived.by(() => {
+    if (!explorer.repo) return []
+    const rel = explorer.dir.startsWith(explorer.repo + '/') ? explorer.dir.slice(explorer.repo.length + 1) : ''
+    return Object.entries(explorer.changed)
+      .filter(([k]) => (rel ? k.startsWith(rel + '/') : true))
+      .map(([k, code]) => {
+        const i = k.lastIndexOf('/')
+        return { abs: explorer.repo + '/' + k, name: i < 0 ? k : k.slice(i + 1), dir: i < 0 ? '' : k.slice(0, i), code }
+      })
+      .sort((a, b) => a.name.localeCompare(b.name))
+  })
+
+  function toggleChanges() {
+    changesOpen = !changesOpen
+    if (changesOpen) menuOpen = false
+  }
 
   /* dir 子树内的 git 变更概况（文件夹着色用）：条数与是否含改/增 */
   function subtreeStatus(dir: string): { n: number; mod: boolean; add: boolean } {
@@ -199,12 +227,10 @@
     inputMode = false
   }
 
-  /* removeRecent 把快捷目录从「最近」清单移除（工作目录常驻，不在清单里）；
-     联动清掉该目录的自动对比记忆 */
+  /* removeRecent 把快捷目录从「最近」清单移除（工作目录常驻，不在清单里） */
   function removeRecent(path: string) {
     recent = recent.filter((p) => p !== path)
     localStorage.setItem('ez-explorer-recent', JSON.stringify(recent))
-    removeAutoDiffDir(path)
   }
 
   /* ── 展开状态记忆（按根目录分别保存）：重开面板/切走再切回都还原 ── */
@@ -242,11 +268,12 @@
     }
   }
 
-  /* 点面板外关闭（ResourcePane 的开关钮在 pointerdown 阶段挡掉，不误关）；
-     右键菜单在面板外，点它不算"外部" */
+  /* 面板本体不搞「点外部即收」——在预览区随手点一下就收面板太烦，
+     收起只认显式出口（头部 X / 资源页开关钮）。这里只管瞬态：面板外的
+     点击收目录下拉；变更视图是面板的常态之一，不随外点收起 */
   function onOutside(e: PointerEvent) {
     const t = e.target as HTMLElement
-    if (rootEl && !rootEl.contains(t) && !t.closest('.ctx')) onclose?.()
+    if (menuOpen && rootEl && !rootEl.contains(t)) menuOpen = false
     if (ctx && !t.closest('.ctx')) ctx = null
   }
 
@@ -278,10 +305,10 @@
 
 <svelte:window onpointerdown={onOutside} onkeydown={(e) => e.key === 'Escape' && (ctx = null)} />
 
-<aside class="tree" bind:this={rootEl} onpointerdown={onPanelDown}>
+<aside class="tree" class:docked class:closed={!open} bind:this={rootEl} onpointerdown={onPanelDown}>
   <header>
     <!-- 根目录按钮：完整路径（尾部优先显示），点击弹目录下拉 -->
-    <button class="rootbtn" onclick={() => (menuOpen = !menuOpen)} title={explorer.dir}>
+    <button class="rootbtn" onclick={() => { menuOpen = !menuOpen; if (menuOpen) changesOpen = false }} title={explorer.dir}>
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
         <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
       </svg>
@@ -290,25 +317,34 @@
         <path d="M6 9l6 6 6-6" />
       </svg>
     </button>
-    <!-- git chip = 自动对比开关（按当前根目录各自记忆）：在仓库内可点
-         （开启变绿，点有变更的文件直接进对比）；不在仓库内禁用置灰 -->
+    <!-- git chip = 变更清单开关：在仓库内可点（展开本目录下的未提交
+         文件，点文件直接进 HEAD 对比）；不在仓库内禁用置灰 -->
     <button
       class="gitchip"
       class:clean={!rootChangedCount}
-      class:on={dirAutoDiff}
+      class:on={changesOpen}
       disabled={!explorer.repo}
       title={!explorer.repo
-        ? '目录不在 git 仓库内，无法对比'
-        : dirAutoDiff
-          ? '自动对比已开启：打开「有未提交变更」的文件直接进 HEAD 对比（无变更的文件正常打开）。点击关闭'
-          : '点击开启自动对比：打开有未提交变更的文件时直接进 HEAD 对比（当前目录 ' +
-            rootChangedCount +
-            ' 个文件有变更）。被 .gitignore 忽略的文件没有变更概念'}
-      onclick={() => setAutoDiff(explorer.dir, !dirAutoDiff)}
+        ? '目录不在 git 仓库内'
+        : changesOpen
+          ? '切回目录视图'
+          : `查看本目录的未提交变更（${rootChangedCount} 个文件）——点文件直接进 HEAD 对比。树里点文件永远正常打开，被 .gitignore 忽略的文件没有变更概念`}
+      onclick={toggleChanges}
     >
       git{rootChangedCount ? ` ${rootChangedCount}` : ''}
     </button>
     <span class="acts">
+      <button
+        class="abtn"
+        class:on={docked}
+        onclick={() => setExplorerDocked(!docked)}
+        title={docked ? '切回悬浮（盖在预览区上，不占宽）' : '钉到左侧（占据预览宽度，宽屏推荐）'}
+      >
+        <svg viewBox="0 0 24 24" fill={docked ? 'currentColor' : 'none'} stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M12 17v5" />
+          <path d="M9 3h6l-1 6 3 3v2H7v-2l3-3-1-6z" />
+        </svg>
+      </button>
       <button class="abtn" onclick={() => void refresh()} title="刷新">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
           <path d="M21 12a9 9 0 1 1-2.6-6.3" />
@@ -359,6 +395,27 @@
       </button>
     </div>
   {/if}
+  {#if changesOpen}
+    <!-- 变更视图：目录树原地切换（点 git chip 切回目录），文件名 + 所在
+         目录（仓库相对），点文件直接进 HEAD 对比 -->
+    <div class="rows">
+      {#each changeList as c (c.abs)}
+        <button
+          class="citem"
+          class:del={c.code.trim() === 'D'}
+          disabled={c.code.trim() === 'D'}
+          onclick={() => onopen?.(c.abs, { diff: true })}
+          title={c.code.trim() === 'D' ? '文件已删除' : `${c.abs}——点击进 HEAD 对比`}
+        >
+          <span class="cbadge {statusLetter(c.code)}">{statusLetter(c.code)}</span>
+          <span class="cname">{c.name}</span>
+          {#if c.dir}<span class="cdir">{c.dir}</span>{/if}
+        </button>
+      {:else}
+        <div class="cempty">当前目录没有未提交的变更</div>
+      {/each}
+    </div>
+  {:else}
   {#if inputMode}
     <div class="pathrow">
       <input
@@ -418,6 +475,7 @@
       <div class="leafhint" style="padding-left:10px">加载中…</div>
     {/if}
   </div>
+  {/if}
 </aside>
 
 {#if ctx}
@@ -446,6 +504,64 @@
     border-radius: 12px;
     background: var(--bg);
     box-shadow: 0 10px 32px rgb(0 0 0 / 14%);
+  }
+  /* 钉住态：不再是悬浮层，成为 file-pane grid 的左列实体栏——整列全
+     高、占布局宽，tab 条与内容只占右列；去圆角/阴影/边框，只留右缘
+     分隔线。position 用 relative 不用 static：面板内的下拉/清单以树头
+     定位，static 会改挂到滚动祖先上 */
+  .tree.docked {
+    position: relative;
+    top: auto;
+    left: auto;
+    width: 260px; /* 最小宽抽屉里 320 太占地，钉住态收窄（文件名省略号兜底） */
+    min-width: 0;
+    height: auto;
+    min-height: 0;
+    max-height: none;
+    z-index: auto;
+    border: none;
+    border-right: 1px solid var(--line);
+    border-radius: 0;
+    box-shadow: none;
+    /* 展开/收起 = 宽度收放（grid auto 列跟随），头栏定宽避免挤压重排，
+       面板 overflow 裁掉探出部分。钉住态面板全高，下拉清单不会越出
+       底缘，overflow 不误伤 */
+    overflow: hidden;
+    transition:
+      width 0.26s var(--ease-out),
+      border-right-width 0.26s var(--ease-out);
+  }
+  .tree.docked.closed {
+    width: 0;
+    border-right-width: 0;
+  }
+  .tree.docked > header {
+    min-width: 260px;
+    box-sizing: border-box;
+  }
+  /* 悬浮态收起：左移淡出（absolute 不占布局，无需宽度动画）；
+     visibility 延迟到动画结束再隐藏，展开时立即可见 */
+  .tree:not(.docked) {
+    transition:
+      transform 0.22s var(--ease-out),
+      opacity 0.22s var(--ease-out),
+      visibility 0s linear 0s;
+  }
+  .tree:not(.docked).closed {
+    opacity: 0;
+    transform: translateX(-12px);
+    pointer-events: none;
+    visibility: hidden;
+    transition:
+      transform 0.22s var(--ease-out),
+      opacity 0.22s var(--ease-out),
+      visibility 0s linear 0.22s;
+  }
+  .tree.docked header {
+    border-radius: 0;
+  }
+  .tree.docked .rows {
+    border-radius: 0;
   }
   header {
     flex: none;
@@ -603,6 +719,78 @@
     margin: 4px 2px;
     background: var(--line);
   }
+  .citem {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    width: 100%;
+    padding: 4px 6px;
+    border: none;
+    border-radius: 7px;
+    background: transparent;
+    color: var(--fg);
+    font: inherit;
+    font-size: var(--font-size-ui);
+    text-align: left;
+    cursor: pointer;
+    transition: background var(--dur-fast) var(--ease-out);
+  }
+  .citem:hover:not(:disabled) {
+    background: var(--bg-soft);
+  }
+  .citem:disabled {
+    cursor: default;
+  }
+  /* 已删除文件：灰显只陈列（无法打开进对比） */
+  .citem.del {
+    color: var(--faint);
+    text-decoration: line-through;
+  }
+  .cbadge {
+    flex: none;
+    font-family: var(--font-mono);
+    font-size: var(--font-size-small);
+    line-height: 1;
+    padding: 1px 4px;
+    border-radius: 4px;
+  }
+  .cbadge.M {
+    color: #b45309;
+    background: color-mix(in srgb, #f0883e 16%, transparent);
+  }
+  .cbadge.U,
+  .cbadge.A {
+    color: #1a7f37;
+    background: color-mix(in srgb, #1a7f37 12%, transparent);
+  }
+  .cbadge.D {
+    color: #cf222e;
+    background: color-mix(in srgb, #cf222e 12%, transparent);
+  }
+  .cname {
+    flex: none;
+    max-width: 55%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  /* 所在目录（仓库相对）：灰显右对齐，VSCode 源代码管理同款布局 */
+  .cdir {
+    flex: 1;
+    min-width: 0;
+    direction: rtl;
+    text-align: left;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--faint);
+    font-size: var(--font-size-small);
+  }
+  .cempty {
+    padding: 6px;
+    color: var(--faint);
+    font-size: var(--font-size-ui);
+  }
   .gitchip {
     flex: none;
     border: none;
@@ -623,7 +811,7 @@
     color: var(--faint);
     background: var(--line);
   }
-  /* 自动对比已开启：绿色（有变更可对比的“健康”信号色） */
+  /* 变更清单展开中：绿色（有变更可对比的“健康”信号色） */
   .gitchip.on {
     color: #1a7f37;
     background: color-mix(in srgb, #1a7f37 16%, transparent);
@@ -655,6 +843,10 @@
   .abtn:hover {
     color: var(--fg);
     background: var(--line);
+  }
+  /* 钉住中：图钉高亮（实心已钉） */
+  .abtn.on {
+    color: var(--accent, #2563eb);
   }
   .abtn svg {
     width: 12px;
