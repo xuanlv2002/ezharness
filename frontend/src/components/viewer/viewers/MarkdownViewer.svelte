@@ -9,7 +9,12 @@
   import DOMPurify from 'dompurify'
   import type { ResTab } from '../registry'
 
-  let { tab, active = false, onSave }: { tab: ResTab; active?: boolean; onSave?: () => void } = $props()
+  let {
+    tab,
+    active = false,
+    flush = false,
+    onSave,
+  }: { tab: ResTab; active?: boolean; flush?: boolean; onSave?: () => void } = $props()
 
   marked.setOptions({ breaks: true, gfm: true })
 
@@ -24,10 +29,12 @@
   }
 </script>
 
-<div class="viewer">
+<div class="viewer" class:flush>
   <div class="bar">
-    <button class:active={preview} onclick={() => (preview = true)}>预览</button>
-    <button class:active={!preview} onclick={() => (preview = false)}>原文</button>
+    <div class="seg">
+      <button class:active={preview} onclick={() => (preview = true)}>预览</button>
+      <button class:active={!preview} onclick={() => (preview = false)}>原文</button>
+    </div>
     {#if !preview}<span class="hint">编辑后 Ctrl+S 保存</span>{/if}
   </div>
   {#if tab.err}
@@ -62,26 +69,37 @@
     flex: none;
     display: flex;
     align-items: center;
-    gap: 6px;
+    gap: 8px;
   }
-  .bar button {
+  /* 预览/原文 = 分段控件（一个容器两条边，替代两颗各自带框的胶囊） */
+  .seg {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    width: fit-content;
+    padding: 2px;
     border: 1px solid var(--line);
-    background: var(--bg);
-    color: var(--muted);
     border-radius: 8px;
-    padding: 3px 12px;
+    background: var(--bg-soft);
+  }
+  .seg button {
+    border: none;
+    background: transparent;
+    color: var(--muted);
+    border-radius: 6px;
+    padding: 2px 10px;
     font-size: var(--font-size-ui);
+    white-space: nowrap;
     cursor: pointer;
     transition:
       background var(--dur-fast) var(--ease-out),
-      color var(--dur-fast) var(--ease-out),
-      border-color var(--dur-fast) var(--ease-out);
+      color var(--dur-fast) var(--ease-out);
   }
-  .bar button.active {
-    border-color: var(--accent-soft, var(--accent));
-    color: var(--accent, #2563eb);
-    background: var(--bg-soft);
+  .seg button.active {
+    background: var(--bg);
+    color: var(--fg);
     font-weight: 600;
+    box-shadow: 0 1px 2px rgb(0 0 0 / 8%);
   }
   .hint {
     font-size: var(--font-size-small);
@@ -98,6 +116,18 @@
     padding: 12px 16px;
     font-size: var(--font-size-section);
     line-height: 1.7;
+  }
+  /* 满铺模式（目录钉住展开）：内容区是一整面，取消内层卡片边框与圆角 */
+  .viewer.flush {
+    gap: 0;
+  }
+  .viewer.flush .bar {
+    padding: 4px 8px;
+  }
+  .viewer.flush .md-body,
+  .viewer.flush .editor-wrap {
+    border: none;
+    border-radius: 0;
   }
   .md-body :global(pre) {
     background: var(--bg-soft);

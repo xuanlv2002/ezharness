@@ -1,6 +1,7 @@
 <script lang="ts">
   import { store } from '../../lib/store.svelte'
   import { filePane } from '../../lib/filePaneState'
+  import { explorerUI, setExplorerOpen } from '../../lib/explorerState.svelte'
   import TerminalTab from './TerminalTab.svelte'
   import ResourcePane from '../viewer/ResourcePane.svelte'
   import BrowserPane from './BrowserPane.svelte'
@@ -226,6 +227,21 @@
         <p>{title[1]}</p>
       </div>
       <div class="actions">
+        {#if tool === 'file'}
+          <!-- 目录面板开关进标题栏：树从标题栏正下方展开，预览区里不再
+          常驻一枚钮占一行（弹出独立窗没有标题栏，面板内自留） -->
+          <button
+            class="pop"
+            class:active={explorerUI.open}
+            onclick={() => setExplorerOpen(!explorerUI.open)}
+            title={explorerUI.open ? '收起目录面板' : '打开目录面板'}
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="3" y="4" width="18" height="16" rx="2" />
+              <path d="M9 4v16" />
+            </svg>
+          </button>
+        {/if}
         <button class="pop" onclick={() => popOut()} title="弹出为独立窗口（也可按住头部拖出）">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
             <path d="M15 4h5v5" />
@@ -240,12 +256,12 @@
         </button>
       </div>
     </header>
-    <div class="body">
+    <div class="body" class:treedocked={tool === 'file' && explorerUI.open && explorerUI.docked}>
       <div class="pane" class:hidden={tool !== 'term'}>
         <TerminalTab active={open && tool === 'term'} />
       </div>
       <div class="pane" class:hidden={tool !== 'file'}>
-        <ResourcePane active={open && tool === 'file'} />
+        <ResourcePane active={open && tool === 'file'} hosted />
       </div>
       <div class="pane" class:hidden={tool !== 'browser'}>
         <BrowserPane active={open && tool === 'browser'} {animating} />
@@ -259,9 +275,15 @@
   （100vw - 侧栏 - 主列）：窗口缩放时抽屉跟着伸缩、主列与中间线不动；
   抽屉保底 640：浏览器/终端/资源页都按这个下限布局，不允许再压 */
   .drawer {
-    /* 主列优先让出宽度：窗口变窄时主列收缩，抽屉至少保留 640 */
+    /* 主列优先让出宽度：窗口变窄时主列收缩，抽屉至少保留 640；
+    但「侧栏展开(176)+主列保底(480)+640」超视口时（壳 minWidth 1184 按
+    收起侧栏算的，展开即溢出）抽屉必须让位——封顶到主列保底后的剩余，
+    底线 280 保住头部弹出/收起钮在窗内，不再顶出窗外 */
     --chat-w: min(var(--chat-w-pref, max(480px, 42vw)), calc(100vw - var(--sidebar-w, 64px) - 640px));
-    --pane-w: max(640px, calc(100vw - var(--sidebar-w, 64px) - var(--chat-w)));
+    --pane-w: min(
+      max(640px, calc(100vw - var(--sidebar-w, 64px) - var(--chat-w))),
+      max(280px, calc(100vw - var(--sidebar-w, 64px) - 480px))
+    );
     position: relative;
     flex: none;
     width: 0;
@@ -400,6 +422,11 @@
     background: var(--line);
     color: var(--fg);
   }
+  /* 目录面板开着：开关钮亮着（面板从标题栏正下方展开） */
+  .pop.active {
+    background: var(--accent-soft, color-mix(in srgb, #2563eb 10%, transparent));
+    color: var(--accent, #2563eb);
+  }
   .pop svg {
     width: 15px;
     height: 15px;
@@ -410,6 +437,11 @@
     display: flex;
     flex-direction: column;
     padding: 12px 12px 12px 16px;
+    transition: padding 0.26s var(--ease-out); /* 与目录树收放同步 */
+  }
+  /* 目录钉住：抽屉内容满铺（树/内容直接贴边），不再留一圈白缝 */
+  .body.treedocked {
+    padding: 0;
   }
   /* 工具页互斥显隐（pane 常驻保活——不进 {#if}） */
   .pane {

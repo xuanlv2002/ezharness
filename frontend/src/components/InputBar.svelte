@@ -186,6 +186,9 @@
   const approveLabel = $derived(APPROVE_MODES.find((m) => m.v === approveMode)?.label ?? '跟随安全配置')
   const reasonEffort = $derived((store.settings?.reasoningEffort ?? '') as ReasoningEffort)
   const reasonLabel = $derived(REASON_MODES.find((m) => m.v === reasonEffort)?.label ?? '思考·默认')
+  /* 窄列短标签：裸「思考/审批」丢档位，短标也带关键字（状态一眼可见） */
+  const reasonShort = $derived(!reasonEffort ? '思考·默认' : reasonEffort === 'none' ? '思考·无' : `思考·${reasonEffort}`)
+  const approveShort = $derived(approveMode === 'strict' ? '审批·严格' : approveMode === 'off' ? '审批·无' : '审批·跟随')
 
   function toggleModelMenu() {
     approveOpen = false
@@ -373,7 +376,7 @@
           <path d="M12 2a7 7 0 0 0-4 12.7V16h8v-1.3A7 7 0 0 0 12 2z" />
         </svg>
         <span class="model-name full">{reasonLabel}</span>
-        <span class="model-name short">思考</span>
+        <span class="model-name short">{reasonShort}</span>
       </button>
       {#if reasonOpen}
         <div class="model-menu">
@@ -392,7 +395,7 @@
           <path d="M12 3l7 3v5c0 4.5-3 8-7 10-4-2-7-5.5-7-10V6z" />
         </svg>
         <span class="model-name full">{approveLabel}</span>
-        <span class="model-name short">审批</span>
+        <span class="model-name short">{approveShort}</span>
       </button>
       {#if approveOpen}
         <div class="model-menu">

@@ -5,10 +5,12 @@ package controller
 
 import (
 	"crypto/subtle"
+	"fmt"
 	"io/fs"
 	"net/http"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/coder/websocket"
 	"github.com/gin-gonic/gin"
@@ -74,6 +76,34 @@ func (t *TokenStore) SetOpenapi(v string) {
 }
 
 /*
+accessLog 取代 gin.Logger：轮询读的成功请求不落盘——悬浮球 3s 三点
+（topics/notifications/apps）、回调页 5s 两点、资源树 3s，全量记一天
+8 万+ 行，把 core-*.log 淹得没法看。这些端点失败（>=400）照记，其余
+请求全记。格式沿用 gin 默认行（去色，含 IP 与耗时）。
+*/
+func accessLog() gin.HandlerFunc {
+	quiet := map[string]bool{
+		"/api/app/health":     true, // 桌面壳启动探活 / 换代探活
+		"/api/topics":         true, // 悬浮球运行态轮询
+		"/api/notifications":  true, // 通知轮询（悬浮球/通知窗/主端）
+		"/api/apps":           true, // 快应用清单轮询（悬浮球/回调页）
+		"/api/callbacks":      true, // 回调页任务清单轮询
+		"/api/workspace/tree": true, // 资源页目录树轮询（AI 改盘跟进）
+	}
+	return func(c *gin.Context) {
+		start := time.Now()
+		c.Next()
+		if c.Request.Method == http.MethodGet &&
+			c.Writer.Status() < http.StatusBadRequest && quiet[c.Request.URL.Path] {
+			return
+		}
+		fmt.Fprintf(gin.DefaultWriter, "[GIN] %v | %3d | %13v | %15s | %-7s %s\n",
+			start.Format("2006/01/02 - 15:04:05"), c.Writer.Status(),
+			time.Since(start), c.ClientIP(), c.Request.Method, c.Request.URL.RequestURI())
+	}
+}
+
+/*
 NewRouter 装配 gin engine 与全部路由。dist 非 nil 时服务前端静态资源。
 路由分两面：
 
@@ -83,7 +113,7 @@ NewRouter 装配 gin engine 与全部路由。dist 非 nil 时服务前端静态
 */
 func NewRouter(c Controllers, dist fs.FS, tokens *TokenStore) *gin.Engine {
 	r := gin.New()
-	r.Use(gin.Logger(), gin.Recovery())
+	r.Use(accessLog(), gin.Recovery())
 
 	/* 换代探活：旧页面重启后在新 origin 上跨域轮询，必须免鉴权（只回 boot） */
 	r.GET("/api/app/health", c.App.Health)

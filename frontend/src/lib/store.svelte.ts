@@ -64,6 +64,14 @@ export interface ToolBlockData {
 /* ForkState 是分身聊天框的数据模型：blocks 与主时间线同构，
 实时事件归约与存档回放共用 buildBlocks。owner=所属会话 ID（fork 存档
 在所属库的 forks/ 下，compact 链上的历代库分身懒加载按 owner 取）。 */
+/* 模型重试状态（modelretry.retry 事件）：主循环与分身各挂各的，互不覆盖 */
+export interface RetryState {
+  attempt: number
+  maxAttempts: number
+  delayMs: number
+  err: string
+}
+
 export interface ForkState {
   id: string
   owner: string
@@ -73,6 +81,7 @@ export interface ForkState {
   answer: string
   stopReason: string
   loaded: boolean
+  retry?: RetryState | null // 分身自己的模型重试状态（并行 task 429 时入口卡可见）
 }
 
 export interface DecisionData {
@@ -290,8 +299,10 @@ class AppStore {
   private boardTag = ''
   /* 模型调用进行中（model_start→model_end），思考指示用 */
   modelActive = $state(false)
-  /* 模型请求失败正在重试（modelretry.retry 事件；model_end/turn_end 清空） */
-  retryInfo = $state<{ attempt: number; maxAttempts: number; delayMs: number; err: string } | null>(null)
+  /* 主循环的模型重试状态（modelretry.retry 事件；model_end/turn_end 清空）。
+     分身的重试挂各自 ForkState.retry——并行 task 的 429 不再挤掉主循环
+     的显示，也看得出是哪个分身在重试、第几次 */
+  retryInfo = $state<RetryState | null>(null)
   /* 迭代上限软收尾进行中（final_wrap 事件置位；新轮/切分支清空） */
   wrapPhase = $state(false)
   /* 本轮已进行的迭代数（SSE 帧 iter 实时更新；轮末/切分支清零）——长任务实时看进度 */
@@ -1669,8 +1680,10 @@ class AppStore {
         break
       }
       case 'model_start': {
+        // 新一次调用开始，旧重试信息作废（分身的只清分身自己的）
         this.modelActive = true
-        this.retryInfo = null // 新一次调用开始，旧重试信息作废
+        if (ev.forkId) this.ensureFork(ev.forkId).retry = null
+        else this.retryInfo = null
         break
       }
       case 'final_wrap': {
@@ -1681,12 +1694,14 @@ class AppStore {
       case 'modelretry.retry': {
         const d = ev.data as { attempt?: number; maxAttempts?: number; delayMs?: number; err?: string } | null
         if (d) {
-          this.retryInfo = {
+          const info: RetryState = {
             attempt: d.attempt ?? 0,
             maxAttempts: d.maxAttempts ?? 0,
             delayMs: d.delayMs ?? 0,
             err: d.err ?? '',
           }
+          if (ev.forkId) this.ensureFork(ev.forkId).retry = info
+          else this.retryInfo = info
         }
         break
       }
@@ -1765,7 +1780,8 @@ class AppStore {
       }
       case 'model_end': {
         this.modelActive = false
-        this.retryInfo = null
+        if (ev.forkId) this.ensureFork(ev.forkId).retry = null
+        else this.retryInfo = null
         // 关闭本次调用所属块流的流式态（fork 关自己的）：否则下一轮正文
         // 会追加进工具调用前的旧流式块（思考直调工具时正文顺序错乱）
         const bs = ev.forkId ? this.ensureFork(ev.forkId).blocks : this.blocks
@@ -1911,6 +1927,7 @@ class AppStore {
           f.status = 'done'
           f.answer = ev.data?.answer || ''
           f.stopReason = ev.data?.stopReason || ''
+          f.retry = null
         }
         break
       }
@@ -2136,6 +2153,7 @@ class AppStore {
         this.busy = false
         this.modelActive = false
         this.retryInfo = null
+        for (const k of Object.keys(this.forks)) this.forks[k].retry = null
         this.wrapPhase = false
         this.lastTool = ''
         this.pendingUserUid = 0
