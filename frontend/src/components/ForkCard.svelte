@@ -24,7 +24,12 @@
     <span class="fid">{fork.id}</span>
     <span class="task" title={fork.task}>{fork.task || '子任务'}</span>
     {#if fork.status === 'running'}
-      <span class="state">运行中</span>
+      {#if fork.retry}
+        <!-- 并行 task 撞限流：哪颗分身在重试、第几次，直接挂在它的入口卡上 -->
+        <span class="state retry" title={fork.retry.err}>第 {fork.retry.attempt}/{fork.retry.maxAttempts} 次重试 {(fork.retry.delayMs / 1000).toFixed(1)}s 后…</span>
+      {:else}
+        <span class="state">运行中</span>
+      {/if}
     {:else}
       <span class="state dim">{fork.stopReason || 'done'}</span>
       {#if fork.answer}
@@ -112,6 +117,10 @@
     font-size: var(--font-size-small);
     color: var(--accent);
     font-family: var(--font-mono);
+  }
+  /* 重试中：警示色（限流/故障的暂态），完整错误悬停可见 */
+  .state.retry {
+    color: #b45309;
   }
   .state.dim {
     color: var(--faint);
