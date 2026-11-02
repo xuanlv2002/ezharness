@@ -41,6 +41,8 @@
   const tab = $derived(tabs.find((t) => t.key === current))
   const dirty = $derived(!!tab && tab.kind !== 'image' && tab.content !== tab.saved)
   const textish = $derived(!!tab && ['text', 'markdown', 'html'].includes(tab.kind))
+  /* 目录钉住展开时内容满铺（grid 右列）：查看器内部不再叠一层圆角卡片 */
+  const filePaneFlush = $derived(explorerUI.docked && explorerUI.open)
   const imageTabs = $derived(tabs.filter((t) => t.kind === 'image'))
   /* 二进制类(pdf/媒体/表格/文档/幻灯片/兜底)统一从 VIEWERS 表取组件即挂 */
   const binViewer = $derived(tab && !textish && tab.kind !== 'image' ? VIEWERS[tab.kind] : undefined)
@@ -377,9 +379,9 @@
     {:else if tab && tab.kind === 'text'}
       <TextViewer bind:this={textViewer} {tab} {active} onSave={() => void saveTab(tab)} />
     {:else if tab && tab.kind === 'markdown'}
-      <MarkdownViewer {tab} {active} onSave={() => void saveTab(tab)} />
+      <MarkdownViewer {tab} {active} flush={filePaneFlush} onSave={() => void saveTab(tab)} />
     {:else if tab && tab.kind === 'html'}
-      <HtmlViewer {tab} {active} onSave={() => void saveTab(tab)} />
+      <HtmlViewer {tab} {active} flush={filePaneFlush} onSave={() => void saveTab(tab)} />
     {:else if tab && binViewer}
       {@const Viewer = binViewer}
       <Viewer {tab} {active} />
@@ -543,7 +545,7 @@
   .file-pane.docked {
     display: grid;
     grid-template-columns: auto minmax(0, 1fr);
-    grid-template-rows: auto minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr) auto;
     gap: 0;
     transition: row-gap 0.26s var(--ease-out);
   }
@@ -553,7 +555,7 @@
   }
   .file-pane.docked :global(.tree) {
     grid-column: 1;
-    grid-row: 1 / 3;
+    grid-row: 1 / 4;
   }
   .file-pane.docked > .strip {
     grid-column: 2;
@@ -562,6 +564,14 @@
   .file-pane.docked > .body {
     grid-column: 2;
     grid-row: 2;
+  }
+  /* 状态条显式落右列末行：grid 自动放置会把它塞进树下面的隐式行 */
+  .file-pane.docked > .statusbar {
+    grid-column: 2;
+    grid-row: 3;
+  }
+  .file-pane.docked.treeopen > .statusbar {
+    padding: 0 10px 6px;
   }
   /* 树展开时 tab 条成栏、内容是一块整面（去圆角贴齐树缘与 tab 条） */
   .file-pane.docked.treeopen > .strip {

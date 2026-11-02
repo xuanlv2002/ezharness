@@ -184,11 +184,11 @@
   ] as const
   const approveMode = $derived((store.settings?.approveMode ?? '') as '' | 'off' | 'strict')
   const approveLabel = $derived(APPROVE_MODES.find((m) => m.v === approveMode)?.label ?? '跟随安全配置')
+  const reasonEffort = $derived((store.settings?.reasoningEffort ?? '') as ReasoningEffort)
+  const reasonLabel = $derived(REASON_MODES.find((m) => m.v === reasonEffort)?.label ?? '思考·默认')
   /* 窄列短标签：裸「思考/审批」丢档位，短标也带关键字（状态一眼可见） */
   const reasonShort = $derived(!reasonEffort ? '思考·默认' : reasonEffort === 'none' ? '思考·无' : `思考·${reasonEffort}`)
   const approveShort = $derived(approveMode === 'strict' ? '审批·严格' : approveMode === 'off' ? '审批·无' : '审批·跟随')
-  const reasonEffort = $derived((store.settings?.reasoningEffort ?? '') as ReasoningEffort)
-  const reasonLabel = $derived(REASON_MODES.find((m) => m.v === reasonEffort)?.label ?? '思考·默认')
 
   function toggleModelMenu() {
     approveOpen = false

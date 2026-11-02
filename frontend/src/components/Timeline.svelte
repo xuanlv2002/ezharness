@@ -16,6 +16,9 @@
         b.kind === 'user' && (!!b.text.trim() || !!b.images?.length),
     ),
   )
+  /* 轮次导航最多 5 个刻度（取最近 5 轮）：长会话下整列刻度太占视觉，
+     更早的轮次靠滚动/下拉历史查看 */
+  const navTurns = $derived(turns.length > 5 ? turns.slice(-5) : turns)
   let activeUid = $state(0)
 
   function updateActive() {
@@ -303,7 +306,7 @@
   </div>
   {#if turns.length >= 2}
     <div class="turnnav">
-      {#each turns as t (t.uid)}
+      {#each navTurns as t (t.uid)}
         <button class:cur={t.uid === activeUid} onclick={() => jumpTo(t.uid)}
           title={t.text.length > 40 ? t.text : undefined}>
           <span class="tt">{t.text || '[附件]'}</span>
