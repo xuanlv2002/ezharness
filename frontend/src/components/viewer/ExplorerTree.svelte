@@ -428,7 +428,9 @@
 
 <style>
   /* 悬浮面板：absolute 盖在预览区左侧（.body 是定位上下文），不参与布局
-     ——预览区始终全宽；高度按内容收缩（上限抽屉内高），不高垂到底 */
+     ——预览区始终全宽；高度按内容收缩（上限抽屉内高），不高垂到底。
+     不设 overflow: hidden——目录下拉要悬浮溢出面板底缘（面板不随之长
+     高），圆角裁剪由 header / .rows 各自承担 */
   .tree {
     position: absolute;
     top: 0;
@@ -444,7 +446,6 @@
     border-radius: 12px;
     background: var(--bg);
     box-shadow: 0 10px 32px rgb(0 0 0 / 14%);
-    overflow: hidden;
   }
   header {
     flex: none;
@@ -454,6 +455,7 @@
     padding: 6px 8px 6px 8px;
     border-bottom: 1px solid var(--line);
     background: var(--bg-soft);
+    border-radius: 11px 11px 0 0; /* 面板无 overflow 裁剪，圆角自己收 */
     min-width: 0;
   }
   .rootbtn {
@@ -679,6 +681,7 @@
     flex: 1;
     min-height: 0;
     overflow: auto;
+    border-radius: 0 0 11px 11px; /* 面板无 overflow 裁剪，圆角自己收 */
     padding: 4px 0 8px;
     scrollbar-width: thin;
     scrollbar-color: var(--line-strong) transparent;

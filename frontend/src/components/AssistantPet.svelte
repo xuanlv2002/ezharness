@@ -13,7 +13,8 @@
   环形菜单：以头像（窗口中心 144,144）为圆心、右上 30°（弹出箭头）起
   顺时针、每颗固定 36°（满 6 颗恰 180°）——箭头（开主客户端）+ 铃铛
   （通知）+ 钉选快应用（≤3，点击启动，实心图钉角标点击取消）+「…」球
-  （快应用 </> logo，点击展开全部应用栏）。子球位置由 JS 算成绝对
+  （快应用 ⚡️ logo，与侧边栏「快应用」入口同图标，点击展开全部应用
+  栏）。子球位置由 JS 算成绝对
   left/top（不靠 transform 位移——定位与动画解耦，transform 只做 scale
   弹出）。全部应用栏贴左缘竖列、滚轮纵向滚，条目本体点击启动、右上
   图钉角标（实心橙=已钉/空心灰=未钉）点击切换，钉满 3 个由 core 顶掉
@@ -183,8 +184,7 @@
         <button class="orb more" class:on={hovered} style={`left:${s.left}px;top:${s.top}px;transition-delay:${hovered ? 40 + s.d * 50 : 0}ms`}
           onclick={() => (trayOpen = !trayOpen)} title={trayOpen ? '收起应用栏' : '全部快应用'}>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M8 6L3 12l5 6" />
-            <path d="M16 6l5 6-5 6" />
+            <path d="M13 2L4.5 13h6L11 22l8.5-11h-6L13 2z" />
           </svg>
         </button>
       {:else if s.a}
