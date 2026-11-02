@@ -612,14 +612,28 @@ function registerIpc() {
   ipcMain.on('ez:pet-dragmove', (_e, x, y) => {
     const win = petWindow
     if (!win || win.isDestroyed() || !petDrag) return
+    /* 渲染层坐标或拖拽锚点里混进 NaN 时，min/max 钳制拦不住（NaN 可穿透），
+       进 setPosition 就是类型转换错——主进程未捕获异常会弹系统级错误框。
+       锚点脏了按当前光标重锚一帧自愈，重锚还脏则丢弃本次移动 */
+    if (!Number.isFinite(x) || !Number.isFinite(y)) return
+    let nx = Math.round(x - petDrag.dx)
+    let ny = Math.round(y - petDrag.dy)
+    if (!Number.isFinite(nx) || !Number.isFinite(ny)) {
+      const b = win.getBounds()
+      const pt = screen.getCursorScreenPoint()
+      petDrag = { dx: pt.x - b.x, dy: pt.y - b.y }
+      nx = Math.round(pt.x - petDrag.dx)
+      ny = Math.round(pt.y - petDrag.dy)
+      if (!Number.isFinite(nx) || !Number.isFinite(ny)) return
+    }
     const wa = screen.getDisplayNearestPoint({ x: Math.round(x), y: Math.round(y) }).workArea
     const minX = wa.x - PET_AVATAR_OFFSET
     const maxX = wa.x + wa.width - PET_AVATAR_OFFSET - PET_AVATAR
     const minY = wa.y - PET_AVATAR_OFFSET
     const maxY = wa.y + wa.height - PET_AVATAR_OFFSET - PET_AVATAR
     win.setPosition(
-      Math.min(Math.max(Math.round(x - petDrag.dx), minX), maxX),
-      Math.min(Math.max(Math.round(y - petDrag.dy), minY), maxY),
+      Math.min(Math.max(nx, minX), maxX),
+      Math.min(Math.max(ny, minY), maxY),
     )
   })
   /* 宠物 JS 拖拽：按下记光标与窗口左上角偏移
