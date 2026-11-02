@@ -269,7 +269,10 @@
     return null
   }
 
-  /* 滚轮缩放（锚定光标）。 */
+  /* 滚轮缩放（锚定光标）。步长随滚动量走：macOS 触控板/惯性一次轻扫
+     会连发几十个 wheel 事件，固定倍率指数叠加直接冲到缩放极限——
+     像素量归一后过 exp 曲线，单格滚距 ≈ 原 1.15 倍手感，触控板则
+     平滑连续；单次步长封顶防惯性尖峰 */
   function onWheel(e: WheelEvent) {
     if (!canvas) return
     e.preventDefault()
@@ -277,7 +280,11 @@
     const cx = ((e.clientX - r.left) * W) / r.width
     const cy = ((e.clientY - r.top) * H) / r.height
     const world = { x: cx / zoom + viewX, y: cy / zoom + viewY }
-    zoom = Math.min(Math.max(zoom * (e.deltaY < 0 ? 1.15 : 1 / 1.15), 0.1), 8)
+    const dy = Math.max(
+      -200,
+      Math.min(200, e.deltaY * (e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? canvas.clientHeight || 1 : 1)),
+    )
+    zoom = Math.min(Math.max(zoom * Math.exp(-dy * 0.0015), 0.1), 8)
     viewX = world.x - cx / zoom
     viewY = world.y - cy / zoom
     schedulePaint()
