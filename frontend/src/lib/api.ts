@@ -519,6 +519,7 @@ export interface TreeView {
 export interface PinSessionRef {
   id: string
   title: string
+  createdAt?: number // 会话创建时刻（毫秒，关联时缓存）
 }
 
 export interface PinCard {

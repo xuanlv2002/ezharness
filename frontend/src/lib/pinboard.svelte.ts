@@ -87,7 +87,10 @@ function normSessions(v: unknown): PinSessionRef[] | undefined {
   for (const s of v as PinSessionRef[]) {
     if (!s || typeof s.id !== 'string' || !s.id || seen.has(s.id)) continue
     seen.add(s.id)
-    out.push({ id: s.id, title: typeof s.title === 'string' ? s.title : '' })
+    const ref: PinSessionRef = { id: s.id, title: typeof s.title === 'string' ? s.title : '' }
+    const created = num(s.createdAt)
+    if (created > 0) ref.createdAt = created
+    out.push(ref)
   }
   return out.length ? out : undefined
 }
@@ -235,7 +238,7 @@ export function addPendingSession(cardId: string, sessionId: string): void {
 linkPendingNote 对话页真实发出消息后调用：把该会话挂到对应便签的关联
 列表末尾（卡片右下角按顺序显示），并移出待定。未加载过便签板时先补拉。
 */
-export async function linkPendingNote(sessionId: string, title = ''): Promise<void> {
+export async function linkPendingNote(sessionId: string, title = '', createdAt = 0): Promise<void> {
   if (!sessionId) return
   await ensurePinboard()
   if (!board.loaded) return
@@ -243,10 +246,9 @@ export async function linkPendingNote(sessionId: string, title = ''): Promise<vo
   function link<T extends PinCard | PinRecord>(entry: T): T {
     if (!entry.pendingSessionIds?.includes(sessionId)) return entry
     changed = true
-    const sessions = [
-      ...(entry.sessions ?? []).filter((s) => s.id !== sessionId),
-      { id: sessionId, title: title || '会话' },
-    ]
+    const ref: PinSessionRef = { id: sessionId, title: title || '会话' }
+    if (createdAt > 0) ref.createdAt = createdAt
+    const sessions = [...(entry.sessions ?? []).filter((s) => s.id !== sessionId), ref]
     const pending = entry.pendingSessionIds.filter((id) => id !== sessionId)
     return { ...entry, sessions, pendingSessionIds: pending.length ? pending : undefined }
   }

@@ -37,6 +37,14 @@
     return store.branches.find((b) => b.id === s.id)?.title || s.title || '会话'
   }
 
+  /* 会话创建时间：优先分支列表的实时值，未刷新时用关联时缓存 */
+  function timeOf(s: PinSessionRef): string {
+    const ts = store.branches.find((b) => b.id === s.id)?.createdAt || s.createdAt || 0
+    return ts > 0
+      ? new Date(ts).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+      : ''
+  }
+
   function portal(node: HTMLElement) {
     document.body.appendChild(node)
     return { destroy: () => node.remove() }
@@ -99,7 +107,8 @@
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
         <path d="M7 17L17 7M9 7h8v8" />
       </svg>
-      <span>{titleOf(s)}</span>
+      <span class="title">{titleOf(s)}</span>
+      {#if timeOf(s)}<span class="time">{timeOf(s)}</span>{/if}
     </button>
   {/each}
   {#if hiddenCount > 0}
@@ -133,7 +142,8 @@
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <path d="M7 17L17 7M9 7h8v8" />
         </svg>
-        <span>{titleOf(s)}</span>
+        <span class="mtitle">{titleOf(s)}</span>
+        {#if timeOf(s)}<span class="mtime">{timeOf(s)}</span>{/if}
       </button>
     {/each}
   </div>
@@ -176,15 +186,25 @@
     height: 10px;
     opacity: 0.65;
   }
-  .link span {
+  .link .title {
     min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
-  .link:hover span {
+  .link .time {
+    flex: none;
+    font-size: 10px;
+    color: var(--faint);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+  .link:hover .title {
     text-decoration: underline;
     text-underline-offset: 2px;
+  }
+  .link:hover .time {
+    text-decoration: none;
   }
   /* 新会话比关联链接更弱：灰字，悬停才浮现 */
   .link.new {
@@ -246,10 +266,17 @@
     height: 11px;
     opacity: 0.6;
   }
-  .mitem span {
+  .mtitle {
+    flex: 1;
     min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+  .mtime {
+    flex: none;
+    font-size: 10px;
+    color: var(--faint);
+    font-variant-numeric: tabular-nums;
   }
 </style>

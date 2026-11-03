@@ -1050,7 +1050,8 @@ class AppStore {
       await api.send(sid, text, final, fileRefs)
       void this.refreshBranches() // 首次发言落线索引 + 运行指示
       /* 真实发出消息才把「从便签开的新会话」挂到那张便签上 */
-      void linkPendingNote(sid, this.branches.find((b) => b.id === sid)?.title ?? '')
+      const branch = this.branches.find((b) => b.id === sid)
+      void linkPendingNote(sid, branch?.title ?? '', branch?.createdAt ?? Date.now())
     } catch (e) {
       this.busy = false
       this.lastStatus = `发送失败：${(e as Error).message}`
