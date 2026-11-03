@@ -342,14 +342,14 @@ export function moveRecordDay(id: string, target: string): void {
   const others = board.done.filter((r) => r.id !== id && dayOf(r) === target).sort(byDayOrder)
   const ordById = new Map(others.map((r, i) => [r.id, i + 1]))
   board.done = board.done.map((r) => (ordById.has(r.id) ? { ...r, ord: ordById.get(r.id) } : r))
-  scheduleSave()
+  void saveNow() // 跨天落位是离散动作：立即落盘，关窗/切页都不丢
 }
 
-/* reorderDay 当天内拖动排序（ids = 目标顺序）。 */
+/* reorderDay 当天内拖动排序（ids = 目标顺序，ord 持久化到 pinboard.json）。 */
 export function reorderDay(day: string, ids: string[]): void {
   const ord = new Map(ids.map((id, i) => [id, i]))
   board.done = board.done.map((r) => (ord.has(r.id) && dayOf(r) === day ? { ...r, ord: ord.get(r.id) } : r))
-  scheduleSave()
+  void saveNow() // 松手即写：排序不依赖 350ms 防抖，重启后保持
 }
 
 /* packRows 按行填充：行内从左到右、行间从上到下，行高 = 该行最高卡。
