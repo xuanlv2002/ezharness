@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -73,11 +74,11 @@ func TestTreeAndGitBlob(t *testing.T) {
 	if len(view.Entries) != 2 || view.Entries[0].Name != "a.txt" {
 		t.Fatalf("条目应为 a.txt/new.txt（目录优先、字典序）: %+v", view.Entries)
 	}
-	if view.Git == nil || view.Git.Root != filepath.ToSlash(dir) {
+	if len(view.Git) != 1 || view.Git[0].Root != filepath.ToSlash(dir) {
 		t.Fatalf("git 信息缺失: %+v", view.Git)
 	}
-	if view.Git.Status["a.txt"] != " M" || view.Git.Status["new.txt"] != "??" {
-		t.Fatalf("工作区状态不符: %v", view.Git.Status)
+	if view.Git[0].Status["a.txt"] != " M" || view.Git[0].Status["new.txt"] != "??" {
+		t.Fatalf("工作区状态不符: %v", view.Git[0].Status)
 	}
 
 	/* GitBlob：a.txt 的 HEAD 原文是旧内容；new.txt 未纳入 HEAD */
@@ -100,10 +101,52 @@ func TestTreeWithoutGit(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Tree: %v", err)
 	}
-	if view.Git != nil {
-		t.Fatalf("非 git 目录 Git 应为 nil: %+v", view.Git)
+	if len(view.Git) != 0 {
+		t.Fatalf("周边无仓库 Git 应为空: %+v", view.Git)
 	}
 	if len(view.Entries) != 1 || view.Entries[0].Name != "plain.txt" {
 		t.Fatalf("条目不符: %+v", view.Entries)
+	}
+}
+
+/*
+TestTreeContainerRepos 容器目录（多仓库并列的父目录）：一级子目录里
+
+	的仓库根各报一条（按根排序），非仓库子目录不出现。
+*/
+func TestTreeContainerRepos(t *testing.T) {
+	gitAvailable(t)
+	container := t.TempDir()
+	for i, src := range []string{initRepo(t), initRepo(t)} {
+		if err := os.Rename(src, filepath.Join(container, fmt.Sprintf("repo%d", i))); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(container, "loose.txt"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(container, "plain"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	/* repo0 造一条未提交修改，repo0 的状态表应出现它；repo1 保持干净 */
+	if err := os.WriteFile(filepath.Join(container, "repo0", "a.txt"), []byte("changed\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	view, err := (&WorkspaceService{}).Tree(context.Background(), container)
+	if err != nil {
+		t.Fatalf("Tree: %v", err)
+	}
+	if len(view.Git) != 2 {
+		t.Fatalf("应报 2 个一级子仓库: %+v", view.Git)
+	}
+	if view.Git[0].Root >= view.Git[1].Root {
+		t.Fatalf("仓库应按根排序: %+v", view.Git)
+	}
+	if view.Git[0].Status["a.txt"] != " M" {
+		t.Fatalf("repo0 工作区状态不符: %v", view.Git[0].Status)
+	}
+	if view.Git[1].Status == nil || len(view.Git[1].Status) != 0 {
+		t.Fatalf("干净的 repo1 应为非 nil 空表: %+v", view.Git[1])
 	}
 }

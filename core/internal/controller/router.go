@@ -35,6 +35,7 @@ type Controllers struct {
 	Terminal  *TerminalController
 	Browser   *BrowserController
 	Workspace *WorkspaceController
+	Pinboard  *PinboardController
 }
 
 /*
@@ -141,6 +142,7 @@ func NewRouter(c Controllers, dist fs.FS, tokens *TokenStore) *gin.Engine {
 		api.GET("/app/config", c.App.Config)
 		api.GET("/app/update-check", c.App.UpdateCheck) // 版本检查：最新 release 摘要（比对在前端）
 		api.POST("/app/restart", c.App.Restart)
+		api.POST("/app/format", c.App.Format) // 格式化：清空全部配置/会话/数据并重建（不可恢复）
 		/* 令牌管理（设置页展示/复制/重置；能过鉴权者才可见） */
 		api.GET("/app/token", c.App.SessionToken)
 		api.GET("/app/openapi-token", c.App.OpenapiToken)
@@ -223,6 +225,10 @@ func NewRouter(c Controllers, dist fs.FS, tokens *TokenStore) *gin.Engine {
 		api.GET("/workspace/workdir", c.Workspace.WorkDir)   // 解析后的工作目录（目录树默认根）
 		api.GET("/workspace/tree", c.Workspace.Tree)         // 目录树一层 + git 工作区变更（资源页目录树）
 		api.GET("/workspace/git-blob", c.Workspace.GitBlob)  // 文件 HEAD 原文（变更对比左侧）
+
+		/* 便签板：整块板 JSON 原样读写（布局/交互在前端） */
+		api.GET("/pinboard", c.Pinboard.Get)
+		api.POST("/pinboard", c.Pinboard.Save)
 
 		/* 魔法看板·共享终端：WS 多路复用 + REST 管理 */
 		api.GET("/terminal/ws", c.Terminal.Ws)

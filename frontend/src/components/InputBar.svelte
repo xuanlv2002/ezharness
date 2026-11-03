@@ -69,6 +69,25 @@
     })
   })
 
+  /* 目录树右键「插入路径到会话」：路径补进当前文本的光标处（替换选中
+     区、不改写其余草稿），焦点与光标落在插入内容之后 */
+  $effect(() => {
+    const p = store.pendingInsert
+    if (!p) return
+    store.pendingInsert = null
+    const start = el?.selectionStart ?? text.length
+    const end = el?.selectionEnd ?? start
+    text = text.slice(0, start) + p + text.slice(end)
+    const caret = start + p.length
+    void tick().then(() => {
+      if (!el) return
+      el.focus()
+      el.setSelectionRange(caret, caret)
+      el.style.height = 'auto'
+      el.style.height = Math.min(el.scrollHeight, 200) + 'px'
+    })
+  })
+
   /* 附件缩略：真身路径走文件服务源（与聊天记录同源，带版本参数——
   画板写回后强制刷新）；path 空 = 拖入暂存中占位 */
   const thumbnails = $derived(
@@ -777,6 +796,27 @@
     }
     .ws-btn {
       width: 26px;
+    }
+  }
+  /* 极窄（工具抽屉钉住把聊天列挤窄）：思考/审批收成纯图标——行必须放得
+     下，宁可少字也不把标签截成半字/把左侧工具钮挤出界（含义仍在 title
+     与下拉里） */
+  @container (max-width: 420px) {
+    .reason-pick .model-btn .model-name.short,
+    .approve-pick .model-btn .model-name.short {
+      display: none;
+    }
+  }
+  /* 更窄：模型名与上下文百分比也收起（圆环本身仍是量表），整行只剩图标 */
+  @container (max-width: 360px) {
+    .model-pick .model-btn .model-name {
+      display: none;
+    }
+    .tools :global(.status-pick .pct) {
+      display: none;
+    }
+    .tools {
+      gap: 4px;
     }
   }
   /* 工具入口靠左、设置类按钮靠右 */

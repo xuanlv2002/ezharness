@@ -67,11 +67,13 @@ function zoomTab(wc, dir) {
 
 /* tabList 标签清单（带 active 标记）：当前激活标签只有主进程知道（它决定
    显示哪个视图），渲染层据此高亮标签条、定地址栏——不能让各窗口自己猜，
-   新建/关闭后两边最容易不一致（页面切了、地址栏没换）。 */
+   新建/关闭后两边最容易不一致（页面切了、地址栏没换）。
+   ai/busy 供标签条画标识与锁：ai=AI 建的标签，busy=AI 桥调用正在该标签上
+   执行——提示用户此刻别抢着操作，避免人机同时动一张页面互相打架。 */
 function tabList() {
   return [...tabs.entries()].map(([id, t]) => ({
     id, name: t.name, desc: t.desc || '', origin: t.origin, url: t.url, title: t.title,
-    loading: t.loading, active: id === activeTab,
+    loading: t.loading, active: id === activeTab, ai: t.origin === 'AI', busy: !!t.agentBusy,
   }))
 }
 
@@ -79,25 +81,66 @@ function tabList() {
    窗口，去重）。不能只发给当前宿主：宿主会随窗口显隐让位，让位后旁路窗口若
    收不到清单就会冻住（表现是标签条点关没反应、也看不到新标签）。
    多标签的加载/标题事件会在短时间内密集触发，这里合并到一个短窗口内只发
-   一次，且内容没变就不发——渲染层每次收到都会全量重建标签条。 */
+   一次，且内容没变就不发——渲染层每次收到都会全量重建标签条。
+   immediate=true 跳过合并立即发（AI 忙碌锁这类状态过渡要当场见，合并窗口
+   会把已完成调用的 true→false 抵消成"什么都没发生"）。 */
 let tabsPayload = ''
 let broadcastTimer = null
 let tabsDirty = false
-function broadcastTabs() {
+function broadcastTabs(immediate) {
   tabsDirty = true
+  if (immediate) {
+    if (broadcastTimer) {
+      clearTimeout(broadcastTimer)
+      broadcastTimer = null
+    }
+    flushTabs()
+    return
+  }
   if (broadcastTimer) return
   broadcastTimer = setTimeout(() => {
     broadcastTimer = null
-    if (!tabsDirty) return
-    tabsDirty = false
-    const payload = JSON.stringify(tabList())
-    if (payload === tabsPayload) return
-    tabsPayload = payload
-    const wins = new Set([getParentWindow(), ...paneWindows])
-    for (const w of wins) {
-      if (w && !w.isDestroyed()) w.webContents.send('ez-browser:tabs', payload)
-    }
+    flushTabs()
   }, 60)
+}
+function flushTabs() {
+  if (!tabsDirty) return
+  tabsDirty = false
+  const payload = JSON.stringify(tabList())
+  if (payload === tabsPayload) return
+  tabsPayload = payload
+  const wins = new Set([getParentWindow(), ...paneWindows])
+  for (const w of wins) {
+    if (w && !w.isDestroyed()) w.webContents.send('ez-browser:tabs', payload)
+  }
+}
+
+/* BUSY_LINGER 忙碌锁在最后一次桥调用结束后的保留时长：eval 这类瞬时调用
+   若执行完立刻解锁，用户根本看不到锁；连续工具调用间隔内也保持锁亮，
+   表达"AI 正在这片页面上干活"。 */
+const BUSY_LINGER = 2500
+
+/* markAgentBusy 给标签打/解 AI 忙碌标记。上锁立即广播，解锁延迟
+   BUSY_LINGER 并把新调用视为连续活动（清掉待解锁定时器）。 */
+function markAgentBusy(tab, on) {
+  if (!tab) return
+  if (tab.busyTimer) {
+    clearTimeout(tab.busyTimer)
+    tab.busyTimer = null
+  }
+  if (on) {
+    if (!tab.agentBusy) {
+      tab.agentBusy = true
+      broadcastTabs(true)
+    }
+    return
+  }
+  tab.busyTimer = setTimeout(() => {
+    tab.busyTimer = null
+    if (!tab.agentBusy) return
+    tab.agentBusy = false
+    broadcastTabs(true)
+  }, BUSY_LINGER)
 }
 
 /* tabState 工具回执的标签状态对象（list 与各操作同构；id 即标签 id，
@@ -278,6 +321,7 @@ function hostOf(raw) {
 function closeTab(id) {
   const tab = tabs.get(id)
   if (!tab) return
+  if (tab.busyTimer) clearTimeout(tab.busyTimer)
   devtools.detachDevtools(tab)
   detachView(tab.view, null)
   tabs.delete(id)
@@ -620,10 +664,15 @@ const executors = {
     const tab = tabs.get(id)
     const note = '已创建,后续操作用返回的 id;内嵌于工作区抽屉,用户实时共见可随时接管'
     if (!url) return { result: JSON.stringify({ ...tabState(id), note }) }
-    const title = await loadSettled(tab.view.webContents, completeURL(url), timeoutMs || 20000)
-    const state = tabState(id)
-    if (title) state.title = title
-    return { result: JSON.stringify({ ...state, note: `${note};页面已加载` }) }
+    markAgentBusy(tab, true)
+    try {
+      const title = await loadSettled(tab.view.webContents, completeURL(url), timeoutMs || 20000)
+      const state = tabState(id)
+      if (title) state.title = title
+      return { result: JSON.stringify({ ...state, note: `${note};页面已加载` }) }
+    } finally {
+      markAgentBusy(tab, false)
+    }
   },
 
   async navigate({ tabId, url, timeoutMs }) {
@@ -879,11 +928,17 @@ function connectBridge() {
       reply = { id: req.id, ok: false, error: `未知浏览器指令 ${req.method}` }
     } else {
       const params = req.params || {}
+      /* 执行期间给目标标签打 busy（标签条画锁）；结束后延迟释放，瞬时
+         调用也看得见锁 */
+      const tab = params.tabId ? tabs.get(params.tabId) : null
+      markAgentBusy(tab, true)
       try {
         const out = await exec(params)
         reply = { id: req.id, ok: true, result: out.result, images: out.images, note: out.note }
       } catch (err) {
         reply = { id: req.id, ok: false, error: String(err?.message || err) }
+      } finally {
+        markAgentBusy(tab, false)
       }
     }
     if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(reply))
@@ -945,7 +1000,11 @@ function registerIpc() {
   })
   ipcMain.on('ez-browser:navigate', (_e, tabId, url) => {
     const tab = tabs.get(tabId)
-    if (tab && url) tab.view.webContents.loadURL(completeURL(url))
+    if (!tab || !url) return
+    /* AI 操作中（标签条亮锁）：用户改地址一律忽略，别和 AI 抢同一个页面。
+       AI 自己的导航走 executors 直接调用，不经过这条 IPC */
+    if (tab.agentBusy) return
+    tab.view.webContents.loadURL(completeURL(url))
   })
   ipcMain.on('ez-browser:select', (_e, tabId) => selectTab(tabId))
   ipcMain.on('ez-browser:close', (_e, tabId) => closeTab(tabId))

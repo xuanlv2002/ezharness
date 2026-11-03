@@ -2,7 +2,7 @@
   import Logo from './Logo.svelte'
   import { store } from '../lib/store.svelte'
 
-  type View = 'chat' | 'models' | 'memory' | 'tools' | 'callbacks' | 'mcp' | 'security' | 'settings'
+  type View = 'chat' | 'pinboard' | 'models' | 'memory' | 'tools' | 'callbacks' | 'mcp' | 'security' | 'settings'
 
   let {
     view,
@@ -21,6 +21,11 @@
       key: 'chat',
       label: '对话',
       icon: '<path d="M21 11.5a8.5 8.5 0 0 1-8.5 8.5c-1.3 0-2.6-.25-3.7-.7L3 21l1.7-4.3A8.5 8.5 0 1 1 21 11.5z"/>',
+    },
+    {
+      key: 'pinboard',
+      label: '便签',
+      icon: '<rect x="4" y="4" width="16" height="16" rx="2"/><path d="M8 9h8M8 13h5"/>',
     },
     {
       key: 'models',
@@ -54,9 +59,9 @@
     },
   ]
 
-  /* 工作面（对话 + agent 产出的快应用）与 harness 配置分两组；
+  /* 工作面（对话 + 便签 + agent 产出的快应用）与 harness 配置分两组；
   设置不入数组——底部固定钮独立渲染 */
-  const work = items.filter((i) => i.key === 'chat' || i.key === 'tools' || i.key === 'callbacks')
+  const work = items.filter((i) => i.key === 'chat' || i.key === 'pinboard' || i.key === 'tools' || i.key === 'callbacks')
   const config = items.filter((i) => !work.includes(i))
 </script>
 

@@ -1,7 +1,8 @@
 /*
-workspace_tree 是资源页目录树的可观测用例：目录列表、所在 git 仓库的
-工作区变更清单、文件在 HEAD 的原文（左右对比的左侧）。全部只读——
-不做任何 git 写操作；git 缺失或目录不在仓库内时降级为无 git 信息。
+workspace_tree 是资源页目录树的可观测用例：目录列表、目录视角下的
+git 仓库工作区变更清单（可能多仓：容器目录下的并列仓库各一条）、
+文件在 HEAD 的原文（左右对比的左侧）。全部只读——不做任何 git 写
+操作；git 缺失或周边无仓库时降级为无 git 信息。
 */
 package service
 
@@ -21,9 +22,12 @@ type TreeEntry struct {
 	Dir  bool   `json:"dir"`
 }
 
-/* GitInfo 是目录所在仓库的可观测信息：仓库根 + 工作区变更表
+/*
+	GitInfo 是一个仓库的可观测信息：仓库根 + 工作区变更表
+
 （键 = 仓库相对斜杠路径，值 = porcelain 两字符状态码如 "M "/"??"）。
-Status 为 nil 表示本次状态获取失败（git 缺失/锁冲突），非"无变更"。 */
+Status 为 nil 表示本次状态获取失败（git 缺失/锁冲突），非"无变更"。
+*/
 type GitInfo struct {
 	Root   string            `json:"root"`
 	Status map[string]string `json:"status"`
@@ -33,7 +37,7 @@ type GitInfo struct {
 type TreeView struct {
 	Path    string      `json:"path"`
 	Entries []TreeEntry `json:"entries"`
-	Git     *GitInfo    `json:"git"`
+	Git     []GitInfo   `json:"git"`
 }
 
 /* DefaultWorkDir 返回解析后的工作目录绝对路径（目录树默认根）。 */
@@ -42,8 +46,8 @@ func (w *WorkspaceService) DefaultWorkDir() string {
 }
 
 /*
-Tree 列出目录的一级条目 + 所在 git 仓库的工作区变更。条目按目录优先、
-名称排序；仓库内的 .git 目录不列出。
+Tree 列出目录的一级条目 + 目录视角下的 git 仓库工作区变更。条目按
+目录优先、名称排序；仓库内的 .git 目录不列出。
 */
 func (w *WorkspaceService) Tree(ctx context.Context, dir string) (TreeView, error) {
 	abs, err := filepath.Abs(filepath.FromSlash(dir))
@@ -114,28 +118,57 @@ func (w *WorkspaceService) GitBlob(ctx context.Context, abs string) (string, err
 const maxGitBlobBytes = 8 << 20
 
 /*
-gitInfo 探测目录所在仓库并取工作区变更。仓库判定只看 .git 存在
-（确定性，不闪）；状态命令失败时仍返回 GitInfo 但 Status 为 nil——
-调用方（前端）保留上次结果，避免 AI/终端并发用 git 时锁冲突导致
-徽标闪烁。
+gitInfo 汇总目录视角下的仓库：目录在仓库内 → 该仓库一条；否则目录
+是容器（多仓库并列的父目录，一级子目录里各有仓库）→ 扫一级子目录
+里的仓库根各一条（VS Code 源代码管理同策略，条数封顶防住把整个
+home 当树根时的轮询开销）。状态命令失败时该仓库仍返回但 Status 为
+nil——调用方（前端）保留上次结果，避免 AI/终端并发用 git 时锁冲突
+导致徽标闪烁。
 */
-func gitInfo(ctx context.Context, dir string) *GitInfo {
-	root := findRepoRoot(dir)
-	if root == "" {
-		return nil
+func gitInfo(ctx context.Context, dir string) []GitInfo {
+	if root := findRepoRoot(dir); root != "" {
+		return []GitInfo{repoStatus(ctx, root)}
 	}
-	/* --no-optional-locks：观测性读取不拿可选锁（不 refresh index），
-	   与用户/AI 的真实 git 操作互不阻塞 */
+	dirs, err := os.ReadDir(dir)
+	if err != nil {
+		return []GitInfo{}
+	}
+	repos := []GitInfo{}
+	for _, d := range dirs {
+		if len(repos) >= maxScanRepos {
+			break
+		}
+		if !d.IsDir() || d.Name() == ".git" {
+			continue
+		}
+		child := filepath.Join(dir, d.Name())
+		if _, err := os.Stat(filepath.Join(child, ".git")); err != nil {
+			continue // 只认一级子目录里的仓库根，不下钻
+		}
+		repos = append(repos, repoStatus(ctx, child))
+	}
+	sort.Slice(repos, func(i, j int) bool { return repos[i].Root < repos[j].Root })
+	return repos
+}
+
+/* maxScanRepos 容器目录一次扫描的仓库数上限。 */
+const maxScanRepos = 16
+
+/*
+repoStatus 单仓库的工作区变更。--no-optional-locks：观测性读取不拿
+可选锁（不 refresh index），与用户/AI 的真实 git 操作互不阻塞。
+*/
+func repoStatus(ctx context.Context, root string) GitInfo {
 	out, err := gitRun(ctx, root, "--no-optional-locks", "status", "--porcelain=v1", "-z",
 		"--untracked-files=all", "--no-renames")
 	if err != nil {
-		return &GitInfo{Root: filepath.ToSlash(root)}
+		return GitInfo{Root: filepath.ToSlash(root)}
 	}
 	status := parsePorcelain(out)
 	if status == nil {
 		status = map[string]string{}
 	}
-	return &GitInfo{Root: filepath.ToSlash(root), Status: status}
+	return GitInfo{Root: filepath.ToSlash(root), Status: status}
 }
 
 /* findRepoRoot 自目录向上找仓库根（.git 目录或文件皆可，worktree/submodule）。 */

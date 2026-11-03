@@ -11,6 +11,7 @@
   let cfg = $state<AppConfig | null>(null)
   let port = $state<number | ''>('')
   let listen = $state('')
+  /* 数据目录不可改（挪盘走 ezharness.json 手改）：仅供 resolveWorkDir 解析相对工作目录 */
   let dataDir = $state('')
   let restarting = $state(false)
   let restartErr = $state('')
@@ -37,6 +38,17 @@
   /* 桌面悬浮球（desktop 壳启动时读取；保存成功后 IPC 通知主进程切显隐，web 端自动跳过） */
   let petEnabled = $state(true)
   let savingPet = $state(false)
+
+  /* 开机自启动（OS 登录项是唯一事实源，不进后端设置；web/Linux/开发态
+     拿到 supported:false 就不显示这一行） */
+  let autoLaunch = $state(false)
+  let autoLaunchOK = $state(false)
+  let savingAutoLaunch = $state(false)
+
+  /* 格式化配置文件：把后端全部配置 json 重写成规整结构，损坏的先备份 .bak
+     再落默认值——修复手改/断电写坏的配置 */
+  let formatting = $state(false)
+  let formatMsg = $state('')
 
   /* 调试模式（模型完整输入进日志；后端实时开关，即改即生效） */
   let debugMode = $state(false)
@@ -131,6 +143,13 @@
     }
     api.appToken().then((r) => (apiToken = r.token)).catch(() => {})
     api.openapiToken().then((r) => (oaToken = r.token)).catch(() => {})
+    ez?.autolaunch
+      ?.get?.()
+      .then((r: any) => {
+        autoLaunchOK = !!r?.supported
+        autoLaunch = !!r?.enabled
+      })
+      .catch(() => {})
   })
 
   /* 复制令牌：clipboard 失败（非安全上下文等）时选中文本让用户 Ctrl+C。 */
@@ -207,12 +226,50 @@
     }
   }
 
+  /* 开机自启动：set 回写后的实际状态（企业策略等写不进时如实回落），失败回滚 */
+  async function saveAutoLaunch(v: boolean) {
+    savingAutoLaunch = true
+    try {
+      const r = await ez?.autolaunch?.set?.(v)
+      if (r) autoLaunch = !!r.enabled
+    } catch {
+      /* 保持原状态，下次进页面重查 */
+    } finally {
+      savingAutoLaunch = false
+    }
+  }
+
+  /* 工作目录选文件夹：桌面壳原生对话框（ExplorerTree 同款），web 端无此按钮 */
+  async function pickWorkDir() {
+    const picked = await ez?.window?.pickDir?.()
+    if (picked) workDir = picked.replaceAll('\\', '/')
+  }
+
+  /* 格式化：清空数据目录的全部配置、会话与数据，恢复首次运行状态（不可恢复） */
+  async function formatConfig() {
+    const ok = confirm(
+      '格式化会删除数据目录下的全部内容：所有配置、会话、记忆、上传、快应用与工作区，并恢复首次运行状态。\n\n端口与数据目录位置会保留（否则本页立即失联）；此操作不可恢复，确定继续？',
+    )
+    if (!ok) return
+    formatting = true
+    formatMsg = ''
+    try {
+      const res = await api.formatAll()
+      /* 配置回到默认（悬浮球默认开）：桌面壳的显隐随之复位 */
+      ez?.pet?.setEnabled?.(true)
+      formatMsg = '正在格式化并重启服务…'
+      if (!(await followNewGeneration(res))) {
+        formatMsg = '格式化已完成，但等待新服务超时，请手动刷新页面'
+      }
+    } catch (e) {
+      formatMsg = `格式化失败：${e instanceof Error ? e.message : String(e)}`
+    } finally {
+      formatting = false
+    }
+  }
+
   function checkChanged() {
-    appChanged =
-      !!cfg &&
-      (String(port) !== String(cfg.port) ||
-        listen.trim() !== cfg.listen ||
-        dataDir.trim() !== cfg.dataDir)
+    appChanged = !!cfg && (String(port) !== String(cfg.port) || listen.trim() !== cfg.listen)
   }
 
   async function saveThreshold() {
@@ -279,40 +336,44 @@
     }
   }
 
+  /* 换代（重启/格式化共用）：轮询 health.boot，新代就绪后刷新或跳转。
+     返回 false = 超时未就绪，由调用方给提示。 */
+  async function followNewGeneration(res: { url: string; boot: number }): Promise<boolean> {
+    for (let i = 0; i < 120; i++) {
+      await new Promise((r) => setTimeout(r, 500))
+      try {
+        const h = await api.appHealth(res.url)
+        if (h.boot !== res.boot) continue
+        if (res.url === location.origin) location.reload()
+        else {
+          /* 换端口跳转：cookie 按 host 生效（不看端口），同 host 无需再带令牌；
+             跨 host（如 Vite dev 的 localhost 页面跳到 127.0.0.1）才带一次引导令牌 */
+          const q = new URLSearchParams()
+          if (new URLSearchParams(location.search).has('desktop')) q.set('desktop', '1')
+          if (new URL(res.url).hostname !== location.hostname) {
+            const t = getToken()
+            if (t) q.set('token', t)
+          }
+          const qs = q.toString()
+          location.assign(`${res.url}/${qs ? `?${qs}` : ''}`)
+        }
+        return true
+      } catch {
+        /* 新代未就绪，继续轮询 */
+      }
+    }
+    return false
+  }
+
   async function restartApp() {
     restarting = true
     restartErr = ''
     try {
-      const req: { port?: number; listen?: string; dataDir?: string } = {}
+      const req: { port?: number; listen?: string } = {}
       if (String(port) !== String(cfg?.port)) req.port = Number(port)
       if (listen.trim() !== cfg?.listen) req.listen = listen.trim()
-      if (dataDir.trim() !== cfg?.dataDir) req.dataDir = dataDir.trim()
       const res = await api.appRestart(req)
-      for (let i = 0; i < 60; i++) {
-        await new Promise((r) => setTimeout(r, 500))
-        try {
-          const h = await api.appHealth(res.url)
-          if (h.boot === res.boot) {
-            if (res.url === location.origin) location.reload()
-            else {
-              /* 换端口跳转：cookie 按 host 生效（不看端口），同 host 无需再带令牌；
-                 跨 host（如 Vite dev 的 localhost 页面跳到 127.0.0.1）才带一次引导令牌 */
-              const q = new URLSearchParams()
-              if (new URLSearchParams(location.search).has('desktop')) q.set('desktop', '1')
-              if (new URL(res.url).hostname !== location.hostname) {
-                const t = getToken()
-                if (t) q.set('token', t)
-              }
-              const qs = q.toString()
-              location.assign(`${res.url}/${qs ? `?${qs}` : ''}`)
-            }
-            return
-          }
-        } catch {
-          /* 新代未就绪，继续轮询 */
-        }
-      }
-      restartErr = '等待新服务超时，请手动刷新页面'
+      if (!(await followNewGeneration(res))) restartErr = '等待新服务超时，请手动刷新页面'
     } catch (e) {
       restartErr = e instanceof Error ? e.message : String(e)
     } finally {
@@ -325,7 +386,7 @@
   <h1>设置</h1>
 
   <section id="set-server">
-    <h2 title="监听、端口与数据目录是启动期配置，修改后需点「应用并重启」换代（进程内完成，数据目录变更自动迁移）；其余设置保存即生效，无需重启。监听 127.0.0.1 = 仅本机访问（默认，无防火墙弹窗），0.0.0.0 = 局域网可达（会触发防火墙授权）。">服务端配置</h2>
+    <h2 title="监听与端口是启动期配置，修改后需点「应用并重启」换代（进程内完成）；其余设置保存即生效，无需重启。监听 127.0.0.1 = 仅本机访问（默认，无防火墙弹窗），0.0.0.0 = 局域网可达（会触发防火墙授权）。数据目录挪盘：手改 ezharness.json 的 dataDir 后重启应用。">服务端配置</h2>
     <div class="grid2">
       <label class="field">
         <span>监听地址</span>
@@ -334,10 +395,6 @@
       <label class="field">
         <span>端口</span>
         <input type="number" bind:value={port} oninput={checkChanged} min="1" max="65535" />
-      </label>
-      <label class="field">
-        <span>数据目录</span>
-        <input type="text" bind:value={dataDir} oninput={checkChanged} placeholder={cfg?.dataDir ?? ''} />
       </label>
     </div>
     <button class="primary" disabled={restarting || !appChanged} onclick={restartApp}>
@@ -416,9 +473,14 @@
   <section id="set-workdir">
     <h2 title="terminal 命令默认执行目录，模型草稿与命令产物落这里；空 = 数据目录下 workspace/，相对路径按数据目录解析，保存时目录不存在会自动创建。">工作目录</h2>
     <div class="grid2">
-      <label class="field">
+      <label class="field wide">
         <span>工作目录路径</span>
-        <input type="text" bind:value={workDir} placeholder="空 = 数据目录下 workspace/" />
+        <span class="tokenRow">
+          <input type="text" bind:value={workDir} placeholder="空 = 数据目录下 workspace/" />
+          {#if ez?.window?.pickDir}
+            <button onclick={pickWorkDir} title="系统文件夹选择框">选择…</button>
+          {/if}
+        </span>
       </label>
     </div>
     <button
@@ -453,6 +515,17 @@
         onchange={(e) => savePet((e.currentTarget as HTMLInputElement).checked)}
       />
     </label>
+    {#if autoLaunchOK}
+      <label class="switch-row">
+        <span>开机自启动</span>
+        <input
+          type="checkbox"
+          checked={autoLaunch}
+          disabled={savingAutoLaunch}
+          onchange={(e) => saveAutoLaunch((e.currentTarget as HTMLInputElement).checked)}
+        />
+      </label>
+    {/if}
   </section>
 
   <section id="set-debug">
@@ -535,6 +608,18 @@
           </div>
         {/if}
       </div>
+      <div class="fixbar">
+        <span class="fixtext">
+          <b>格式化（清空全部数据）</b>
+          <i>删除数据目录下的全部内容：配置、会话、记忆、上传、快应用与工作区，恢复首次运行状态；不可恢复（端口与数据目录位置保留）</i>
+        </span>
+        <button class="ghost danger" onclick={formatConfig} disabled={formatting}>
+          {formatting ? '格式化中…' : '格式化'}
+        </button>
+      </div>
+      {#if formatMsg}
+        <p class="msg">{formatMsg}</p>
+      {/if}
     {/if}
   </section>
 </div>
@@ -685,6 +770,9 @@
     grid-template-columns: 1fr 1.6fr;
     gap: 12px;
   }
+  .field.wide {
+    grid-column: 1 / -1;
+  }
   .switch-row {
     display: flex;
     align-items: center;
@@ -719,6 +807,20 @@
     flex: 1;
     min-width: 0;
     user-select: text;
+  }
+  /* 行内小按钮（复制/重置/选择…）：与输入框同高的描边按钮，别只剩裸文字 */
+  .tokenRow button {
+    flex: none;
+    border: 1px solid var(--line-strong);
+    border-radius: 8px;
+    background: var(--bg);
+    color: var(--fg);
+    padding: 0 14px;
+    font-size: var(--font-size-section);
+    transition: background var(--dur-fast) var(--ease-out);
+  }
+  .tokenRow button:hover:not(:disabled) {
+    background: var(--bg-soft);
   }
   input,
   select,
@@ -782,6 +884,56 @@
     border: 1px solid var(--line);
     border-radius: 12px;
     overflow: hidden;
+  }
+  /* 格式化配置文件行：左侧说明、右侧描边按钮（与版本检查行同款 bordered 行） */
+  .fixbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 10px 14px;
+  }
+  .fixtext {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+  }
+  .fixtext b {
+    font-size: var(--font-size-section);
+    font-weight: 600;
+  }
+  .fixtext i {
+    font-style: normal;
+    font-size: var(--font-size-ui);
+    color: var(--muted);
+  }
+  .ghost {
+    flex: none;
+    border: 1px solid var(--line-strong);
+    border-radius: 8px;
+    background: transparent;
+    color: var(--fg);
+    padding: 6px 14px;
+    font-size: var(--font-size-section);
+    transition: background var(--dur-fast) var(--ease-out);
+  }
+  .ghost:hover:not(:disabled) {
+    background: var(--bg-soft);
+  }
+  .ghost:disabled {
+    opacity: 0.5;
+    cursor: default;
+  }
+  /* 不可恢复的破坏性操作：红色描边 */
+  .ghost.danger {
+    border-color: color-mix(in srgb, var(--danger) 45%, var(--line));
+    color: var(--danger);
+  }
+  .ghost.danger:hover:not(:disabled) {
+    background: color-mix(in srgb, var(--danger) 8%, transparent);
   }
   .path-row {
     display: flex;

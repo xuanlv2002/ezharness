@@ -7,6 +7,7 @@
   import TitleBar from './components/TitleBar.svelte'
   import ChatView from './components/ChatView.svelte'
   import ModelsView from './components/ModelsView.svelte'
+  import PinboardView from './components/pinboard/PinboardView.svelte'
   import MemoryView from './components/MemoryView.svelte'
   import ToolsView from './components/ToolsView.svelte'
   import CallbacksView from './components/CallbacksView.svelte'
@@ -20,7 +21,7 @@
   import AssistantPet from './components/AssistantPet.svelte'
   import NoticeWindow from './components/NoticeWindow.svelte'
 
-  let view = $state<'chat' | 'models' | 'memory' | 'tools' | 'callbacks' | 'mcp' | 'security' | 'settings'>('chat')
+  let view = $state<'chat' | 'pinboard' | 'models' | 'memory' | 'tools' | 'callbacks' | 'mcp' | 'security' | 'settings'>('chat')
   let expanded = $state(false)
 
   /* 弹出窗口（ez:popout 创建）：只渲染单个工具 pane 的轻布局，无会话/
@@ -118,6 +119,8 @@
     <main>
       {#if view === 'chat'}
         <ChatView />
+      {:else if view === 'pinboard'}
+        <PinboardView />
       {:else if view === 'models'}
         <ModelsView />
       {:else if view === 'memory'}

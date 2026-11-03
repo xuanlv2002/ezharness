@@ -6,15 +6,17 @@
   清单里手动选）。默认根 = 工作
   目录（可换：桌面壳原生对话框 / web 端手输路径）；选择过的目录进
   「最近」清单快速切换，当前根置顶打勾。目录懒加载按层展开（点目录
-  只展开子层，树根不切换）；所在目录是 git 仓库时条目带工作区变更徽标
-  （U 新 / M 改 / D 删——纯观测，不做任何 git 操作），git chip 把面板
-  原地切成变更视图（点文件直接进 HEAD 对比，再点切回目录）。激活期 3s
-  轮询根目录与已展开目录，AI 改盘后徽标与列表自动跟进。
+  只展开子层，树根不切换）；目录在 git 仓库内、或根目录是容器（多仓库
+  并列）时条目带工作区变更徽标（U 新 / M 改 / D 删——纯观测，不做任何
+  git 操作），git chip 把面板原地切成变更视图（按仓库分组，VS Code 源
+  代码管理样式；点文件直接进 HEAD 对比，再点切回目录）。激活期 3s 轮询
+  根目录与已展开目录，AI 改盘后徽标与列表自动跟进。
   */
 
   import { onMount } from 'svelte'
   import { api, statusLetter, type TreeEntry } from '../../lib/api'
-  import { explorer, setExplorerDocked } from '../../lib/explorerState.svelte'
+  import { explorer, repoOf, setExplorerDocked, statusOf } from '../../lib/explorerState.svelte'
+  import { store } from '../../lib/store.svelte'
   import KindIcon from './KindIcon.svelte'
   import { kindOf } from './registry'
 
@@ -35,6 +37,7 @@
   interface Listing {
     entries: TreeEntry[]
     err: string
+    repos: string[] // 该目录本次上报的仓库根（换根/仓库消失时据此移除）
   }
 
   let workdir = $state('')
@@ -68,18 +71,33 @@
     return items
   })
 
-  /* 变更清单（git chip 展开）：当前根目录子树内的未提交文件，文件名 +
-     所在目录（仓库相对），点条目直接进 HEAD 对比；删除项只陈列不可点 */
-  const changeList = $derived.by(() => {
-    if (!explorer.repo) return []
-    const rel = explorer.dir.startsWith(explorer.repo + '/') ? explorer.dir.slice(explorer.repo.length + 1) : ''
-    return Object.entries(explorer.changed)
-      .filter(([k]) => (rel ? k.startsWith(rel + '/') : true))
-      .map(([k, code]) => {
-        const i = k.lastIndexOf('/')
-        return { abs: explorer.repo + '/' + k, name: i < 0 ? k : k.slice(i + 1), dir: i < 0 ? '' : k.slice(0, i), code }
-      })
-      .sort((a, b) => a.name.localeCompare(b.name))
+  /* 当前根目录视角下的已知仓库：根目录在仓库内 = 该仓库；仓库在根目录
+     子树内（容器根 / 展开过的子仓库）也算。chip 可用性与变更分组用它 */
+  const gitRepos = $derived.by(() => {
+    const roots: string[] = []
+    for (const r of Object.keys(explorer.repos)) {
+      if (explorer.dir === r || explorer.dir.startsWith(r + '/') || r.startsWith(explorer.dir + '/')) roots.push(r)
+    }
+    return roots.sort((a, b) => a.localeCompare(b))
+  })
+
+  /* 变更清单（git chip 展开）按仓库分组：组头 = 仓库名，组内 = 根目录
+     子树内的未提交文件（在仓库深处开树只看眼前的），文件名 + 所在目录
+     （仓库相对），点条目直接进 HEAD 对比；删除项只陈列不可点 */
+  const changeGroups = $derived.by(() => {
+    return gitRepos.map((root) => {
+      const inRepo = explorer.dir === root || explorer.dir.startsWith(root + '/')
+      const rel = inRepo && explorer.dir !== root ? explorer.dir.slice(root.length + 1) : ''
+      const items = Object.entries(explorer.repos[root])
+        .filter(([k]) => (rel ? k.startsWith(rel + '/') : true))
+        .map(([k, code]) => {
+          const i = k.lastIndexOf('/')
+          return { abs: root + '/' + k, name: i < 0 ? k : k.slice(i + 1), dir: i < 0 ? '' : k.slice(0, i), code }
+        })
+        .sort((a, b) => a.name.localeCompare(b.name))
+      const i = root.lastIndexOf('/')
+      return { root, name: i < 0 ? root : root.slice(i + 1), items }
+    })
   })
 
   function toggleChanges() {
@@ -87,14 +105,22 @@
     if (changesOpen) menuOpen = false
   }
 
+  /* 变更分组的折叠状态（按仓库根记，会话内即记；收起只藏文件清单，
+     数字与 chip 计数不受影响） */
+  let collapsedGroups = $state<Record<string, boolean>>({})
+  function toggleGroup(root: string) {
+    collapsedGroups = { ...collapsedGroups, [root]: !collapsedGroups[root] }
+  }
+
   /* dir 子树内的 git 变更概况（文件夹着色用）：条数与是否含改/增 */
   function subtreeStatus(dir: string): { n: number; mod: boolean; add: boolean } {
-    if (!explorer.repo || !dir.startsWith(explorer.repo + '/')) return { n: 0, mod: false, add: false }
-    const rel = dir.slice(explorer.repo.length + 1)
+    const r = repoOf(dir)
+    if (!r) return { n: 0, mod: false, add: false }
+    const rel = dir === r ? '' : dir.slice(r.length + 1)
     let n = 0
     let mod = false
     let add = false
-    for (const [k, code] of Object.entries(explorer.changed)) {
+    for (const [k, code] of Object.entries(explorer.repos[r])) {
       if (rel && !k.startsWith(rel + '/')) continue
       n++
       if (code === '??' || code.includes('A')) add = true
@@ -105,22 +131,16 @@
 
   /* git 计数只统计当前根目录子树内的变更（仓库其他位置的变更不进来，
      数字与所见目录对得上） */
-  const rootChangedCount = $derived.by(() => {
-    if (!explorer.repo || !explorer.dir.startsWith(explorer.repo + '/')) return 0
-    const rel = explorer.dir.slice(explorer.repo.length + 1)
-    return Object.keys(explorer.changed).filter((k) => (rel ? k.startsWith(rel + '/') : true)).length
-  })
-
-  /* dir 状态码：仓库相对路径 → porcelain 两字符码（无 = 未变更） */
-  function codeOf(abs: string): string {
-    return explorer.changed[abs.slice(explorer.repo.length + 1)] ?? ''
-  }
+  const rootChangedCount = $derived(changeGroups.reduce((n, g) => n + g.items.length, 0))
 
   /*
   load 拉一层目录，成功返回规范化路径（换根用）。轮询是主要调用方，
   所以一切写入先做同值判——数据没变就不动状态（对象写入必触发整树
   重渲染）；单次请求失败不清空已有条目、git 状态失败保留上次结果——
   AI/终端并发用 git 时的锁冲突是瞬态的，闪一下徽标再闪回来就是"乱跳"。
+  仓库按根分键：本目录只写自己上报的仓库（不在了才移除），别的目录
+  登记的仓库不动——根目录（容器，无 git）与子目录（仓库）轮流刷新
+  也不会互相清掉对方的徽标。
   注意：load 不动 explorer.dir（树根），点子目录展开不会"进入"该目录。
   */
   async function load(dir: string): Promise<string | null> {
@@ -128,24 +148,28 @@
       const v = await api.tree(dir)
       const cur = listing[v.path]
       /* 同值不写（对象写入必触发整树重渲染）；上次有错这次成功则连错一起清 */
-      if (!cur || cur.err || JSON.stringify(cur.entries) !== JSON.stringify(v.entries)) {
-        listing = { ...listing, [v.path]: { entries: v.entries, err: '' } }
+      const same = cur && !cur.err && JSON.stringify(cur.entries) === JSON.stringify(v.entries)
+      const roots = v.git.map((g) => g.root)
+      for (const r of cur?.repos ?? []) {
+        if (!roots.includes(r)) delete explorer.repos[r]
       }
-      if (v.git) {
-        explorer.repo = v.git.root
-        if (v.git.status != null && JSON.stringify(explorer.changed) !== JSON.stringify(v.git.status)) {
-          explorer.changed = v.git.status
+      for (const g of v.git) {
+        const prev = explorer.repos[g.root]
+        if (g.status != null) {
+          if (JSON.stringify(prev) !== JSON.stringify(g.status)) explorer.repos[g.root] = g.status
+        } else if (!prev) {
+          explorer.repos[g.root] = {} // 状态失败且无旧值：先登记仓库（计数为 0）
         }
-      } else if (explorer.repo || Object.keys(explorer.changed).length) {
-        explorer.repo = ''
-        explorer.changed = {}
+      }
+      if (!same || JSON.stringify(cur?.repos ?? []) !== JSON.stringify(roots)) {
+        listing = { ...listing, [v.path]: { entries: v.entries, err: '', repos: roots } }
       }
       return v.path
     } catch (e) {
       const msg = (e as Error).message
       const cur = listing[dir]
       if (!cur || cur.err !== msg) {
-        listing = { ...listing, [dir]: { entries: cur?.entries ?? [], err: msg } }
+        listing = { ...listing, [dir]: { entries: cur?.entries ?? [], err: msg, repos: cur?.repos ?? [] } }
       }
       return null
     }
@@ -215,8 +239,11 @@
     inputMode = false
   }
 
-  /* setRoot 换树根：记忆 + 进「最近」清单（当前项置顶去重，最多 6 个） */
+  /* setRoot 换树根：记忆 + 进「最近」清单（当前项置顶去重，最多 6 个）。
+     仓库表清空重来——上个根视角下的仓库对新根多数不可见，留着也只是
+     不再刷新的死数据 */
   async function setRoot(dir: string) {
+    explorer.repos = {}
     const p = await load(dir)
     if (!p) return
     explorer.dir = p
@@ -283,7 +310,8 @@
     if (menuOpen && !t.closest('.menu') && !t.closest('.rootbtn')) menuOpen = false
   }
 
-  /* 行右键：在资源管理器打开（目录与文件通用；web 端无壳禁用） */
+  /* 行右键：插入路径到会话输入框 / 在资源管理器打开（目录与文件通用；
+     web 端无壳时后者禁用） */
   let ctx = $state<{ x: number; y: number; path: string } | null>(null)
   const canReveal = !!(window as any).ez?.window?.reveal
 
@@ -294,6 +322,14 @@
       y: Math.min(e.clientY, window.innerHeight - 60),
       path,
     }
+  }
+
+  /* 插入路径到会话：绝对路径进输入框光标处（文件夹/文件通用）；没有
+     打开的会话时 store 里会先新建会话标签再插，AI 可直接拿路径干活 */
+  function insertCtx() {
+    const p = ctx?.path
+    ctx = null
+    if (p) void store.insertToInput(p)
   }
 
   function revealCtx() {
@@ -317,15 +353,16 @@
         <path d="M6 9l6 6 6-6" />
       </svg>
     </button>
-    <!-- git chip = 变更清单开关：在仓库内可点（展开本目录下的未提交
-         文件，点文件直接进 HEAD 对比）；不在仓库内禁用置灰 -->
+    <!-- git chip = 变更清单开关：目录视角下有仓库（所在仓库 / 容器根下
+         的一级子仓库）就可点，展开按仓库分组的未提交文件，点文件直接进
+         HEAD 对比；周边无仓库禁用置灰 -->
     <button
       class="gitchip"
       class:clean={!rootChangedCount}
       class:on={changesOpen}
-      disabled={!explorer.repo}
-      title={!explorer.repo
-        ? '目录不在 git 仓库内'
+      disabled={!gitRepos.length}
+      title={!gitRepos.length
+        ? '目录周边没有 git 仓库'
         : changesOpen
           ? '切回目录视图'
           : `查看本目录的未提交变更（${rootChangedCount} 个文件）——点文件直接进 HEAD 对比。树里点文件永远正常打开，被 .gitignore 忽略的文件没有变更概念`}
@@ -396,21 +433,43 @@
     </div>
   {/if}
   {#if changesOpen}
-    <!-- 变更视图：目录树原地切换（点 git chip 切回目录），文件名 + 所在
-         目录（仓库相对），点文件直接进 HEAD 对比 -->
+    <!-- 变更视图：目录树原地切换（点 git chip 切回目录），按仓库分组
+         （容器根目录下多仓并列时各占一组，VS Code 源代码管理样式）；
+         组头 = 折叠开关（数字 = 变更条数），组内文件名 + 所在目录
+         （仓库相对），点文件直接进 HEAD 对比 -->
     <div class="rows">
-      {#each changeList as c (c.abs)}
+      {#each changeGroups as g (g.root)}
         <button
-          class="citem"
-          class:del={c.code.trim() === 'D'}
-          disabled={c.code.trim() === 'D'}
-          onclick={() => onopen?.(c.abs, { diff: true })}
-          title={c.code.trim() === 'D' ? '文件已删除' : `${c.abs}——点击进 HEAD 对比`}
+          class="chead"
+          onclick={() => toggleGroup(g.root)}
+          title={collapsedGroups[g.root] ? `展开 ${g.name} 的变更清单` : `收起 ${g.name} 的变更清单`}
         >
-          <span class="cbadge {statusLetter(c.code)}">{statusLetter(c.code)}</span>
-          <span class="cname">{c.name}</span>
-          {#if c.dir}<span class="cdir">{c.dir}</span>{/if}
+          <span class="chev" class:open={!collapsedGroups[g.root]}>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M9 6l6 6-6 6" />
+            </svg>
+          </span>
+          <svg class="cico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+          </svg>
+          <span class="cheadname">{g.name}</span>
+          <span class="cheadn">{g.items.length}</span>
         </button>
+        {#if !collapsedGroups[g.root]}
+          {#each g.items as c (c.abs)}
+            <button
+              class="citem"
+              class:del={c.code.trim() === 'D'}
+              disabled={c.code.trim() === 'D'}
+              onclick={() => onopen?.(c.abs, { diff: true })}
+              title={c.code.trim() === 'D' ? '文件已删除' : `${c.abs}——点击进 HEAD 对比`}
+            >
+              <span class="cbadge {statusLetter(c.code)}">{statusLetter(c.code)}</span>
+              <span class="cname">{c.name}</span>
+              {#if c.dir}<span class="cdir">{c.dir}</span>{/if}
+            </button>
+          {/each}
+        {/if}
       {:else}
         <div class="cempty">当前目录没有未提交的变更</div>
       {/each}
@@ -451,7 +510,7 @@
             {/if}
           {/if}
         {:else}
-          {@const code = codeOf(abs)}
+          {@const code = statusOf(abs)}
           <button
             class="row"
             class:active={abs === explorer.activeFile}
@@ -480,6 +539,7 @@
 
 {#if ctx}
   <div class="ctx" style="left:{ctx.x}px; top:{ctx.y}px" role="menu">
+    <button role="menuitem" title="把路径插入会话输入框光标处（可再补充说明后发送）" onclick={insertCtx}>插入路径到会话</button>
     <button role="menuitem" disabled={!canReveal} title={canReveal ? '' : '仅桌面端可用'} onclick={revealCtx}>在资源管理器打开</button>
   </div>
 {/if}
@@ -535,11 +595,25 @@
     width: 0;
     border-right-width: 0;
   }
-  .tree.docked > header {
+  /* 展开动画 = 从左缘整体拉出：内容钉在目标宽度上（只裁切、不重排，
+     行内文字/省略号不逐帧位移），并随宽度动画同步平移——收起时整块
+     滑到裁切缘外，展开时从左缘滑回，而不是钉在原地被逐渐"露出"（那
+     样观感是内容从右边慢慢补齐到位）。位移与宽度同时长同缓动，运动
+     全程同步 */
+  .tree.docked > header,
+  .tree.docked .pathrow,
+  .tree.docked .rows {
     min-width: 260px;
     box-sizing: border-box;
+    transform: translateX(-100%);
+    transition: transform 0.26s var(--ease-out);
   }
-  /* 悬浮态收起：左移淡出（absolute 不占布局，无需宽度动画）；
+  .tree.docked:not(.closed) > header,
+  .tree.docked:not(.closed) .pathrow,
+  .tree.docked:not(.closed) .rows {
+    transform: translateX(0);
+  }
+  /* 悬浮态收起：向左拉出淡出（absolute 不占布局，无需宽度动画）；
      visibility 延迟到动画结束再隐藏，展开时立即可见 */
   .tree:not(.docked) {
     transition:
@@ -549,7 +623,7 @@
   }
   .tree:not(.docked).closed {
     opacity: 0;
-    transform: translateX(-12px);
+    transform: translateX(-40px);
     pointer-events: none;
     visibility: hidden;
     transition:
@@ -718,6 +792,51 @@
     height: 1px;
     margin: 4px 2px;
     background: var(--line);
+  }
+  /* 变更分组的仓库头（可点折叠）：折叠箭头 + 目录图标 + 仓库名 + 条数。
+     行高统一钉在 1 —— 名与数字不同字号同基线居中，不再一高一低 */
+  .chead {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    width: 100%;
+    padding: 5px 6px;
+    border: none;
+    background: transparent;
+    color: var(--muted);
+    font: inherit;
+    font-size: var(--font-size-ui);
+    font-weight: 600;
+    line-height: 1;
+    text-align: left;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: background var(--dur-fast) var(--ease-out);
+  }
+  .chead:hover {
+    background: var(--bg-soft);
+  }
+  .cico {
+    flex: none;
+    width: 12px;
+    height: 12px;
+  }
+  .cheadname {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  /* 条数：等宽小字垫进胶囊（line-height 1 + 胶囊自身高度），与名字垂直居中 */
+  .cheadn {
+    flex: none;
+    font-family: var(--font-mono);
+    font-size: var(--font-size-small);
+    font-weight: 400;
+    line-height: 1;
+    color: var(--faint);
+    background: var(--bg-soft);
+    border-radius: 4px;
+    padding: 3px 5px;
   }
   .citem {
     display: flex;

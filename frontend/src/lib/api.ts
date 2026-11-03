@@ -495,8 +495,10 @@ export interface ToolRule {
   list: string[]
 }
 
-/* 资源页目录树：一层条目 + 所在 git 仓库工作区变更（git=null = 目录不在
-   仓库内；git.status=null = 状态获取失败（git 缺失/锁冲突），非"无变更"） */
+/* 资源页目录树：一层条目 + 目录视角下的 git 仓库工作区变更。git 数组：
+   目录在仓库内 = 该仓库一条；容器目录 = 一级子目录里的仓库各一条；
+   空 = 周边无 git 仓库可观测。status=null = 状态获取失败（git 缺失/锁
+   冲突），非"无变更" */
 export interface TreeEntry {
   name: string
   dir: boolean
@@ -508,7 +510,56 @@ export interface GitInfo {
 export interface TreeView {
   path: string
   entries: TreeEntry[]
-  git: GitInfo | null
+  git: GitInfo[]
+}
+
+/* 便签板（GET/POST /api/pinboard）：整块板 JSON 原样存取，布局与拖拽
+   在前端 */
+/* 便签关联的会话（弱关联：只在卡片上做跳转） */
+export interface PinSessionRef {
+  id: string
+  title: string
+  createdAt?: number // 会话创建时刻（毫秒，关联时缓存）
+}
+
+export interface PinCard {
+  id: string
+  x: number
+  y: number
+  w: number
+  h: number
+  text: string
+  created: number
+  z: number
+  tint: string
+  due?: number
+  /* 已真正发起过消息的关联会话（卡片右下角按顺序列出） */
+  sessions?: PinSessionRef[]
+  /* 从本卡「新会话」开出、还没在任何对话里发过消息的会话：不显示，
+     发出第一条消息后转成 sessions 里的一条 */
+  pendingSessionIds?: string[]
+}
+
+/* 已完成归档：doneAt 是事实（点完成那一刻），day 只表达归档到哪一天
+   （手工拖时间线时写，拖回真实完成日则删除） */
+export interface PinRecord {
+  id: string
+  text: string
+  created: number
+  doneAt: number
+  tint: string
+  day?: string // 'YYYY-MM-DD'
+  ord?: number // 当天内顺序（0 起，缺省 = 当天最左）
+  /* 归档时从卡片带过来的会话关联（当天详情里可点击跳转） */
+  sessions?: PinSessionRef[]
+  pendingSessionIds?: string[]
+}
+
+export interface PinboardData {
+  v: number
+  z: number
+  cards: PinCard[]
+  done: PinRecord[]
 }
 
 /* porcelain 两字符码 → 徽标字母（U=未跟踪/A=新增/D=删除/其余按修改）。 */
@@ -661,6 +712,10 @@ export const api = {
 
   /* 解析后的工作目录（目录树默认根） */
   workdir: () => fetch('/api/workspace/workdir').then(json<{ path: string }>),
+
+  /* 便签板整块读写（前端防抖提交；首次读取为空板） */
+  pinboard: () => fetch('/api/pinboard', { cache: 'no-store' }).then(json<PinboardData>),
+  savePinboard: (data: PinboardData) => post<{ ok: boolean }>('/api/pinboard', data),
 
   /* 文件在 HEAD 的原文（变更对比左侧）；404 = 未纳入 git（按空串 = 新文件） */
   gitBlob: async (path: string) => {
@@ -824,7 +879,10 @@ export const api = {
 
   resetOpenapiToken: () => post<{ token: string }>('/api/app/openapi-token/reset', {}),
 
-  appRestart: (req: { port?: number; listen?: string; dataDir?: string }) =>
+  /* 格式化：清空全部配置、会话与数据并恢复首次运行（不可恢复），返回新代地址供轮询 */
+  formatAll: () => post<{ url: string; boot: number }>('/api/app/format', {}),
+
+  appRestart: (req: { port?: number; listen?: string }) =>
     post<{ url: string; boot: number }>('/api/app/restart', req),
 
   appHealth: (base = '') => fetch(`${base}/api/app/health`).then(json<{ ok: boolean; boot: number }>),

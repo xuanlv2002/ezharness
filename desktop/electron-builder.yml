@@ -7,8 +7,9 @@ directories:
 files:
   - src/**
   - package.json
-# core 与配置同目录（resources/）：exe 在哪，配置与数据就在哪
-# （core 产物统一命名 ezharness-core.exe，三平台一致——spawn 与打包都认这一个名字）
+# core 打进 resources/（产物统一命名 ezharness-core.exe，三平台一致——spawn 与打包都认）。
+# 配置与数据不放安装目录（升级/卸载会整目录删除）：开发态在 release/dev/，
+# 便携版在 exe 同目录，安装版在系统用户数据目录（见 desktop/src/main/index.js rootDir）
 extraResources:
   - from: ../release/dev/ezharness-core.exe
     to: ezharness-core.exe
@@ -20,6 +21,8 @@ win:
     - portable
   # 图标用默认约定位置 desktop/build/icon.png（越出项目目录的路径 app-builder 不识别，会静默回落 Electron 默认图标）
 nsis:
+  # 升级前把旧版放在安装目录里的配置与数据预拷到用户数据目录
+  include: build/installer.nsh
   oneClick: false
   allowToChangeInstallationDirectory: true
   perMachine: false

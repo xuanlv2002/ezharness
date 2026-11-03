@@ -4,7 +4,7 @@
   import { fileBaseName, normFileKey } from '../../lib/textfile'
   import { store } from '../../lib/store.svelte'
   import { filePane } from '../../lib/filePaneState'
-  import { explorer, explorerUI, setExplorerOpen } from '../../lib/explorerState.svelte'
+  import { explorer, explorerUI, repoOf, setExplorerOpen } from '../../lib/explorerState.svelte'
   import { kindOf, VIEWERS, MAX_BYTES, type ResTab } from './registry'
   import KindIcon from './KindIcon.svelte'
   import ExplorerTree from './ExplorerTree.svelte'
@@ -405,7 +405,7 @@
   {#if tab && textish}
     <!-- 统一状态条（文本系）：对比 + 保存 + 添加到对话 + 轻量状态 -->
     <div class="statusbar">
-        {#if explorer.repo}
+        {#if tab.path && repoOf(tab.path)}
           <button class="diffbtn" class:on={tab.diff} onclick={toggleDiff} title={tab.diff ? '退出对比，回到编辑' : '查看与上次提交（HEAD）的变更对比'}>
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
               <circle cx="6" cy="18" r="2.2" />
