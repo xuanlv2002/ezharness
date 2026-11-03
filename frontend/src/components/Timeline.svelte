@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { tick } from 'svelte'
   import { store, type Block } from '../lib/store.svelte'
   import { buildRows } from '../lib/rows'
   import Logo from './Logo.svelte'
@@ -8,6 +9,77 @@
 
   let el: HTMLDivElement
   let stick = true
+
+  /* 行模型见 lib/rows（主时间线与分身抽屉共用同一组装） */
+  const rows = $derived(buildRows(store.blocks))
+
+  /* 大会话只挂最近一段行：打开/切页时不必为整段历史建 DOM、跑 markdown。
+     窗口同时受行数与正文字数约束——上下文塞满的会话行数可能不多，但每条
+     消息很长，只按行数切仍会把一次打开的一半开销留在首屏。起点在会话
+     首次载入时锚定，流式追加只长尾部；点「显示更早」或轮次导航跳到窗口外
+     时才向前扩。 */
+  const INITIAL_ROWS = 40
+  const INITIAL_MIN_ROWS = 6
+  const BUDGET_CHARS = 128 * 1024
+  const ROW_STEP = 40
+  let rowStart = $state(0)
+  let rowSession = $state('')
+
+  /* rowChars 估算一行挂载后的正文体量（工具卡折叠时只剩摘要，按小常量计） */
+  function rowChars(r: (typeof rows)[number]): number {
+    if (r.kind === 'user') return r.b.text.length
+    let n = 0
+    for (const seg of r.segs) {
+      if (seg.type === 'tools') {
+        n += 400
+        continue
+      }
+      const b = seg.b
+      if (b.kind === 'assistant') n += b.text.length + b.reasoning.length
+      else if (b.kind === 'user') n += b.text.length
+      else if (b.kind === 'tool') n += 200
+      else if (b.kind === 'note') n += b.text.length
+      else n += 200
+    }
+    return n
+  }
+
+  function initialStart(): number {
+    let i = rows.length
+    let chars = 0
+    while (i > 0 && rows.length - i < INITIAL_ROWS) {
+      const n = rowChars(rows[i - 1])
+      if (rows.length - i >= INITIAL_MIN_ROWS && chars + n > BUDGET_CHARS) break
+      chars += n
+      i--
+    }
+    return i
+  }
+
+  /* earlierStart 从当前窗口继续向前展开一批（同样按行数与字数双限） */
+  function earlierStart(from: number): number {
+    let i = from
+    let chars = 0
+    while (i > 0 && from - i < ROW_STEP) {
+      const n = rowChars(rows[i - 1])
+      if (from - i >= 1 && chars + n > BUDGET_CHARS) break
+      chars += n
+      i--
+    }
+    return i
+  }
+
+  const autoStart = $derived(initialStart())
+  const start = $derived(rowSession === store.activeId ? Math.min(rowStart, rows.length) : autoStart)
+  const visibleRows = $derived(rows.slice(start))
+  const hiddenRows = $derived(start)
+
+  async function showEarlier() {
+    if (!el || start <= 0) return
+    rowSession = store.activeId
+    rowStart = earlierStart(start)
+    scheduleActive()
+  }
 
   /* 右侧轮次导航：每轮用户输入一行，点击回溯、滚动跟随高亮（纯图片轮次也算）。
      收起时只显示最近 5 个刻度；悬浮展开全部轮次，列高封顶后可滚动选择 */
@@ -21,16 +93,37 @@
   const navTurns = $derived(navHover ? turns : turns.slice(-5))
   let activeUid = $state(0)
 
+  /* 窗口从某轮中间开始时，该轮的 user 行在窗口外：高亮回落到最后一条
+     已渲染前的 user 轮次，别让导航整列无当前项 */
+  const startUserUid = $derived.by(() => {
+    for (let i = start - 1; i >= 0; i--) {
+      const r = rows[i]
+      if (r.kind === 'user') return r.b.uid
+    }
+    return 0
+  })
+
   function updateActive() {
     if (!el) return
     const base = el.getBoundingClientRect().top
     const line = base + Math.min(el.clientHeight * 0.35, 280)
-    let cur = 0
+    let cur = startUserUid
     for (const n of el.querySelectorAll<HTMLElement>('[data-uid]')) {
       if (n.getBoundingClientRect().top <= line) cur = Number(n.dataset.uid) || 0
       else break
     }
     activeUid = cur
+  }
+
+  /* 逐帧合并滚动时的量距：滚动事件一帧可触发多次，每次都全量量矩形
+     会强制布局（放大到数千行时就是滚动卡顿来源） */
+  let activeRaf = 0
+  function scheduleActive() {
+    if (activeRaf) return
+    activeRaf = requestAnimationFrame(() => {
+      activeRaf = 0
+      updateActive()
+    })
   }
 
   /* 悬浮展开全部刻度后：把当前轮次滚进导航列视窗（居中）。手动算
@@ -65,22 +158,80 @@
     lastTop = el.scrollTop
   }
 
+  /* 会话切换/首次载入：窗口锚到尾部；同一会话内流式追加不重锚。
+     新会话默认回到底部（切会话前可能停在上一会话的中段）。 */
+  let lastSessionId = $state('')
+  $effect(() => {
+    const id = store.activeId
+    if (lastSessionId === id) return
+    lastSessionId = id
+    stick = true
+    lastTop = 0
+    lastUserScrollAt = 0
+  })
+  $effect(() => {
+    const id = store.activeId
+    if (rowSession === id || !rows.length) return
+    rowStart = initialStart()
+    rowSession = id
+    void tick().then(() => {
+      if (stick && !store.jumpMain && Date.now() - lastUserScrollAt > 300) follow()
+    })
+  })
+
+  /* 懒渲染正文换真身（MessageItem 发出）后内容变高：吸底时重新贴底，
+     否则用户会停在半空（不是用户主动展开，不与滚动意图冲突） */
+  $effect(() => {
+    const onGrow = () => {
+      if (stick && !pull && Date.now() - lastUserScrollAt > 300) follow()
+    }
+    window.addEventListener('ez:timeline-grow', onGrow)
+    return () => window.removeEventListener('ez:timeline-grow', onGrow)
+  })
+
   function jump(direction: 'top' | 'bottom') {
     if (!el) return
     if (direction === 'bottom') stick = true
     el.scrollTo({ top: direction === 'top' ? 0 : el.scrollHeight, behavior: 'smooth' })
   }
 
-  function jumpTo(uid: number) {
+  async function jumpTo(uid: number) {
     if (!el) return
+    const idx = rows.findIndex((r) => r.kind === 'user' && r.b.uid === uid)
+    if (idx < 0) return
+    /* 目标在渲染窗口外：先把窗口扩到包含它，再定位 */
+    if (idx < start) {
+      rowSession = store.activeId
+      rowStart = Math.max(0, idx - 2)
+      await tick()
+    }
     const node = el.querySelector<HTMLElement>(`[data-uid="${uid}"]`)
     if (!node) return
     const top = el.scrollTop + node.getBoundingClientRect().top - el.getBoundingClientRect().top - 24
     el.scrollTo({ top, behavior: 'smooth' })
   }
 
-  /* 行模型见 lib/rows（主时间线与分身抽屉共用同一组装） */
-  const rows = $derived(buildRows(store.blocks))
+  /* 通知跳转锚点（decision-<id>）落在渲染窗口外时先扩窗；可见时交给
+     ChatView 原有的滚动逻辑。 */
+  $effect(() => {
+    const target = store.jumpMain
+    if (!target) return
+    const idx = rows.findIndex(
+      (r) =>
+        r.kind !== 'user' &&
+        r.segs.some((seg) => seg.type === 'one' && seg.b.kind === 'decision' && `decision-${seg.b.id}` === target),
+    )
+    if (idx < 0 || idx >= start) return
+    rowSession = store.activeId
+    rowStart = Math.max(0, idx - 2)
+    void (async () => {
+      await tick()
+      const node = document.getElementById(target)
+      if (!node) return
+      node.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      store.jumpMain = ''
+    })()
+  })
 
   /* 空状态判定：note/status/resourcechange/endtick/imgload 是系统自动记录
      （压缩翻页后的新会话仅含一条 <end_reason> 收尾），不算对话内容——
@@ -204,6 +355,10 @@
     pull = 0
     const prevHeight = el?.scrollHeight ?? 0
     await store.loadPrev()
+    /* 用户主动拉出的上一会话整段可见（不再受窗口限制） */
+    rowStart = 0
+    rowSession = store.activeId
+    await tick()
     loading = false
     // prepend 高度补偿：视口停在原有内容处，不跳顶
     if (el) el.scrollTop = el.scrollHeight - prevHeight
@@ -215,7 +370,7 @@
       /* 程序滚动（吸底回弹）：不动 stick，也别记成用户滚动 */
       selfScroll = false
       lastTop = el.scrollTop
-      updateActive()
+      scheduleActive()
       return
     }
     lastUserScrollAt = Date.now()
@@ -230,7 +385,7 @@
     else if (top <= 24) jumpDir = 'bottom'
     else if (dist <= 24) jumpDir = 'top'
     else jumpDir = goingUp ? 'top' : 'bottom'
-    updateActive()
+    scheduleActive()
   }
 
   /* 模型活跃且正文尚未流出时的活动指示：思考（首 token 前 / 只有思考在
@@ -268,8 +423,13 @@
     class:settle
     style="transform:translateY({pull}px)">
     {#if !empty}
+      {#if hiddenRows > 0}
+        <button class="earlier" onclick={() => void showEarlier()}>
+          ↑ 显示更早的消息（还有 {hiddenRows} 行未展开）
+        </button>
+      {/if}
       <ThreadRows
-        {rows}
+        rows={visibleRows}
         liveBusy={store.busy}
         reveal={store.batchIds}
         avatarOutside
@@ -520,6 +680,22 @@
   /* 松手回弹：只动 transform（合成层），不触发时间线重排 */
   .inner.settle {
     transition: transform 0.05s cubic-bezier(0.25, 0.8, 0.3, 1);
+  }
+  /* 大会话窗口的顶部分界：点一下往前多展开一段（不自动加载，避免快速
+     滚到顶时把整段历史一次性全挂上） */
+  .earlier {
+    align-self: center;
+    border: 1px dashed var(--line-strong);
+    border-radius: 999px;
+    padding: 5px 14px;
+    font-size: var(--font-size-ui);
+    color: var(--faint);
+    background: transparent;
+    transition: color var(--dur-fast) var(--ease-out), border-color var(--dur-fast) var(--ease-out);
+  }
+  .earlier:hover {
+    color: var(--fg);
+    border-color: var(--fg);
   }
   /* 提示悬浮在滚动区顶部，不占布局；内容由 .inner 的 transform 下拉 */
   .pullind {

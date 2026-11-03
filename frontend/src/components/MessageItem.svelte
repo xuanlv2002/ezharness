@@ -1,7 +1,9 @@
 <script lang="ts">
+  import { tick } from 'svelte'
   import { marked } from 'marked'
   import DOMPurify from 'dompurify'
   import { api, type ImagePayload } from '../lib/api'
+  import { cachedMarkdown } from '../lib/markdown'
   import { fileBaseName, isImagePath } from '../lib/textfile'
   import { launchApp } from '../lib/apps'
   import type { CallbackMessageMeta } from '../lib/callbackMessage'
@@ -32,6 +34,10 @@
   } = $props()
 
   marked.setOptions({ breaks: true, gfm: true })
+
+  /* markdown 渲染走共享缓存：历史消息反复挂载（切页、回聊天页）时重复
+     parse+sanitize 是主要卡顿源。 */
+  const renderMd = (src: string) => DOMPurify.sanitize(marked.parse(src) as string)
 
   /* 回调卡头的时间：元数据是后端本机时区 YYYY-MM-DD HH:MM:SS，列表里缩到分。 */
   function callbackTime(at: string): string {
@@ -168,7 +174,7 @@
   })
 
   /* 无流式头缓存的重建消息的全文渲染（XSS 消毒）；mermaid 在流结束后由 effect 替换渲染 */
-  const mdHtml = $derived(text && !streaming ? DOMPurify.sanitize(marked.parse(text) as string) : '')
+  const mdHtml = $derived(text && !streaming ? cachedMarkdown(text, renderMd) : '')
 
   /* 超长全文一次性 parse+innerHTML 会长时间占死主线程（历史重建时全部
      消息同帧全量渲染,表现为卡死后突然全部涌出）——超过阈值只渲染
@@ -186,8 +192,8 @@
     if (tailStart < cut) tailStart = text.length
     return {
       hidden: tailStart - cut,
-      head: DOMPurify.sanitize(marked.parse(text.slice(0, cut)) as string),
-      tail: DOMPurify.sanitize(marked.parse(text.slice(tailStart)) as string),
+      head: cachedMarkdown(text.slice(0, cut), renderMd),
+      tail: cachedMarkdown(text.slice(tailStart), renderMd),
     }
   })
   const reasoningClipped = $derived(streaming && reasoning.length > 1200)
@@ -207,10 +213,36 @@
   let bodyEl: HTMLDivElement | undefined = $state()
   let mmdSeq = 0
 
-  /* mermaid 代码块 → svg：动态加载（包体大，不占首屏）；语法错误保留源码块 */
+  /* 历史正文懒渲染：离屏消息不跑 markdown——大会话/单轮超长时，一次性给
+     所有消息建 DOM 是打开会话与切页卡顿的主因。滚到附近（rootMargin
+     800px）再解析替换占位块；流式消息始终渲染。 */
+  let nearView = $state(streaming)
+  const renderBody = $derived(streaming || nearView)
+  /* 占位高度按字数粗估（只影响离屏区域的滚动条长度，进入视区即换真身） */
+  const placeholderH = $derived(Math.min(560, Math.max(48, Math.round(text.length / 40) * 18)))
   $effect(() => {
-    if (streaming || !bodyEl) return
-    const html = streamView ? streamView.head + streamView.tail : mdHtml
+    if (renderBody || !bodyEl) return
+    const el = bodyEl
+    const io = new IntersectionObserver(
+      (entries) => {
+        if (!entries.some((e) => e.isIntersecting)) return
+        nearView = true
+        io.disconnect()
+        /* 占位换成真身后高度会变：吸底状态下让时间线重新贴底 */
+        void tick().then(() => window.dispatchEvent(new Event('ez:timeline-grow')))
+      },
+      { rootMargin: '800px 0px' },
+    )
+    io.observe(el)
+    return () => io.disconnect()
+  })
+
+  /* mermaid 代码块 → svg：动态加载（包体大，不占首屏）；语法错误保留源码块。
+     只在正文真正渲染后跑（懒渲染已把离屏消息挡掉）。 */
+  $effect(() => {
+    if (streaming || !renderBody || !bodyEl) return
+    /* 与模板同源：超长消息走 clipHtml 时不要额外计算全文 mdHtml */
+    const html = streamView ? streamView.head + streamView.tail : clipHtml ? clipHtml.head + clipHtml.tail : mdHtml
     if (!html.includes('language-mermaid')) return
     void renderMermaids(bodyEl)
   })
@@ -234,6 +266,7 @@
         delete (pre as HTMLElement).dataset.mmd
       }
     }
+    window.dispatchEvent(new Event('ez:timeline-grow'))
   }
 
   let copied = $state(false)
@@ -339,7 +372,10 @@
       {/if}
       {#if text}
         <div class="md" class:live={streaming} bind:this={bodyEl} onclick={onBodyClick}>
-          {#if streamView}
+          {#if !renderBody}
+            <!-- 离屏占位：滚进 800px 预加载区后替换为真正的 markdown -->
+            <div class="md-skel" style:height="{placeholderH}px" aria-hidden="true"></div>
+          {:else if streamView}
             <!-- 头/尾分节点：cut 不变时头段 DOM 不重建，delta 只重排尾段 -->
             {#if streamView.head}{@html streamView.head}{/if}{@html streamView.tail}
           {:else if clipHtml}
@@ -680,6 +716,12 @@
     /* 长路径/长串（行内 code、URL）就地断行，不撑宽消息列（pre 代码块
     white-space: pre 不受影响，横向滚动由其自身 overflow-x 承担） */
     overflow-wrap: anywhere;
+  }
+  /* 离屏正文占位：只撑高度，滚进预加载区就换成真正的 markdown */
+  .md-skel {
+    width: 100%;
+    border-radius: 6px;
+    background: transparent;
   }
   /* 屏外消息跳过布局与绘制：历史重建时成百条长消息不再同帧全量渲染。
      流式中的消息除外（高度连续变化,虚拟化会让吸底/滚动跳动） */
