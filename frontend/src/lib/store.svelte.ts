@@ -21,6 +21,7 @@ import {
 } from './api'
 import { parseCallbackMessage, type CallbackMessageMeta } from './callbackMessage'
 import { filePane } from './filePaneState'
+import { linkPendingNote } from './pinboard.svelte'
 import { openExternal } from './desktop'
 import pkg from '../../package.json'
 
@@ -1013,6 +1014,7 @@ class AppStore {
     （<reference_file> 记录告知模型）——附件进框时已落盘 tmp，发送只传路径。 */
   async send(text: string, attachments: Attachment[] = [], fileRefs: FileRef[] = []) {
     if (!this.activeId || (!text.trim() && !attachments.length && !fileRefs.length)) return
+    const sid = this.activeId // 发送落定后按发送时的会话落实便签待关联
     if (attachments.some((a) => !a.path)) {
       this.lastStatus = '附件仍在暂存中，稍候再发送'
       return
@@ -1045,8 +1047,10 @@ class AppStore {
     this.busy = true
     this.lastStatus = ''
     try {
-      await api.send(this.activeId, text, final, fileRefs)
+      await api.send(sid, text, final, fileRefs)
       void this.refreshBranches() // 首次发言落线索引 + 运行指示
+      /* 真实发出消息才把「从便签开的新会话」挂到那张便签上 */
+      void linkPendingNote(sid, this.branches.find((b) => b.id === sid)?.title ?? '')
     } catch (e) {
       this.busy = false
       this.lastStatus = `发送失败：${(e as Error).message}`

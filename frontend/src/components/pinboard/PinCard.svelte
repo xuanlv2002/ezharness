@@ -11,6 +11,7 @@
   import { onDestroy } from 'svelte'
   import type { PinCard as PinCardT } from '../../lib/api'
   import { MIN_H, MIN_W, PAD, bumpCard, patchCard, removeCard } from '../../lib/pinboard.svelte'
+  import PinSessionLinks from './PinSessionLinks.svelte'
 
   let {
     card,
@@ -22,6 +23,8 @@
     leaving = false,
     onedit,
     oncomplete,
+    onnewsession,
+    onopensession,
   }: {
     card: PinCardT
     width?: number
@@ -32,6 +35,8 @@
     leaving?: boolean
     onedit?: () => void
     oncomplete?: () => void
+    onnewsession?: () => void
+    onopensession?: (id: string) => void
   } = $props()
 
   function fmtShort(ts: number): string {
@@ -224,6 +229,8 @@
       <span class="tline">记于 {fmtShort(card.created)} · 已持续 {dur(now - card.created)}</span>
       <span class="tline" class:over={!!card.due && card.due < now}>截止 {card.due ? fmtShort(card.due) : '未设置'}</span>
     </div>
+    <!-- 右下角：新会话 → 已真实发起的关联会话（待定会话不显示） -->
+    <PinSessionLinks sessions={card.sessions ?? []} showNew onnew={onnewsession} onopen={onopensession} />
   </div>
 
   <span class="grip nodrag" onpointerdown={rDown} role="presentation"></span>

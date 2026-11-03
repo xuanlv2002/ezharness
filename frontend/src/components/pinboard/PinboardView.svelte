@@ -10,11 +10,13 @@
   */
   import { onDestroy, onMount, tick } from 'svelte'
   import type { PinRecord } from '../../lib/api'
+  import { store } from '../../lib/store.svelte'
   import {
     CARD_DEF_H,
     CARD_DEF_W,
     PAD,
     addCard,
+    addPendingSession,
     board,
     byDayOrder,
     completeCard,
@@ -27,6 +29,7 @@
   } from '../../lib/pinboard.svelte'
   import PinCard from './PinCard.svelte'
   import PinEditor from './PinEditor.svelte'
+  import PinSessionLinks from './PinSessionLinks.svelte'
   import PinTimeline from './PinTimeline.svelte'
 
   const clamp = (v: number, lo: number, hi: number): number => Math.max(lo, Math.min(hi, v))
@@ -127,6 +130,24 @@
   function tidy() {
     dayOpen = ''
     tidyCards(bw - PAD * 2, bh - PAD * 2)
+  }
+
+  /* 「新会话」：开新会话并跳对话页；先记成待定，真实发出消息后才在卡片
+     上显示关联（多次点击各自独立，没聊过的永不显示） */
+  let creatingFor = $state('') // 防双击一次开两条（创建完成即释放）
+  async function newSessionFor(cardId: string) {
+    if (creatingFor) return
+    creatingFor = cardId
+    try {
+      const before = store.activeId
+      await store.newChatTab()
+      const id = store.activeId
+      if (!id || id === before) return
+      addPendingSession(cardId, id)
+      store.jumpView = 'chat'
+    } finally {
+      creatingFor = ''
+    }
   }
 
   /* ── 时间线拖回板上 ── */
@@ -298,6 +319,8 @@
             editId = c.id
           }}
           oncomplete={() => complete(c.id)}
+          onnewsession={() => void newSessionFor(c.id)}
+          onopensession={(id) => void store.openSession(id)}
         />
       {/each}
 
@@ -345,7 +368,7 @@
             </button>
           </div>
           <div class="dcards" bind:this={dcardsEl}>
-            {#each dayRecs as r, i (r.id)}
+            {#each dayRecs as r (r.id)}
               <article
                 class="dcard"
                 class:dragging={rdrag?.id === r.id && rdrag.active}
@@ -355,9 +378,12 @@
                 onpointerdown={(e) => rdStart(e, r.id)}
               >
                 <p class="dtext">{r.text || '（空）'}</p>
-                <div class="dline">第 {i + 1}/{dayRecs.length} · 记于 {fmt(r.created)} · 完成 {fmt(r.doneAt)}</div>
+                <div class="dline">记于 {fmt(r.created)} · 完成 {fmt(r.doneAt)}</div>
                 <div class="dline">用时 {dur(r.doneAt - r.created)}</div>
                 {#if r.day}<div class="dnote">手动归到此日（完成于 {fmt(r.doneAt)}）</div>{/if}
+                {#if r.sessions?.length}
+                  <PinSessionLinks sessions={r.sessions} onopen={(id) => void store.openSession(id)} />
+                {/if}
               </article>
             {:else}
               <p class="dempty">这一天没有完成的便签</p>

@@ -515,6 +515,12 @@ export interface TreeView {
 
 /* 便签板（GET/POST /api/pinboard）：整块板 JSON 原样存取，布局与拖拽
    在前端 */
+/* 便签关联的会话（弱关联：只在卡片上做跳转） */
+export interface PinSessionRef {
+  id: string
+  title: string
+}
+
 export interface PinCard {
   id: string
   x: number
@@ -526,6 +532,11 @@ export interface PinCard {
   z: number
   tint: string
   due?: number
+  /* 已真正发起过消息的关联会话（卡片右下角按顺序列出） */
+  sessions?: PinSessionRef[]
+  /* 从本卡「新会话」开出、还没在任何对话里发过消息的会话：不显示，
+     发出第一条消息后转成 sessions 里的一条 */
+  pendingSessionIds?: string[]
 }
 
 /* 已完成归档：doneAt 是事实（点完成那一刻），day 只表达归档到哪一天
@@ -538,6 +549,9 @@ export interface PinRecord {
   tint: string
   day?: string // 'YYYY-MM-DD'
   ord?: number // 当天内顺序（0 起，缺省 = 当天最左）
+  /* 归档时从卡片带过来的会话关联（当天详情里可点击跳转） */
+  sessions?: PinSessionRef[]
+  pendingSessionIds?: string[]
 }
 
 export interface PinboardData {

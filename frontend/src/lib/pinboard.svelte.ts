@@ -7,7 +7,7 @@
 只表达「归到哪一天」，只在手工拖时间线时写，拖回真实完成日即删除。
 */
 import { api } from './api'
-import type { PinCard, PinboardData, PinRecord } from './api'
+import type { PinCard, PinboardData, PinRecord, PinSessionRef } from './api'
 
 /* 便签色板（低饱和，卡片左侧 2px 竖条常驻） */
 export const TINTS = [
@@ -79,9 +79,27 @@ function randTint(): string {
   return TINTS[Math.floor(Math.random() * TINTS.length)]
 }
 
+/* 会话关联：只保留合法条目并去重（同一会话只列一次） */
+function normSessions(v: unknown): PinSessionRef[] | undefined {
+  if (!Array.isArray(v)) return undefined
+  const seen = new Set<string>()
+  const out: PinSessionRef[] = []
+  for (const s of v as PinSessionRef[]) {
+    if (!s || typeof s.id !== 'string' || !s.id || seen.has(s.id)) continue
+    seen.add(s.id)
+    out.push({ id: s.id, title: typeof s.title === 'string' ? s.title : '' })
+  }
+  return out.length ? out : undefined
+}
+
+function normPending(v: unknown): string[] | undefined {
+  if (!Array.isArray(v)) return undefined
+  const out = (v as unknown[]).filter((id): id is string => typeof id === 'string' && !!id)
+  return out.length ? out : undefined
+}
+
 /* 老数据补齐缺失字段（尺寸/颜色/时刻），保证渲染与拖拽都有确定值。
-   逐字段重建而不是展开原对象——已移除的旧字段（如历史上的会话关联）
-   会在下一次落盘时自然消失 */
+   逐字段重建而不是展开原对象——已移除的旧字段会在下一次落盘时自然消失 */
 function normCard(c: PinCard): PinCard {
   const card: PinCard = {
     id: typeof c.id === 'string' && c.id ? c.id : pinId(),
@@ -96,6 +114,10 @@ function normCard(c: PinCard): PinCard {
   }
   const due = num(c.due)
   if (due > 0) card.due = due
+  const sessions = normSessions(c.sessions)
+  if (sessions) card.sessions = sessions
+  const pending = normPending(c.pendingSessionIds)
+  if (pending) card.pendingSessionIds = pending
   return card
 }
 
@@ -109,6 +131,10 @@ function normRecord(r: PinRecord): PinRecord {
   }
   if (typeof r.day === 'string' && r.day) rec.day = r.day
   if (typeof r.ord === 'number' && Number.isFinite(r.ord)) rec.ord = r.ord
+  const sessions = normSessions(r.sessions)
+  if (sessions) rec.sessions = sessions
+  const pending = normPending(r.pendingSessionIds)
+  if (pending) rec.pendingSessionIds = pending
   return rec
 }
 
@@ -191,6 +217,45 @@ export function removeCard(id: string): void {
   scheduleSave()
 }
 
+/*
+addPendingSession 卡片「新会话」开出的会话先记为待定：卡片上不显示、
+也不算关联；在对话里真正发出第一条消息后由 linkPendingNote 落实。
+同一张卡可以开多个，互不影响。
+*/
+export function addPendingSession(cardId: string, sessionId: string): void {
+  const c = findCard(cardId)
+  if (!c || !sessionId) return
+  if (c.sessions?.some((s) => s.id === sessionId)) return
+  const cur = c.pendingSessionIds ?? []
+  if (cur.includes(sessionId)) return
+  patchCard(cardId, { pendingSessionIds: [...cur, sessionId] })
+}
+
+/*
+linkPendingNote 对话页真实发出消息后调用：把该会话挂到对应便签的关联
+列表末尾（卡片右下角按顺序显示），并移出待定。未加载过便签板时先补拉。
+*/
+export async function linkPendingNote(sessionId: string, title = ''): Promise<void> {
+  if (!sessionId) return
+  await ensurePinboard()
+  if (!board.loaded) return
+  let changed = false
+  function link<T extends PinCard | PinRecord>(entry: T): T {
+    if (!entry.pendingSessionIds?.includes(sessionId)) return entry
+    changed = true
+    const sessions = [
+      ...(entry.sessions ?? []).filter((s) => s.id !== sessionId),
+      { id: sessionId, title: title || '会话' },
+    ]
+    const pending = entry.pendingSessionIds.filter((id) => id !== sessionId)
+    return { ...entry, sessions, pendingSessionIds: pending.length ? pending : undefined }
+  }
+  /* 卡片与已归档记录都可能带着待定会话（先完成卡片、后发消息） */
+  board.cards = board.cards.map(link)
+  board.done = board.done.map(link)
+  if (changed) scheduleSave()
+}
+
 /* completeCard 划线入库：生成 Record（doneAt = 此刻），卡片走下板。 */
 export function completeCard(id: string): PinRecord | null {
   const c = board.cards.find((x) => x.id === id)
@@ -202,6 +267,9 @@ export function completeCard(id: string): PinRecord | null {
     doneAt: Date.now(),
     tint: c.tint,
   }
+  /* 关联随卡片一起归档：当天详情里仍能看到并跳转 */
+  if (c.sessions?.length) rec.sessions = c.sessions.map((s) => ({ ...s }))
+  if (c.pendingSessionIds?.length) rec.pendingSessionIds = [...c.pendingSessionIds]
   board.cards = board.cards.filter((x) => x.id !== id)
   board.done = [rec, ...board.done]
   scheduleSave()
@@ -225,6 +293,9 @@ export function restoreRecord(id: string, x: number, y: number): PinCard | null 
     z: board.z,
     tint: r.tint,
   }
+  /* 拖回板上时关联一起还原 */
+  if (r.sessions?.length) card.sessions = r.sessions.map((s) => ({ ...s }))
+  if (r.pendingSessionIds?.length) card.pendingSessionIds = [...r.pendingSessionIds]
   board.cards = [...board.cards, card]
   scheduleSave()
   return card
