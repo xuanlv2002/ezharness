@@ -13,7 +13,7 @@
 
   let { active = false, animating = false }: { active?: boolean; animating?: boolean } = $props()
 
-  type TabInfo = { id: string; name: string; desc?: string; origin: string; url: string; title: string; loading: boolean; active: boolean }
+  type TabInfo = { id: string; name: string; desc?: string; origin: string; url: string; title: string; loading: boolean; active: boolean; ai?: boolean; busy?: boolean }
 
   /* desktop 壳能力（preload 注入；web 端 undefined） */
   function ezBrowser(): any | undefined {
@@ -27,9 +27,14 @@
   let content: HTMLElement | undefined = $state()
   let ro: ResizeObserver | undefined
 
+  /* 当前标签与 AI 忙碌锁：忙碌期间地址栏禁用（主进程 IPC 同样拒绝导航，
+     这里只是把锁表达在输入框上） */
+  const curTab = $derived(tabs.find((t) => t.id === current))
+  const busy = $derived(!!curTab?.busy)
+
   /* 地址栏跟随当前标签 url（未在编辑时） */
   $effect(() => {
-    const url = tabs.find((t) => t.id === current)?.url ?? ''
+    const url = curTab?.url ?? ''
     if (!addressFocused) addressValue = url
   })
 
@@ -52,7 +57,7 @@
   }
 
   function submitAddress() {
-    if (!current || !addressValue.trim()) return
+    if (!current || busy || !addressValue.trim()) return
     ezBrowser()?.navigate(current, addressValue.trim())
     ;(document.activeElement as HTMLElement | null)?.blur()
   }
@@ -118,9 +123,24 @@
   {:else}
     <div class="strip">
       {#each tabs as t (t.id)}
-        <button class="strip-item" class:active={current === t.id} onclick={() => pickTab(t.id)} title="{t.name}{t.desc ? ` · ${t.desc}` : ''} · 来源 {t.origin || '?'} · {t.url}">
+        <button
+          class="strip-item"
+          class:active={current === t.id}
+          class:busy={t.busy}
+          onclick={() => pickTab(t.id)}
+          title="{t.name}{t.desc ? ` · ${t.desc}` : ''} · 来源 {t.origin || '?'}{t.busy ? ' · AI 正在操作此页面' : ''} · {t.url}"
+        >
+          {#if t.busy}
+            <span class="lock" title="AI 操作中">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                <rect x="5" y="11" width="14" height="9" rx="2" />
+                <path d="M8 11V8a4 4 0 1 1 8 0v3" />
+              </svg>
+            </span>
+          {/if}
           <span class="dot" class:loading={t.loading}></span>
           <span class="name">{t.title || t.name}</span>
+          {#if t.ai}<span class="ai">AI</span>{/if}
           <span class="x" onclick={(e) => { e.stopPropagation(); ezBrowser().close(t.id) }} role="button" tabindex="-1" title="关闭">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round">
               <path d="M6 6l12 12M18 6L6 18" />
@@ -135,13 +155,22 @@
       <input
         type="text"
         bind:value={addressValue}
-        placeholder="{current ? '输入网址回车导航' : '新建标签后可导航'}"
+        disabled={busy}
+        placeholder={busy ? 'AI 操作中，地址栏已锁定' : current ? '输入网址回车导航' : '新建标签后可导航'}
         onfocus={() => (addressFocused = true)}
         onblur={() => (addressFocused = false)}
         spellcheck="false"
         autocomplete="off"
       />
-      {#if tabs.find((t) => t.id === current)?.loading}
+      {#if busy}
+        <span class="busytag" title="AI 的浏览器工具正在此标签上执行，地址栏已锁定，避免同时操作互相干扰">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="5" y="11" width="14" height="9" rx="2" />
+            <path d="M8 11V8a4 4 0 1 1 8 0v3" />
+          </svg>
+          AI 操作中
+        </span>
+      {:else if curTab?.loading}
         <span class="spinner" title="加载中"></span>
       {/if}
     </form>
@@ -196,6 +225,52 @@
     background: var(--bg-soft);
     color: var(--fg);
     font-weight: 600;
+  }
+  /* AI 桥调用正在该标签执行：锁形标识 + 强调色描边（呼吸提示），
+     用户此刻别抢着操作，避免人机同时动一张页面 */
+  .strip-item.busy {
+    border-color: var(--accent);
+    animation: busypulse 1.6s ease-in-out infinite;
+  }
+  .lock {
+    display: grid;
+    place-items: center;
+    width: 13px;
+    height: 13px;
+    color: var(--accent);
+    flex: none;
+  }
+  .lock svg {
+    width: 11px;
+    height: 11px;
+  }
+  /* AI 建的标签的来源徽标（busy 只是执行瞬间的锁，ai 是常驻标识） */
+  .ai {
+    flex: none;
+    font-size: 9px;
+    line-height: 1;
+    font-weight: 600;
+    padding: 2px 4px;
+    border-radius: 4px;
+    background: color-mix(in srgb, var(--accent) 14%, transparent);
+    color: var(--accent);
+  }
+  .busytag {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    flex: none;
+    font-size: var(--font-size-ui);
+    color: var(--accent);
+  }
+  .busytag svg {
+    width: 12px;
+    height: 12px;
+  }
+  @keyframes busypulse {
+    50% {
+      box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent);
+    }
   }
   .name {
     max-width: 160px;
@@ -272,6 +347,10 @@
   }
   .address input::placeholder {
     color: var(--faint);
+  }
+  .address input:disabled {
+    color: var(--faint);
+    cursor: not-allowed;
   }
   .spinner {
     width: 12px;

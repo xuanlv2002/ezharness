@@ -168,20 +168,58 @@ function coreDir() {
 /*
 rootDir 是配置与数据根（ezharness.json + data/）：
 - 开发态：release/dev（与 core 产物同目录，dev.bat 的既有习惯）
-- Windows 打包：便携版锚定 exe 解压目录，安装版锚定安装目录的 resources/
-- macOS / Linux 打包：.app 可能被 Gatekeeper 移位、AppImage 是只读挂载，
-  写进应用目录不可靠，统一用系统用户数据目录（~/Library/Application Support/
-  ezharness、~/.config/ezharness）。EZHARNESS_ROOT 可显式覆盖。
+- 便携版（Windows portable）：锚定 exe 所在目录——绿色版数据跟包走
+- 安装版（Windows NSIS / macOS / Linux）：系统用户数据目录
+  （%APPDATA%\ezharness、~/Library/Application Support/ezharness、
+  ~/.config/ezharness）。安装目录会被升级/卸载整目录删除，配置与数据
+  放这里才能跨版本保留。EZHARNESS_ROOT 可显式覆盖。
 */
 function rootDir() {
   if (process.env.EZHARNESS_ROOT) return path.resolve(process.env.EZHARNESS_ROOT)
   if (!app.isPackaged) return coreDir()
-  if (process.platform === 'win32') {
-    const base = process.env.PORTABLE_EXECUTABLE_DIR || coreDir()
-    // 装到 Program Files 等只读位置时回落到用户目录
+  if (process.platform === 'win32' && process.env.PORTABLE_EXECUTABLE_DIR) {
+    const base = path.resolve(process.env.PORTABLE_EXECUTABLE_DIR)
+    // 便携版放在只读位置时回落到用户目录
     return writableDir(base) ? base : app.getPath('userData')
   }
   return app.getPath('userData')
+}
+
+/*
+migrateLegacyRoot 旧版 Windows 安装版把数据放在安装目录 resources/ 下，
+升级时会被 NSIS 连目录一起删掉。新版本改用用户数据目录后，这里把仍能
+找到的旧配置与数据补过去：只补缺、不覆盖（新目录已有任何内容就跳过）。
+注意升级安装会先跑旧版卸载器、旧目录多半已被清空——这个迁移兜的是
+覆盖安装/手动搬运的场景，不能挽回已被卸载器删除的数据。
+*/
+function migrateLegacyRoot() {
+  if (!app.isPackaged || process.platform !== 'win32') return
+  if (process.env.PORTABLE_EXECUTABLE_DIR || process.env.EZHARNESS_ROOT) return
+  const legacy = coreDir()
+  const root = rootDir()
+  if (path.resolve(legacy) === path.resolve(root)) return
+  if (fs.existsSync(path.join(root, 'data')) || fs.existsSync(path.join(root, 'ezharness.json'))) return
+  for (const name of ['ezharness.json', 'data']) {
+    const src = path.join(legacy, name)
+    if (!fs.existsSync(src)) continue
+    try {
+      copyMissing(src, path.join(root, name))
+      console.log(`[migrate] ${src} -> ${root}`)
+    } catch (err) {
+      console.error(`旧配置迁移失败（${src}）：`, err.message)
+    }
+  }
+}
+
+/* copyMissing 递归复制，目标已存在的文件一律不覆盖。 */
+function copyMissing(src, dst) {
+  const st = fs.statSync(src)
+  if (st.isDirectory()) {
+    fs.mkdirSync(dst, { recursive: true })
+    for (const name of fs.readdirSync(src)) copyMissing(path.join(src, name), path.join(dst, name))
+  } else if (!fs.existsSync(dst)) {
+    fs.copyFileSync(src, dst)
+  }
 }
 
 /* writableDir 目录是否可写（只读安装位置/AppImage 挂载点会 false）。 */
@@ -508,6 +546,18 @@ function showMain() {
   mainWindow.focus()
 }
 
+/* 开机自启动：win/mac 有登录项 API（Linux 没有）。开发态注册的会是
+   electron 本体而非应用，所以只在进程内记模拟状态——设置页能正常显示、
+   调样式，打包版才真正写系统登录项。 */
+let devAutoLaunch = false
+function autoLaunchSupported() {
+  return process.platform === 'win32' || process.platform === 'darwin'
+}
+function autoLaunchState() {
+  const enabled = app.isPackaged ? app.getLoginItemSettings().openAtLogin : devAutoLaunch
+  return { supported: autoLaunchSupported(), enabled: autoLaunchSupported() && enabled }
+}
+
 /* registerIpc 窗口控制与桌面能力 */
 function registerIpc() {
   ipcMain.on('ez:minimize', () => mainWindow?.minimize())
@@ -542,6 +592,16 @@ function registerIpc() {
     const win = BrowserWindow.getFocusedWindow() ?? mainWindow
     const r = await dialog.showOpenDialog(win, { properties: ['openDirectory'] })
     return r.canceled || r.filePaths.length === 0 ? null : r.filePaths[0]
+  })
+  /* 开机自启动：OS 登录项是唯一事实源（get 读实际状态渲染开关，set 写后
+     回读实际结果——企业策略等写不进去时 UI 如实回落；不进 core 设置，避免
+     双源不同步）。Linux 不支持，返回 supported:false 供设置页隐藏开关 */
+  ipcMain.handle('ez:get-autolaunch', () => autoLaunchState())
+  ipcMain.handle('ez:set-autolaunch', (_e, on) => {
+    if (!autoLaunchSupported()) return autoLaunchState()
+    if (app.isPackaged) app.setLoginItemSettings({ openAtLogin: !!on })
+    else devAutoLaunch = !!on
+    return autoLaunchState()
   })
   /* 打开文件夹：是目录就在资源管理器直接打开,返回是否已处理 */
   ipcMain.handle('ez:open-dir', async (_e, p) => {
@@ -742,6 +802,7 @@ function registerIpc() {
 
 app.whenReady().then(async () => {
   installAppMenu()
+  migrateLegacyRoot()
   await startCore()
   await setCoreCookie()
   createMainWindow()

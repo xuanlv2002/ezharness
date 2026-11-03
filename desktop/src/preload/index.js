@@ -29,6 +29,12 @@ contextBridge.exposeInMainWorld('ez', {
     /* 系统级关闭（Alt+F4/任务栏）由主进程转到前端弹框 */
     onClosePrompt: (cb) => ipcRenderer.on('ez:close-prompt', () => cb()),
   },
+  /* 开机自启动（OS 登录项为唯一事实源）：get/set 均回 {supported, enabled}，
+     不支持平台（web/Linux/开发态）supported:false，设置页据此隐藏开关 */
+  autolaunch: {
+    get: () => ipcRenderer.invoke('ez:get-autolaunch'),
+    set: (on) => ipcRenderer.invoke('ez:set-autolaunch', !!on),
+  },
   /* 抽屉工具弹出窗口（view: term/file/browser） */
   popout: {
     /* 弹出（已弹出则聚焦）；state 是资源页初始状态快照；

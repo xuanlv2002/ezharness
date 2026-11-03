@@ -2,8 +2,7 @@
 Package config 的日志落盘：进程日志写 <数据目录>/logs/core-YYYYMMDD.log
 （按天滚动，保留 7 天），与 stderr 双写——dev 终端可见；打包版 Electron
 是 GUI 进程无控制台，文件是唯一出口。main 起始处把标准 log、gin、
-modeldump 的输出统一接管到 OpenLogWriter 返回的 writer；换代切数据目录
-时经 FollowDataDir 跟随（multiWriter 引用同一实例，接管点无需重设）。
+modeldump 的输出统一接管到 OpenLogWriter 返回的 writer。
 */
 package config
 
@@ -43,14 +42,17 @@ func OpenLogWriter(dataDir string) io.Writer {
 	return io.MultiWriter(stdLog, os.Stderr)
 }
 
-/* FollowDataDir 换代切数据目录后让日志跟随新目录。 */
-func FollowDataDir(dataDir string) {
+/*
+CloseLogWriter 关闭当前日志文件（保留目录锚点）：格式化要清空 logs/，
+Windows 上打开中的文件删不掉。之后的写入会自动重开新文件。
+*/
+func CloseLogWriter() {
 	stdLog.mu.Lock()
 	defer stdLog.mu.Unlock()
-	if dataDir == stdLog.dir {
-		return
+	if stdLog.file != nil {
+		_ = stdLog.file.Close()
+		stdLog.file = nil
 	}
-	_ = stdLog.openLocked(dataDir)
 }
 
 func (w *logWriter) Write(p []byte) (int, error) {
@@ -65,7 +67,7 @@ func (w *logWriter) Write(p []byte) (int, error) {
 	return w.file.Write(p)
 }
 
-/* openLocked 打开（或跨天/换目录时切换）日志文件；caller 持锁。 */
+/* openLocked 打开（或跨天滚动时重建）日志文件；caller 持锁。 */
 func (w *logWriter) openLocked(dir string) error {
 	if dir == "" {
 		return nil // OpenLogWriter 之前的极早期输出只走 stderr

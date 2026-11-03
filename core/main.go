@@ -118,7 +118,7 @@ func (a *app) buildRouter() *gin.Engine {
 	}
 
 	// 系统级 MCP router(全局唯一):agent 的 mcp hook 与页面/API 调用共用
-	// 同一连接池,跨代复用;换代可能切数据目录,按当代 mcp.json 重载列表
+	// 同一连接池,跨代复用;换代按当代 mcp.json 重载列表
 	if a.mcpAuth == nil {
 		a.mcpAuth = service.NewMcpAuthManager(hub.Fsys)
 	}
@@ -141,6 +141,7 @@ func (a *app) buildRouter() *gin.Engine {
 	appSvc := &service.AppService{
 		Cfg:       a.snapshot,
 		RestartFn: a.restart,
+		FormatFn:  a.format,
 		Boot:      &a.boot,
 	}
 	controllers := controller.Controllers{

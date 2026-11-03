@@ -1,9 +1,9 @@
 /*
 app 是应用生命周期管理：持有当前一代 http.Server 与配置快照。
 
-重启 = 换代：关闭旧 server → 切数据目录 → 重建 Hub/Router → 新 server
-同端口或预占的新端口上服务。boot 计数由 service 层持有，前端以
-health.boot 与 restart 响应的 boot 匹配来判断新服务已就绪。
+重启 = 换代：关闭旧 server → 重建 Hub/Router → 新 server 同端口或
+预占的新端口上服务。boot 计数由 service 层持有，前端以 health.boot
+与 restart 响应的 boot 匹配来判断新服务已就绪。
 */
 package main
 
@@ -22,7 +22,6 @@ import (
 	"ezharness/core/internal/config"
 	"ezharness/core/internal/controller"
 	"ezharness/core/internal/domain"
-	"ezharness/core/internal/osfs"
 	"ezharness/core/internal/service"
 
 	"github.com/xuanlv2002/ezloop/ext/hook/mcp"
@@ -104,31 +103,14 @@ func (a *app) addr() string { return config.ListenAddr(a.cfg.Listen, a.cfg.Port)
 /*
 restart 换代重启（由 AppService 异步调用，此刻 HTTP 响应已写完，
 Shutdown 不会与活跃 handler 死锁）。ln 非 nil 时是预占的新端口 listener。
-先收尾旧代（轮落盘到旧目录后，才切数据目录——否则旧轮 OnEnd 会写进新库）。
+数据目录换代不存在（不在可改面内）：换目录 = 手改 ezharness.json 后整进程重启。
 */
-func (a *app) restart(port int, listen, dataDir string, ln net.Listener) {
-	a.mu.Lock()
-	hub := a.hub
-	a.mu.Unlock()
+func (a *app) restart(port int, listen string, ln net.Listener) {
 	a.shutdownGeneration()
-	if hub != nil {
-		syncDrained(dataDir, hub.ActiveSession().ID)
-	}
-	if err := os.MkdirAll(dataDir, 0o755); err == nil {
-		if cerr := os.Chdir(dataDir); cerr == nil {
-			// 换到新目录后补齐布局（迁移只复制已知文件，缺的按默认补建）
-			if _, lerr := service.EnsureLayout(); lerr != nil {
-				log.Printf("数据目录初始化失败（%s）: %v", dataDir, lerr)
-			}
-		}
-	}
-	config.FollowDataDir(dataDir) // 日志文件跟随数据目录换代
-	// 换代可能切数据目录：openapi 令牌随新目录的 openapi.json（缺则新建）
-	a.tokens.SetOpenapi(service.LoadOrCreateOpenapiToken())
 	engine := a.buildRouter()
 	srv := &http.Server{Handler: engine}
 	a.mu.Lock()
-	a.cfg.Port, a.cfg.Listen, a.cfg.DataDir = port, listen, dataDir
+	a.cfg.Port, a.cfg.Listen = port, listen
 	a.srv = srv
 	a.mu.Unlock()
 	if ln == nil {
@@ -139,6 +121,95 @@ func (a *app) restart(port int, listen, dataDir string, ln net.Listener) {
 		}
 	}
 	go func() { _ = srv.Serve(ln) }()
+}
+
+/*
+format 格式化（由 AppService 异步调用）：先收尾当前代——会话落盘、回调
+与终端停止，再清空数据目录全部内容、重建默认布局与新代（端口/监听
+不变，页面原地重连即首次运行状态）。
+日志文件先关再删：Windows 上打开中的文件删不掉，下次写日志会自动重开。
+*/
+func (a *app) format(port int, listen string) {
+	a.shutdownGeneration()
+	config.CloseLogWriter()
+	if err := wipeDataDir(); err != nil {
+		log.Printf("格式化清理未完全成功: %v", err)
+	}
+	if _, err := service.EnsureLayout(); err != nil {
+		log.Printf("格式化后重建数据目录失败: %v", err)
+	}
+	/* 跨代常驻服务持有旧目录状态（MCP OAuth 探测缓存、浏览器截图目录）：
+	   重置它们，让 buildRouter 按新默认布局重建（桌面桥会自动重连） */
+	a.mu.Lock()
+	oldRouter, oldAuth := a.mcpRouter, a.mcpAuth
+	a.mcpRouter, a.mcpAuth, a.browser = nil, nil, nil
+	a.mu.Unlock()
+	if oldRouter != nil {
+		_ = oldRouter.Close()
+	}
+	if oldAuth != nil {
+		oldAuth.Close()
+	}
+	// 数据目录已清空：OpenAPI 令牌随新 openapi.json 重新生成
+	a.tokens.SetOpenapi(service.LoadOrCreateOpenapiToken())
+	engine := a.buildRouter()
+	srv := &http.Server{Handler: engine}
+	a.mu.Lock()
+	a.cfg.Port, a.cfg.Listen = port, listen
+	a.srv = srv
+	a.mu.Unlock()
+	ln, err := net.Listen("tcp", a.addr())
+	if err != nil {
+		log.Printf("格式化后重新监听失败: %v", err)
+		return
+	}
+	go func() { _ = srv.Serve(ln) }()
+}
+
+/*
+wipeDataDir 删除数据目录（进程 cwd）下的全部条目，目录本身保留（cwd
+不能删）。运行中的可执行文件跳过：dataDir 被指到应用根时不能把 core
+自己删了。Windows 上残留句柄可能短暂占文件，重试三轮再放弃。
+*/
+func wipeDataDir() error {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return err
+	}
+	entries, err := os.ReadDir(cwd)
+	if err != nil {
+		return err
+	}
+	exe, _ := os.Executable()
+	exe = filepath.Clean(exe)
+	/* 结构配置与运行中的可执行文件不删：前者刚由 Format 归一落盘（dataDir
+	   被指到应用根时它会躺在数据目录里），后者删了进程下次就起不来 */
+	keep := map[string]bool{filepath.Clean(filepath.Join(config.Root(), "ezharness.json")): true}
+	if exe != "" {
+		keep[exe] = true
+	}
+	var failed []string
+	for _, e := range entries {
+		target := filepath.Clean(filepath.Join(cwd, e.Name()))
+		/* 目标目录里住着运行中的 core 时整棵跳过（dataDir 指到应用根/父目录） */
+		if keep[target] || (exe != "" && strings.HasPrefix(exe, target+string(os.PathSeparator))) {
+			continue
+		}
+		var rmErr error
+		for attempt := 0; attempt < 3; attempt++ {
+			if rmErr = os.RemoveAll(target); rmErr == nil {
+				break
+			}
+			time.Sleep(200 * time.Millisecond)
+		}
+		if rmErr != nil {
+			failed = append(failed, fmt.Sprintf("%s（%v）", e.Name(), rmErr))
+		}
+	}
+	if len(failed) > 0 {
+		return fmt.Errorf("%s", strings.Join(failed, "、"))
+	}
+	return nil
 }
 
 /*
@@ -181,7 +252,7 @@ func (a *app) shutdownGeneration() {
 		callbacks.Stop()
 	}
 	if term != nil {
-		term.Shutdown(3 * time.Second) // 换代=换数据目录:杀全部终端 shell
+		term.Shutdown(3 * time.Second) // 换代重建终端服务:杀全部旧 shell
 	}
 	if hub != nil {
 		active := hub.ActiveSession()
@@ -197,28 +268,5 @@ func (a *app) shutdownGeneration() {
 	}
 	if srv != nil {
 		_ = srv.Close() // 立即断开全部连接（含 SSE），handler 随连接退出
-	}
-}
-
-/*
-syncDrained 把收尾轮落盘后的最新数据强制同步到新数据目录：
-MigrateData（restart 响应前执行）跳过已存在文件，而收尾轮的
-session.json/stats/topics 此刻才写到旧目录，不同步会静默丢失。
-仅换目录重启需要。
-*/
-func syncDrained(dataDir, activeID string) {
-	cwd, _ := os.Getwd()
-	if activeID == "" || filepath.Clean(cwd) == filepath.Clean(dataDir) {
-		return
-	}
-	for _, f := range []string{"stats.json", "topics.json", "callbacks.json"} {
-		if data, err := os.ReadFile(filepath.Join(cwd, f)); err == nil {
-			if wErr := os.WriteFile(filepath.Join(dataDir, f), data, 0o644); wErr != nil {
-				log.Printf("换代同步 %s 失败: %v", f, wErr)
-			}
-		}
-	}
-	if err := osfs.CopyDir(filepath.Join(cwd, "sessions", activeID), filepath.Join(dataDir, "sessions", activeID), true); err != nil {
-		log.Printf("换代同步活动会话失败（%s）: %v", activeID, err)
 	}
 }

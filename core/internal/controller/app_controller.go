@@ -46,7 +46,7 @@ func (c *AppController) UpdateCheck(g *gin.Context) {
 	g.JSON(http.StatusOK, info)
 }
 
-/* Restart 换代重启：port/dataDir 零值不改；失败时旧服务不受影响。 */
+/* Restart 换代重启：port/listen 零值不改；失败时旧服务不受影响。 */
 func (c *AppController) Restart(g *gin.Context) {
 	var req service.RestartRequest
 	if err := g.ShouldBindJSON(&req); err != nil {
@@ -79,6 +79,19 @@ func (c *AppController) ResetOpenapiToken(g *gin.Context) {
 	token := service.ResetOpenapiToken()
 	c.Tokens.SetOpenapi(token)
 	g.JSON(http.StatusOK, gin.H{"token": token})
+}
+
+/*
+Format POST /api/app/format：清空全部配置与会话数据、恢复首次运行状态
+（不可恢复）。响应 {url, boot}，前端轮询 health.boot 就绪后重载页面。
+*/
+func (c *AppController) Format(g *gin.Context) {
+	res, err := c.Svc.Format()
+	if err != nil {
+		g.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	g.JSON(http.StatusOK, res)
 }
 
 /*

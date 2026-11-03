@@ -824,7 +824,10 @@ export const api = {
 
   resetOpenapiToken: () => post<{ token: string }>('/api/app/openapi-token/reset', {}),
 
-  appRestart: (req: { port?: number; listen?: string; dataDir?: string }) =>
+  /* 格式化：清空全部配置、会话与数据并恢复首次运行（不可恢复），返回新代地址供轮询 */
+  formatAll: () => post<{ url: string; boot: number }>('/api/app/format', {}),
+
+  appRestart: (req: { port?: number; listen?: string }) =>
     post<{ url: string; boot: number }>('/api/app/restart', req),
 
   appHealth: (base = '') => fetch(`${base}/api/app/health`).then(json<{ ok: boolean; boot: number }>),

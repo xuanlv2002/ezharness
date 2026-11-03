@@ -1,10 +1,10 @@
 /*
-AppService 是应用级用例：配置查询、数据目录迁移与换代重启。
+AppService 是应用级用例：配置查询、格式化与换代重启。
 
-boot 是服务代际计数（原子）：restart 先递增并随响应返回，新代
+boot 是服务代际计数（原子）：restart/format 先递增并随响应返回，新代
 server 的 health 报告同一值——前端轮询 health.boot 与之匹配即可
-判断新服务已就绪，再行跳转。RestartFn（main 注入）必须异步语义：
-调用即返回，内部换完代后新 server 开始服务。
+判断新服务已就绪，再行跳转。RestartFn/FormatFn（main 注入）必须异步
+语义：调用即返回，内部换完代后新 server 开始服务。
 */
 package service
 
@@ -22,7 +22,6 @@ import (
 	"time"
 
 	"ezharness/core/internal/config"
-	"ezharness/core/internal/osfs"
 )
 
 /*
@@ -32,7 +31,8 @@ import (
 */
 type AppService struct {
 	Cfg       func() config.Config
-	RestartFn func(port int, listen, dataDir string, ln net.Listener)
+	RestartFn func(port int, listen string, ln net.Listener)
+	FormatFn  func(port int, listen string)
 	Boot      *atomic.Int64
 }
 
@@ -151,9 +151,8 @@ func (s *AppService) ConfigView() AppConfigView {
 
 /* RestartRequest 是重启请求（字段为零值表示不改）。 */
 type RestartRequest struct {
-	Port    *int    `json:"port"`
-	Listen  *string `json:"listen"`
-	DataDir string  `json:"dataDir"`
+	Port   *int    `json:"port"`
+	Listen *string `json:"listen"`
 }
 
 /* RestartResult 是重启响应：前端轮询 health.boot === boot 后跳转 url。 */
@@ -163,8 +162,9 @@ type RestartResult struct {
 }
 
 /*
-Restart 校验并落盘新配置、迁移数据目录、预占新端口，然后异步换代。
-仅当请求值非法或新端口被占时返回错误（旧服务不受影响）。
+Restart 校验并落盘新配置（监听/端口）、预占新端口，然后异步换代。
+仅当请求值非法或新端口被占时返回错误（旧服务不受影响）。数据目录不在
+可改面内：挪盘手改 ezharness.json 的 dataDir 后整进程重启。
 */
 func (s *AppService) Restart(req RestartRequest) (RestartResult, error) {
 	cur := s.Cfg()
@@ -179,16 +179,7 @@ func (s *AppService) Restart(req RestartRequest) (RestartResult, error) {
 	if req.Listen != nil {
 		listen = *req.Listen
 	}
-	dataDir := cur.DataDir
-	if req.DataDir != "" {
-		dataDir = config.ResolveDataDir(req.DataDir)
-	}
 
-	if dataDir != cur.DataDir {
-		if err := MigrateData(cur.DataDir, dataDir); err != nil {
-			return RestartResult{}, fmt.Errorf("迁移数据失败: %w", err)
-		}
-	}
 	var ln net.Listener
 	if port != cur.Port || listen != cur.Listen {
 		var err error
@@ -196,7 +187,7 @@ func (s *AppService) Restart(req RestartRequest) (RestartResult, error) {
 			return RestartResult{}, fmt.Errorf("%s:%d 监听失败: %w", listen, port, err)
 		}
 	}
-	if err := config.Save(config.Config{Port: port, Listen: listen, DataDir: dataDir}); err != nil {
+	if err := config.Save(config.Config{Port: port, Listen: listen, DataDir: cur.DataDir}); err != nil {
 		if ln != nil {
 			_ = ln.Close()
 		}
@@ -204,31 +195,23 @@ func (s *AppService) Restart(req RestartRequest) (RestartResult, error) {
 	}
 
 	next := s.Boot.Add(1)
-	go s.RestartFn(port, listen, dataDir, ln)
+	go s.RestartFn(port, listen, ln)
 	/* listen=0.0.0.0 时本机访问仍走 127.0.0.1，跳转地址不受影响 */
 	return RestartResult{URL: fmt.Sprintf("http://127.0.0.1:%d", port), Boot: next}, nil
 }
 
 /*
-MigrateData 把旧数据目录的全部运行时数据拷入新目录（已存在的文件
-跳过——不覆盖新目录中已有的数据）。sessions/ 整目录递归。
+Format 格式化：清空数据目录的全部内容（配置记录、会话、记忆、上传、
+快应用、工作区、日志等），恢复首次运行状态。端口与数据目录位置保留
+——它们决定当前页面与桌面壳连到哪，重置会让本页立刻失联；结构配置
+的其余字段（窗口尺寸）一并回默认。
 */
-func MigrateData(src, dst string) error {
-	if err := os.MkdirAll(dst, 0o755); err != nil {
-		return err
+func (s *AppService) Format() (RestartResult, error) {
+	cur := s.Cfg()
+	if err := config.Save(config.Config{Port: cur.Port, Listen: cur.Listen, DataDir: cur.DataDir}); err != nil {
+		return RestartResult{}, fmt.Errorf("保存配置失败: %w", err)
 	}
-	for _, f := range []string{"models.json", "settings.json", "stats.json", "topics.json", "callbacks.json", "memory.md", "mcp.json"} {
-		data, err := os.ReadFile(filepath.Join(src, f))
-		if err != nil {
-			continue
-		}
-		target := filepath.Join(dst, f)
-		if _, err := os.Stat(target); err == nil {
-			continue
-		}
-		if err := os.WriteFile(target, data, 0o644); err != nil {
-			return err
-		}
-	}
-	return osfs.CopyDir(filepath.Join(src, "sessions"), filepath.Join(dst, "sessions"), false)
+	next := s.Boot.Add(1)
+	go s.FormatFn(cur.Port, cur.Listen)
+	return RestartResult{URL: fmt.Sprintf("http://127.0.0.1:%d", cur.Port), Boot: next}, nil
 }

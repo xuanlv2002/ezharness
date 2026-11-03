@@ -9,16 +9,16 @@
   let el: HTMLDivElement
   let stick = true
 
-  /* 右侧轮次导航：每轮用户输入一行，点击回溯、滚动跟随高亮（纯图片轮次也算） */
+  /* 右侧轮次导航：每轮用户输入一行，点击回溯、滚动跟随高亮（纯图片轮次也算）。
+     收起时只显示最近 5 个刻度；悬浮展开全部轮次，列高封顶后可滚动选择 */
   const turns = $derived(
     store.blocks.filter(
       (b): b is Extract<Block, { kind: 'user' }> =>
         b.kind === 'user' && (!!b.text.trim() || !!b.images?.length),
     ),
   )
-  /* 轮次导航最多 5 个刻度（取最近 5 轮）：长会话下整列刻度太占视觉，
-     更早的轮次靠滚动/下拉历史查看 */
-  const navTurns = $derived(turns.length > 5 ? turns.slice(-5) : turns)
+  let navHover = $state(false)
+  const navTurns = $derived(navHover ? turns : turns.slice(-5))
   let activeUid = $state(0)
 
   function updateActive() {
@@ -32,6 +32,19 @@
     }
     activeUid = cur
   }
+
+  /* 悬浮展开全部刻度后：把当前轮次滚进导航列视窗（居中）。手动算
+     scrollTop——scrollIntoView 会连带滚外层聊天容器 */
+  let navEl = $state<HTMLDivElement>()
+  $effect(() => {
+    const uid = activeUid
+    const hovering = navHover
+    const box = navEl
+    if (!box || !hovering || !uid) return
+    const cur = box.querySelector<HTMLButtonElement>('button.cur')
+    if (!cur || box.scrollHeight <= box.clientHeight) return
+    box.scrollTop = Math.max(0, cur.offsetTop - box.clientHeight / 2 + cur.offsetHeight / 2)
+  })
 
   /* ── 吸底（stick）机制 ──
   selfScroll：程序设 scrollTop 引发的 scroll 事件不算用户滚动（否则
@@ -305,7 +318,13 @@
     </span>
   </div>
   {#if turns.length >= 2}
-    <div class="turnnav">
+    <div
+      class="turnnav"
+      class:open={navHover}
+      bind:this={navEl}
+      onmouseenter={() => (navHover = true)}
+      onmouseleave={() => (navHover = false)}
+    >
       {#each navTurns as t (t.uid)}
         <button class:cur={t.uid === activeUid} onclick={() => jumpTo(t.uid)}
           title={t.text.length > 40 ? t.text : undefined}>
@@ -389,8 +408,8 @@
     min-height: 0;
     overscroll-behavior: contain;
   }
-  /* 轮次导航：默认仅一列刻度线垂直居中贴右缘，悬浮展开文字卡片。
-     高度封顶（约 20 条刻度），超出滚动——滚动条仅悬浮时显形 */
+  /* 轮次导航：收起时只露最近 5 个刻度（一列点线垂直居中贴右缘）；悬浮
+     展开全部轮次与文字卡片，高度封顶后可滚动选择——滚动条仅悬浮时显形 */
   .turnnav {
     position: absolute;
     /* 贴内容列右缘（主列已满宽，直接 right:10 会跑到窗口最右压住悬浮列） */
@@ -409,6 +428,10 @@
     scrollbar-width: none;
     transition: background var(--dur-fast) var(--ease-out), border-color var(--dur-fast) var(--ease-out),
       box-shadow var(--dur-fast) var(--ease-out);
+  }
+  /* 悬浮：展开更高（约 20 个刻度），全量轮次可滚动选择 */
+  .turnnav.open {
+    max-height: 320px;
   }
   .turnnav::-webkit-scrollbar {
     display: none;
