@@ -513,6 +513,40 @@ export interface TreeView {
   git: GitInfo[]
 }
 
+/* 便签板（GET/POST /api/pinboard）：整块板 JSON 原样存取，布局与拖拽
+   在前端 */
+export interface PinCard {
+  id: string
+  x: number
+  y: number
+  w: number
+  h: number
+  text: string
+  created: number
+  z: number
+  tint: string
+  due?: number
+}
+
+/* 已完成归档：doneAt 是事实（点完成那一刻），day 只表达归档到哪一天
+   （手工拖时间线时写，拖回真实完成日则删除） */
+export interface PinRecord {
+  id: string
+  text: string
+  created: number
+  doneAt: number
+  tint: string
+  day?: string // 'YYYY-MM-DD'
+  ord?: number // 当天内顺序（0 起，缺省 = 当天最左）
+}
+
+export interface PinboardData {
+  v: number
+  z: number
+  cards: PinCard[]
+  done: PinRecord[]
+}
+
 /* porcelain 两字符码 → 徽标字母（U=未跟踪/A=新增/D=删除/其余按修改）。 */
 export function statusLetter(code: string): string {
   if (code === '??') return 'U'
@@ -663,6 +697,10 @@ export const api = {
 
   /* 解析后的工作目录（目录树默认根） */
   workdir: () => fetch('/api/workspace/workdir').then(json<{ path: string }>),
+
+  /* 便签板整块读写（前端防抖提交；首次读取为空板） */
+  pinboard: () => fetch('/api/pinboard', { cache: 'no-store' }).then(json<PinboardData>),
+  savePinboard: (data: PinboardData) => post<{ ok: boolean }>('/api/pinboard', data),
 
   /* 文件在 HEAD 的原文（变更对比左侧）；404 = 未纳入 git（按空串 = 新文件） */
   gitBlob: async (path: string) => {

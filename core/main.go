@@ -159,6 +159,7 @@ func (a *app) buildRouter() *gin.Engine {
 		Terminal:  &controller.TerminalController{Svc: termSvc},
 		Browser:   &controller.BrowserController{Svc: a.browser},
 		Workspace: &controller.WorkspaceController{Svc: service.NewWorkspaceService(hub.Fsys, hub)},
+		Pinboard:  &controller.PinboardController{Svc: &service.PinboardService{Fsys: hub.Fsys}},
 	}
 	return controller.NewRouter(controllers, distFS(), a.tokens)
 }
