@@ -279,6 +279,9 @@ class AppStore {
   pendingFileRef = $state<FileRef | null>(null)
   /* 快速开始示例的待填指令：输入框消费后清空并聚焦，不自动发送 */
   pendingPrompt = $state<string | null>(null)
+  /* 目录树右键「插入路径到会话」的待插文本：补进输入框光标处（不改写
+     已有草稿），消费后清空 */
+  pendingInsert = $state<string | null>(null)
   /* 图片写回后的缩略图版本（按路径 bump：同 URL 的 img 立即换 src，
      含历史 chips——引用同一资源，处处显示最新；跨会话由 HTTP 304 兜底） */
   imgVer = $state<Record<string, number>>({})
@@ -1189,6 +1192,14 @@ class AppStore {
     if (this.activeId && !this.tabs.some((t) => t.rootId === this.activeId)) {
       this.tabs = [...this.tabs, { rootId: this.activeId }]
     }
+  }
+
+  /* insertToInput 路径进会话输入框（树右键「插入路径到会话」）：没有活动
+     会话时先新建一个会话标签，再交 InputBar 补进光标处——插入永远有落
+     点，不会把路径晾在没有会话的空页上 */
+  async insertToInput(text: string) {
+    if (!this.activeId) await this.newChatTab()
+    this.pendingInsert = text
   }
 
   /* 归档换代（分支列表行操作）：指定分支总结归档开新篇，线不变叶子换代。

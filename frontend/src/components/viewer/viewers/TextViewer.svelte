@@ -99,7 +99,7 @@
     min-height: 0;
     border: 1px solid var(--line);
     border-radius: 12px;
-    background: #fff;
+    background: var(--card);
     overflow: hidden;
   }
   textarea {
@@ -148,15 +148,15 @@
     box-sizing: border-box;
     overflow: hidden;
     pointer-events: none;
-    color: #26272d;
+    color: var(--hl-text);
   }
   .hlayer code {
     font: inherit;
   }
-  /* 代码配色（GitHub 浅色系；编辑器底色恒为白，深浅主题下都按浅色排版） */
+  /* 代码配色随主题翻转（app.css 的 --hl-*：浅色 GitHub 浅色系，暗色暗色系） */
   .hlayer :global(.hljs-comment),
   .hlayer :global(.hljs-quote) {
-    color: #6e7781;
+    color: var(--hl-comment);
   }
   .hlayer :global(.hljs-keyword),
   .hlayer :global(.hljs-selector-tag),
@@ -164,14 +164,14 @@
   .hlayer :global(.hljs-section),
   .hlayer :global(.hljs-name),
   .hlayer :global(.hljs-strong) {
-    color: #cf222e;
+    color: var(--hl-keyword);
   }
   .hlayer :global(.hljs-string),
   .hlayer :global(.hljs-regexp),
   .hlayer :global(.hljs-addition),
   .hlayer :global(.hljs-attribute),
   .hlayer :global(.hljs-meta .hljs-string) {
-    color: #0a3069;
+    color: var(--hl-string);
   }
   .hlayer :global(.hljs-number),
   .hlayer :global(.hljs-symbol),
@@ -182,17 +182,17 @@
   .hlayer :global(.hljs-selector-attr),
   .hlayer :global(.hljs-selector-pseudo),
   .hlayer :global(.hljs-literal) {
-    color: #0550ae;
+    color: var(--hl-constant);
   }
   .hlayer :global(.hljs-title),
   .hlayer :global(.hljs-title.class_),
   .hlayer :global(.hljs-title.function_),
   .hlayer :global(.hljs-meta) {
-    color: #8250df;
+    color: var(--hl-title);
   }
   .hlayer :global(.hljs-built_in),
   .hlayer :global(.hljs-type) {
-    color: #953800;
+    color: var(--hl-builtin);
   }
   .hlayer :global(.hljs-emphasis) {
     font-style: italic;
@@ -211,6 +211,6 @@
     white-space: pre-wrap;
     padding: 0 20px;
     text-align: center;
-    color: #e74c3c;
+    color: var(--danger);
   }
 </style>

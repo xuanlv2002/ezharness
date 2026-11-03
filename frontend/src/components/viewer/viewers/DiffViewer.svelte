@@ -67,7 +67,7 @@
     flex-direction: column;
     border: 1px solid var(--line);
     border-radius: 12px;
-    background: #fff;
+    background: var(--card);
     overflow: hidden;
   }
   .dhead {
@@ -172,24 +172,31 @@
     white-space: pre-wrap;
     word-break: break-all;
   }
+  /* 增删行文字走主题变量（浅色深字，暗色翻亮色），标记符保持饱和色 */
   .uline.del {
     background: color-mix(in srgb, #cf222e 9%, transparent);
   }
   .uline.del .mark,
   .uline.del .tx {
-    color: #8b1d24;
+    color: var(--diff-del-fg);
   }
   .uline.del .mark {
     color: #cf222e;
+  }
+  :global(html[data-theme='dark']) .uline.del .mark {
+    color: #ff7b72;
   }
   .uline.add {
     background: color-mix(in srgb, #1a7f37 9%, transparent);
   }
   .uline.add .mark,
   .uline.add .tx {
-    color: #116329;
+    color: var(--diff-add-fg);
   }
   .uline.add .mark {
     color: #1a7f37;
+  }
+  :global(html[data-theme='dark']) .uline.add .mark {
+    color: #7ee787;
   }
 </style>

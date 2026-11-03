@@ -111,7 +111,8 @@
     min-height: 0;
     border: 1px solid var(--line);
     border-radius: 12px;
-    background: #fff;
+    background: var(--card);
+    color: var(--fg); /* 预览正文显式落主题前景：不依赖继承，暗色下不发虚 */
     overflow: auto;
     padding: 12px 16px;
     font-size: var(--font-size-section);
@@ -202,7 +203,7 @@
     font-size: var(--font-size-section);
   }
   .veil.err {
-    color: #e74c3c;
+    color: var(--danger);
     padding: 0 20px;
     text-align: center;
   }

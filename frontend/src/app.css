@@ -15,6 +15,23 @@
   /* 危险文字（错误提示/危险操作名）：填充底的危险按钮仍直接用饱和红，不在此管 */
   --danger: #c0392b;
 
+  /* 内容卡面（文本编辑器 / markdown 预览 / 变更对比的底）：浅色白纸感，
+     暗色比背景提亮半档（编辑区与代码块、行号槽仍可区分） */
+  --card: #fff;
+
+  /* 代码高亮（资源文本编辑器的垫层 token，GitHub 浅色系） */
+  --hl-text: #26272d;
+  --hl-comment: #6e7781;
+  --hl-keyword: #cf222e;
+  --hl-string: #0a3069;
+  --hl-constant: #0550ae;
+  --hl-title: #8250df;
+  --hl-builtin: #953800;
+
+  /* 变更对比的增删行文字（增绿 / 删红，配 color-mix 的行底色） */
+  --diff-add-fg: #116329;
+  --diff-del-fg: #8b1d24;
+
   /* 玻璃面板：悬浮卡片/输入框的柔滑底（backdrop-filter 需与半透明底同用） */
   --glass: color-mix(in srgb, var(--bg) 72%, transparent);
   --glass-blur: blur(18px) saturate(1.4);
@@ -56,6 +73,17 @@ html[data-theme='dark'] {
   --accent: #3d8bfd;
   --accent-soft: #223245;
   --danger: #ff7b72;
+  --card: #212429;
+  /* 代码高亮（GitHub 暗色系）与增删行文字随主题翻转 */
+  --hl-text: #e6edf3;
+  --hl-comment: #8b949e;
+  --hl-keyword: #ff7b72;
+  --hl-string: #a5d6ff;
+  --hl-constant: #79c0ff;
+  --hl-title: #d2a8ff;
+  --hl-builtin: #ffa657;
+  --diff-add-fg: #7ee787;
+  --diff-del-fg: #ff7b72;
 }
 
 * {

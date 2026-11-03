@@ -495,8 +495,10 @@ export interface ToolRule {
   list: string[]
 }
 
-/* 资源页目录树：一层条目 + 所在 git 仓库工作区变更（git=null = 目录不在
-   仓库内；git.status=null = 状态获取失败（git 缺失/锁冲突），非"无变更"） */
+/* 资源页目录树：一层条目 + 目录视角下的 git 仓库工作区变更。git 数组：
+   目录在仓库内 = 该仓库一条；容器目录 = 一级子目录里的仓库各一条；
+   空 = 周边无 git 仓库可观测。status=null = 状态获取失败（git 缺失/锁
+   冲突），非"无变更" */
 export interface TreeEntry {
   name: string
   dir: boolean
@@ -508,7 +510,7 @@ export interface GitInfo {
 export interface TreeView {
   path: string
   entries: TreeEntry[]
-  git: GitInfo | null
+  git: GitInfo[]
 }
 
 /* porcelain 两字符码 → 徽标字母（U=未跟踪/A=新增/D=删除/其余按修改）。 */
