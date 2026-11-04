@@ -1,9 +1,10 @@
 <script lang="ts">
   /*
   完成时间线（日期轴）：从今天往过去铺开，左新右旧，无记录的日子也占
-  位（空天只有一根刻度）。完成的卡片按天叠成一副牌，悬停像抽扑克一样
-  上移一截（高度不变、压在左邻卡下面，露不全就点开当天看）；命中用
-  几何热区（原位置 ∪ 上移位置），滚轮横向滚动、滚动条隐藏。
+  位（空天只有一根刻度）。完成的卡片挂在日期轴下方（顶部色条 + 小夹子，
+  像晾在绳上），悬停向上提起一截（高度不变、压在左邻卡下面，露不全就
+  点开当天看）；命中用几何热区（原位置 ∪ 上移位置），滚轮横向滚动、
+  滚动条隐藏。
 
   拖拽只改「归到哪天」：拖到另一天 → 写 day（拖回真实完成日则删除），
   落进去即当天第一个；拖回便签板 → 交父级还原成待办卡。落点判定带
@@ -34,7 +35,7 @@
   const DAY_MS = 86400000
   const TC_W = 132
   const PITCH = 28
-  const LIFT = 28 // 抽出上移量（高度不变，靠位移做出扑克抽卡感）
+  const LIFT = 12 // 提起上移量（高度不变；再高小夹子会顶出时间线裁切区）
   const EMPTY_W = 26
   const GAP = 10
   const EDGE = 18
@@ -341,12 +342,12 @@
     position: relative;
     height: 100%;
   }
-  /* 日期轴：一条贯穿全宽的细线，卡片立在线上 */
+  /* 日期轴：一条贯穿全宽的细线，卡片挂在线的下方 */
   .axis {
     position: absolute;
     left: 0;
     right: 0;
-    top: 118px;
+    top: 16px;
     height: 1px;
     background: var(--line);
   }
@@ -361,46 +362,64 @@
     position: absolute;
     left: 0;
     right: 0;
-    top: 14px;
-    height: 104px;
+    top: 24px;
+    height: 82px;
     border: 1px dashed var(--accent);
     border-radius: 8px;
     background: color-mix(in srgb, var(--accent) 6%, transparent);
   }
   .mini {
     position: absolute;
-    top: 38px;
+    top: 30px;
     width: 132px;
     height: 72px;
     box-sizing: border-box;
     display: flex;
     flex-direction: column;
-    padding: 8px 9px 6px 12px;
+    padding: 6px 9px;
     border: 1px solid var(--line);
-    border-radius: 7px 7px 4px 4px;
+    border-top: 3px solid var(--tint, #b291a6);
+    border-radius: 4px 4px 7px 7px;
     background: var(--bg);
     color: var(--fg);
     box-shadow: 0 1px 2px rgb(0 0 0 / 5%);
     cursor: grab;
-    overflow: hidden;
+    /* 只裁正文；小夹子/吊线要探出卡顶，所以卡本身不裁 */
+    overflow: visible;
     touch-action: none;
     transition:
       transform 0.18s var(--ease-out),
       box-shadow 0.18s var(--ease-out);
   }
+  /* 吊线：从日期轴垂到卡顶 */
   .mini::before {
     content: '';
     position: absolute;
-    left: 0;
-    top: 0;
-    bottom: 0;
-    width: 2px;
-    background: var(--tint, #b291a6);
+    left: 50%;
+    top: -17px;
+    width: 1px;
+    height: 17px;
+    background: var(--line-strong);
+    opacity: 0.5;
   }
-  /* 抽出：只上移、不变高；不抬 z——左邻卡（层级更高）仍压在它上面，
-     露出抽出的那一截，像从一副牌里抽出一张 */
+  /* 小夹子：横跨日期轴、夹住吊线，颜色随卡片色条 */
+  .mini::after {
+    content: '';
+    position: absolute;
+    left: 50%;
+    top: -21px;
+    width: 7px;
+    height: 9px;
+    margin-left: -3.5px;
+    border-radius: 2px;
+    background: color-mix(in srgb, var(--tint, #b291a6) 72%, var(--bg));
+    box-shadow: inset 0 0 0 1px rgb(0 0 0 / 10%);
+    transform: rotate(-10deg);
+  }
+  /* 提起：只上移、不变高；不抬 z——左邻卡（层级更高）仍压在它上面，
+     露出提起的那一截，像把衣服从绳上提起一角 */
   .mini.peek {
-    transform: translateY(-28px);
+    transform: translateY(-12px);
     box-shadow: 0 12px 26px -12px rgb(0 0 0 / 38%);
   }
   /* 拖拽时原卡保留可见（只加虚线与抬升，不淡出）——拖到哪天一眼可见 */
@@ -423,18 +442,18 @@
     word-break: break-word;
     overflow: hidden;
   }
-  /* 空天：一根细刻度 */
+  /* 空天：日期轴下方一根细刻度 */
   .tick {
     position: absolute;
     left: 50%;
-    top: 110px;
+    top: 16px;
     width: 1px;
-    height: 16px;
+    height: 14px;
     background: var(--line);
   }
   .daylabel {
     position: absolute;
-    top: 124px;
+    top: 106px;
     left: 0;
     display: flex;
     align-items: center;

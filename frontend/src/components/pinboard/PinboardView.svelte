@@ -5,10 +5,13 @@
 
   · 板上：双击空白/「记一笔」新建（Enter 提交、Shift+Enter 换行、Esc
     放弃、空内容丢弃），卡片可拖动/缩放/双击编辑，✓ 划线入库。
-  · 时间线：左新右旧按天铺开，悬停抽出，点某天就地展开当天详情（在板
-    下半部展开，不覆盖时间线），拖卡片跨天改归属、拖回板上变回待办。
+  · 时间线：左新右旧按天铺开，卡片挂在轴下，点某天就地展开当天详情
+    （在板下半部展开，不覆盖时间线），拖卡片跨天改归属、拖回板上变回
+    待办。
+  · 当天详情：markdown 渲染、图片、拖动排序；双击卡片就地编辑正文，
+    拖起又放回原位时挪到当天第一个。
   */
-  import { onDestroy, onMount, tick } from 'svelte'
+  import { onDestroy, onMount, tick, untrack } from 'svelte'
   import type { PinRecord } from '../../lib/api'
   import { store } from '../../lib/store.svelte'
   import {
@@ -18,17 +21,21 @@
     addCard,
     addPendingSession,
     board,
+    bumpCard,
     byDayOrder,
     completeCard,
     dayOf,
     ensurePinboard,
+    fitCards,
+    patchRecord,
     reorderDay,
     restoreRecord,
     saveNow,
     tidyCards,
   } from '../../lib/pinboard.svelte'
+  import { renderPinMarkdown, toggleTask } from '../../lib/pinMarkdown'
   import PinCard from './PinCard.svelte'
-  import PinEditor from './PinEditor.svelte'
+  import PinRichEditor from './PinRichEditor.svelte'
   import PinSessionLinks from './PinSessionLinks.svelte'
   import PinTimeline from './PinTimeline.svelte'
 
@@ -43,16 +50,55 @@
   let nowTick = $state(Date.now()) // 卡片「已持续/超期」每 30s 重算
 
   let draft = $state<{ x: number; y: number; text: string } | null>(null)
-  let editId = $state('')
   let leaving = $state<Set<string>>(new Set())
   let dayOpen = $state('')
   let highlight = $state('')
 
-  const editing = $derived(editId ? (board.cards.find((c) => c.id === editId) ?? null) : null)
   const dayRecs = $derived.by(() => (dayOpen ? board.done.filter((r) => dayOf(r) === dayOpen).sort(byDayOrder) : []))
 
+  /* 当天详情的正文渲染缓存：按记录 id（dayRecs 变化才重算） */
+  const recHtml = $derived.by(() => {
+    const m = new Map<string, string>()
+    for (const r of dayRecs) m.set(r.id, renderPinMarkdown(r.text || (r.images?.length ? '' : '（空）')))
+    return m
+  })
+
+  /* 便签小窗点条目 → 定位到那张卡：提到最上层并描边闪一下 */
+  $effect(() => {
+    const id = store.pinFocus
+    if (!id) return
+    void ensurePinboard().then(() => {
+      if (store.pinFocus !== id) return
+      store.pinFocus = ''
+      if (!board.cards.some((c) => c.id === id)) return
+      bumpCard(id)
+      highlight = id
+      setTimeout(() => {
+        if (highlight === id) highlight = ''
+      }, 1800)
+    })
+  })
+
+  /* 编辑中的归档记录 */
+  let editingRec = $state('')
+  let recText = $state('')
+  let recErr = $state('')
+  let suppressDblUntil = 0
+  /* 收起/切天时先落定编辑中的记录（与板上卡片点外面即保存一致），
+     内容与图片都空则放弃。只有 dayOpen 变化触发，读写编辑态用 untrack。 */
+  $effect(() => {
+    dayOpen
+    untrack(() => {
+      if (!editingRec) return
+      const r = board.done.find((x) => x.id === editingRec)
+      if (r) commitRec(r)
+      editingRec = ''
+      recErr = ''
+    })
+  })
+
   /* 渲染层级按 z 排序归一（10 起、封顶 60）：便签板长期使用 bump 累加的
-     z 会无限增长，盖住页面浮层（编辑面板 250） */
+     z 会无限增长，盖住当天详情（1000）与新建草稿（2000） */
   const stackOf = $derived.by(() => {
     const sorted = [...board.cards].sort((a, b) => a.z - b.z)
     const map = new Map<string, number>()
@@ -75,7 +121,30 @@
     }
   })
 
-  onDestroy(removeRdWindow)
+  /* 窗口缩放时卡片跟着缩：板面变小后把越界的卡等比收回来。侧栏展开等
+     布局变化不走这里，避免来回切换把卡片越缩越小 */
+  let fitRaf = 0
+  function fitToBoard() {
+    cancelAnimationFrame(fitRaf)
+    fitRaf = requestAnimationFrame(() => {
+      if (!boardEl) return
+      fitCards(boardEl.clientWidth, boardEl.clientHeight)
+    })
+  }
+
+  /* 首次进入（数据加载完、板面量到尺寸）也收一次：上次窗口更大时存的
+     布局在当前窗口里同样不能露出板外 */
+  let fitted = false
+  $effect(() => {
+    if (fitted || !board.loaded || !bw || !bh) return
+    fitted = true
+    fitCards(bw, bh)
+  })
+
+  onDestroy(() => {
+    cancelAnimationFrame(fitRaf)
+    removeRdWindow()
+  })
 
   /* ── 新建 ── */
 
@@ -172,12 +241,57 @@
 
   /* ── 当天详情：横向拖动排序 ── */
 
-  let rdrag = $state<{ id: string; px: number; dx: number; active: boolean } | null>(null)
+  let rdrag = $state<{ id: string; px: number; py: number; dx: number; dy: number; active: boolean } | null>(null)
+
+  /* 双击归档卡编辑正文；拖动刚结束的 300ms 内忽略 */
+  function startRecEdit(e: MouseEvent, r: PinRecord) {
+    if (editingRec || Date.now() < suppressDblUntil) return
+    if ((e.target as HTMLElement).closest('button, a, input, .nodrag')) return
+    editingRec = r.id
+    recText = r.text
+    recErr = ''
+  }
+
+  /* commitRec 把编辑草稿写回归档记录；正文与图片都空时返回 false */
+  function commitRec(r: PinRecord): boolean {
+    const t = recText.trim()
+    if (!t && !r.images?.length) return false
+    patchRecord(r.id, { text: t })
+    return true
+  }
+
+  function saveRec(r: PinRecord) {
+    if (!commitRec(r)) {
+      recErr = '内容或图片至少留一样'
+      return
+    }
+    editingRec = ''
+    recErr = ''
+  }
+
+  function cancelRec() {
+    editingRec = ''
+    recErr = ''
+  }
+
+  /* 归档卡里的待办勾选框：按 DOM 顺序翻转原文任务行 */
+  function onRecMdClick(e: MouseEvent, r: PinRecord) {
+    const box = (e.target as HTMLElement).closest('input[type="checkbox"]') as HTMLInputElement | null
+    if (!box) return
+    e.preventDefault()
+    const host = e.currentTarget as HTMLElement
+    const idx = Array.from(host.querySelectorAll('input[type="checkbox"]')).indexOf(box)
+    if (idx < 0) return
+    const next = toggleTask(r.text, idx)
+    if (next !== null) patchRecord(r.id, { text: next })
+  }
 
   function rdStart(e: PointerEvent, id: string) {
     if (e.button !== 0) return
+    if (editingRec) return
+    if ((e.target as HTMLElement).closest('a, input, button')) return
     removeRdWindow()
-    rdrag = { id, px: e.clientX, dx: 0, active: false }
+    rdrag = { id, px: e.clientX, py: e.clientY, dx: 0, dy: 0, active: false }
     try {
       ;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
     } catch {
@@ -199,11 +313,13 @@
   function rdMove(e: PointerEvent) {
     if (!rdrag) return
     const dx = e.clientX - rdrag.px
+    const dy = e.clientY - rdrag.py
     if (!rdrag.active) {
-      if (Math.abs(dx) < 6) return
+      if (Math.hypot(dx, dy) < 6) return
       rdrag.active = true
     }
     rdrag.dx = dx
+    rdrag.dy = dy
   }
 
   function rdCancel() {
@@ -229,6 +345,7 @@
     const d = rdrag
     rdrag = null
     if (!d.active || !dayOpen) return
+    suppressDblUntil = Date.now() + 300
     /* 目标索引在「去掉被拖卡后的顺序」上算，避免索引含自己时错一位 */
     const cards = Array.from(stripEl?.querySelectorAll<HTMLElement>('[data-rec]') ?? []).filter(
       (el) => el.dataset.rec !== d.id,
@@ -239,6 +356,12 @@
     })
     const ids = dayRecs.map((r) => r.id).filter((id) => id !== d.id)
     ids.splice(target < 0 ? ids.length : target, 0, d.id)
+    /* 拖起又放回原位（顺序没变）→ 挪到当天第一个 */
+    const cur = dayRecs.map((r) => r.id)
+    if (ids.length === cur.length && ids.every((id, i) => id === cur[i])) {
+      ids.splice(ids.indexOf(d.id), 1)
+      ids.unshift(d.id)
+    }
     reorderDay(dayOpen, ids)
   }
 
@@ -276,7 +399,7 @@
       else if (draft) draft = null
       return
     }
-    if (typing || editId) return
+    if (typing) return
     if ((e.key === 'n' || e.key === 'N') && !e.ctrlKey && !e.metaKey && !e.altKey) {
       e.preventDefault()
       createAt(bw / 2 - CARD_DEF_W / 2, bh * 0.26)
@@ -284,7 +407,7 @@
   }
 </script>
 
-<svelte:window onkeydown={onKey} />
+<svelte:window onkeydown={onKey} onresize={fitToBoard} />
 
 <div class="pinpage">
   <header class="head">
@@ -314,10 +437,6 @@
           now={nowTick}
           highlighted={highlight === c.id}
           leaving={leaving.has(c.id)}
-          onedit={() => {
-            dayOpen = '' // 日期详情在编辑遮罩之上（1000），先收起
-            editId = c.id
-          }}
           oncomplete={() => complete(c.id)}
           onnewsession={() => void newSessionFor(c.id)}
           onopensession={(id) => void store.openSession(id)}
@@ -359,7 +478,7 @@
           <div class="dhead">
             <b>{dayLabel(dayOpen)}</b>
             <span>{dayRecs.length} 条完成</span>
-            <span class="dhint">拖动卡片可排序</span>
+            <span class="dhint">拖动排序 · 双击编辑</span>
             <span class="spacer"></span>
             <button class="xbtn" onclick={() => (dayOpen = '')} title="收起（Esc）">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
@@ -372,17 +491,44 @@
               <article
                 class="dcard"
                 class:dragging={rdrag?.id === r.id && rdrag.active}
+                class:editing={editingRec === r.id}
                 data-rec={r.id}
                 style:--tint={r.tint}
-                style:transform={rdrag?.id === r.id && rdrag.active ? `translateX(${rdrag.dx}px)` : undefined}
+                style:transform={rdrag?.id === r.id && rdrag.active ? `translate(${rdrag.dx}px, ${rdrag.dy}px)` : undefined}
                 onpointerdown={(e) => rdStart(e, r.id)}
+                ondblclick={(e) => startRecEdit(e, r)}
+                title={editingRec === r.id ? undefined : '双击编辑 · 拖动排序'}
               >
-                <p class="dtext">{r.text || '（空）'}</p>
-                <div class="dline">记于 {fmt(r.created)} · 完成 {fmt(r.doneAt)}</div>
-                <div class="dline">用时 {dur(r.doneAt - r.created)}</div>
-                {#if r.day}<div class="dnote">手动归到此日（完成于 {fmt(r.doneAt)}）</div>{/if}
-                {#if r.sessions?.length}
-                  <PinSessionLinks sessions={r.sessions} onopen={(id) => void store.openSession(id)} />
+                {#if editingRec === r.id}
+                  <div class="deditor">
+                    <PinRichEditor
+                      value={recText}
+                      onchange={(md) => (recText = md)}
+                      onsave={() => saveRec(r)}
+                      oncancel={cancelRec}
+                    />
+                  </div>
+                  {#if recErr}<p class="dedit-err">{recErr}</p>{/if}
+                  <div class="dedit" role="group" aria-label="编辑操作" onpointerdown={(e) => e.stopPropagation()}>
+                    <button class="dbtn cancel" onclick={cancelRec}>取消</button>
+                    <button class="dbtn save" onclick={() => saveRec(r)}>保存</button>
+                  </div>
+                {:else}
+                  <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
+                  <div class="dtext" onclick={(e) => onRecMdClick(e, r)}>{@html recHtml.get(r.id) ?? ''}</div>
+                  {#if r.images?.length}
+                    <div class="dimgrid">
+                      {#each r.images as src (src)}
+                        <img {src} alt="" loading="lazy" />
+                      {/each}
+                    </div>
+                  {/if}
+                  <div class="dline">记于 {fmt(r.created)} · 完成 {fmt(r.doneAt)}</div>
+                  <div class="dline">用时 {dur(r.doneAt - r.created)}</div>
+                  {#if r.day}<div class="dnote">手动归到此日（完成于 {fmt(r.doneAt)}）</div>{/if}
+                  {#if r.sessions?.length}
+                    <PinSessionLinks sessions={r.sessions} onopen={(id) => void store.openSession(id)} />
+                  {/if}
                 {/if}
               </article>
             {:else}
@@ -404,13 +550,6 @@
     />
   </div>
 </div>
-
-{#if editing}
-  <PinEditor
-    card={editing}
-    onclose={() => (editId = '')}
-  />
-{/if}
 
 <style>
   /* 使用页（与对话同级），不是管理页：不套全局 .page 的 624px 居中限宽 */
@@ -618,13 +757,153 @@
     z-index: 5;
     box-shadow: 0 10px 24px -12px rgb(0 0 0 / 30%);
   }
-  .dtext {
+  .dcard.editing {
+    cursor: default;
+  }
+  /* 编辑区：撑起最小高度，卡片内容再多也在卡内滚 */
+  .deditor {
+    flex: 1;
+    min-height: 140px;
+    display: flex;
+  }
+  .dedit {
+    flex: none;
+    display: flex;
+    justify-content: flex-end;
+    gap: 6px;
+  }
+  .dedit-err {
+    flex: none;
     margin: 0;
+    font-size: var(--font-size-small);
+    color: var(--danger);
+  }
+  .dbtn {
+    padding: 1px 8px;
+    border: 1px solid var(--line);
+    border-radius: 5px;
+    background: var(--bg);
+    color: var(--muted);
+    font: inherit;
+    font-size: var(--font-size-small);
+    cursor: pointer;
+  }
+  .dbtn:hover {
+    color: var(--fg);
+    border-color: var(--line-strong);
+  }
+  .dbtn.save {
+    border-color: var(--fg);
+    background: var(--fg);
+    color: var(--bg);
+    font-weight: 600;
+  }
+  .dbtn.save:hover {
+    opacity: 0.9;
+  }
+  /* 正文按 markdown 渲染（与板上便签同款排版） */
+  .dtext {
     font-size: var(--font-size-section);
     line-height: 1.65;
     font-weight: 500;
-    white-space: pre-wrap;
     word-break: break-word;
+    cursor: default;
+  }
+  .dtext :global(p) {
+    margin: 0 0 3px;
+  }
+  .dtext :global(p:last-child) {
+    margin-bottom: 0;
+  }
+  .dtext :global(h1),
+  .dtext :global(h2),
+  .dtext :global(h3),
+  .dtext :global(h4) {
+    margin: 6px 0 2px;
+    font-weight: 700;
+    line-height: 1.35;
+  }
+  .dtext :global(h1) {
+    font-size: 1.35em;
+  }
+  .dtext :global(h2) {
+    font-size: 1.2em;
+  }
+  .dtext :global(h3),
+  .dtext :global(h4) {
+    font-size: 1.08em;
+    font-weight: 600;
+  }
+  .dtext :global(ul),
+  .dtext :global(ol) {
+    margin: 1px 0 4px;
+    padding-left: 1.25em;
+  }
+  .dtext :global(li) {
+    margin: 0;
+  }
+  .dtext :global(input[type='checkbox']) {
+    width: 12px;
+    height: 12px;
+    margin: 0 5px 0 0;
+    accent-color: var(--accent);
+    vertical-align: -2px;
+    cursor: pointer;
+  }
+  .dtext :global(li:has(> input[type='checkbox'])) {
+    list-style: none;
+    margin-left: -1.25em;
+  }
+  .dtext :global(code) {
+    padding: 0 4px;
+    border-radius: 4px;
+    background: var(--bg-soft);
+    font-family: var(--font-mono);
+    font-size: 0.9em;
+  }
+  .dtext :global(pre) {
+    margin: 4px 0;
+    padding: 6px 8px;
+    border-radius: 6px;
+    background: var(--bg-soft);
+    overflow-x: auto;
+  }
+  .dtext :global(pre code) {
+    padding: 0;
+    background: none;
+  }
+  .dtext :global(blockquote) {
+    margin: 4px 0;
+    padding-left: 8px;
+    border-left: 2px solid var(--line-strong);
+    color: var(--muted);
+  }
+  .dtext :global(a) {
+    color: var(--accent);
+    text-decoration: none;
+  }
+  .dtext :global(a:hover) {
+    text-decoration: underline;
+  }
+  .dtext :global(hr) {
+    margin: 8px 0;
+    border: none;
+    border-top: 1px solid var(--line);
+  }
+  /* 归档卡图片：随卡片宽度排，超出高度在卡内滚 */
+  .dimgrid {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  .dimgrid img {
+    display: block;
+    max-width: 100%;
+    max-height: 220px;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    background: var(--bg-soft);
+    object-fit: contain;
   }
   .dline {
     font-size: var(--font-size-small);

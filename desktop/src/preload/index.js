@@ -69,6 +69,13 @@ contextBridge.exposeInMainWorld('ez', {
     jump: (payload) => ipcRenderer.send('ez:notice-jump', payload),
     onJump: (cb) => ipcRenderer.on('ez:notice-jump', (_e, payload) => cb(payload)),
   },
+  /* 便签：便签球开小窗；小窗点条目 → 主进程亮主窗并转发卡片 id
+     （空串 = 只打开便签页，不定位） */
+  pin: {
+    open: () => ipcRenderer.send('ez:pin-open'),
+    jump: (cardId) => ipcRenderer.send('ez:pin-jump', typeof cardId === 'string' ? cardId : ''),
+    onJump: (cb) => ipcRenderer.on('ez:pin-focus', (_e, cardId) => cb(cardId)),
+  },
   browser: {
     /* 标签清单（JSON 字符串）订阅与拉取 */
     onTabs: (cb) => ipcRenderer.on('ez-browser:tabs', (_e, payload) => cb(payload)),

@@ -2,14 +2,14 @@
   /*
   便签卡 / 归档卡右下角的会话链接（纯文本 + 小图标，不是按钮）：
     · showNew 时第一条是「新会话」：点击跳对话页，发出消息后才关联
-    · 只直接列最近 MAX_VISIBLE 个关联会话，其余收进「还有 N 个…」浮层——
-      卡片高度不随关联数增长
+    · 只直接列最近 MAX_VISIBLE 个关联会话，其余收进「更多会话」浮层——
+      卡片高度不随关联数增长（配合 showNew 最多三行）
   点击只做跳转；阻止 pointerdown 冒泡，避免触发卡片的拖动/排序。
   */
   import type { PinSessionRef } from '../../lib/api'
   import { store } from '../../lib/store.svelte'
 
-  const MAX_VISIBLE = 2
+  const MAX_VISIBLE = 1
   const MENU_W = 220
 
   let {
@@ -24,7 +24,7 @@
     onopen?: (id: string) => void
   } = $props()
 
-  /* 最近的两个直接显示；更早的收进浮层 */
+  /* 最近的一个直接显示；更早的收进浮层 */
   const visible = $derived(sessions.slice(-MAX_VISIBLE))
   const hiddenCount = $derived(Math.max(0, sessions.length - visible.length))
 
@@ -121,7 +121,7 @@
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
         <circle cx="5" cy="12" r="1" /><circle cx="12" cy="12" r="1" /><circle cx="19" cy="12" r="1" />
       </svg>
-      <span>还有 {hiddenCount} 个…</span>
+      <span>更多会话</span>
     </button>
   {/if}
 </div>

@@ -32,6 +32,7 @@ let corePort = 5260
    距离"的圆判定：那样圈内整片透明白区都会被吃掉，垃圾桶这类就点不到。 */
 let petWindow = null
 let noticeWindow = null
+let pinWindow = null
 const PET_SIZE = 288
 /* 头像（悬浮球）在宠物窗内的可见尺寸与居中偏移：拖拽钳制以「球」为准，
    窗口可以越过屏幕顶，但球必须留在工作区内 */
@@ -489,6 +490,43 @@ function createNoticeWindow() {
   noticeWindow = win
 }
 
+/* createPinWindow 便签小窗（便签球打开）：轮询便签板的小列表，普通有边框
+   窗口；单例，已开则聚焦。位置在宠物窗左侧，通知窗也开着时再往左让一格。 */
+function createPinWindow() {
+  if (pinWindow && !pinWindow.isDestroyed()) {
+    pinWindow.show()
+    pinWindow.focus()
+    return
+  }
+  const W = 360
+  const H = 460
+  let at = {}
+  if (petWindow && !petWindow.isDestroyed()) {
+    const p = petWindow.getBounds()
+    const area = screen.getDisplayNearestPoint({ x: p.x, y: p.y }).workArea
+    let x = Math.min(Math.max(p.x - W + 48, area.x), area.x + area.width - W)
+    if (noticeWindow && !noticeWindow.isDestroyed()) x = Math.max(area.x, x - W - 8)
+    const y = Math.min(Math.max(p.y - H + 120, area.y), area.y + area.height - H)
+    at = { x: Math.round(x), y: Math.round(y) }
+  }
+  const win = new BrowserWindow({
+    width: W,
+    height: H,
+    title: 'ezharness · 便签',
+    autoHideMenuBar: true,
+    webPreferences: {
+      preload: path.join(__dirname, '../preload/index.js'),
+    },
+    ...at,
+  })
+  win.loadURL(pageUrl('/?desktop=1&pins=1'))
+  guardWebContents(win.webContents)
+  win.on('closed', () => {
+    pinWindow = null
+  })
+  pinWindow = win
+}
+
 /* handleCloseRequest 点 X：已配置托盘则直接隐藏；否则让前端弹确认框 */
 async function handleCloseRequest() {
   const settings = await coreSettings()
@@ -630,7 +668,7 @@ function registerIpc() {
     win.loadURL(pageBase() + url)
     guardWebContents(win.webContents)
   })
-  /* 桌面宠物：点小按钮 → 显示主窗口（拖动走渲染层 app-region，无 IPC） */
+  /* 桌面宠物：点小按钮 → 显示主窗口 */
   ipcMain.on('ez:pet-open-main', () => showMain())
   /* 设置页保存成功后通知：只切显隐，不落盘（设置页已直连 core 持久化，
      双写会有竞态）。开=show（窗不在则建），关=hide（保位，不销毁） */
@@ -647,6 +685,14 @@ function registerIpc() {
   ipcMain.on('ez:notice-jump', (_e, payload) => {
     showMain()
     mainWindow?.webContents.send('ez:notice-jump', payload)
+  })
+  /* 便签：便签球开小窗；小窗点条目 → 亮主窗 + 把卡片 id 转给便签页定位 */
+  ipcMain.on('ez:pin-open', () => createPinWindow())
+  ipcMain.on('ez:pin-jump', (_e, cardId) => {
+    showMain()
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('ez:pin-focus', typeof cardId === 'string' ? cardId : '')
+    }
   })
   /* 宠物光标轮询：只把光标换算成窗口内坐标推给渲染层（穿透时渲染层收不到
      DOM 鼠标事件，只能主进程喂坐标）。悬浮/穿透由渲染层 elementFromPoint

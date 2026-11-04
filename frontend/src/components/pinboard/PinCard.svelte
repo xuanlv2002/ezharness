@@ -1,16 +1,40 @@
 <script lang="ts">
   /*
   板上的一张便签卡：拖动（3px 阈值）、右下角缩放、悬停工具条（✓ 完成 /
-  ✕ 删除就地确认）、双击打开编辑面板。内容下方固定显示记于时间、已持续
-  时长与截止时间。
+  ✕ 删除就地确认）、双击就地编辑。正文按 markdown 渲染，待办勾选框可直接
+  点，超出卡片高度时在正文区域内滚动；贴在卡面上的图片跟在正文后展示，
+  可直接拖入图片文件，或在编辑器里粘贴图片。
+
+  底栏固定显示记于、已持续与截止（按剩余时长分档着色：3/6/12/24 小时内
+  与 24 小时以上各一色，超期为危险色）。宽卡时会话列挪到右侧、与「记于」
+  首行对齐：新会话 / 最近 1 个会话 / 更多会话，最多 3 行；窄卡仍上下排。
+  底栏常显：卡片最小高度 = 底栏 + 一行正文（见 minCardHeight），正文超出
+  时在内部滚动。
+
+  编辑不弹面板：正文换成卡内块编辑器（`# ` 标题、`[] ` 待办、`- ` 列表
+  自动转格式），底部一行改截止时间 + 取消/保存。点卡片外、保存按钮或
+  Ctrl/⌘+Enter 提交，Esc 取消；空内容不提交（有图片时可只存图片）。
 
   拖动/缩放期间只改本地 transform 与宽高（不写共享状态），松手才提交
   x/y/w/h——连续 pointermove 不触发整板重排。now 由父级定时推进（30s），
   持续时间与超期状态跟着刷新。
   */
   import { onDestroy } from 'svelte'
-  import type { PinCard as PinCardT } from '../../lib/api'
-  import { MIN_H, MIN_W, PAD, bumpCard, patchCard, removeCard } from '../../lib/pinboard.svelte'
+  import { api, type PinCard as PinCardT } from '../../lib/api'
+  import {
+    MIN_W,
+    PAD,
+    WIDE_W,
+    bumpCard,
+    minCardHeight,
+    patchCard,
+    removeCard,
+    sessionRows,
+  } from '../../lib/pinboard.svelte'
+  import { DUE_COLOR, dueLevel } from '../../lib/pinDue'
+  import { renderPinMarkdown, toggleTask } from '../../lib/pinMarkdown'
+  import { compressPinImage, hasImageFile, imageFiles } from '../../lib/pinImage'
+  import PinRichEditor from './PinRichEditor.svelte'
   import PinSessionLinks from './PinSessionLinks.svelte'
 
   let {
@@ -21,7 +45,6 @@
     now = Date.now(),
     highlighted = false,
     leaving = false,
-    onedit,
     oncomplete,
     onnewsession,
     onopensession,
@@ -33,7 +56,6 @@
     now?: number
     highlighted?: boolean
     leaving?: boolean
-    onedit?: () => void
     oncomplete?: () => void
     onnewsession?: () => void
     onopensession?: (id: string) => void
@@ -51,7 +73,149 @@
     return `${Math.floor(h / 24)} 天${h % 24 ? ` ${h % 24} 小时` : ''}`
   }
 
+  /* 截止档位与说明：颜色按档位取，悬停说明还剩/超期多久 */
+  const dueLv = $derived(dueLevel(card.due, now))
+  const dueTip = $derived(
+    !card.due
+      ? '未设置截止时间'
+      : card.due <= now
+        ? `已超期 ${dur(now - card.due)}`
+        : `还剩 ${dur(card.due - now)}`,
+  )
+
   const clamp = (v: number, lo: number, hi: number): number => Math.max(lo, Math.min(hi, v))
+
+  const pad2 = (n: number): string => String(n).padStart(2, '0')
+
+  /* datetime-local 的值与卡片 due 时间戳互转（都按本地时区，精确到分钟） */
+  function dueInput(ts: number): string {
+    const d = new Date(ts)
+    return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}T${pad2(d.getHours())}:${pad2(d.getMinutes())}`
+  }
+  function dueValue(s: string): number | undefined {
+    const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/.exec(s)
+    if (!m) return undefined
+    const ts = new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5]).getTime()
+    return Number.isFinite(ts) ? ts : undefined
+  }
+
+  /* 双击就地编辑：打开时快照正文、截止时间与图片，提交才写回卡片。 */
+  function startEdit() {
+    if (editing) return
+    editText = card.text
+    editDue = card.due ? dueInput(card.due) : ''
+    editImages = [...(card.images ?? [])]
+    editErr = ''
+    editing = true
+    bumpCard(card.id) // 编辑中的卡提到最上层，避免被相邻卡盖住
+  }
+
+  function saveEdit() {
+    if (uploading) {
+      editErr = '图片上传中…'
+      return
+    }
+    const t = editText.trim()
+    if (!t && !editImages.length) {
+      editErr = '内容或图片至少留一样'
+      return
+    }
+    patchCard(card.id, { text: t, due: dueValue(editDue), images: editImages.length ? editImages : undefined })
+    editing = false
+    editErr = ''
+  }
+
+  function cancelEdit() {
+    editing = false
+    editErr = ''
+  }
+
+  function onEditKey(e: KeyboardEvent) {
+    if (e.key === 'Escape') {
+      e.preventDefault()
+      e.stopPropagation()
+      cancelEdit()
+    } else if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+      e.preventDefault()
+      saveEdit()
+    }
+  }
+
+  /* 渲染态点击待办勾选框：按 DOM 顺序找到对应的原文任务行并翻转。
+     marked 的 checkbox 默认 disabled，mdHtml 里已去掉该属性 */
+  function onMdClick(e: MouseEvent) {
+    const box = (e.target as HTMLElement).closest('input[type="checkbox"]') as HTMLInputElement | null
+    if (!box || !mdEl) return
+    e.preventDefault()
+    const idx = Array.from(mdEl.querySelectorAll('input[type="checkbox"]')).indexOf(box)
+    if (idx < 0) return
+    const next = toggleTask(card.text, idx)
+    if (next !== null) patchCard(card.id, { text: next })
+  }
+
+  /* ── 图片：编辑器内粘贴或把图片文件拖到卡面 ── */
+  let editImages = $state<string[]>([])
+  let uploading = $state(0)
+  let dropping = $state(false)
+  let dropErr = $state('')
+  let dropErrTimer: ReturnType<typeof setTimeout> | undefined
+
+  async function uploadImages(files: File[]): Promise<string[]> {
+    uploading += files.length
+    try {
+      return await Promise.all(
+        files.map(async (f) => (await api.uploadPinImage(await compressPinImage(f))).url),
+      )
+    } finally {
+      uploading -= files.length
+    }
+  }
+
+  async function addEditImages(files: File[]) {
+    editErr = ''
+    try {
+      const urls = await uploadImages(files)
+      editImages = [...editImages, ...urls]
+    } catch (e) {
+      editErr = `图片上传失败：${(e as Error).message}`
+    }
+  }
+
+  /* 非编辑态拖入失败的提示：卡面浮一条，4s 后自动消失 */
+  function showDropErr(msg: string) {
+    dropErr = msg
+    clearTimeout(dropErrTimer)
+    dropErrTimer = setTimeout(() => (dropErr = ''), 4000)
+  }
+
+  function onDragOver(e: DragEvent) {
+    if (!hasImageFile(e.dataTransfer?.items)) return
+    e.preventDefault()
+    dropping = true
+  }
+
+  function onDragLeave(e: DragEvent) {
+    const to = e.relatedTarget
+    if (!(to instanceof Node) || !el?.contains(to)) dropping = false
+  }
+
+  async function onDrop(e: DragEvent) {
+    const files = imageFiles(e.dataTransfer?.items)
+    dropping = false
+    if (!files.length) return
+    e.preventDefault()
+    e.stopPropagation()
+    if (editing) {
+      await addEditImages(files)
+      return
+    }
+    try {
+      const urls = await uploadImages(files)
+      patchCard(card.id, { images: [...(card.images ?? []), ...urls] })
+    } catch (err) {
+      showDropErr(`图片上传失败：${(err as Error).message}`)
+    }
+  }
 
   let el = $state<HTMLElement>()
   let drag = $state<{ px: number; py: number; x: number; y: number } | null>(null)
@@ -66,14 +230,55 @@
 
   let confirmDel = $state(false)
 
+  /* 就地编辑草稿：打开时快照，提交才写回卡片 */
+  let editing = $state(false)
+  let editText = $state('')
+  let editDue = $state('')
+  let editErr = $state('')
+  let mdEl = $state<HTMLElement>()
+
   const showW = $derived(resizing ? liveW : card.w)
   const showH = $derived(resizing ? liveH : card.h)
+
+  /* 底栏（时间 + 会话）固定常显：卡片高度不低于底栏 + 一行正文 */
+  const minH = $derived(minCardHeight(card.w, sessionRows(card.sessions?.length ?? 0)))
+  /* 旧数据或关联会话变多后自动补足，避免底栏被裁 */
+  $effect(() => {
+    if (card.h < minH) patchCard(card.id, { h: minH })
+  })
+
+  /* 卡片正文按 markdown 渲染；待办勾选框去掉 disabled，点击直接改原文。
+     只有图片没有正文时不显示「空便签」占位 */
+  const mdHtml = $derived(renderPinMarkdown(card.text || (card.images?.length ? '' : '（空便签）')))
+
+  /* 编辑中点击卡片外即提交；正文与图片都空则放弃 */
+  $effect(() => {
+    if (!editing) return
+    const down = (e: PointerEvent) => {
+      if (el?.contains(e.target as Node)) return
+      if (uploading) return // 上传中不落定，等图片 URL 回来再提交
+      if (editText.trim() || editImages.length) saveEdit()
+      else cancelEdit()
+    }
+    document.addEventListener('pointerdown', down, true)
+    return () => document.removeEventListener('pointerdown', down, true)
+  })
+
+  /* 指针落在内容区的滚动条上：不启动卡片拖动 / 双击编辑，让滚动条自己
+     处理拖拽（内容溢出时正文右侧出现 6px 滚动条） */
+  function onScrollbar(e: MouseEvent): boolean {
+    const t = e.target as HTMLElement
+    if (t.scrollHeight > t.clientHeight && e.offsetX >= t.clientWidth) return true
+    return t.scrollWidth > t.clientWidth && e.offsetY >= t.clientHeight
+  }
 
   /* 拖拽/缩放的收尾监听挂在 window 上：松手、取消、窗口失焦都能收尾，
      不会出现「松手没检测到、卡一直挂在拖动状态」 */
   function onDown(e: PointerEvent) {
     if (e.button !== 0) return
-    if ((e.target as HTMLElement).closest('.nodrag')) return
+    if (editing) return
+    if ((e.target as HTMLElement).closest('.nodrag, a, input, button')) return
+    if (onScrollbar(e)) return
     drag = { px: e.clientX, py: e.clientY, x: card.x, y: card.y }
     moved = false
     try {
@@ -126,9 +331,10 @@
   }
 
   function dbl(e: MouseEvent) {
-    if ((e.target as HTMLElement).closest('.nodrag')) return
-    if (moved) return
-    onedit?.()
+    if (editing) return
+    if ((e.target as HTMLElement).closest('.nodrag, a, input, button')) return
+    if (moved || onScrollbar(e)) return
+    startEdit()
   }
 
   /* 缩放：右下角 grip，最小尺寸 MIN_W/MIN_H，不越出板右/下缘 */
@@ -159,7 +365,7 @@
   function rMove(e: PointerEvent) {
     if (!rs) return
     liveW = clamp(rs.w + e.clientX - rs.px, MIN_W, Math.max(MIN_W, width - card.x - PAD))
-    liveH = clamp(rs.h + e.clientY - rs.py, MIN_H, Math.max(MIN_H, height - card.y - PAD))
+    liveH = clamp(rs.h + e.clientY - rs.py, minH, Math.max(minH, height - card.y - PAD))
   }
 
   function rUp() {
@@ -181,6 +387,7 @@
   onDestroy(() => {
     removeDragWindow()
     removeResizeWindow()
+    clearTimeout(dropErrTimer)
   })
 
   function removeNow() {
@@ -194,9 +401,11 @@
   class="pcard"
   class:dragging={moved}
   class:resizing
+  class:editing
   class:leaving
   class:hl={highlighted}
-  class:short={card.h < 56}
+  class:wide={card.w >= WIDE_W}
+  class:dropping
   style:left="{card.x}px"
   style:top="{card.y}px"
   style:width="{showW}px"
@@ -206,34 +415,91 @@
   style:transform={moved ? `translate(${dx}px, ${dy}px)` : undefined}
   onpointerdown={onDown}
   ondblclick={dbl}
+  ondragover={onDragOver}
+  ondragleave={onDragLeave}
+  ondrop={onDrop}
   role="group"
   aria-label="便签"
 >
-  <div class="bar">
-    <button class="tool nodrag" onclick={(e) => { e.stopPropagation(); oncomplete?.() }} title="划线完成，归档到时间线">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
-        <path d="M5 12.5l4.5 4.5L19 7" />
-      </svg>
-    </button>
-    <button class="tool nodrag" onclick={(e) => { e.stopPropagation(); confirmDel = true }} title="删除这张便签">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round">
-        <path d="M6 6l12 12M18 6L6 18" />
-      </svg>
-    </button>
-  </div>
+  {#if !editing}
+    <div class="bar">
+      <button class="tool nodrag" onclick={(e) => { e.stopPropagation(); oncomplete?.() }} title="划线完成，归档到时间线">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M5 12.5l4.5 4.5L19 7" />
+        </svg>
+      </button>
+      <button class="tool nodrag" onclick={(e) => { e.stopPropagation(); confirmDel = true }} title="删除这张便签">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round">
+          <path d="M6 6l12 12M18 6L6 18" />
+        </svg>
+      </button>
+    </div>
+  {/if}
 
   <div class="body">
-    <p class="text">{card.text || '（空便签）'}</p>
-    <!-- 固定信息行：记于 + 已持续 / 截止（未设置也显式占位） -->
-    <div class="times">
-      <span class="tline">记于 {fmtShort(card.created)} · 已持续 {dur(now - card.created)}</span>
-      <span class="tline" class:over={!!card.due && card.due < now}>截止 {card.due ? fmtShort(card.due) : '未设置'}</span>
-    </div>
-    <!-- 右下角：新会话 → 已真实发起的关联会话（待定会话不显示） -->
-    <PinSessionLinks sessions={card.sessions ?? []} showNew onnew={onnewsession} onopen={onopensession} />
+    {#if editing}
+      <PinRichEditor
+        value={editText}
+        onchange={(md) => (editText = md)}
+        onsave={saveEdit}
+        oncancel={cancelEdit}
+        onimage={(files) => void addEditImages(files)}
+      />
+      {#if editImages.length || uploading}
+        <div class="edit-imgs nodrag">
+          {#each editImages as src, i (src)}
+            <span class="eimg">
+              <img {src} alt="" />
+              <button onclick={() => (editImages = editImages.filter((_, j) => j !== i))} title="移除图片">✕</button>
+            </span>
+          {/each}
+          {#if uploading}<span class="eimg busy">上传中…</span>{/if}
+        </div>
+      {/if}
+      {#if editErr}<p class="edit-err">{editErr}</p>{/if}
+      <div class="ebar nodrag">
+        <label class="duefield">
+          <span>截止</span>
+          <input type="datetime-local" bind:value={editDue} onkeydown={onEditKey} title="截止时间（可留空）" />
+        </label>
+        <button class="xdue" disabled={!editDue} onclick={() => (editDue = '')} title="清除截止时间">✕</button>
+        <button class="ebtn cancel" onclick={cancelEdit} title="放弃修改（Esc）">取消</button>
+        <button class="ebtn save" disabled={uploading > 0} onclick={saveEdit} title="保存（Ctrl/⌘+Enter）">保存</button>
+      </div>
+    {:else}
+      <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
+      <div class="mdbody" bind:this={mdEl} onclick={onMdClick}>
+        {@html mdHtml}
+        {#if card.images?.length}
+          <div class="imgs">
+            {#each card.images as src (src)}
+              <img {src} alt="" loading="lazy" />
+            {/each}
+          </div>
+        {/if}
+      </div>
+      <!-- 底栏：左列记于/已持续/截止，右列会话（新会话、最近 1 个、更多） -->
+      <div class="foot">
+        <div class="times">
+          <span class="tline">记于 {fmtShort(card.created)} · 已持续 {dur(now - card.created)}</span>
+          <span class="tline" class:over={dueLv === 'over'} style:color={dueLv ? DUE_COLOR[dueLv] : undefined} title={dueTip}>
+            截止 {card.due ? fmtShort(card.due) : '未设置'}
+          </span>
+        </div>
+        <!-- 新会话 → 已真实发起的关联会话（待定会话不显示） -->
+        <PinSessionLinks sessions={card.sessions ?? []} showNew onnew={onnewsession} onopen={onopensession} />
+      </div>
+    {/if}
   </div>
 
   <span class="grip nodrag" onpointerdown={rDown} role="presentation"></span>
+
+  {#if dropping}
+    <div class="drop-hint">松手贴图</div>
+  {/if}
+  {#if dropErr}
+    <div class="drop-err">{dropErr}</div>
+  {/if}
 
   {#if confirmDel}
     <!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -263,9 +529,11 @@
       0 10px 22px -16px rgb(24 20 16 / 55%);
     cursor: grab;
     touch-action: none;
-    /* 只过渡阴影：transform 参与过渡会在松手（left/top 提交 + 位移归零）
-       时播放一段位移，看起来抖一下 */
-    transition: box-shadow var(--dur-fast) var(--ease-out);
+    /* 只过渡阴影与描边：transform 参与过渡会在松手（left/top 提交 + 位移
+       归零）时播放一段位移，看起来抖一下 */
+    transition:
+      box-shadow var(--dur-fast) var(--ease-out),
+      border-color var(--dur-fast) var(--ease-out);
   }
   /* 便签色：左侧 2px 竖条常驻 */
   .pcard::before {
@@ -283,6 +551,14 @@
       0 1px 2px rgb(24 20 16 / 5%),
       0 14px 28px -16px rgb(24 20 16 / 60%);
   }
+  /* 编辑中：描边与柔光标记当前卡，提示不是在拖动 */
+  .pcard.editing {
+    border-color: color-mix(in srgb, var(--accent) 45%, var(--line));
+    box-shadow:
+      0 0 0 3px color-mix(in srgb, var(--accent) 10%, transparent),
+      0 14px 28px -16px rgb(24 20 16 / 60%);
+    cursor: default;
+  }
   .pcard.dragging,
   .pcard.resizing {
     cursor: grabbing;
@@ -293,6 +569,13 @@
   .pcard.hl {
     box-shadow:
       0 0 0 2px var(--accent),
+      0 14px 28px -16px rgb(24 20 16 / 60%);
+  }
+  /* 图片文件拖到卡面：整卡描边提示松手即贴 */
+  .pcard.dropping {
+    border-color: var(--accent);
+    box-shadow:
+      0 0 0 3px color-mix(in srgb, var(--accent) 12%, transparent),
       0 14px 28px -16px rgb(24 20 16 / 60%);
   }
   /* 完成离场：淡出上移（240ms 后再真正移出数据） */
@@ -346,16 +629,300 @@
     padding: 11px 12px 8px 15px;
     overflow: hidden;
   }
-  .text {
+  /* 渲染态正文：markdown 排版，可滚动；任务勾选框直接可点 */
+  .mdbody {
     flex: 1;
-    min-height: 0;
-    margin: 0;
+    /* 底栏固定常显，正文至少留一行、再多在内部滚动 */
+    min-height: 1.6em;
     font-size: var(--font-size-section);
     line-height: 1.6;
     font-weight: 500;
-    white-space: pre-wrap;
-    overflow: hidden;
+    overflow-x: hidden;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    scrollbar-width: thin;
+    scrollbar-color: color-mix(in srgb, var(--fg) 18%, transparent) transparent;
     word-break: break-word;
+    cursor: default;
+  }
+  /* 底栏：窄卡时间在上、会话在下；宽卡改成左右两列，首行对齐。
+     底栏固定占位（flex:none），正文在剩余空间里滚动 */
+  .foot {
+    flex: none;
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .pcard.wide .foot {
+    flex-direction: row;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 8px;
+  }
+  .foot :global(.links) {
+    flex: none;
+    align-self: flex-end;
+    max-width: 100%;
+    margin-top: 0;
+    padding-top: 5px;
+  }
+  .pcard.wide .foot :global(.links) {
+    max-width: 56%;
+    padding-top: 6px;
+  }
+  /* 卡面图片：跟在正文后，随正文一起滚 */
+  .imgs {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    margin-top: 5px;
+  }
+  .imgs img {
+    display: block;
+    max-width: 100%;
+    max-height: 160px;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    background: var(--bg-soft);
+    object-fit: contain;
+  }
+  .mdbody :global(p) {
+    margin: 0 0 3px;
+  }
+  .mdbody :global(p:last-child) {
+    margin-bottom: 0;
+  }
+  .mdbody :global(h1),
+  .mdbody :global(h2),
+  .mdbody :global(h3),
+  .mdbody :global(h4) {
+    margin: 6px 0 2px;
+    font-weight: 700;
+    line-height: 1.35;
+  }
+  .mdbody :global(h1) {
+    font-size: 1.35em;
+  }
+  .mdbody :global(h2) {
+    font-size: 1.2em;
+  }
+  .mdbody :global(h3),
+  .mdbody :global(h4) {
+    font-size: 1.08em;
+    font-weight: 600;
+  }
+  .mdbody :global(ul),
+  .mdbody :global(ol) {
+    margin: 1px 0 4px;
+    padding-left: 1.25em;
+  }
+  .mdbody :global(li) {
+    margin: 0;
+  }
+  .mdbody :global(input[type='checkbox']) {
+    width: 12px;
+    height: 12px;
+    margin: 0 5px 0 0;
+    accent-color: var(--accent);
+    vertical-align: -2px;
+    cursor: pointer;
+  }
+  /* 任务项去掉圆点，勾选框顶格 */
+  .mdbody :global(li:has(> input[type='checkbox'])) {
+    list-style: none;
+    margin-left: -1.25em;
+  }
+  .mdbody :global(code) {
+    padding: 0 4px;
+    border-radius: 4px;
+    background: var(--bg-soft);
+    font-family: var(--font-mono);
+    font-size: 0.9em;
+  }
+  .mdbody :global(pre) {
+    margin: 4px 0;
+    padding: 6px 8px;
+    border-radius: 6px;
+    background: var(--bg-soft);
+    overflow-x: auto;
+  }
+  .mdbody :global(pre code) {
+    padding: 0;
+    background: none;
+  }
+  .mdbody :global(blockquote) {
+    margin: 4px 0;
+    padding-left: 8px;
+    border-left: 2px solid var(--line-strong);
+    color: var(--muted);
+  }
+  .mdbody :global(a) {
+    color: var(--accent);
+    text-decoration: none;
+  }
+  .mdbody :global(a:hover) {
+    text-decoration: underline;
+  }
+  .mdbody :global(hr) {
+    margin: 8px 0;
+    border: none;
+    border-top: 1px solid var(--line);
+  }
+  .edit-err {
+    flex: none;
+    margin: 2px 0 0;
+    font-size: var(--font-size-small);
+    color: var(--danger);
+  }
+  .ebar {
+    flex: none;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 4px;
+    padding-top: 5px;
+    animation: ereveal var(--dur-fast) var(--ease-out) both;
+  }
+  @keyframes ereveal {
+    from {
+      opacity: 0;
+      transform: translateY(2px);
+    }
+  }
+  /* 编辑中的图片草稿：横向缩略图条，右上角小叉移除 */
+  .edit-imgs {
+    flex: none;
+    display: flex;
+    gap: 5px;
+    padding-top: 5px;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+  .edit-imgs::-webkit-scrollbar {
+    display: none;
+  }
+  .eimg {
+    position: relative;
+    flex: none;
+    display: grid;
+    place-items: center;
+    width: 54px;
+    height: 42px;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    background: var(--bg-soft);
+    color: var(--faint);
+    font-size: 9px;
+    overflow: hidden;
+  }
+  .eimg img {
+    display: block;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
+  .eimg button {
+    position: absolute;
+    top: 1px;
+    right: 1px;
+    display: grid;
+    place-items: center;
+    width: 14px;
+    height: 14px;
+    padding: 0;
+    border: none;
+    border-radius: 50%;
+    background: color-mix(in srgb, var(--fg) 86%, transparent);
+    color: var(--bg);
+    font: inherit;
+    font-size: 8px;
+    line-height: 1;
+    cursor: pointer;
+  }
+  .eimg.busy {
+    border-style: dashed;
+  }
+  .duefield {
+    flex: 1 1 110px;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    min-width: 0;
+    font-size: var(--font-size-small);
+    color: var(--muted);
+  }
+  .duefield span {
+    flex: none;
+  }
+  .duefield input {
+    min-width: 0;
+    width: 100%;
+    padding: 1px 4px;
+    border: 1px solid var(--line);
+    border-radius: 5px;
+    background: var(--bg);
+    color: var(--fg);
+    font-family: inherit;
+    font-size: 10px;
+    color-scheme: inherit;
+    outline: none;
+    transition: border-color var(--dur-fast) var(--ease-out);
+  }
+  .duefield input:focus {
+    border-color: var(--accent);
+  }
+  .xdue {
+    flex: none;
+    width: 16px;
+    height: 16px;
+    padding: 0;
+    border: none;
+    border-radius: 4px;
+    background: transparent;
+    color: var(--faint);
+    font: inherit;
+    font-size: 10px;
+    line-height: 1;
+    cursor: pointer;
+  }
+  .xdue:hover:not(:disabled) {
+    background: var(--bg-soft);
+    color: var(--fg);
+  }
+  .xdue:disabled {
+    opacity: 0;
+    pointer-events: none;
+  }
+  .ebtn {
+    flex: none;
+    padding: 1px 7px;
+    border: 1px solid var(--line);
+    border-radius: 5px;
+    background: var(--bg);
+    color: var(--muted);
+    font: inherit;
+    font-size: 10px;
+    cursor: pointer;
+  }
+  .ebtn:hover {
+    color: var(--fg);
+    border-color: var(--line-strong);
+  }
+  .ebtn.cancel {
+    margin-left: auto;
+  }
+  .ebtn.save {
+    border-color: var(--fg);
+    background: var(--fg);
+    color: var(--bg);
+    font-weight: 600;
+  }
+  .ebtn.save:hover {
+    opacity: 0.9;
+  }
+  .ebtn.save:disabled {
+    opacity: 0.5;
+    cursor: default;
   }
   /* 固定时间信息：记于+已持续 / 截止（两行，等宽数字） */
   .times {
@@ -368,25 +935,46 @@
     color: color-mix(in srgb, var(--fg) 52%, transparent);
     font-variant-numeric: tabular-nums;
   }
+  .pcard.wide .times {
+    flex: 1;
+    min-width: 0;
+  }
   .tline {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
   .tline.over {
+    font-weight: 600;
+  }
+  /* 拖入图片的落点提示 / 上传失败提示（都不参与布局） */
+  .drop-hint {
+    position: absolute;
+    inset: 4px;
+    z-index: 4;
+    display: grid;
+    place-items: center;
+    border: 2px dashed var(--accent);
+    border-radius: 6px;
+    background: color-mix(in srgb, var(--accent) 10%, transparent);
+    color: var(--accent);
+    font-size: var(--font-size-section);
+    font-weight: 600;
+    pointer-events: none;
+  }
+  .drop-err {
+    position: absolute;
+    left: 8px;
+    right: 8px;
+    bottom: 8px;
+    z-index: 5;
+    padding: 3px 8px;
+    border-radius: 6px;
+    background: color-mix(in srgb, var(--danger) 12%, var(--bg));
     color: var(--danger);
-  }
-  /* 矮卡紧凑排版：缩小字号与内边距，底部时间信息永远保留 */
-  .pcard.short .body {
-    padding: 7px 9px 5px 12px;
-  }
-  .pcard.short .text {
-    font-size: var(--font-size-ui);
-    line-height: 1.45;
-  }
-  .pcard.short .times {
-    padding-top: 2px;
-    font-size: 9px;
+    font-size: var(--font-size-small);
+    line-height: 1.4;
+    pointer-events: none;
   }
   /* 右下角缩放手柄 */
   .grip {

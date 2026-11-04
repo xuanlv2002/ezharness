@@ -226,9 +226,12 @@ func NewRouter(c Controllers, dist fs.FS, tokens *TokenStore) *gin.Engine {
 		api.GET("/workspace/tree", c.Workspace.Tree)         // 目录树一层 + git 工作区变更（资源页目录树）
 		api.GET("/workspace/git-blob", c.Workspace.GitBlob)  // 文件 HEAD 原文（变更对比左侧）
 
-		/* 便签板：整块板 JSON 原样读写（布局/交互在前端） */
+		/* 便签板：整块板 JSON 原样读写（布局/交互在前端）；图片单独落盘，
+		   板 JSON 只存 URL（<img> 走 cookie 鉴权） */
 		api.GET("/pinboard", c.Pinboard.Get)
 		api.POST("/pinboard", c.Pinboard.Save)
+		api.POST("/pinboard/images", c.Pinboard.SaveImage)
+		api.GET("/pinboard/images/:name", c.Pinboard.Image)
 
 		/* 魔法看板·共享终端：WS 多路复用 + REST 管理 */
 		api.GET("/terminal/ws", c.Terminal.Ws)

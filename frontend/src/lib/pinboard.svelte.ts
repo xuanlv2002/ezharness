@@ -22,9 +22,30 @@ export const MIN_W = 132
 export const MIN_H = 54
 export const PAD = 12
 
+/* 卡面宽到多少时，会话列与时间并排（PinCard 的 .wide 同值） */
+export const WIDE_W = 320
+
+/* sessionRows 底栏会话行数：新会话 + 最近 1 个 + 更多会话 */
+export function sessionRows(n: number): number {
+  return 1 + (n > 0 ? 1 : 0) + (n > 1 ? 1 : 0)
+}
+
+/*
+minCardHeight 卡片最小高度：底栏（两行时间 + 会话）与一行正文固定常显，
+多出来的正文在内部滚动。行高与边距和 PinCard 的 CSS 对齐（11px/1.5、
+会话行距 2、正文上下 padding 19、一行正文约 21、边框 2）。宽卡
+（≥WIDE_W）会话列与时间并排，窄卡上下叠。
+*/
+export function minCardHeight(w: number, rows: number): number {
+  const times = 6 + 2 * 16.5 // padding-top + 两行时间
+  const r = Math.max(1, Math.min(3, rows))
+  const links = 5 + r * 16.5 + (r - 1) * 2
+  const foot = w >= WIDE_W ? Math.max(times, links + 1) : times + links
+  return Math.ceil(foot) + 19 + 21 + 2
+}
+
 const GAP_X = 12
 const GAP_Y = 12
-const TIDY_MIN_H = 30
 
 export const board = $state<{
   v: number
@@ -48,6 +69,16 @@ let loadP: Promise<void> | null = null
 let saveTimer: ReturnType<typeof setTimeout> | undefined
 let saveChain: Promise<void> = Promise.resolve() // 保存串行化：慢请求不会把旧快照盖在新快照上
 
+/* applyPinboard 用服务端数据覆盖共享态。 */
+function applyPinboard(d: PinboardData): void {
+  board.v = d.v || 1
+  board.z = d.z || 10
+  board.cards = Array.isArray(d.cards) ? d.cards.map(normCard) : []
+  board.done = Array.isArray(d.done) ? d.done.map(normRecord) : []
+  board.loaded = true
+  board.err = ''
+}
+
 /* ensurePinboard 首次使用时拉整块板（PinboardView 与状态卡共用）。 */
 export async function ensurePinboard(): Promise<void> {
   if (board.loaded) return
@@ -55,14 +86,7 @@ export async function ensurePinboard(): Promise<void> {
   board.loading = true
   loadP = api
     .pinboard()
-    .then((d) => {
-      board.v = d.v || 1
-      board.z = d.z || 10
-      board.cards = Array.isArray(d.cards) ? d.cards.map(normCard) : []
-      board.done = Array.isArray(d.done) ? d.done.map(normRecord) : []
-      board.loaded = true
-      board.err = ''
-    })
+    .then(applyPinboard)
     .catch((e) => {
       board.err = `便签数据加载失败：${(e as Error).message}`
     })
@@ -71,6 +95,15 @@ export async function ensurePinboard(): Promise<void> {
       loadP = null
     })
   return loadP
+}
+
+/* reloadPinboard 强制重拉（便签小窗轮询用）；失败保留旧数据只记错误。 */
+export async function reloadPinboard(): Promise<void> {
+  try {
+    applyPinboard(await api.pinboard())
+  } catch (e) {
+    board.err = `便签数据加载失败：${(e as Error).message}`
+  }
 }
 
 const num = (v: unknown): number => (typeof v === 'number' && Number.isFinite(v) ? v : 0)
@@ -101,15 +134,26 @@ function normPending(v: unknown): string[] | undefined {
   return out.length ? out : undefined
 }
 
+/* 图片只认本机便签图片 URL（板文件里不落任意外链） */
+function normImages(v: unknown): string[] | undefined {
+  if (!Array.isArray(v)) return undefined
+  const out = (v as unknown[]).filter(
+    (u): u is string => typeof u === 'string' && /^\/api\/pinboard\/images\/img-[0-9a-f]{32}\.(png|jpg|webp|gif)$/.test(u),
+  )
+  return out.length ? out : undefined
+}
+
 /* 老数据补齐缺失字段（尺寸/颜色/时刻），保证渲染与拖拽都有确定值。
    逐字段重建而不是展开原对象——已移除的旧字段会在下一次落盘时自然消失 */
 function normCard(c: PinCard): PinCard {
+  const sessions = normSessions(c.sessions)
+  const w = Math.max(MIN_W, num(c.w) || CARD_DEF_W)
   const card: PinCard = {
     id: typeof c.id === 'string' && c.id ? c.id : pinId(),
     x: num(c.x),
     y: num(c.y),
-    w: Math.max(MIN_W, num(c.w) || CARD_DEF_W),
-    h: Math.max(MIN_H, num(c.h) || CARD_DEF_H),
+    w,
+    h: Math.max(MIN_H, minCardHeight(w, sessionRows(sessions?.length ?? 0)), num(c.h) || CARD_DEF_H),
     text: typeof c.text === 'string' ? c.text : '',
     created: num(c.created) || Date.now(),
     z: num(c.z) || 10,
@@ -117,7 +161,8 @@ function normCard(c: PinCard): PinCard {
   }
   const due = num(c.due)
   if (due > 0) card.due = due
-  const sessions = normSessions(c.sessions)
+  const images = normImages(c.images)
+  if (images) card.images = images
   if (sessions) card.sessions = sessions
   const pending = normPending(c.pendingSessionIds)
   if (pending) card.pendingSessionIds = pending
@@ -134,6 +179,8 @@ function normRecord(r: PinRecord): PinRecord {
   }
   if (typeof r.day === 'string' && r.day) rec.day = r.day
   if (typeof r.ord === 'number' && Number.isFinite(r.ord)) rec.ord = r.ord
+  const images = normImages(r.images)
+  if (images) rec.images = images
   const sessions = normSessions(r.sessions)
   if (sessions) rec.sessions = sessions
   const pending = normPending(r.pendingSessionIds)
@@ -220,6 +267,12 @@ export function removeCard(id: string): void {
   scheduleSave()
 }
 
+/* patchRecord 改已归档记录的字段（当天详情里双击编辑/勾待办）。 */
+export function patchRecord(id: string, patch: Partial<PinRecord>): void {
+  board.done = board.done.map((r) => (r.id === id ? { ...r, ...patch } : r))
+  scheduleSave()
+}
+
 /*
 addPendingSession 卡片「新会话」开出的会话先记为待定：卡片上不显示、
 也不算关联；在对话里真正发出第一条消息后由 linkPendingNote 落实。
@@ -269,7 +322,8 @@ export function completeCard(id: string): PinRecord | null {
     doneAt: Date.now(),
     tint: c.tint,
   }
-  /* 关联随卡片一起归档：当天详情里仍能看到并跳转 */
+  /* 图片与关联随卡片一起归档：当天详情里仍能看到并跳转 */
+  if (c.images?.length) rec.images = [...c.images]
   if (c.sessions?.length) rec.sessions = c.sessions.map((s) => ({ ...s }))
   if (c.pendingSessionIds?.length) rec.pendingSessionIds = [...c.pendingSessionIds]
   board.cards = board.cards.filter((x) => x.id !== id)
@@ -295,7 +349,8 @@ export function restoreRecord(id: string, x: number, y: number): PinCard | null 
     z: board.z,
     tint: r.tint,
   }
-  /* 拖回板上时关联一起还原 */
+  /* 拖回板上时图片与关联一起还原 */
+  if (r.images?.length) card.images = [...r.images]
   if (r.sessions?.length) card.sessions = r.sessions.map((s) => ({ ...s }))
   if (r.pendingSessionIds?.length) card.pendingSessionIds = [...r.pendingSessionIds]
   board.cards = [...board.cards, card]
@@ -369,27 +424,32 @@ function packRows(hs: number[], cols: number): { y: number[]; tallest: number } 
 
 /*
 tidyCards 一键整理：按挂得久→新排序，按行填充；列数从少到多取第一个
-装得下的方案，仍超高则逐轮等比压缩卡片高度（下限 30px）。绝不靠夹紧
-坐标兜底——宁可压矮也不重叠（方案文档 §5.3）。
+装得下的方案，仍超高则逐轮等比压缩卡片高度（不低于底栏+一行正文的
+minCardHeight）。绝不靠夹紧坐标兜底——宁可压矮也不重叠（方案文档 §5.3）。
 availW/availH = 板内容区（调用方已减去 PAD）。
 */
 export function tidyCards(availW: number, availH: number): void {
   if (!board.cards.length || availW <= 0 || availH <= 0) return
   const ordered = [...board.cards].sort((a, b) => a.created - b.created || a.y - b.y || a.x - b.x)
+  const rows = ordered.map((c) => sessionRows(c.sessions?.length ?? 0))
+  const minsFor = (w: number): number[] => ordered.map((_, i) => minCardHeight(w, rows[i]))
   const maxCols = Math.max(1, Math.min(6, Math.floor((availW + GAP_X) / (176 + GAP_X))))
-  let hs = ordered.map((c) => clamp(c.h, MIN_H, availH))
+  let mins = minsFor(availW)
+  let hs = ordered.map((c, i) => Math.max(MIN_H, mins[i], Math.min(c.h, availH)))
   let cols = 1
   let colW = availW
   let plan = packRows(hs, 1)
   for (let n = 1; n <= maxCols; n++) {
     cols = n
     colW = Math.floor((availW - GAP_X * (n - 1)) / n)
+    mins = minsFor(colW)
+    hs = ordered.map((c, i) => Math.max(MIN_H, mins[i], Math.min(c.h, availH)))
     plan = packRows(hs, n)
     if (plan.tallest <= availH) break
   }
   for (let t = 0; t < 12 && plan.tallest > availH; t++) {
     const f = Math.max(0.35, availH / plan.tallest)
-    const next = hs.map((h) => Math.max(TIDY_MIN_H, Math.round(h * f)))
+    const next = hs.map((h, i) => Math.max(mins[i], Math.round(h * f)))
     if (next.every((h, i) => h === hs[i])) break // 压不动了：防死循环
     hs = next
     plan = packRows(hs, cols)
@@ -406,6 +466,36 @@ export function tidyCards(availW: number, availH: number): void {
   board.cards = board.cards.map((c) => {
     const p = pos.get(c.id)
     return p ? { ...c, ...p } : c
+  })
+  scheduleSave()
+}
+
+/*
+fitCards 窗口缩小时把越出板面的卡片收回可见区：整块按同一比例缩小
+（x/y/w/h 一起缩，相对排布不变），宽不低于 MIN_W、高不低于底栏+一行
+正文的 minCardHeight，最后夹紧到板内。只缩不放——窗口变大不改用户
+手工摆好的尺寸。availW/availH = 板面尺寸（含内边距）。
+*/
+export function fitCards(availW: number, availH: number): void {
+  if (!board.cards.length) return
+  const roomW = availW - 2 * PAD
+  const roomH = availH - 2 * PAD
+  if (roomW <= 0 || roomH <= 0) return
+  let extW = 0
+  let extH = 0
+  for (const c of board.cards) {
+    extW = Math.max(extW, c.x + c.w - PAD)
+    extH = Math.max(extH, c.y + c.h - PAD)
+  }
+  const f = Math.min(1, roomW / Math.max(1, extW), roomH / Math.max(1, extH))
+  if (f >= 0.999) return
+  board.cards = board.cards.map((c) => {
+    const w = Math.max(MIN_W, Math.round(c.w * f))
+    const minH = minCardHeight(w, sessionRows(c.sessions?.length ?? 0))
+    const h = Math.max(MIN_H, minH, Math.round(c.h * f))
+    const x = Math.round(clamp(PAD + (c.x - PAD) * f, PAD, Math.max(PAD, availW - PAD - w)))
+    const y = Math.round(clamp(PAD + (c.y - PAD) * f, PAD, Math.max(PAD, availH - PAD - h)))
+    return { ...c, x, y, w, h }
   })
   scheduleSave()
 }

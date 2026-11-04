@@ -36,7 +36,7 @@ func EnsureLayout() ([]string, error) {
 	// 目录：会话/记忆/技能/快应用/日志 + 工作目录下的草稿与截图区
 	workDir := ResolveWorkDir(LoadSettings(ctx, fsys).WorkDir)
 	dirs := []string{
-		"sessions", hooks.LongtermDir, hooks.SkillsDir, AppsDir, "logs",
+		"sessions", hooks.LongtermDir, hooks.SkillsDir, AppsDir, "logs", PinboardImagesDir,
 		workDir, filepath.Join(workDir, "tmp"), filepath.Join(workDir, "browser"),
 	}
 	for _, d := range dirs {
