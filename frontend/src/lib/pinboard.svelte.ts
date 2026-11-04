@@ -68,6 +68,7 @@ export const board = $state<{
 let loadP: Promise<void> | null = null
 let saveTimer: ReturnType<typeof setTimeout> | undefined
 let saveChain: Promise<void> = Promise.resolve() // 保存串行化：慢请求不会把旧快照盖在新快照上
+let saveInFlight = false
 
 /* applyPinboard 用服务端数据覆盖共享态。 */
 function applyPinboard(d: PinboardData): void {
@@ -143,6 +144,22 @@ function normImages(v: unknown): string[] | undefined {
   return out.length ? out : undefined
 }
 
+/* 卡面图片摆放：只认板里现存图片的条目，坐标/比例越界就夹回 0..1 */
+function normImgpos(v: unknown, images: string[] | undefined): PinCard['imgpos'] {
+  if (!v || typeof v !== 'object' || !images?.length) return undefined
+  const out: NonNullable<PinCard['imgpos']> = {}
+  for (const [src, raw] of Object.entries(v as Record<string, unknown>)) {
+    if (!images.includes(src) || !raw || typeof raw !== 'object') continue
+    const b = raw as Record<string, unknown>
+    const w = num(b.w)
+    const ar = num(b.ar)
+    if (w <= 0 || ar <= 0) continue
+    const frac = (n: unknown): number => Math.max(0, Math.min(1, num(n)))
+    out[src] = { x: frac(b.x), y: frac(b.y), w: Math.min(1, w), ar }
+  }
+  return Object.keys(out).length ? out : undefined
+}
+
 /* 老数据补齐缺失字段（尺寸/颜色/时刻），保证渲染与拖拽都有确定值。
    逐字段重建而不是展开原对象——已移除的旧字段会在下一次落盘时自然消失 */
 function normCard(c: PinCard): PinCard {
@@ -161,8 +178,11 @@ function normCard(c: PinCard): PinCard {
   }
   const due = num(c.due)
   if (due > 0) card.due = due
+  if (typeof c.ord === 'number' && Number.isFinite(c.ord)) card.ord = c.ord
   const images = normImages(c.images)
   if (images) card.images = images
+  const imgpos = normImgpos(c.imgpos, images)
+  if (imgpos) card.imgpos = imgpos
   if (sessions) card.sessions = sessions
   const pending = normPending(c.pendingSessionIds)
   if (pending) card.pendingSessionIds = pending
@@ -206,11 +226,14 @@ export function saveNow(): Promise<void> {
   if (!board.loaded) return saveChain
   const data = snapshot()
   saveChain = saveChain.then(async () => {
+    saveInFlight = true
     try {
       await api.savePinboard(data)
       board.err = ''
     } catch (e) {
       board.err = `便签保存失败：${(e as Error).message}`
+    } finally {
+      saveInFlight = false
     }
   })
   return saveChain
@@ -220,6 +243,12 @@ export function scheduleSave(): void {
   if (!board.loaded) return
   clearTimeout(saveTimer)
   saveTimer = setTimeout(() => void saveNow(), 350)
+}
+
+/* pinboardBusy 本地还有未落盘的改动（小窗轮询/主窗聚焦刷新前避开，
+   免得读到旧板把刚做的改动盖掉）。 */
+export function pinboardBusy(): boolean {
+  return saveTimer !== undefined || saveInFlight
 }
 
 export function pinId(): string {
@@ -265,6 +294,13 @@ export function bumpCard(id: string): void {
 export function removeCard(id: string): void {
   board.cards = board.cards.filter((c) => c.id !== id)
   scheduleSave()
+}
+
+/* reorderCards 便签小窗手工排序（ids = 目标顺序，ord 持久化到 pinboard.json）。 */
+export function reorderCards(ids: string[]): void {
+  const ord = new Map(ids.map((id, i) => [id, i]))
+  board.cards = board.cards.map((c) => (ord.has(c.id) ? { ...c, ord: ord.get(c.id) } : c))
+  void saveNow() // 松手即写：排序不依赖防抖，重启后保持
 }
 
 /* patchRecord 改已归档记录的字段（当天详情里双击编辑/勾待办）。 */

@@ -2,6 +2,7 @@
   import { onMount } from 'svelte'
   import pkg from '../package.json'
   import { store } from './lib/store.svelte'
+  import { pinboardBusy, reloadPinboard } from './lib/pinboard.svelte'
   import { filePane } from './lib/filePaneState'
   import Sidebar from './components/Sidebar.svelte'
   import TitleBar from './components/TitleBar.svelte'
@@ -72,10 +73,13 @@
     ez?.notice?.onJump?.((ref: { rootId: string; forkId: string; id: string; target: string }) =>
       void store.jumpToNoticeRef(ref),
     )
-    /* 便签小窗点条目 → 主进程亮起主窗并转发卡片 id（空 = 只开便签页） */
+    /* 便签小窗点条目 → 主进程亮起主窗并转发卡片 id（空 = 只开便签页）。
+       小窗里可能刚完成/排过序：不定位卡片时先拉最新板；定位卡片由
+       PinboardView 拉完再提层，免得提层被随后返回的旧板盖掉 */
     ez?.pin?.onJump?.((cardId: string) => {
       store.pinFocus = cardId
       store.jumpView = 'pinboard'
+      if (!cardId && !pinboardBusy()) void reloadPinboard()
     })
     void store.bootstrap().catch((e) => {
       console.error('bootstrap 失败', e)

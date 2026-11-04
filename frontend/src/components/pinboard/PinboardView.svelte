@@ -8,8 +8,7 @@
   · 时间线：左新右旧按天铺开，卡片挂在轴下，点某天就地展开当天详情
     （在板下半部展开，不覆盖时间线），拖卡片跨天改归属、拖回板上变回
     待办。
-  · 当天详情：markdown 渲染、图片、拖动排序；双击卡片就地编辑正文，
-    拖起又放回原位时挪到当天第一个。
+  · 当天详情：markdown 渲染、图片、拖动排序；双击卡片就地编辑正文。
   */
   import { onDestroy, onMount, tick, untrack } from 'svelte'
   import type { PinRecord } from '../../lib/api'
@@ -28,6 +27,8 @@
     ensurePinboard,
     fitCards,
     patchRecord,
+    pinboardBusy,
+    reloadPinboard,
     reorderDay,
     restoreRecord,
     saveNow,
@@ -63,11 +64,12 @@
     return m
   })
 
-  /* 便签小窗点条目 → 定位到那张卡：提到最上层并描边闪一下 */
+  /* 便签小窗点条目 → 定位到那张卡：先拉最新板（小窗里可能刚排过序/
+     完成过），再把卡片提到最上层并描边闪一下 */
   $effect(() => {
     const id = store.pinFocus
     if (!id) return
-    void ensurePinboard().then(() => {
+    void reloadPinboard().then(() => {
       if (store.pinFocus !== id) return
       store.pinFocus = ''
       if (!board.cards.some((c) => c.id === id)) return
@@ -108,6 +110,14 @@
 
   onMount(() => {
     void ensurePinboard()
+    /* 小窗可能刚完成/排序过：重进便签页拉一次最新板（有定位卡片时由
+       下面的定位流程拉，避免两次刷新抢着覆盖提层） */
+    if (board.loaded && !store.pinFocus && !pinboardBusy()) void reloadPinboard()
+    /* 从便签小窗切回主窗：同样拉一次最新板 */
+    const onFocus = () => {
+      if (!pinboardBusy()) void reloadPinboard()
+    }
+    window.addEventListener('focus', onFocus)
     const clock = setInterval(() => (nowTick = Date.now()), 30000)
     const ro = boardEl ? new ResizeObserver(([e]) => {
       bw = e.contentRect.width
@@ -115,6 +125,7 @@
     }) : null
     if (ro && boardEl) ro.observe(boardEl)
     return () => {
+      window.removeEventListener('focus', onFocus)
       clearInterval(clock)
       ro?.disconnect()
       void saveNow()
@@ -241,7 +252,7 @@
 
   /* ── 当天详情：横向拖动排序 ── */
 
-  let rdrag = $state<{ id: string; px: number; py: number; dx: number; dy: number; active: boolean } | null>(null)
+  let rdrag = $state<{ id: string; px: number; dx: number; active: boolean } | null>(null)
 
   /* 双击归档卡编辑正文；拖动刚结束的 300ms 内忽略 */
   function startRecEdit(e: MouseEvent, r: PinRecord) {
@@ -291,7 +302,7 @@
     if (editingRec) return
     if ((e.target as HTMLElement).closest('a, input, button')) return
     removeRdWindow()
-    rdrag = { id, px: e.clientX, py: e.clientY, dx: 0, dy: 0, active: false }
+    rdrag = { id, px: e.clientX, dx: 0, active: false }
     try {
       ;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
     } catch {
@@ -313,13 +324,11 @@
   function rdMove(e: PointerEvent) {
     if (!rdrag) return
     const dx = e.clientX - rdrag.px
-    const dy = e.clientY - rdrag.py
     if (!rdrag.active) {
-      if (Math.hypot(dx, dy) < 6) return
+      if (Math.abs(dx) < 6) return
       rdrag.active = true
     }
     rdrag.dx = dx
-    rdrag.dy = dy
   }
 
   function rdCancel() {
@@ -356,12 +365,6 @@
     })
     const ids = dayRecs.map((r) => r.id).filter((id) => id !== d.id)
     ids.splice(target < 0 ? ids.length : target, 0, d.id)
-    /* 拖起又放回原位（顺序没变）→ 挪到当天第一个 */
-    const cur = dayRecs.map((r) => r.id)
-    if (ids.length === cur.length && ids.every((id, i) => id === cur[i])) {
-      ids.splice(ids.indexOf(d.id), 1)
-      ids.unshift(d.id)
-    }
     reorderDay(dayOpen, ids)
   }
 
@@ -494,7 +497,7 @@
                 class:editing={editingRec === r.id}
                 data-rec={r.id}
                 style:--tint={r.tint}
-                style:transform={rdrag?.id === r.id && rdrag.active ? `translate(${rdrag.dx}px, ${rdrag.dy}px)` : undefined}
+                style:transform={rdrag?.id === r.id && rdrag.active ? `translateX(${rdrag.dx}px)` : undefined}
                 onpointerdown={(e) => rdStart(e, r.id)}
                 ondblclick={(e) => startRecEdit(e, r)}
                 title={editingRec === r.id ? undefined : '双击编辑 · 拖动排序'}

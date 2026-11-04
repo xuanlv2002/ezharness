@@ -533,8 +533,12 @@ export interface PinCard {
   z: number
   tint: string
   due?: number
+  /* 便签小窗里的手工排序（缺省 = 按截止时间排） */
+  ord?: number
   /* 贴在卡面上的图片（/api/pinboard/images/…，本体单独落盘） */
   images?: string[]
+  /* 卡面图片的摆放：x/y/w 为卡片内宽/高比例，ar 为图片宽高比（高由宽推出） */
+  imgpos?: Record<string, { x: number; y: number; w: number; ar: number }>
   /* 已真正发起过消息的关联会话（卡片右下角按顺序列出） */
   sessions?: PinSessionRef[]
   /* 从本卡「新会话」开出、还没在任何对话里发过消息的会话：不显示，
