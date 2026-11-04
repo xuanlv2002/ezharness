@@ -2,12 +2,14 @@
   import { onMount } from 'svelte'
   import pkg from '../package.json'
   import { store } from './lib/store.svelte'
+  import { pinboardBusy, reloadPinboard } from './lib/pinboard.svelte'
   import { filePane } from './lib/filePaneState'
   import Sidebar from './components/Sidebar.svelte'
   import TitleBar from './components/TitleBar.svelte'
   import ChatView from './components/ChatView.svelte'
   import ModelsView from './components/ModelsView.svelte'
   import PinboardView from './components/pinboard/PinboardView.svelte'
+  import PinQuickWindow from './components/pinboard/PinQuickWindow.svelte'
   import MemoryView from './components/MemoryView.svelte'
   import ToolsView from './components/ToolsView.svelte'
   import CallbacksView from './components/CallbacksView.svelte'
@@ -32,6 +34,8 @@
   const petView = new URLSearchParams(location.search).get('pet') === '1'
   /* 独立通知窗（铃铛球打开）：复用 NoticePanel + store 轮询，不 bootstrap */
   const noticeView = new URLSearchParams(location.search).get('notice') === '1'
+  /* 便签小窗（便签球打开）：只轮询便签板，不 bootstrap/SSE */
+  const pinsView = new URLSearchParams(location.search).get('pins') === '1'
   const ez = (window as any).ez
 
   /* 资源页弹出侧：状态变化防抖上报主进程（关窗回流取最新快照） */
@@ -46,6 +50,8 @@
     if (petView) return
     /* 独立通知窗：自管 refreshBranches/refreshNotices 轮询，不 bootstrap */
     if (noticeView) return
+    /* 便签小窗：只轮询便签板 */
+    if (pinsView) return
     if (popoutView) {
       /* 弹出窗口：装载初始状态 + 接收主窗口转发的外部定位请求 */
       if (popoutView === 'file') {
@@ -67,6 +73,14 @@
     ez?.notice?.onJump?.((ref: { rootId: string; forkId: string; id: string; target: string }) =>
       void store.jumpToNoticeRef(ref),
     )
+    /* 便签小窗点条目 → 主进程亮起主窗并转发卡片 id（空 = 只开便签页）。
+       小窗里可能刚完成/排过序：不定位卡片时先拉最新板；定位卡片由
+       PinboardView 拉完再提层，免得提层被随后返回的旧板盖掉 */
+    ez?.pin?.onJump?.((cardId: string) => {
+      store.pinFocus = cardId
+      store.jumpView = 'pinboard'
+      if (!cardId && !pinboardBusy()) void reloadPinboard()
+    })
     void store.bootstrap().catch((e) => {
       console.error('bootstrap 失败', e)
       store.lastStatus = `启动失败：${(e as Error).message}`
@@ -101,6 +115,8 @@
   <AssistantPet />
 {:else if noticeView}
   <NoticeWindow />
+{:else if pinsView}
+  <PinQuickWindow />
 {:else if popoutView}
   <div class="popout-pane">
     {#if popoutView === 'term'}

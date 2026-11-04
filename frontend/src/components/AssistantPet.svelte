@@ -2,6 +2,7 @@
   import { onMount } from 'svelte'
   import EzAvatar from './EzAvatar.svelte'
   import { launchApp as openApp } from '../lib/apps'
+  import { DUE_COLOR, DUE_ORDER, dueLevel, type DueLevel } from '../lib/pinDue'
 
   /*
   桌面宠物（pet=1 窗口）：悬浮球 + 环形菜单。
@@ -11,8 +12,9 @@
   小部件上：压上 → 关穿透 + 展开环形菜单；透明处 → 保持穿透漏点。
 
   环形菜单：以头像（窗口中心 144,144）为圆心、右上 30°（弹出箭头）起
-  顺时针、每颗固定 36°（满 6 颗恰 180°）——箭头（开主客户端）+ 铃铛
-  （通知）+ 钉选快应用（≤3，点击启动，实心图钉角标点击取消）+「…」球
+  顺时针、每颗固定 36°（满 7 颗 216°）——箭头（开主客户端）+ 铃铛
+  （通知）+ 便签（角标显示板上待办数，数字颜色取最紧的截止档，点击打开
+  便签小窗）+ 钉选快应用（≤3，点击启动，实心图钉角标点击取消）+「…」球
   （快应用 ⚡️ logo，与侧边栏「快应用」入口同图标，点击展开全部应用
   栏）。子球位置由 JS 算成绝对
   left/top（不靠 transform 位移——定位与动画解耦，transform 只做 scale
@@ -26,16 +28,27 @@
   const C = 144 // 窗口中心（stage 288×288）
   const RING_R = 74
   const RING_START = -30 // 起点：弹出箭头，右上 30°
-  const RING_STEP = 36 // 相邻球固定角距：满 6 颗（箭头+铃铛+3 钉选+…）恰好 180°
-  const SIZE = { main: 36, bell: 36, app: 38, more: 34 } as const
+  const RING_STEP = 36 // 相邻球固定角距：满 7 颗（箭头+铃铛+便签+3 钉选+…）到 216°
+  const SIZE = { main: 36, bell: 36, pins: 36, app: 38, more: 34 } as const
 
   type PetApp = { name: string; title: string; icon?: string; pinned?: boolean }
+  type PetPin = { text?: string; due?: number }
+  /* 便签球摘要：待办数 + 最紧的截止档 + 24 小时内到期/超期数 + 最近到期 */
+  type PinSummary = {
+    count: number
+    level: DueLevel | null
+    over: number
+    soon: number
+    nextAt: number
+    nextText: string
+  }
 
   let dragging = false // 拖拽中：跳过 hover 判定（穿透已关，别被轮询扰动）
   let running = $state(false)
   let pending = $state(0)
   let done = $state(false)
   let apps = $state<PetApp[]>([])
+  let pins = $state<PinSummary>({ count: 0, level: null, over: 0, soon: 0, nextAt: 0, nextText: '' })
   let hovered = $state(false)
   let trayOpen = $state(false)
   /* 图标加载失败的应用：回退成名字（否则 onerror 隐藏 img 只剩一个空球） */
@@ -59,16 +72,41 @@
     })
     const poll = async () => {
       try {
-        const [topics, notices, list] = await Promise.all([
+        const [topics, notices, list, boardData] = await Promise.all([
           fetch('/api/topics').then((r) => (r.ok ? r.json() : [])),
           fetch('/api/notifications').then((r) => (r.ok ? r.json() : [])),
           fetch('/api/apps').then((r) => (r.ok ? r.json() : { apps: [] })),
+          fetch('/api/pinboard', { cache: 'no-store' })
+            .then((r) => (r.ok ? r.json() : { cards: [] }))
+            .catch(() => ({ cards: [] })),
         ])
         running = (topics as { running?: boolean }[]).some((t) => t.running)
         const items = (notices as { items?: { kind?: string }[] }[]).flatMap((g) => g.items ?? [])
         pending = items.filter((it) => it.kind === 'approve' || it.kind === 'ask' || it.kind === 'mcp_auth' || it.kind === 'memory' || it.kind === 'callback').length
         done = items.some((it) => it.kind === 'info')
         apps = ((list as { apps?: PetApp[] }).apps ?? [])
+
+        /* 便签板只读摘要：颗数、最紧档位、临期/超期数、最近到期条目 */
+        const cards = ((boardData as { cards?: PetPin[] }).cards ?? [])
+        const nowMs = Date.now()
+        let level: DueLevel | null = null
+        let over = 0
+        let soon = 0
+        let nextAt = 0
+        let nextText = ''
+        for (const c of cards) {
+          const lv = dueLevel(c.due, nowMs)
+          if (lv) {
+            if (!level || DUE_ORDER[lv] < DUE_ORDER[level]) level = lv
+            if (lv === 'over') over++
+            else if (lv !== 'later') soon++
+          }
+          if (c.due && c.due > nowMs && (!nextAt || c.due < nextAt)) {
+            nextAt = c.due
+            nextText = (c.text ?? '').replace(/\s+/g, ' ').trim().slice(0, 18)
+          }
+        }
+        pins = { count: cards.length, level, over, soon, nextAt, nextText }
       } catch {
         /* core 不可达：静默，下轮再试 */
       }
@@ -80,15 +118,30 @@
 
   const pinned = $derived(apps.filter((a) => a.pinned).slice(0, 3))
 
+  function fmtDue(ts: number): string {
+    return new Date(ts).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+  }
+
+  /* 便签球悬停说明：颗数、临期/超期数与最近到期条目 */
+  const pinTitle = $derived.by(() => {
+    if (!pins.count) return '便签 · 板上暂无待办（点击查看）'
+    const parts = [`便签 · ${pins.count} 件待办`]
+    if (pins.over) parts.push(`${pins.over} 件已超期`)
+    if (pins.soon) parts.push(`${pins.soon} 件 24 小时内到期`)
+    if (pins.nextAt) parts.push(`最近：${pins.nextText || '无标题'} ${fmtDue(pins.nextAt)}`)
+    return `${parts.join(' · ')}（点击查看）`
+  })
+
   /*
   环形摆位：从弹出箭头（右上 30°）起，顺时针每个固定 +RING_STEP°。
   相邻球角距恒定（不随数量摊薄），球多弧线就自然变长。
   位置直接算成 left/top（球心 - 尺寸一半），CSS 里没有定位变量。
   */
   const ring = $derived.by(() => {
-    const items: { kind: 'main' | 'bell' | 'app' | 'more'; a?: PetApp }[] = [
+    const items: { kind: 'main' | 'bell' | 'pins' | 'app' | 'more'; a?: PetApp }[] = [
       { kind: 'main' },
       { kind: 'bell' },
+      { kind: 'pins' },
       ...pinned.map((a) => ({ kind: 'app', a }) as { kind: 'app'; a: PetApp }),
       { kind: 'more' },
     ]
@@ -178,6 +231,19 @@
             <i class="ndot red"></i>
           {:else if done}
             <i class="ndot green"></i>
+          {/if}
+        </button>
+      {:else if s.kind === 'pins'}
+        <button class="orb pins" class:on={hovered} style={`left:${s.left}px;top:${s.top}px;transition-delay:${hovered ? 40 + s.d * 50 : 0}ms`}
+          onclick={() => ez?.pin?.open?.()} title={pinTitle}>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="4" y="4" width="16" height="16" rx="2" />
+            <path d="M8 9h8M8 13h5" />
+          </svg>
+          {#if pins.count > 0}
+            <i class="pcount" style:color={pins.level ? DUE_COLOR[pins.level] : 'var(--accent)'}>
+              {pins.count > 99 ? '99+' : pins.count}
+            </i>
           {/if}
         </button>
       {:else if s.kind === 'more'}
@@ -297,8 +363,9 @@
     border: 2px solid var(--bg);
   }
 
-  /* 铃铛球：与客户端收起态铃铛同款图标，待处理红点 / 完成绿点浮在球上 */
-  .orb.bell {
+  /* 铃铛球 / 便签球：与客户端同款图标的白底小球，状态角标浮在球上 */
+  .orb.bell,
+  .orb.pins {
     width: 36px;
     height: 36px;
     border-radius: 50%;
@@ -306,13 +373,35 @@
     color: var(--muted);
     box-shadow: 0 4px 14px rgb(0 0 0 / 18%);
   }
-  .orb.bell:hover {
+  .orb.bell:hover,
+  .orb.pins:hover {
     color: var(--fg);
     box-shadow: 0 6px 18px rgb(0 0 0 / 26%);
   }
-  .orb.bell svg {
+  .orb.bell svg,
+  .orb.pins svg {
     width: 15px;
     height: 15px;
+  }
+  /* 便签球角标：板上待办数，数字颜色取最紧的截止档（无截止为主题蓝） */
+  .pcount {
+    position: absolute;
+    top: -3px;
+    right: -4px;
+    display: grid;
+    place-items: center;
+    min-width: 15px;
+    height: 15px;
+    padding: 0 3px;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: var(--bg);
+    font-size: 8px;
+    font-weight: 700;
+    font-style: normal;
+    line-height: 1;
+    font-variant-numeric: tabular-nums;
+    box-shadow: 0 1px 4px rgb(0 0 0 / 18%);
   }
   .ndot {
     position: absolute;

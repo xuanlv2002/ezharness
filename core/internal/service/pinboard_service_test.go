@@ -6,6 +6,39 @@ import (
 	"testing"
 )
 
+/* TestPinboardImages 图片按内容嗅探落盘，非图片/超限/非法名拒绝。 */
+func TestPinboardImages(t *testing.T) {
+	t.Chdir(t.TempDir())
+	svc := &PinboardService{}
+	ctx := context.Background()
+	png := []byte("\x89PNG\r\n\x1a\n" + strings.Repeat("\x00", 32))
+
+	url, err := svc.SaveImage(ctx, png)
+	if err != nil {
+		t.Fatalf("SaveImage: %v", err)
+	}
+	if !strings.HasPrefix(url, "/api/pinboard/images/img-") || !strings.HasSuffix(url, ".png") {
+		t.Fatalf("URL 形状不对: %s", url)
+	}
+	name := strings.TrimPrefix(url, "/api/pinboard/images/")
+	data, mime, err := svc.ReadImage(ctx, name)
+	if err != nil {
+		t.Fatalf("ReadImage: %v", err)
+	}
+	if string(data) != string(png) || mime != "image/png" {
+		t.Fatalf("读回不符: %d bytes, %s", len(data), mime)
+	}
+	if _, _, err := svc.ReadImage(ctx, "../pinboard.json"); err == nil {
+		t.Fatal("非法文件名应拒绝")
+	}
+	if _, err := svc.SaveImage(ctx, []byte("not an image")); err == nil {
+		t.Fatal("非图片应拒绝")
+	}
+	if _, err := svc.SaveImage(ctx, make([]byte, MaxPinboardImageBytes+1)); err == nil {
+		t.Fatal("超限应拒绝")
+	}
+}
+
 /* TestPinboardRoundTrip 首次读取给空板，保存后原样读回，非法形状拒绝。 */
 func TestPinboardRoundTrip(t *testing.T) {
 	t.Chdir(t.TempDir()) // 数据文件写进程 cwd（与生产数据目录 chdir 语义一致）

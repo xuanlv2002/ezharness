@@ -533,6 +533,12 @@ export interface PinCard {
   z: number
   tint: string
   due?: number
+  /* 便签小窗里的手工排序（缺省 = 按截止时间排） */
+  ord?: number
+  /* 贴在卡面上的图片（/api/pinboard/images/…，本体单独落盘） */
+  images?: string[]
+  /* 卡面图片的摆放：x/y/w 为卡片内宽/高比例，ar 为图片宽高比（高由宽推出） */
+  imgpos?: Record<string, { x: number; y: number; w: number; ar: number }>
   /* 已真正发起过消息的关联会话（卡片右下角按顺序列出） */
   sessions?: PinSessionRef[]
   /* 从本卡「新会话」开出、还没在任何对话里发过消息的会话：不显示，
@@ -548,6 +554,7 @@ export interface PinRecord {
   created: number
   doneAt: number
   tint: string
+  images?: string[] // 归档时从卡片带过来的图片
   day?: string // 'YYYY-MM-DD'
   ord?: number // 当天内顺序（0 起，缺省 = 当天最左）
   /* 归档时从卡片带过来的会话关联（当天详情里可点击跳转） */
@@ -716,6 +723,13 @@ export const api = {
   /* 便签板整块读写（前端防抖提交；首次读取为空板） */
   pinboard: () => fetch('/api/pinboard', { cache: 'no-store' }).then(json<PinboardData>),
   savePinboard: (data: PinboardData) => post<{ ok: boolean }>('/api/pinboard', data),
+  /* 便签图片上传：请求体即图片字节，返回同源 URL（存进卡片 images） */
+  uploadPinImage: (data: Blob) =>
+    fetch('/api/pinboard/images', {
+      method: 'POST',
+      headers: { 'Content-Type': data.type || 'application/octet-stream' },
+      body: data,
+    }).then(json<{ url: string }>),
 
   /* 文件在 HEAD 的原文（变更对比左侧）；404 = 未纳入 git（按空串 = 新文件） */
   gitBlob: async (path: string) => {
