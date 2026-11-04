@@ -58,6 +58,8 @@
   let viewImg = $state('')
   let viewAt = 0
   let lbEl = $state<HTMLElement>()
+  /* 从归档图片上起手拖动排序时，松手后别把这一次误判成「看大图」 */
+  let imgClickGuard = 0
 
   function openView(src: string): void {
     viewImg = src
@@ -314,7 +316,8 @@
   function rdStart(e: PointerEvent, id: string) {
     if (e.button !== 0) return
     if (editingRec) return
-    if ((e.target as HTMLElement).closest('a, input, button')) return
+    /* 图片按钮也允许起手拖卡：拖动排序不挑落手位置 */
+    if ((e.target as HTMLElement).closest('a, input, button:not(.dimgbtn)')) return
     removeRdWindow()
     rdrag = { id, px: e.clientX, dx: 0, active: false }
     try {
@@ -369,6 +372,7 @@
     rdrag = null
     if (!d.active || !dayOpen) return
     suppressDblUntil = Date.now() + 300
+    imgClickGuard = Date.now() + 300
     /* 目标索引在「去掉被拖卡后的顺序」上算，避免索引含自己时错一位 */
     const cards = Array.from(stripEl?.querySelectorAll<HTMLElement>('[data-rec]') ?? []).filter(
       (el) => el.dataset.rec !== d.id,
@@ -540,9 +544,11 @@
                       {#each r.images as src (src)}
                         <button
                           class="dimgbtn"
-                          onclick={() => openView(src)}
+                          onclick={() => {
+                            if (Date.now() > imgClickGuard) openView(src)
+                          }}
                           ondblclick={(e) => e.stopPropagation()}
-                          title="查看大图"
+                          title="查看大图（拖动卡片排序时不受影响）"
                         >
                           <img {src} alt="" loading="lazy" />
                         </button>
