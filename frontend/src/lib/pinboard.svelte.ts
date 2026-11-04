@@ -259,6 +259,25 @@ export function findCard(id: string): PinCard | undefined {
   return board.cards.find((c) => c.id === id)
 }
 
+/*
+orderedCards 小窗/顶栏预览的展示顺序：手工顺序（ord）优先；没排过的卡
+（新记的）排在已排的后面，彼此按截止从紧到松、同档新记的在前。整板都
+没排过时就是纯截止排序。
+*/
+export function orderedCards(cards: PinCard[]): PinCard[] {
+  return [...cards].sort((a, b) => {
+    if (a.ord !== undefined || b.ord !== undefined) {
+      if (a.ord === undefined) return 1
+      if (b.ord === undefined) return -1
+      if (a.ord !== b.ord) return a.ord - b.ord
+    }
+    const ad = a.due ?? Number.MAX_SAFE_INTEGER
+    const bd = b.due ?? Number.MAX_SAFE_INTEGER
+    if (ad !== bd) return ad - bd
+    return b.created - a.created
+  })
+}
+
 export function addCard(text: string, x: number, y: number, w = CARD_DEF_W, h = CARD_DEF_H): PinCard {
   board.z += 1
   const card: PinCard = {

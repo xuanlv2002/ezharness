@@ -1,19 +1,56 @@
 <script lang="ts">
   /*
-  顶栏右侧入口：主题切换与全局通知铃铛，点开向下弹出通知面板。
-  会话级的状态不在这里（见输入条内的 SessionStatus）。
+  顶栏右侧：便签小点（板上每张待办一颗，点开挂下完整便签）、主题切换与
+  全局通知铃铛。会话级的状态不在这里（见输入条内的 SessionStatus）。
   */
+  import { onMount } from 'svelte'
   import { store } from '../lib/store.svelte'
   import { theme, toggleTheme } from '../lib/theme.svelte'
+  import { board, ensurePinboard } from '../lib/pinboard.svelte'
   import NoticePanel from './NoticePanel.svelte'
+  import PinRack from './pinboard/PinRack.svelte'
 
-  let open = $state(false)
+  let noticeOpen = $state(false)
+  let pinsSelected = $state('')
+  let now = $state(Date.now())
+
+  onMount(() => {
+    /* 顶栏便签小点常驻：先拉一次板，小点才有数据 */
+    void ensurePinboard()
+    const t = setInterval(() => (now = Date.now()), 30000)
+    return () => clearInterval(t)
+  })
 
   const pending = $derived(store.notices.filter((n) => n.status === 'pending').length)
   const info = $derived(store.notices.filter((n) => n.kind === 'info').length)
+
+  $effect(() => {
+    if (pinsSelected) noticeOpen = false
+  })
+
+  function toggleNotice(): void {
+    noticeOpen = !noticeOpen
+    if (noticeOpen) pinsSelected = ''
+  }
 </script>
 
+<svelte:window
+  onkeydown={(e) => {
+    if (e.key !== 'Escape') return
+    if (pinsSelected) pinsSelected = ''
+    else if (noticeOpen) noticeOpen = false
+  }}
+/>
+
 <div class="rail">
+  {#if pinsSelected}
+    <div class="scrim" role="presentation" onclick={() => (pinsSelected = '')}></div>
+  {/if}
+  {#if board.cards.length}
+    <div class="pins-entry" class:lifted={!!pinsSelected}>
+      <PinRack {now} bind:selected={pinsSelected} />
+    </div>
+  {/if}
   <button
     class="rail-btn theme"
     onclick={toggleTheme}
@@ -32,9 +69,11 @@
   </button>
   <button
     class="rail-btn bell"
-    class:on={open}
-    onclick={() => (open = !open)}
+    class:on={noticeOpen}
+    onclick={toggleNotice}
     title={pending > 0 ? `通知（${pending} 条待处理）` : '通知'}
+    aria-haspopup="dialog"
+    aria-expanded={noticeOpen}
   >
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
       <path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9" />
@@ -47,18 +86,18 @@
     {/if}
   </button>
 
-  {#if open}
-    <div class="scrim" role="presentation" onclick={() => (open = '')}></div>
-    <div class="popover" role="dialog" aria-label={open === 'status' ? '运行状态' : '通知'}>
+  {#if noticeOpen}
+    <div class="scrim" role="presentation" onclick={() => (noticeOpen = false)}></div>
+    <div class="popover" role="dialog" aria-label="通知">
       <NoticePanel
         notices={store.notices}
-        onClose={() => (open = false)}
+        onClose={() => (noticeOpen = false)}
         onResolve={(id, action, input) => {
           const n = store.notices.find((x) => x.id === id)
           if (n) void store.resolveNoticeGlobal(n, action, input)
         }}
         onJump={(n) => {
-          open = false
+          noticeOpen = false
           void store.jumpToNotice(n)
         }}
         onDismiss={(id) => store.dismissNotice(id)}
@@ -75,6 +114,17 @@
     gap: 2px;
     height: 100%;
     app-region: no-drag;
+  }
+  /* 便签小点入口：完整便签层从点区右缘向下挂 */
+  .pins-entry {
+    position: relative;
+    display: flex;
+    align-items: center;
+    height: 100%;
+  }
+  /* 展开时抬到遮罩之上，点小点仍可直接操作 */
+  .pins-entry.lifted {
+    z-index: 73;
   }
   .rail-btn {
     position: relative;

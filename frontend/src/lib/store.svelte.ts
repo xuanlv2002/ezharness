@@ -258,7 +258,7 @@ class AppStore {
      本地记录结果给卡片落定状态（后端返回后待确认项即消失） */
   memoryDecisions = $state<Record<string, 'accept' | 'cancel'>>({})
   jumpView = $state<'' | 'chat' | 'pinboard' | 'memory' | 'callbacks'>('') // 跳页请求（App 消费后清空）
-  pinFocus = $state('') // 便签小窗点条目要定位的卡片 id（PinboardView 消费后清空）
+  pinFocus = $state('') // 便签小窗/顶栏预览点条目要定位的卡片 id（PinboardView 消费后清空）
   /* 定时回调通知要展开的任务（回调页消费后清空） */
   callbackFocus = $state('')
   jumpAnchor = $state('') // 顶栏搜索跳转目标（view:anchor，目标视图消费后清空）

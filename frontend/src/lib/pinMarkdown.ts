@@ -17,6 +17,16 @@ function withBareTasks(src: string): string {
   }).join('\n')
 }
 
+/* plainPinText 列表预览用的纯文本：去掉标题/列表/待办前缀与强调符号，
+   不渲染 markdown（便签小窗与顶栏预览共用）。 */
+export function plainPinText(md: string): string {
+  return md
+    .replace(/^#{1,6}\s+/gm, '')
+    .replace(/^\s*[-*+]\s+(?:\[[ xX]?\]\s+)?/gm, '')
+    .replace(/[*_`>]/g, '')
+    .trim()
+}
+
 export function renderPinMarkdown(src: string): string {
   const html = marked.parse(withBareTasks(src), { gfm: true, breaks: true }) as string
   return DOMPurify.sanitize(html).replace(/<input\b[^>]*>/g, (tag) => tag.replace(/\sdisabled(?:="[^"]*")?/g, ''))
