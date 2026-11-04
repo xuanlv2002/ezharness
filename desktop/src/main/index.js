@@ -188,7 +188,9 @@ function rootDir() {
 /*
 migrateLegacyRoot 旧版 Windows 安装版把数据放在安装目录 resources/ 下，
 升级时会被 NSIS 连目录一起删掉。新版本改用用户数据目录后，这里把仍能
-找到的旧配置与数据补过去：只补缺、不覆盖（新目录已有任何内容就跳过）。
+找到的旧数据补过去：只迁 data/、只补缺不覆盖（新目录已有 data/ 就跳过）。
+ezharness.json 不迁移——由 core 在新根下按默认重建（旧版 dataDir 是指向
+安装目录的绝对路径，沿用会让数据继续落在会被卸载器删除的位置）。
 注意升级安装会先跑旧版卸载器、旧目录多半已被清空——这个迁移兜的是
 覆盖安装/手动搬运的场景，不能挽回已被卸载器删除的数据。
 */
@@ -198,16 +200,15 @@ function migrateLegacyRoot() {
   const legacy = coreDir()
   const root = rootDir()
   if (path.resolve(legacy) === path.resolve(root)) return
-  if (fs.existsSync(path.join(root, 'data')) || fs.existsSync(path.join(root, 'ezharness.json'))) return
-  for (const name of ['ezharness.json', 'data']) {
-    const src = path.join(legacy, name)
-    if (!fs.existsSync(src)) continue
-    try {
-      copyMissing(src, path.join(root, name))
-      console.log(`[migrate] ${src} -> ${root}`)
-    } catch (err) {
-      console.error(`旧配置迁移失败（${src}）：`, err.message)
-    }
+  const dst = path.join(root, 'data')
+  if (fs.existsSync(dst)) return
+  const src = path.join(legacy, 'data')
+  if (!fs.existsSync(src)) return
+  try {
+    copyMissing(src, dst)
+    console.log(`[migrate] ${src} -> ${dst}`)
+  } catch (err) {
+    console.error(`旧数据迁移失败（${src}）：`, err.message)
   }
 }
 
