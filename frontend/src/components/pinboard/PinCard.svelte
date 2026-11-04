@@ -4,7 +4,7 @@
   ✕ 删除就地确认）、双击就地编辑。正文按 markdown 渲染，待办勾选框可直接
   点，超出卡片高度时在正文区域内滚动。图片是贴在卡面上的贴纸：可直接拖入
   图片文件或在编辑器里粘贴，编辑时拖动图片移动、右下角手柄缩放，位置与
-  大小随卡片一起存盘。
+  大小随卡片一起存盘；选中后可复制到系统剪贴板，点图片看大图。
 
   底栏固定显示记于、已持续与截止（按剩余时长分档着色：3/6/12/24 小时内
   与 24 小时以上各一色，超期为危险色）。宽卡时会话列挪到右侧、与「记于」
@@ -49,6 +49,7 @@
     oncomplete,
     onnewsession,
     onopensession,
+    onview,
   }: {
     card: PinCardT
     width?: number
@@ -60,6 +61,8 @@
     oncomplete?: () => void
     onnewsession?: () => void
     onopensession?: (id: string) => void
+    /* 点图片看大图（父级弹全屏预览） */
+    onview?: (src: string) => void
   } = $props()
 
   function fmtShort(ts: number): string {
@@ -107,6 +110,7 @@
     editDue = card.due ? dueInput(card.due) : ''
     editImages = [...(card.images ?? [])]
     editBoxes = {}
+    imgUndo = []
     selImg = editImages[0] ?? '' // 选中第一张，手柄一眼可见
     editErr = ''
     editing = true
@@ -138,6 +142,7 @@
     editing = false
     selImg = ''
     editBoxes = {}
+    imgUndo = []
     editErr = ''
   }
 
@@ -145,6 +150,7 @@
     editing = false
     selImg = ''
     editBoxes = {}
+    imgUndo = []
     editErr = ''
   }
 
@@ -178,6 +184,8 @@
   /* 编辑中的图片摆放草稿（没动过的图不落草稿，沿用卡上已存位置/默认位） */
   let editBoxes = $state<Record<string, ImgBox>>({})
   let selImg = $state('')
+  let imgMsg = $state('')
+  let imgMsgTimer: ReturnType<typeof setTimeout> | undefined
   let uploading = $state(0)
   let dropping = $state(false)
   let dropErr = $state('')
@@ -269,6 +277,7 @@
     if (!imgDrag.active) {
       if (Math.hypot(dx, dy) < 3) return
       imgDrag.active = true
+      pushImgUndo() // 拍下移动/缩放前的摆位
     }
     const { lw, lh } = imgDrag
     const b = { ...imgDrag.box }
@@ -302,9 +311,97 @@
   }
 
   function removeEditImage(src: string): void {
+    pushImgUndo()
     editImages = editImages.filter((s) => s !== src)
-    if (selImg === src) selImg = ''
+    /* 保留 selImg：刚删掉的图还能立刻 Ctrl+Z 撤回 */
   }
+
+  /* ── 复制图片：写系统剪贴板（PNG），复制后可直接粘到别的应用或再粘回卡面 ── */
+  function flashImgMsg(msg: string): void {
+    imgMsg = msg
+    clearTimeout(imgMsgTimer)
+    imgMsgTimer = setTimeout(() => (imgMsg = ''), 1600)
+  }
+
+  async function pngBlob(blob: Blob): Promise<Blob> {
+    if (blob.type === 'image/png') return blob
+    const bmp = await createImageBitmap(blob)
+    const canvas = document.createElement('canvas')
+    canvas.width = bmp.width
+    canvas.height = bmp.height
+    canvas.getContext('2d')?.drawImage(bmp, 0, 0)
+    bmp.close()
+    return await new Promise((resolve, reject) =>
+      canvas.toBlob((b) => (b ? resolve(b) : reject(new Error('转成 PNG 失败'))), 'image/png'),
+    )
+  }
+
+  async function copyImage(src: string, msg = '已复制图片'): Promise<boolean> {
+    try {
+      const png = await pngBlob(await (await fetch(src)).blob())
+      await navigator.clipboard.write([new ClipboardItem({ 'image/png': png })])
+      flashImgMsg(msg)
+      return true
+    } catch (e) {
+      flashImgMsg(`复制失败：${(e as Error).message}`)
+      return false
+    }
+  }
+
+  /* ── 图片撤销：编辑会话内每次移动/缩放/增删前拍一张快照 ── */
+  type ImgSnap = { images: string[]; boxes: Record<string, ImgBox> }
+  let imgUndo: ImgSnap[] = []
+
+  function pushImgUndo(): void {
+    imgUndo.push({ images: [...editImages], boxes: { ...editBoxes } })
+    if (imgUndo.length > 30) imgUndo.shift()
+  }
+
+  function undoImg(): void {
+    const s = imgUndo.pop()
+    if (!s) return
+    const had = new Set(editImages)
+    editImages = s.images
+    editBoxes = s.boxes
+    const back = s.images.find((src) => !had.has(src))
+    if (back) selImg = back
+    else if (!editImages.includes(selImg)) selImg = editImages[0] ?? ''
+    flashImgMsg('已撤销')
+  }
+
+  async function cutImage(src: string): Promise<void> {
+    if (!editImages.includes(src)) return
+    if (!(await copyImage(src, '已剪切图片'))) return
+    pushImgUndo()
+    editImages = editImages.filter((s) => s !== src)
+    /* 保留 selImg：刚剪掉的图还能立刻 Ctrl+Z 撤回 */
+  }
+
+  /* 选中图片时 Ctrl/⌘+C 复制、Ctrl/⌘+X 剪切、Ctrl/⌘+Z 撤销图片操作；
+     有文字选区或在输入框里时让浏览器照常处理文字 */
+  $effect(() => {
+    if (!editing) return
+    const onKey = (e: KeyboardEvent) => {
+      if (!(e.ctrlKey || e.metaKey)) return
+      const key = e.key.toLowerCase()
+      if (key !== 'c' && key !== 'x' && key !== 'z') return
+      if ((e.target as HTMLElement | null)?.closest('input, textarea')) return
+      const s = window.getSelection()
+      if (s && !s.isCollapsed && s.anchorNode && el?.contains(s.anchorNode)) return
+      if (key === 'z') {
+        if (!selImg || !imgUndo.length) return
+        e.preventDefault()
+        undoImg()
+        return
+      }
+      if (!selImg) return
+      e.preventDefault()
+      if (key === 'c') void copyImage(selImg)
+      else void cutImage(selImg)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  })
 
   async function uploadImages(files: File[]): Promise<string[]> {
     uploading += files.length
@@ -321,8 +418,11 @@
     editErr = ''
     try {
       const urls = await uploadImages(files)
-      editImages = [...editImages, ...urls]
-      if (urls.length) selImg = urls[urls.length - 1] // 新贴的图直接选中，好马上调位置
+      if (urls.length) {
+        pushImgUndo()
+        editImages = [...editImages, ...urls]
+        selImg = urls[urls.length - 1] // 新贴的图直接选中，好马上调位置
+      }
     } catch (e) {
       editErr = `图片上传失败：${(e as Error).message}`
     }
@@ -555,6 +655,7 @@
     removeResizeWindow()
     stopImgListeners()
     clearTimeout(dropErrTimer)
+    clearTimeout(imgMsgTimer)
   })
 
   function removeNow() {
@@ -650,11 +751,32 @@
         class="sticker"
         class:sel={editing && selImg === src}
         style={imgStyle(src, i)}
-        title={editing ? '拖动移动 · 右下角缩放' : undefined}
+        title={editing ? '拖动移动 · 双击看大图 · Ctrl+C 复制 · Ctrl+X 剪切 · Ctrl+Z 撤销' : undefined}
         onpointerdown={editing ? (e) => startImgDrag(e, src, 'move') : undefined}
+        ondblclick={editing
+          ? (e) => {
+              e.stopPropagation()
+              onview?.(src)
+            }
+          : undefined}
       >
         <img {src} alt="" draggable="false" />
         {#if editing && selImg === src}
+          <button
+            class="imgcopy"
+            onpointerdown={(e) => e.stopPropagation()}
+            onclick={(e) => {
+              e.stopPropagation()
+              void copyImage(src)
+            }}
+            title="复制图片"
+            aria-label="复制图片"
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="9" y="9" width="10" height="11" rx="2" />
+              <path d="M5 15V6a2 2 0 0 1 2-2h7" />
+            </svg>
+          </button>
           <button
             class="imgx"
             onpointerdown={(e) => e.stopPropagation()}
@@ -695,6 +817,8 @@
       </div>
     </div>
   {/if}
+
+  {#if imgMsg}<div class="imgmsg">{imgMsg}</div>{/if}
 </article>
 
 <style>
@@ -897,11 +1021,11 @@
     box-shadow: 0 8px 20px -10px rgb(0 0 0 / 35%);
     cursor: grab;
   }
-  /* 选中贴纸的移除按钮 / 缩放手柄 */
-  .imgx {
+  /* 选中贴纸的复制 / 移除按钮 / 缩放手柄 */
+  .imgx,
+  .imgcopy {
     position: absolute;
     top: 3px;
-    right: 3px;
     display: grid;
     place-items: center;
     width: 16px;
@@ -916,6 +1040,16 @@
     line-height: 1;
     cursor: pointer;
   }
+  .imgx {
+    right: 3px;
+  }
+  .imgcopy {
+    left: 3px;
+  }
+  .imgcopy svg {
+    width: 10px;
+    height: 10px;
+  }
   .imggrip {
     position: absolute;
     right: 2px;
@@ -928,6 +1062,21 @@
     background: var(--accent);
     cursor: nwse-resize;
     touch-action: none;
+  }
+  .imgmsg {
+    position: absolute;
+    left: 50%;
+    bottom: 8px;
+    z-index: 6;
+    padding: 2px 8px;
+    border-radius: 6px;
+    background: var(--bg-invert);
+    color: var(--fg-invert);
+    font-size: var(--font-size-small);
+    white-space: nowrap;
+    transform: translateX(-50%);
+    pointer-events: none;
+    box-shadow: 0 4px 12px rgb(0 0 0 / 18%);
   }
   .mdbody :global(p) {
     margin: 0 0 3px;

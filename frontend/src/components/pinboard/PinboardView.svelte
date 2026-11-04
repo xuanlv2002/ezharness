@@ -54,6 +54,20 @@
   let leaving = $state<Set<string>>(new Set())
   let dayOpen = $state('')
   let highlight = $state('')
+  /* 图片大图预览：viewAt 挡住打开时那一下双击的第二次 click */
+  let viewImg = $state('')
+  let viewAt = 0
+  let lbEl = $state<HTMLElement>()
+
+  function openView(src: string): void {
+    viewImg = src
+    viewAt = Date.now()
+  }
+  /* 打开时把焦点挪到遮罩上：Esc 只关大图，不会落到后面的编辑框里取消编辑 */
+  $effect(() => {
+    if (!viewImg) return
+    requestAnimationFrame(() => lbEl?.focus())
+  })
 
   const dayRecs = $derived.by(() => (dayOpen ? board.done.filter((r) => dayOf(r) === dayOpen).sort(byDayOrder) : []))
 
@@ -398,7 +412,8 @@
     const el = document.activeElement as HTMLElement | null
     const typing = !!el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable)
     if (e.key === 'Escape') {
-      if (dayOpen) dayOpen = ''
+      if (viewImg) viewImg = ''
+      else if (dayOpen) dayOpen = ''
       else if (draft) draft = null
       return
     }
@@ -443,6 +458,7 @@
           oncomplete={() => complete(c.id)}
           onnewsession={() => void newSessionFor(c.id)}
           onopensession={(id) => void store.openSession(id)}
+          onview={openView}
         />
       {/each}
 
@@ -522,7 +538,14 @@
                   {#if r.images?.length}
                     <div class="dimgrid">
                       {#each r.images as src (src)}
-                        <img {src} alt="" loading="lazy" />
+                        <button
+                          class="dimgbtn"
+                          onclick={() => openView(src)}
+                          ondblclick={(e) => e.stopPropagation()}
+                          title="查看大图"
+                        >
+                          <img {src} alt="" loading="lazy" />
+                        </button>
                       {/each}
                     </div>
                   {/if}
@@ -552,6 +575,29 @@
       onblank={() => (dayOpen = '')}
     />
   </div>
+
+  {#if viewImg}
+    <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
+    <div
+      class="lightbox"
+      bind:this={lbEl}
+      tabindex="-1"
+      onclick={(e) => {
+        if (e.target === e.currentTarget && Date.now() - viewAt > 250) viewImg = ''
+      }}
+    >
+      <img src={viewImg} alt="" />
+      <button
+        class="lbclose"
+        onclick={(e) => {
+          e.stopPropagation()
+          viewImg = ''
+        }}
+        title="关闭（Esc）"
+        aria-label="关闭大图"
+      >✕</button>
+    </div>
+  {/if}
 </div>
 
 <style>
@@ -899,7 +945,16 @@
     flex-wrap: wrap;
     gap: 6px;
   }
-  .dimgrid img {
+  .dimgbtn {
+    display: block;
+    max-width: 100%;
+    padding: 0;
+    border: none;
+    background: none;
+    cursor: zoom-in;
+    line-height: 0;
+  }
+  .dimgbtn img {
     display: block;
     max-width: 100%;
     max-height: 220px;
@@ -922,5 +977,48 @@
     padding: 8px 2px;
     color: var(--faint);
     font-size: var(--font-size-ui);
+  }
+  /* 图片大图预览：铺满窗口的暗底，点空白 / Esc / 右上角关闭 */
+  .lightbox {
+    position: fixed;
+    inset: 0;
+    z-index: 3000;
+    display: grid;
+    place-items: center;
+    box-sizing: border-box;
+    padding: 4vh 4vw;
+    background: rgb(0 0 0 / 68%);
+    backdrop-filter: blur(3px);
+    cursor: zoom-out;
+    outline: none;
+  }
+  .lightbox img {
+    max-width: 100%;
+    max-height: 100%;
+    border-radius: 6px;
+    background: var(--bg);
+    box-shadow: 0 24px 64px rgb(0 0 0 / 45%);
+    object-fit: contain;
+    cursor: default;
+  }
+  .lbclose {
+    position: absolute;
+    top: 14px;
+    right: 14px;
+    display: grid;
+    place-items: center;
+    width: 30px;
+    height: 30px;
+    padding: 0;
+    border: 1px solid rgb(255 255 255 / 22%);
+    border-radius: 50%;
+    background: rgb(0 0 0 / 35%);
+    color: #fff;
+    font: inherit;
+    font-size: 14px;
+    cursor: pointer;
+  }
+  .lbclose:hover {
+    background: rgb(0 0 0 / 55%);
   }
 </style>
