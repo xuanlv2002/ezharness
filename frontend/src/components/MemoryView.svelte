@@ -133,6 +133,33 @@
   let adding = $state<{ target: 'user' | 'soul'; text: string } | null>(null)
   let memBusy = $state(false)
 
+  /* soul 面板的预制模板（在「添加」弹框里选用，点一下填入正文再改）：
+     完整人设是一条开箱即用的成套人设；其余是单维度的短模板 */
+  const soulPresets: Array<{ label: string; text: string }> = [
+    {
+      label: '完整人设',
+      text: [
+        '你是「（名字）」，我给你起的名字——对话中用它自称，我叫这个名字你就要应。',
+        '',
+        '性格：务实、直接、有耐心。不确定的事直说不确定，不装懂、不编造；发现我的问题当场指出，但语气不刻薄；交代给你的事有始有终，做完回报结果。',
+        '',
+        '说话风格：用简洁的中文，先结论后细节；不写客套和铺垫，不复述我说过的话；可以轻松一点，但不油腻；专业术语第一次出现时用一句话解释。',
+        '',
+        '做事方式：动手前先讲一句思路；影响面大的操作（删除、覆盖、对外发送）先列出来等我确认；代码只给关键改动和位置（file:line），不整段重贴没改的代码；我的需求有矛盾时先指出来，不要自己猜着改。',
+        '',
+        '边界：做不到就明说，不硬撑；不知道就查，查不到就告诉我查不到。',
+      ].join('\n'),
+    },
+    { label: '名字', text: '你的名字是「（填名字）」。对话中用它自称；用户叫这个名字就是在叫你。' },
+    { label: '称呼我', text: '叫我（填称呼），不要用「您」这类敬称。' },
+    { label: '简洁中文', text: '回复用简洁的中文：先结论后细节，不写客套和铺垫，不复述我说过的话。' },
+    { label: '讲透原理', text: '回复用中文并把来龙去脉讲清楚：关键决策给理由，复杂概念配例子，不省略中间推导。' },
+    { label: '直接一点', text: '语气直接务实：不确定就直说不确定，发现我的问题直接指出，不用缓冲词和过度道歉。' },
+    { label: '温和一点', text: '语气平和友善：指出我的错误时先说哪里合理，再讲问题，避免生硬否定。' },
+    { label: '先确认再动手', text: '涉及删除、覆盖、对外发送等有影响的操作，先列出影响面等我确认，再执行。' },
+    { label: '代码回复风格', text: '代码相关回复只给关键改动与位置（file:line），不整段重贴未改动的代码；注释用中文。' },
+  ]
+
   async function loadLongterm() {
     try {
       longterm = await api.getLongterm()
@@ -1228,9 +1255,23 @@
       <h3>添加到{targetLabel}</h3>
       <button class="dclose" onclick={() => (adding = null)} title="关闭">✕</button>
     </header>
+    {#if adding.target === 'soul'}
+      <div class="tplrow">
+        <span class="tplab">模板</span>
+        {#each soulPresets as p (p.label)}
+          <button class="schip" onclick={() => (adding!.text = p.text)} title={p.text}>{p.label}</button>
+        {/each}
+      </div>
+    {/if}
     <div class="fld">
       <span>条目内容</span>
-      <textarea class="memedit" rows="4" placeholder="一条新记忆（自包含的一句话）" value={adding.text} oninput={(e) => (adding!.text = e.currentTarget.value)}></textarea>
+      <textarea
+        class="memedit"
+        rows={adding.target === 'soul' ? 10 : 4}
+        placeholder={adding.target === 'soul' ? '一条 agent soul：性格 / 语言风格 / 工作方式——可先点上面的模板再改' : '一条新记忆（自包含的一句话）'}
+        value={adding.text}
+        oninput={(e) => (adding!.text = e.currentTarget.value)}
+      ></textarea>
     </div>
     <footer>
       <button class="btn" disabled={memBusy} onclick={() => (adding = null)}>取消</button>
@@ -1486,6 +1527,38 @@
   }
   .mempnel.soul .memsig {
     background: #7c3aed;
+  }
+  /* 添加弹框里的模板 chips：点一下把模板填进下方正文（悬停可预览全文） */
+  .tplrow {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 5px;
+  }
+  .tplab {
+    flex: none;
+    font-size: var(--font-size-small);
+    color: var(--faint);
+  }
+  .schip {
+    padding: 2px 9px;
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    background: var(--bg);
+    color: var(--muted);
+    font: inherit;
+    font-size: var(--font-size-small);
+    line-height: 1.6;
+    cursor: pointer;
+    transition:
+      color var(--dur-fast) var(--ease-out),
+      border-color var(--dur-fast) var(--ease-out),
+      background var(--dur-fast) var(--ease-out);
+  }
+  .schip:hover {
+    color: var(--fg);
+    border-color: color-mix(in srgb, #7c3aed 45%, var(--line));
+    background: var(--bg-soft);
   }
   .memcnt {
     font-family: var(--font-mono);

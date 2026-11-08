@@ -193,6 +193,11 @@
     flex-direction: column;
     gap: 14px;
   }
+  /* 与对话/回调/便签同宽：快应用卡片网格放宽到 1080（管理页默认 624
+     太窄，卡片铺不开几列） */
+  .page > * {
+    max-width: min(1080px, 100%);
+  }
   .head h1 {
     font-size: var(--font-size-page);
     font-weight: 700;
