@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onDestroy, onMount } from 'svelte'
+  import { paneTabs } from '../../lib/paneTabs.svelte'
 
   /*
   共享浏览器抽屉页（desktop 专用）：标签条 + 地址栏 + 内容区占位。
@@ -83,7 +84,13 @@
     requestAnimationFrame(reportRect)
   })
 
-  onDestroy(() => ro?.disconnect())
+  /* 标签数上报顶栏角标 */
+  $effect(() => (paneTabs.browser = tabs.length))
+
+  onDestroy(() => {
+    ro?.disconnect()
+    paneTabs.browser = 0
+  })
 
   /* 抽屉显隐/过渡联动视图贴靠：过渡期间报零矩形**把视图藏起来**——真实内容是
      原生 WebContentsView，跟不上 CSS 等宽动画（逐帧 IPC setBounds 必然滞后一拍，

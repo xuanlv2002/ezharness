@@ -1,9 +1,10 @@
 <script lang="ts">
-  import { onMount } from 'svelte'
+  import { onDestroy, onMount } from 'svelte'
   import { api } from '../../lib/api'
   import { fileBaseName, normFileKey } from '../../lib/textfile'
   import { store } from '../../lib/store.svelte'
   import { filePane } from '../../lib/filePaneState'
+  import { paneTabs } from '../../lib/paneTabs.svelte'
   import { explorer, explorerUI, repoOf, setExplorerOpen } from '../../lib/explorerState.svelte'
   import { kindOf, VIEWERS, MAX_BYTES, type ResTab } from './registry'
   import KindIcon from './KindIcon.svelte'
@@ -80,6 +81,11 @@
     filePane.serialize = serializeTabs
     filePane.restore = restoreTabs
   })
+
+  /* tab 数上报顶栏角标 */
+  $effect(() => (paneTabs.file = tabs.length))
+
+  onDestroy(() => (paneTabs.file = 0))
 
   $effect(() => {
     if (push) push(serializeTabs())
