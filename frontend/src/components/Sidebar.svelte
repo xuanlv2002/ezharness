@@ -185,10 +185,9 @@
     border-radius: 9px;
     color: var(--muted);
     white-space: nowrap;
-    transition:
-      background var(--dur-fast) var(--ease-out),
-      color var(--dur-fast) var(--ease-out),
-      gap var(--dur-in) var(--ease-out);
+    /* 高亮/悬停瞬时切换（不淡入淡出）：切页时高亮与重页面挂载同帧，
+       再叠一段过渡看着就像菜单在闪 */
+    transition: gap var(--dur-in) var(--ease-out);
   }
   .menu.expanded .nav {
     padding: 0 9px;
