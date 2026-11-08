@@ -15,7 +15,7 @@
 
   import { onMount } from 'svelte'
   import { api, statusLetter, type TreeEntry } from '../../lib/api'
-  import { explorer, repoOf, setExplorerDocked, statusOf } from '../../lib/explorerState.svelte'
+  import { explorer, setExplorerDocked, statusOf } from '../../lib/explorerState.svelte'
   import { store } from '../../lib/store.svelte'
   import KindIcon from './KindIcon.svelte'
   import { kindOf } from './registry'
@@ -112,21 +112,36 @@
     collapsedGroups = { ...collapsedGroups, [root]: !collapsedGroups[root] }
   }
 
-  /* dir 子树内的 git 变更概况（文件夹着色用）：条数与是否含改/增 */
-  function subtreeStatus(dir: string): { n: number; mod: boolean; add: boolean } {
-    const r = repoOf(dir)
-    if (!r) return { n: 0, mod: false, add: false }
-    const rel = dir === r ? '' : dir.slice(r.length + 1)
-    let n = 0
-    let mod = false
-    let add = false
-    for (const [k, code] of Object.entries(explorer.repos[r])) {
-      if (rel && !k.startsWith(rel + '/')) continue
-      n++
-      if (code === '??' || code.includes('A')) add = true
-      else mod = true
+  /* 目录 → 子树变更概况（文件夹着色用）：git 状态每变一轮先按目录前缀
+     聚好一张表，行渲染只查表——不在渲染路径上逐目录扫全仓库 */
+  const subtree = $derived.by(() => {
+    const m = new Map<string, { n: number; mod: boolean; add: boolean }>()
+    const bump = (dir: string, add: boolean): void => {
+      const cur = m.get(dir)
+      if (cur) {
+        cur.n++
+        if (add) cur.add = true
+        else cur.mod = true
+      } else m.set(dir, { n: 1, mod: !add, add })
     }
-    return { n, mod, add }
+    for (const [root, st] of Object.entries(explorer.repos)) {
+      for (const [k, code] of Object.entries(st)) {
+        const add = code === '??' || code.includes('A')
+        const parts = k.split('/')
+        parts.pop()
+        let dir = root
+        bump(dir, add)
+        for (const p of parts) {
+          dir += '/' + p
+          bump(dir, add)
+        }
+      }
+    }
+    return m
+  })
+
+  function subtreeStatus(dir: string): { n: number; mod: boolean; add: boolean } {
+    return subtree.get(dir) ?? { n: 0, mod: false, add: false }
   }
 
   /* git 计数只统计当前根目录子树内的变更（仓库其他位置的变更不进来，
@@ -343,8 +358,14 @@
 
 <aside class="tree" class:docked class:closed={!open} bind:this={rootEl} onpointerdown={onPanelDown}>
   <header>
-    <!-- 根目录按钮：完整路径（尾部优先显示），点击弹目录下拉 -->
-    <button class="rootbtn" onclick={() => { menuOpen = !menuOpen; if (menuOpen) changesOpen = false }} title={explorer.dir}>
+    <!-- 根目录按钮：完整路径（尾部优先显示），点击弹目录下拉；根目录在
+         树里没有自己的行，右键菜单挂这里（插入路径到会话 / 资源管理器打开） -->
+    <button
+      class="rootbtn"
+      onclick={() => { menuOpen = !menuOpen; if (menuOpen) changesOpen = false }}
+      oncontextmenu={(e) => openCtx(e, explorer.dir)}
+      title={`${explorer.dir}\n右键：插入路径到会话 / 在资源管理器打开`}
+    >
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
         <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
       </svg>
@@ -388,9 +409,10 @@
           <path d="M21 3v6h-6" />
         </svg>
       </button>
-      <button class="abtn" onclick={() => onclose?.()} title="关闭目录面板">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
-          <path d="M6 6l12 12M18 6L6 18" />
+      <button class="abtn" onclick={() => onclose?.()} title="收起目录面板">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M11 6l-6 6 6 6" />
+          <path d="M18 6l-6 6 6 6" />
         </svg>
       </button>
     </span>
@@ -853,6 +875,9 @@
     text-align: left;
     cursor: pointer;
     transition: background var(--dur-fast) var(--ease-out);
+    /* 同 .row：屏外行不排版不绘制 */
+    content-visibility: auto;
+    contain-intrinsic-size: auto 23px;
   }
   .citem:hover:not(:disabled) {
     background: var(--bg-soft);
@@ -1022,6 +1047,9 @@
     cursor: pointer;
     white-space: nowrap;
     transition: background var(--dur-fast) var(--ease-out);
+    /* 屏外行跳过排版与绘制：大树滚动不吃满主线程（auto 记住已排高度） */
+    content-visibility: auto;
+    contain-intrinsic-size: auto 23px;
   }
   .row:hover {
     background: var(--bg-soft);
