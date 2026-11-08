@@ -1591,16 +1591,21 @@
     font-size: var(--font-size-small);
     color: var(--faint);
   }
+  /* 回调页整体加宽：记录表五列最小 ~730px，管理页 624 阅读列宽下必然
+     裁列。整页统一放宽到 1080，上下区块同宽（避免只有表格宽一截） */
+  .page > * {
+    max-width: min(1080px, 100%);
+  }
   .rtable {
     border: 1px solid var(--line);
     border-radius: 11px;
-    overflow: hidden;
+    overflow-x: auto;
     background: var(--bg);
   }
   .rhead,
   .rrow {
     display: grid;
-    grid-template-columns: 88px minmax(135px, 1.05fr) minmax(150px, 1.2fr) minmax(175px, 1.65fr) minmax(140px, 1.35fr);
+    grid-template-columns: 88px minmax(120px, 1.05fr) minmax(130px, 1.2fr) minmax(160px, 1.65fr) minmax(150px, 1.35fr);
     gap: 10px;
     align-items: center;
     padding: 7px 12px;
@@ -1686,12 +1691,11 @@
   .rlink:hover {
     text-decoration: underline;
   }
+  /* 结果列不截断：完整换行展示（长错误/长输出不能再只给两行），行高随之增长 */
   .rresult {
-    display: -webkit-box;
-    -webkit-line-clamp: 2;
-    -webkit-box-orient: vertical;
     white-space: normal;
     line-height: 1.45;
+    overflow-wrap: anywhere;
   }
   .rresult.err {
     color: var(--danger);

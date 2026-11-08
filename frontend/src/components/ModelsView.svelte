@@ -60,6 +60,7 @@
 
   /* 添加弹框的厂商预设：回填模型名/端点/窗口/视觉/协议，用户只需补 API Key */
   const PRESETS = [
+    { label: '智谱 GLM', name: 'glm-5.3', baseUrl: 'https://open.bigmodel.cn/api/paas/v4', contextWindow: 1024000, vision: false, protocol: 'openai' },
     { label: 'DeepSeek 官方', name: 'deepseek-flash', baseUrl: 'https://api.deepseek.com/v1', contextWindow: 1024000, vision: true, protocol: 'openai' },
     { label: '硅基流动 DeepSeek', name: 'deepseek-ai/DeepSeek-V3.2', baseUrl: 'https://api.siliconflow.cn/v1', contextWindow: 128000, vision: false, protocol: 'openai' },
   ]

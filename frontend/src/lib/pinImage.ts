@@ -41,3 +41,28 @@ export function imageFiles(items: DataTransferItemList | DataTransferItem[] | nu
     .map((it) => it.getAsFile())
     .filter((f): f is File => !!f)
 }
+
+/*
+copyPinImage 把卡面图片写进系统剪贴板（非 PNG 先转 PNG）；ok=是否成功，
+msg=结果消息（默认成功文案，调用方可换成自己的）——板卡与顶栏便签预览共用。
+*/
+export async function copyPinImage(src: string): Promise<{ ok: boolean; msg: string }> {
+  try {
+    let blob = await (await fetch(src)).blob()
+    if (blob.type !== 'image/png') {
+      const bmp = await createImageBitmap(blob)
+      const canvas = document.createElement('canvas')
+      canvas.width = bmp.width
+      canvas.height = bmp.height
+      canvas.getContext('2d')?.drawImage(bmp, 0, 0)
+      bmp.close()
+      blob = await new Promise<Blob>((resolve, reject) =>
+        canvas.toBlob((b) => (b ? resolve(b) : reject(new Error('转成 PNG 失败'))), 'image/png'),
+      )
+    }
+    await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })])
+    return { ok: true, msg: '已复制图片' }
+  } catch (e) {
+    return { ok: false, msg: `复制失败：${(e as Error).message}` }
+  }
+}

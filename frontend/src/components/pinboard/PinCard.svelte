@@ -1,7 +1,8 @@
 <script lang="ts">
   /*
   板上的一张便签卡：拖动（3px 阈值）、右下角缩放、悬停工具条（✓ 完成 /
-  ✕ 删除就地确认）、双击就地编辑。正文按 markdown 渲染，待办勾选框可直接
+  ✕ 删除就地确认）、点击就地编辑（没拖起来就算点击，光标落在点击处）。
+  正文按 markdown 渲染，待办勾选框可直接
   点，超出卡片高度时在正文区域内滚动。图片是贴在卡面上的贴纸：可直接拖入
   图片文件或在编辑器里粘贴，编辑时拖动图片移动、右下角手柄缩放，位置与
   大小随卡片一起存盘；选中后可复制到系统剪贴板，点图片看大图。
@@ -17,8 +18,9 @@
   Ctrl/⌘+Enter 提交，Esc 取消；空内容不提交（有图片时可只存图片）。
 
   拖动/缩放期间只改本地 transform 与宽高（不写共享状态），松手才提交
-  x/y/w/h——连续 pointermove 不触发整板重排。now 由父级定时推进（30s），
-  持续时间与超期状态跟着刷新。
+  x/y/w/h——连续 pointermove 直接写 DOM transform，不经响应式更新，
+  提层（bump）也延到松手一并落，拖起那一帧不触发整板重排。now 由父级
+  定时推进（30s），持续时间与超期状态跟着刷新。
   */
   import { onDestroy } from 'svelte'
   import { api, type PinCard as PinCardT } from '../../lib/api'
@@ -34,7 +36,7 @@
   } from '../../lib/pinboard.svelte'
   import { DUE_COLOR, dueLevel } from '../../lib/pinDue'
   import { renderPinMarkdown, toggleTask } from '../../lib/pinMarkdown'
-  import { compressPinImage, hasImageFile, imageFiles } from '../../lib/pinImage'
+  import { compressPinImage, copyPinImage, hasImageFile, imageFiles } from '../../lib/pinImage'
   import PinRichEditor from './PinRichEditor.svelte'
   import PinSessionLinks from './PinSessionLinks.svelte'
 
@@ -103,8 +105,10 @@
     return Number.isFinite(ts) ? ts : undefined
   }
 
-  /* 双击就地编辑：打开时快照正文、截止时间与图片，提交才写回卡片。 */
-  function startEdit() {
+  /* 点击就地编辑：打开时快照正文、截止时间与图片，提交才写回卡片。
+     记下点击点与正文滚动量，编辑器把光标放到点击处。 */
+  let editFocus = $state<{ x: number; y: number; scrollTop: number } | null>(null)
+  function startEdit(px = -1, py = -1) {
     if (editing) return
     editText = card.text
     editDue = card.due ? dueInput(card.due) : ''
@@ -113,6 +117,7 @@
     imgUndo = []
     selImg = editImages[0] ?? '' // 选中第一张，手柄一眼可见
     editErr = ''
+    editFocus = px >= 0 && py >= 0 ? { x: px, y: py, scrollTop: mdEl?.scrollTop ?? 0 } : null
     editing = true
     bumpCard(card.id) // 编辑中的卡提到最上层，避免被相邻卡盖住
   }
@@ -323,29 +328,10 @@
     imgMsgTimer = setTimeout(() => (imgMsg = ''), 1600)
   }
 
-  async function pngBlob(blob: Blob): Promise<Blob> {
-    if (blob.type === 'image/png') return blob
-    const bmp = await createImageBitmap(blob)
-    const canvas = document.createElement('canvas')
-    canvas.width = bmp.width
-    canvas.height = bmp.height
-    canvas.getContext('2d')?.drawImage(bmp, 0, 0)
-    bmp.close()
-    return await new Promise((resolve, reject) =>
-      canvas.toBlob((b) => (b ? resolve(b) : reject(new Error('转成 PNG 失败'))), 'image/png'),
-    )
-  }
-
   async function copyImage(src: string, msg = '已复制图片'): Promise<boolean> {
-    try {
-      const png = await pngBlob(await (await fetch(src)).blob())
-      await navigator.clipboard.write([new ClipboardItem({ 'image/png': png })])
-      flashImgMsg(msg)
-      return true
-    } catch (e) {
-      flashImgMsg(`复制失败：${(e as Error).message}`)
-      return false
-    }
+    const r = await copyPinImage(src)
+    flashImgMsg(r.ok ? msg : r.msg)
+    return r.ok
   }
 
   /* ── 图片撤销：编辑会话内每次移动/缩放/增删前拍一张快照 ── */
@@ -467,8 +453,10 @@
   let el = $state<HTMLElement>()
   let drag = $state<{ px: number; py: number; x: number; y: number } | null>(null)
   let moved = $state(false)
-  let dx = $state(0)
-  let dy = $state(0)
+  /* 拖动位移不走响应式：pointermove 直接写 el.style.transform，
+     每次移动零组件更新，只有 moved（起拖/收尾各一次）进状态 */
+  let dx = 0
+  let dy = 0
 
   let resizing = $state(false)
   let liveW = $state(0)
@@ -529,7 +517,7 @@
     return () => document.removeEventListener('pointerdown', down, true)
   })
 
-  /* 指针落在内容区的滚动条上：不启动卡片拖动 / 双击编辑，让滚动条自己
+  /* 指针落在内容区的滚动条上：不启动卡片拖动 / 点击编辑，让滚动条自己
      处理拖拽（内容溢出时正文右侧出现 6px 滚动条） */
   function onScrollbar(e: MouseEvent): boolean {
     const t = e.target as HTMLElement
@@ -566,26 +554,34 @@
   }
 
   function onMove(e: PointerEvent) {
-    if (!drag) return
+    if (!drag || !el) return
     const ddx = e.clientX - drag.px
     const ddy = e.clientY - drag.py
     if (!moved && Math.hypot(ddx, ddy) < 3) return
-    if (!moved) {
-      moved = true
-      bumpCard(card.id) // 拖起提层，拖动中的卡在最上层
-    }
+    moved = true
     dx = clamp(drag.x + ddx, PAD, Math.max(PAD, width - card.w - PAD)) - card.x
     dy = clamp(drag.y + ddy, PAD, Math.max(PAD, height - card.h - PAD)) - card.y
+    el.style.transform = `translate(${dx}px, ${dy}px)`
   }
 
-  function onUp() {
+  /* 松手：拖过就落位并提层（一次提交）；没拖起来就是点击——就地编辑 */
+  function onUp(e: PointerEvent) {
     removeDragWindow()
     if (!drag) return
-    if (moved) patchCard(card.id, { x: card.x + dx, y: card.y + dy })
+    const clicked = !moved
+    const x = card.x + dx
+    const y = card.y + dy
     drag = null
     moved = false
     dx = 0
     dy = 0
+    if (el) el.style.transform = ''
+    if (clicked) {
+      startEdit(e.clientX, e.clientY)
+      return
+    }
+    patchCard(card.id, { x, y })
+    bumpCard(card.id)
   }
 
   function cancelDrag() {
@@ -594,13 +590,7 @@
     moved = false
     dx = 0
     dy = 0
-  }
-
-  function dbl(e: MouseEvent) {
-    if (editing) return
-    if ((e.target as HTMLElement).closest('.nodrag, a, input, button')) return
-    if (moved || onScrollbar(e)) return
-    startEdit()
+    if (el) el.style.transform = ''
   }
 
   /* 缩放：右下角 grip，最小尺寸 MIN_W/MIN_H，不越出板右/下缘 */
@@ -680,9 +670,7 @@
   style:height="{showH}px"
   style:z-index={moved ? 9999 : stack}
   style:--tint={card.tint}
-  style:transform={moved ? `translate(${dx}px, ${dy}px)` : undefined}
   onpointerdown={onDown}
-  ondblclick={dbl}
   ondragover={onDragOver}
   ondragleave={onDragLeave}
   ondrop={onDrop}
@@ -708,6 +696,7 @@
     {#if editing}
       <PinRichEditor
         value={editText}
+        focusAt={editFocus}
         onchange={(md) => (editText = md)}
         onsave={saveEdit}
         oncancel={cancelEdit}
@@ -872,6 +861,10 @@
     cursor: grabbing;
     transition: none;
     z-index: 9999;
+  }
+  /* 拖动中常驻合成层：每帧只挪 transform，不重绘阴影 */
+  .pcard.dragging {
+    will-change: transform;
   }
   /* 高亮（时间线卡拖回板上）：描边闪一下，卡不挪位 */
   .pcard.hl {
@@ -1123,6 +1116,11 @@
   .mdbody :global(li:has(> input[type='checkbox'])) {
     list-style: none;
     margin-left: -1.25em;
+  }
+  /* 已勾的待办划线弱化（与编辑器里的完成态一致） */
+  .mdbody :global(li:has(> input[type='checkbox']:checked)) {
+    color: var(--faint);
+    text-decoration: line-through;
   }
   .mdbody :global(code) {
     padding: 0 4px;

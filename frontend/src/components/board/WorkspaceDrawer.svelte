@@ -7,16 +7,17 @@
   import BrowserPane from './BrowserPane.svelte'
 
   /*
-  工作区抽屉：推挤式右布局列（非悬浮 overlay）——打开时占布局宽度，
+  工区抽屉：推挤式右布局列（非悬浮 overlay）——打开时占布局宽度，
   聊天主列被挤窄不遮挡。工具页（终端/资源查看器/共享浏览器）互斥显
   隐，多 pane 常驻挂载保活（终端 WS/xterm、资源 tab 的 buffer/标注/
-  画布、浏览器标签条互不丢失）；入口是右侧悬浮列的 mini 钮
-  （store.toggleDrawerTool）。宽度：中间线定主列宽（默认 42vw、保底
-  480px），抽屉吃掉剩余全部——窗口缩放时抽屉跟着伸缩、主列不动；
-  抽屉保底 PANE_MIN 640px（浏览器/终端/资源都要放得下，不允许压成细条）。
-  动画 = width 展开（内层 .inner 恒宽 var(--pane-w)：过渡期间内容不
-  重排、xterm 不反复 fit；窗口 resize 时宽度变化经 var 继承同步到
-  inner，ResizeObserver 自动 fit）。
+  画布、浏览器标签条互不丢失）；入口是聊天输入条的 mini 钮
+  （store.toggleDrawerTool，开着且同页=收起）。收起：头部 » 钮 /
+  双击标题栏 / Esc，收起后整列出净、不占宽度。
+  宽度：中间线定主列宽（默认 42vw、保底 480px），抽屉吃掉剩余全部——
+  窗口缩放时抽屉跟着伸缩、主列不动；抽屉保底 PANE_MIN 640px（浏览器/
+  终端/资源都要放得下，不允许压成细条）。动画 = width 展开（内层
+  .inner 恒宽 var(--pane-w)：过渡期间内容不重排、xterm 不反复 fit；
+  窗口 resize 时宽度变化经 var 继承同步到 inner，ResizeObserver 自动 fit）。
   */
   let { visible = true }: { visible?: boolean } = $props()
 
@@ -34,6 +35,12 @@
     if (e.key !== 'Escape' || !open) return
     const el = document.activeElement
     if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA')) return
+    store.closeTermDrawer()
+  }
+
+  /* 双击标题栏收起（点在按钮上不算；抽屉开着才够得到标题栏） */
+  function onHeadDbl(e: MouseEvent): void {
+    if (!open || (e.target as HTMLElement).closest('button')) return
     store.closeTermDrawer()
   }
 
@@ -214,7 +221,7 @@
     ></div>
   {/if}
   <div class="inner">
-    <header title="按住拖出抽屉，成为独立窗口（关闭窗口即回到抽屉）">
+    <header title="按住拖出抽屉，成为独立窗口；双击收起" ondblclick={onHeadDbl}>
       <span class="grip" aria-hidden="true">
         <svg viewBox="0 0 16 16" fill="currentColor">
           <circle cx="5" cy="3" r="1.25" /><circle cx="11" cy="3" r="1.25" />
@@ -249,9 +256,10 @@
             <path d="M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5" />
           </svg>
         </button>
-        <button class="pop" onclick={() => store.closeTermDrawer()} title="收起抽屉（Esc）">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
-            <path d="M6 6l12 12M18 6L6 18" />
+        <button class="pop" onclick={() => store.closeTermDrawer()} title="收起抽屉（Esc / 双击标题栏）">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M6 6l6 6-6 6" />
+            <path d="M13 6l6 6-6 6" />
           </svg>
         </button>
       </div>

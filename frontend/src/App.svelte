@@ -2,7 +2,7 @@
   import { onMount } from 'svelte'
   import pkg from '../package.json'
   import { store } from './lib/store.svelte'
-  import { pinboardBusy, reloadPinboard } from './lib/pinboard.svelte'
+  import { pinEditing, pinFeedback, pinFeedbackFlash, pinRedo, pinUndo, pinboardBusy, reloadPinboard } from './lib/pinboard.svelte'
   import { filePane } from './lib/filePaneState'
   import Sidebar from './components/Sidebar.svelte'
   import TitleBar from './components/TitleBar.svelte'
@@ -97,6 +97,27 @@
     return () => window.removeEventListener('focus', onFocus)
   })
 
+  /* 便签落盘级撤销/重做（Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y）：焦点不在
+     输入框/编辑器、且没有便签正在编辑时接管——编辑中的原生撤销优先，
+     保存落盘后的回退走这里 */
+  function onPinUndoKey(e: KeyboardEvent) {
+    if (petView || noticeView || pinsView || popoutView) return
+    if (!(e.ctrlKey || e.metaKey)) return
+    const k = e.key.toLowerCase()
+    if (k !== 'z' && k !== 'y') return
+    if (pinEditing()) return
+    const t = e.target as HTMLElement | null
+    if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return
+    const redo = k === 'y' || e.shiftKey
+    const label = redo ? pinRedo() : pinUndo()
+    if (!label) return
+    e.preventDefault()
+    pinFeedbackFlash(`${redo ? '已重做' : '已撤销'}：${label}`)
+  }
+
+  // 当前页面同步给 store（顶栏工具键判断抽屉可不可见用）
+  $effect(() => (store.view = view))
+
   // 进入对话页即刷新：MCP/记忆等页面改动开关或 skill 后，右上角状态卡实时反映
   $effect(() => {
     if (!popoutView && !petView && view === 'chat') void store.refreshStatus()
@@ -110,6 +131,8 @@
     }
   })
 </script>
+
+<svelte:window onkeydown={onPinUndoKey} />
 
 {#if petView}
   <AssistantPet />
@@ -133,24 +156,30 @@
   <div class="app" class:expanded>
     <Sidebar view={view} expanded={expanded} onNavigate={(v) => (view = v)} onToggle={() => (expanded = !expanded)} />
     <main>
-      {#if view === 'chat'}
+      <!-- 对话页常驻挂载（切页只隐藏不卸载）：消息列表整树重建是切页
+           闪顿的主因，常驻后滚动位置也保留。其余页面按需挂载，对话
+           视图时下面的 {#if} 整链不渲染（否则会落进 else 的设置页） -->
+      <div class="keepchat" class:hidden={view !== 'chat'}>
         <ChatView />
-      {:else if view === 'pinboard'}
-        <PinboardView />
-      {:else if view === 'models'}
-        <ModelsView />
-      {:else if view === 'memory'}
-        <MemoryView onNavigate={(v) => (view = v as typeof view)} />
-      {:else if view === 'tools'}
-        <ToolsView />
-      {:else if view === 'callbacks'}
-        <CallbacksView />
-      {:else if view === 'mcp'}
-        <McpView />
-      {:else if view === 'security'}
-        <SecurityView />
-      {:else}
-        <SettingsView />
+      </div>
+      {#if view !== 'chat'}
+        {#if view === 'pinboard'}
+          <PinboardView />
+        {:else if view === 'models'}
+          <ModelsView />
+        {:else if view === 'memory'}
+          <MemoryView onNavigate={(v) => (view = v as typeof view)} />
+        {:else if view === 'tools'}
+          <ToolsView />
+        {:else if view === 'callbacks'}
+          <CallbacksView />
+        {:else if view === 'mcp'}
+          <McpView />
+        {:else if view === 'security'}
+          <SecurityView />
+        {:else}
+          <SettingsView />
+        {/if}
       {/if}
     </main>
     <!-- 工作区抽屉（终端/文件/画板三工具页）：推挤式右布局列（.app flex
@@ -164,9 +193,29 @@
   <span>·</span>
   <a href="https://github.com/xuanlv2002/ezloop" target="_blank" rel="noreferrer">powered by ezloop</a>
 </footer>
+
+{#if pinFeedback.text}
+  <div class="undo-toast">{pinFeedback.text}</div>
+{/if}
 {/if}
 
 <style>
+  /* 便签撤销/重做结果浮条：底部居中，1.6s 自隐 */
+  .undo-toast {
+    position: fixed;
+    left: 50%;
+    bottom: 30px;
+    z-index: 4000;
+    padding: 5px 14px;
+    border-radius: 8px;
+    background: var(--bg-invert, #1f1b16);
+    color: var(--fg-invert, #fff);
+    font-size: var(--font-size-ui);
+    white-space: nowrap;
+    transform: translateX(-50%);
+    pointer-events: none;
+    box-shadow: 0 8px 24px rgb(0 0 0 / 22%);
+  }
   /* 弹出窗口的单工具布局：撑满（padding 对齐抽屉 body） */
   .popout-pane {
     display: flex;
@@ -202,6 +251,15 @@
     background: var(--bg);
     /* 与窗口左上圆角呼应，避免白色直角紧贴灰色顶栏/侧栏 */
     border-top-left-radius: 10px;
+  }
+  /* 对话页常驻挂载的承载层：占满 main，隐藏时整层 display:none */
+  .keepchat {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+  }
+  .keepchat.hidden {
+    display: none;
   }
   .brand-foot {
     position: fixed;

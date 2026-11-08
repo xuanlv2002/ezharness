@@ -3,6 +3,7 @@
   import { isDesktop } from '../lib/desktop'
   import TopSearch from './TopSearch.svelte'
   import TopRail from './TopRail.svelte'
+  import TopTools from './TopTools.svelte'
 
   /* 顶部通栏：搜索框所有形态都渲染；三键仅桌面壳（?desktop=1）且非 macOS
      渲染——macOS 用系统原生红绿灯（主进程 titleBarStyle: hiddenInset），
@@ -76,8 +77,11 @@
 </script>
 
 <div class="titlebar" style="padding-left:{sidebarWidth}px">
-  <div class="search">
+  <!-- 中列 = 搜索框 + 工具三键（紧贴搜索框右侧）：整组居中，位置不随
+       右侧便签小点增减挪动 -->
+  <div class="mid">
     <TopSearch {onNavigate} />
+    <TopTools />
   </div>
   <div class="right">
     <TopRail />
@@ -137,8 +141,12 @@
     app-region: drag;
     transition: padding-left var(--dur-in) var(--ease-out);
   }
-  .search {
+  /* 中列 = 搜索框 + 工具三键一行，整组在窗口居中 */
+  .mid {
     grid-column: 2;
+    display: flex;
+    align-items: center;
+    gap: 6px;
   }
   .right {
     grid-column: 3;

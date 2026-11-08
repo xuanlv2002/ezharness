@@ -7,6 +7,7 @@
   import { termManager, type TermInfo } from '../../lib/term'
   import { store } from '../../lib/store.svelte'
   import { theme, type Theme } from '../../lib/theme.svelte'
+  import { paneTabs } from '../../lib/paneTabs.svelte'
 
   /*
   魔法看板·终端 tab:顶部切换条(全部终端,含 AI 新建的,来源在 tooltip)
@@ -284,11 +285,15 @@
     if (active) requestAnimationFrame(fitCurrent)
   })
 
+  /* 会话数上报顶栏角标 */
+  $effect(() => (paneTabs.term = sessions.length))
+
   onDestroy(() => {
     offs.forEach((off) => off())
     ro?.disconnect()
     terms.forEach((t) => t.term.dispose())
     terms.clear()
+    paneTabs.term = 0
   })
 </script>
 

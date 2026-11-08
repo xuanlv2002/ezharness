@@ -124,9 +124,17 @@
   }
 
   /* ── 跨天拖拽：卡片本体跟着指针走，日期显示在卡片下方 ── */
-  let drag = $state<{ rec: PinRecord; px: number; py: number; ox: number; oy: number; active: boolean } | null>(
-    null,
-  )
+  let drag = $state<{
+    rec: PinRecord
+    px: number
+    py: number
+    ox: number
+    oy: number
+    active: boolean
+    /* 各日期组的横向区间（激活时量一次）：拖动期间组不动，落点判定
+       不再逐帧 getBoundingClientRect 强制排版 */
+    rects: { key: string; left: number; right: number }[]
+  } | null>(null)
   let dragX = $state(0)
   let dragY = $state(0)
   let overDay = $state('')
@@ -149,6 +157,7 @@
       ox: e.clientX - r.left,
       oy: e.clientY - r.top,
       active: false,
+      rects: [],
     }
     dragX = e.clientX
     dragY = e.clientY
@@ -176,23 +185,22 @@
     finishDrag(null)
   }
 
-  /* groupAtX 落点判定（7px 迟滞）：指针还在上一个落点附近就不切换 */
+  /* groupAtX 落点判定（7px 迟滞）：指针还在上一个落点附近就不切换。
+     区间用激活时量好的 drag.rects，纯算术不做布局查询 */
   function groupAtX(x: number): string {
-    const els = tlEl ? Array.from(tlEl.querySelectorAll<HTMLElement>('.group')) : []
+    const rects = drag?.rects ?? []
     if (overDay) {
-      const prev = els.find((el) => el.dataset.day === overDay)
-      const r = prev?.getBoundingClientRect()
-      if (r && x >= r.left - 7 && x <= r.right + 7) return overDay
+      const prev = rects.find((g) => g.key === overDay)
+      if (prev && x >= prev.left - 7 && x <= prev.right + 7) return overDay
     }
     let best = ''
     let bestD = 26
-    for (const el of els) {
-      const r = el.getBoundingClientRect()
-      if (x >= r.left && x <= r.right) return el.dataset.day ?? ''
-      const d = Math.min(Math.abs(x - r.left), Math.abs(x - r.right))
+    for (const g of rects) {
+      if (x >= g.left && x <= g.right) return g.key
+      const d = Math.min(Math.abs(x - g.left), Math.abs(x - g.right))
       if (d < bestD) {
         bestD = d
-        best = el.dataset.day ?? ''
+        best = g.key
       }
     }
     return best
@@ -203,6 +211,12 @@
     if (!drag.active) {
       if (Math.hypot(e.clientX - drag.px, e.clientY - drag.py) < 5) return
       drag.active = true
+      drag.rects = tlEl
+        ? Array.from(tlEl.querySelectorAll<HTMLElement>('.group')).map((el) => {
+            const r = el.getBoundingClientRect()
+            return { key: el.dataset.day ?? '', left: r.left, right: r.right }
+          })
+        : []
       suppressClick = true
       peekId = ''
     }
@@ -339,7 +353,7 @@
   </div>
 
   {#if drag?.active && dragRec}
-    <div class="dragwrap" style:left="{dragX - drag.ox}px" style:top="{dragY - drag.oy}px">
+    <div class="dragwrap" style:transform="translate({dragX - drag.ox}px, {dragY - drag.oy}px)">
       <div class="dragcard" style:--tint={dragRec.tint}>
         <p>{dragRec.text || '（空）'}</p>
       </div>
@@ -510,15 +524,19 @@
     color: var(--accent);
     background: var(--accent-soft);
   }
-  /* 拖拽中的卡片本体：按抓取点跟着指针，目标日期挂在卡片下方 */
+  /* 拖拽中的卡片本体：按抓取点跟着指针（transform 走合成，不动排版），
+     目标日期挂在卡片下方 */
   .dragwrap {
     position: fixed;
+    left: 0;
+    top: 0;
     z-index: 90;
     display: flex;
     flex-direction: column;
     align-items: flex-start;
     gap: 6px;
     pointer-events: none;
+    will-change: transform;
   }
   .dragcard {
     width: 132px;
