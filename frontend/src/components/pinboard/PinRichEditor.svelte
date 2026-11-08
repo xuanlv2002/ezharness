@@ -8,19 +8,24 @@
   回 markdown。粘贴文本按行拆分；剪贴板里的图片文件交给 onimage（由卡片
   上传并贴到卡面）。
   */
-  import { onMount } from 'svelte'
+  import { onDestroy, onMount } from 'svelte'
   import { imageFiles } from '../../lib/pinImage'
+  import { pinEditEnter, pinEditLeave } from '../../lib/pinboard.svelte'
 
   type Kind = 'p' | 'h1' | 'h2' | 'h3' | 'todo' | 'bullet'
 
   let {
     value = '',
+    focusAt = null,
     onchange,
     onsave,
     oncancel,
     onimage,
   }: {
     value?: string
+    /* 进编辑时的点击点（含渲染态正文的滚动量）：光标落在点击处，
+     命不中正文块就回落到末尾 */
+    focusAt?: { x: number; y: number; scrollTop?: number } | null
     onchange?: (md: string) => void
     onsave?: () => void
     oncancel?: () => void
@@ -144,6 +149,34 @@
     }
     sel.removeAllRanges()
     sel.addRange(range)
+    keepInView(blk)
+  }
+
+  /* 光标所在块保持在编辑器视口内：回车新块、退格并块、粘贴尾块都跟着滚，
+     长正文打到一半不用手动往下翻 */
+  function keepInView(blk: HTMLElement): void {
+    if (!root) return
+    const rr = root.getBoundingClientRect()
+    const br = blk.getBoundingClientRect()
+    if (br.bottom > rr.bottom) root.scrollTop += br.bottom - rr.bottom + 1
+    else if (br.top < rr.top) root.scrollTop -= rr.top - br.top + 1
+  }
+
+  /* 光标放到点击处：命中本编辑器的正文块才生效，否则回落末尾 */
+  function caretAt(x: number, y: number): boolean {
+    if (!root) return false
+    const doc = document as Document & { caretRangeFromPoint?: (x: number, y: number) => Range | null }
+    const r = doc.caretRangeFromPoint?.(x, y) ?? null
+    const node = r?.startContainer
+    if (!r || !node || !root.contains(node)) return false
+    const host = node instanceof HTMLElement ? node : node.parentElement
+    if (!host?.closest('.btext')) return false
+    root.focus()
+    const sel = window.getSelection()
+    if (!sel) return false
+    sel.removeAllRanges()
+    sel.addRange(r)
+    return true
   }
 
   function plain(el: HTMLElement | null): string {
@@ -349,13 +382,22 @@
   }
 
   onMount(() => {
+    pinEditEnter()
     fill(value)
     requestAnimationFrame(() => {
+      /* 先按渲染态的滚动量对齐，再按点击点放光标；没有点击点或没命中
+         正文块时光标落在末尾 */
+      if (focusAt && root) {
+        if (focusAt.scrollTop) root.scrollTop = focusAt.scrollTop
+        if (caretAt(focusAt.x, focusAt.y)) return
+      }
       const last = blocks().at(-1)
       if (last) placeCaret(last, plain(bodyOf(last)).length)
       else root?.focus()
     })
   })
+
+  onDestroy(pinEditLeave)
 </script>
 
 <div

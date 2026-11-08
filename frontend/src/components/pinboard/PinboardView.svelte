@@ -4,11 +4,15 @@
   数据，靠「划线完成」把卡片从板上转到时间线。
 
   · 板上：双击空白/「记一笔」新建（Enter 提交、Shift+Enter 换行、Esc
-    放弃、空内容丢弃），卡片可拖动/缩放/双击编辑，✓ 划线入库。
+    放弃、空内容丢弃），卡片可拖动/缩放/点击编辑，✓ 划线入库。
   · 时间线：左新右旧按天铺开，卡片挂在轴下，点某天就地展开当天详情
     （在板下半部展开，不覆盖时间线），拖卡片跨天改归属、拖回板上变回
     待办。
-  · 当天详情：markdown 渲染、图片、拖动排序；双击卡片就地编辑正文。
+  · 当天详情：markdown 渲染、图片、拖动排序；点击卡片就地编辑正文。
+
+  保存落盘后仍可整体回退：内容级改动（编辑/贴图删图/勾选/完成/删除/
+  新建）进撤销栈，Ctrl+Z 逐步撤销、Ctrl+Shift+Z 或 Ctrl+Y 重做（App
+  层全局接管，编辑中的原生撤销优先）；拖动/缩放/排序不占撤销步。
   */
   import { onDestroy, onMount, tick, untrack } from 'svelte'
   import type { PinRecord } from '../../lib/api'
@@ -99,7 +103,6 @@
   let editingRec = $state('')
   let recText = $state('')
   let recErr = $state('')
-  let suppressDblUntil = 0
   /* 收起/切天时先落定编辑中的记录（与板上卡片点外面即保存一致），
      内容与图片都空则放弃。只有 dayOpen 变化触发，读写编辑态用 untrack。 */
   $effect(() => {
@@ -268,9 +271,9 @@
 
   let rdrag = $state<{ id: string; px: number; dx: number; active: boolean } | null>(null)
 
-  /* 双击归档卡编辑正文；拖动刚结束的 300ms 内忽略 */
-  function startRecEdit(e: MouseEvent, r: PinRecord) {
-    if (editingRec || Date.now() < suppressDblUntil) return
+  /* 点击归档卡（没拖起来）就地编辑正文；点在按钮/链接/勾选框上不进编辑 */
+  function startRecEdit(e: MouseEvent | PointerEvent, r: PinRecord) {
+    if (editingRec) return
     if ((e.target as HTMLElement).closest('button, a, input, .nodrag')) return
     editingRec = r.id
     recText = r.text
@@ -367,8 +370,13 @@
     if (!rdrag) return
     const d = rdrag
     rdrag = null
-    if (!d.active || !dayOpen) return
-    suppressDblUntil = Date.now() + 300
+    /* 没拖起来就是点击：就地编辑正文（勾选框/图片/会话钮在 rdStart 已排除） */
+    if (!d.active) {
+      const r = dayRecs.find((x) => x.id === d.id)
+      if (r) startRecEdit(e, r)
+      return
+    }
+    if (!dayOpen) return
     /* 目标索引在「去掉被拖卡后的顺序」上算，避免索引含自己时错一位 */
     const cards = Array.from(stripEl?.querySelectorAll<HTMLElement>('[data-rec]') ?? []).filter(
       (el) => el.dataset.rec !== d.id,
@@ -497,7 +505,7 @@
           <div class="dhead">
             <b>{dayLabel(dayOpen)}</b>
             <span>{dayRecs.length} 条完成</span>
-            <span class="dhint">拖动排序 · 双击编辑</span>
+            <span class="dhint">拖动排序 · 点击编辑</span>
             <span class="spacer"></span>
             <button class="xbtn" onclick={() => (dayOpen = '')} title="收起（Esc）">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
@@ -515,8 +523,7 @@
                 style:--tint={r.tint}
                 style:transform={rdrag?.id === r.id && rdrag.active ? `translateX(${rdrag.dx}px)` : undefined}
                 onpointerdown={(e) => rdStart(e, r.id)}
-                ondblclick={(e) => startRecEdit(e, r)}
-                title={editingRec === r.id ? undefined : '双击编辑 · 拖动排序'}
+                title={editingRec === r.id ? undefined : '点击编辑 · 拖动排序'}
               >
                 {#if editingRec === r.id}
                   <div class="deditor">
@@ -902,6 +909,11 @@
   .dtext :global(li:has(> input[type='checkbox'])) {
     list-style: none;
     margin-left: -1.25em;
+  }
+  /* 已勾的待办划线弱化（与编辑器里的完成态一致） */
+  .dtext :global(li:has(> input[type='checkbox']:checked)) {
+    color: var(--faint);
+    text-decoration: line-through;
   }
   .dtext :global(code) {
     padding: 0 4px;
