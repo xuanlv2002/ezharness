@@ -255,6 +255,103 @@ export function pinId(): string {
   return 'c' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8)
 }
 
+/* ── 撤销/重做：内容级改动（新建/编辑/贴图删图/完成归档/取回/删除/归档
+   编辑）留可回退步，Ctrl+Z 逐步回退、Ctrl+Shift+Z 或 Ctrl+Y 重做。拖动、
+   缩放、排序、整理这类位置操作不进栈；栈只在本窗口内有效（便签小窗/
+   弹出窗另有自己的实例）。编辑类是单卡步——只回内容字段，卡片的
+   位置/尺寸/层级保持现状（撤销编辑不该让卡飞回老位置）；跨列表的
+   （完成/删除/取回/新建）是整板步。 ── */
+const UNDO_MAX = 100
+type PinStep =
+  | { kind: 'board'; label: string; cards: PinCard[]; done: PinRecord[] }
+  | { kind: 'card'; label: string; id: string; prev: PinCard }
+const undoSteps: PinStep[] = []
+const redoSteps: PinStep[] = []
+
+function boardSnap(): { cards: PinCard[]; done: PinRecord[] } {
+  return { cards: board.cards.map((c) => ({ ...c })), done: board.done.map((r) => ({ ...r })) }
+}
+
+function pushUndo(label: string): void {
+  undoSteps.push({ kind: 'board', label, ...boardSnap() })
+  if (undoSteps.length > UNDO_MAX) undoSteps.shift()
+  redoSteps.length = 0
+}
+
+function pushUndoCard(cur: PinCard, label: string): void {
+  undoSteps.push({ kind: 'card', label, id: cur.id, prev: { ...cur } })
+  if (undoSteps.length > UNDO_MAX) undoSteps.shift()
+  redoSteps.length = 0
+}
+
+/* applyStep 执行一步并返回逆步（供重做）；单卡步的卡已不在板上时返回
+   null（这步作废，调用方继续往前找） */
+function applyStep(step: PinStep): PinStep | null {
+  if (step.kind === 'board') {
+    const inv: PinStep = { kind: 'board', label: step.label, ...boardSnap() }
+    board.cards = step.cards
+    board.done = step.done
+    void saveNow()
+    return inv
+  }
+  const cur = board.cards.find((c) => c.id === step.id)
+  if (!cur) return null
+  const inv: PinStep = { kind: 'card', label: step.label, id: step.id, prev: { ...cur } }
+  /* 回内容，留几何：位置/尺寸/层级沿用当前值 */
+  board.cards = board.cards.map((c) =>
+    c.id === step.id ? { ...step.prev, x: cur.x, y: cur.y, w: cur.w, h: cur.h, z: cur.z } : c,
+  )
+  void saveNow()
+  return inv
+}
+
+function stepFrom(stack: PinStep[], into: PinStep[]): string {
+  while (stack.length) {
+    const step = stack.pop()!
+    const inv = applyStep(step)
+    if (!inv) continue // 作废步丢弃，继续往前
+    into.push(inv)
+    if (into.length > UNDO_MAX) into.shift()
+    return step.label
+  }
+  return ''
+}
+
+/* pinUndo/pinRedo 回退/重做一步，返回该步的动作名（无步可退返回空） */
+export function pinUndo(): string {
+  return stepFrom(undoSteps, redoSteps)
+}
+
+export function pinRedo(): string {
+  return stepFrom(redoSteps, undoSteps)
+}
+
+/* 撤销/重做结果浮条（App 层渲染，全窗口可见） */
+export const pinFeedback = $state({ text: '' })
+let feedbackTimer: ReturnType<typeof setTimeout> | undefined
+
+export function pinFeedbackFlash(text: string): void {
+  pinFeedback.text = text
+  clearTimeout(feedbackTimer)
+  feedbackTimer = setTimeout(() => (pinFeedback.text = ''), 1600)
+}
+
+/* 正在编辑中的便签数（PinRichEditor 挂载 +1 / 卸载 -1）：编辑中的
+   Ctrl+Z 归编辑器（原生文本撤销与图片撤销），板级撤销让路 */
+let editDepth = 0
+
+export function pinEditEnter(): void {
+  editDepth++
+}
+
+export function pinEditLeave(): void {
+  editDepth = Math.max(0, editDepth - 1)
+}
+
+export function pinEditing(): boolean {
+  return editDepth > 0
+}
+
 export function findCard(id: string): PinCard | undefined {
   return board.cards.find((c) => c.id === id)
 }
@@ -279,6 +376,7 @@ export function orderedCards(cards: PinCard[]): PinCard[] {
 }
 
 export function addCard(text: string, x: number, y: number, w = CARD_DEF_W, h = CARD_DEF_H): PinCard {
+  pushUndo('新建便签')
   board.z += 1
   const card: PinCard = {
     id: pinId(),
@@ -296,8 +394,16 @@ export function addCard(text: string, x: number, y: number, w = CARD_DEF_W, h = 
   return card
 }
 
-/* patchCard 合并字段并落盘（位置/尺寸/内容/关联都走这里）。 */
+/* patchCard 合并字段并落盘（位置/尺寸/内容/关联都走这里）；正文或图片
+   真变了才进撤销栈——拖动/缩放/提层这类位置补丁不占撤销步。 */
 export function patchCard(id: string, patch: Partial<PinCard>): void {
+  const cur = board.cards.find((c) => c.id === id)
+  if (cur) {
+    const textChanged = patch.text !== undefined && patch.text !== cur.text
+    const imgChanged =
+      patch.images !== undefined && JSON.stringify(patch.images) !== JSON.stringify(cur.images ?? [])
+    if (textChanged || imgChanged) pushUndoCard(cur, textChanged ? '编辑便签' : '便签图片')
+  }
   board.cards = board.cards.map((c) => (c.id === id ? { ...c, ...patch } : c))
   scheduleSave()
 }
@@ -311,6 +417,7 @@ export function bumpCard(id: string): void {
 }
 
 export function removeCard(id: string): void {
+  pushUndo('删除便签')
   board.cards = board.cards.filter((c) => c.id !== id)
   scheduleSave()
 }
@@ -322,8 +429,10 @@ export function reorderCards(ids: string[]): void {
   void saveNow() // 松手即写：排序不依赖防抖，重启后保持
 }
 
-/* patchRecord 改已归档记录的字段（当天详情里双击编辑/勾待办）。 */
+/* patchRecord 改已归档记录的字段（当天详情里编辑/勾待办）；正文变化进撤销栈 */
 export function patchRecord(id: string, patch: Partial<PinRecord>): void {
+  const cur = board.done.find((r) => r.id === id)
+  if (cur && patch.text !== undefined && patch.text !== cur.text) pushUndo('编辑归档便签')
   board.done = board.done.map((r) => (r.id === id ? { ...r, ...patch } : r))
   scheduleSave()
 }
@@ -370,6 +479,7 @@ export async function linkPendingNote(sessionId: string, title = '', createdAt =
 export function completeCard(id: string): PinRecord | null {
   const c = board.cards.find((x) => x.id === id)
   if (!c) return null
+  pushUndo('完成便签')
   const rec: PinRecord = {
     id: pinId(),
     text: c.text,
@@ -391,6 +501,7 @@ export function completeCard(id: string): PinRecord | null {
 export function restoreRecord(id: string, x: number, y: number): PinCard | null {
   const r = board.done.find((d) => d.id === id)
   if (!r) return null
+  pushUndo('取回便签')
   board.done = board.done.filter((d) => d.id !== id)
   board.z += 1
   const card: PinCard = {

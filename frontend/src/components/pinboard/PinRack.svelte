@@ -2,11 +2,13 @@
   /*
   顶栏便签小点：板上每张待办对应一颗便签色小点，排在便签图标左侧；
   点一颗点 → 从顶部挂下完整便签（正文/图片/记于/截止/关联会话/新会话），
-  再点同一颗点收起。点左右拖动即排序（ord 落盘）。
+  再点同一颗点收起。点左右拖动即排序（ord 落盘）。点正文就地编辑
+  （与板上卡片同款编辑器；拖动划选文字仍归复制，不进编辑）。图片
+  双击看大图、悬停可复制/删除（与板上一致，但不可拖拽摆位）。
   */
   import { onDestroy } from 'svelte'
   import { fly } from 'svelte/transition'
-  import type { PinCard, PinSessionRef } from '../../lib/api'
+  import { api, type PinCard, type PinSessionRef } from '../../lib/api'
   import { store } from '../../lib/store.svelte'
   import {
     addPendingSession,
@@ -22,6 +24,8 @@
   } from '../../lib/pinboard.svelte'
   import { plainPinText, renderPinMarkdown, toggleTask } from '../../lib/pinMarkdown'
   import { dueColor, dueHint, fmtDuration, fmtShortTime } from '../../lib/pinDue'
+  import { compressPinImage, copyPinImage } from '../../lib/pinImage'
+  import PinRichEditor from './PinRichEditor.svelte'
 
   let {
     now,
@@ -44,6 +48,101 @@
   let creatingFor = $state('')
   let deleteAsk = $state(false)
   let dotsEl = $state<HTMLElement>()
+  let layerEl = $state<HTMLElement>()
+  let bodyEl = $state<HTMLElement>()
+
+  /* ── 就地编辑正文：点正文进编辑器，Ctrl/⌘+Enter 或点卡片外落定 ── */
+  let editing = $state(false)
+  let editId = $state('')
+  let editText = $state('')
+  let editErr = $state('')
+  let editFocus = $state<{ x: number; y: number; scrollTop: number } | null>(null)
+
+  function startEdit(x: number, y: number): void {
+    if (!card || editing) return
+    editId = card.id
+    editText = card.text
+    editErr = ''
+    editFocus = { x, y, scrollTop: bodyEl?.scrollTop ?? 0 }
+    editing = true
+  }
+
+  /* endEdit 落定：只写回真的改过的正文；清空到「内容与图片都无」则放弃 */
+  function endEdit(): void {
+    if (!editing) return
+    const c = board.cards.find((x) => x.id === editId)
+    const t = editText.trim()
+    if (c && t !== c.text && (t || c.images?.length)) patchCard(editId, { text: t })
+    editing = false
+    editId = ''
+    editErr = ''
+  }
+
+  function cancelEdit(): void {
+    editing = false
+    editId = ''
+    editErr = ''
+  }
+
+  /* 编辑器里粘贴图片：上传后直接贴到卡面（与板卡非编辑态拖图同款） */
+  async function addImages(files: File[]): Promise<void> {
+    if (!card) return
+    try {
+      const urls: string[] = []
+      for (const f of files) urls.push((await api.uploadPinImage(await compressPinImage(f))).url)
+      patchCard(card.id, { images: [...(card.images ?? []), ...urls] })
+    } catch (e) {
+      editErr = `图片上传失败：${(e as Error).message}`
+    }
+  }
+
+  /* ── 图片：双击看大图、悬停复制/删除（不跳便签板、不可拖拽摆位） ── */
+  let viewImg = $state('')
+  let lbEl = $state<HTMLElement>()
+  let imgMsg = $state('')
+  let imgMsgTimer: ReturnType<typeof setTimeout> | undefined
+
+  function flashImgMsg(msg: string): void {
+    imgMsg = msg
+    clearTimeout(imgMsgTimer)
+    imgMsgTimer = setTimeout(() => (imgMsg = ''), 1600)
+  }
+
+  function openView(src: string): void {
+    viewImg = src
+    requestAnimationFrame(() => lbEl?.focus())
+  }
+
+  async function copyImage(src: string): Promise<void> {
+    const r = await copyPinImage(src)
+    flashImgMsg(r.msg)
+  }
+
+  /* 删图：连带清掉摆位记录（imgpos 里指向不存在图片的条目下次加载也会被滤掉） */
+  function removeImage(src: string): void {
+    if (!card) return
+    const images = (card.images ?? []).filter((s) => s !== src)
+    const pos = card.imgpos
+      ? Object.fromEntries(Object.entries(card.imgpos).filter(([k]) => k !== src))
+      : {}
+    patchCard(card.id, {
+      images: images.length ? images : undefined,
+      imgpos: Object.keys(pos).length ? pos : undefined,
+    })
+    flashImgMsg('已移除图片')
+    if (viewImg === src) viewImg = ''
+  }
+
+  /* 点卡片外先落定编辑（遮罩点击随后自然收起面板） */
+  $effect(() => {
+    if (!editing) return
+    const down = (e: PointerEvent) => {
+      if (layerEl?.contains(e.target as Node)) return
+      endEdit()
+    }
+    document.addEventListener('pointerdown', down, true)
+    return () => document.removeEventListener('pointerdown', down, true)
+  })
   let drag = $state<{
     id: string
     px: number
@@ -102,23 +201,20 @@
   }
 
   function openBoard(): void {
+    endEdit()
     selected = ''
-    store.jumpView = 'pinboard'
-  }
-
-  function openCard(c: PinCard): void {
-    selected = ''
-    store.pinFocus = c.id
     store.jumpView = 'pinboard'
   }
 
   function openSession(s: PinSessionRef): void {
+    endEdit()
     selected = ''
     void store.openSession(s.id)
   }
 
   async function newSession(c: PinCard): Promise<void> {
     if (creatingFor) return
+    endEdit()
     creatingFor = c.id
     try {
       const before = store.activeId
@@ -135,6 +231,7 @@
 
   function complete(c: PinCard, e: MouseEvent): void {
     e.stopPropagation()
+    endEdit()
     completeCard(c.id)
     void saveNow()
     selected = ''
@@ -143,22 +240,40 @@
 
   function removeNow(): void {
     if (!card) return
+    endEdit()
     removeCard(card.id)
     void saveNow()
     selected = ''
     deleteAsk = false
   }
 
-  /* 正文里的待办勾选框：翻转原文对应任务行 */
-  function onMdClick(e: MouseEvent): void {
+  /* 点正文区（文字、空白、图片都算——图片把卡片撑高后，文字旁边的大片
+     空白也要能点进编辑）：勾选框翻转；链接/按钮随自身走；其余单击进
+     编辑。「点击」按按下→抬起的位移判定（板卡同款 5px 阈值）——手抖
+     一两像素照样算点击；真挪动了是划选文字（要复制），双击/三击选词
+     选段也不进编辑 */
+  let bodyDown = { x: 0, y: 0 }
+
+  function onBodyDown(e: PointerEvent): void {
+    if (e.button === 0) bodyDown = { x: e.clientX, y: e.clientY }
+  }
+
+  function onBodyClick(e: MouseEvent): void {
+    if (!card) return
     const box = (e.target as HTMLElement).closest('input[type="checkbox"]')
-    if (!box || !card) return
-    e.preventDefault()
-    const host = e.currentTarget as HTMLElement
-    const idx = Array.from(host.querySelectorAll('input[type="checkbox"]')).indexOf(box as HTMLInputElement)
-    if (idx < 0) return
-    const next = toggleTask(card.text, idx)
-    if (next !== null) patchCard(card.id, { text: next })
+    if (box) {
+      e.preventDefault()
+      const host = e.currentTarget as HTMLElement
+      const idx = Array.from(host.querySelectorAll('input[type="checkbox"]')).indexOf(box as HTMLInputElement)
+      if (idx < 0) return
+      const next = toggleTask(card.text, idx)
+      if (next !== null) patchCard(card.id, { text: next })
+      return
+    }
+    if (editing || (e.target as HTMLElement).closest('a, button')) return
+    if (e.detail > 1) return
+    if (Math.hypot(e.clientX - bodyDown.x, e.clientY - bodyDown.y) >= 5) return
+    startEdit(e.clientX, e.clientY)
   }
 
   /* ── 沿顶栏左右拖动排序 ── */
@@ -267,7 +382,10 @@
     if (selected && !items.some((c) => c.id === selected)) selected = ''
   })
 
-  onDestroy(stopDragListeners)
+  onDestroy(() => {
+    stopDragListeners()
+    clearTimeout(imgMsgTimer)
+  })
 </script>
 
 {#if items.length}
@@ -298,7 +416,7 @@
 {/if}
 
 {#if card}
-  <div class="card-layer" transition:fly={{ y: -8, duration: 150 }}>
+  <div class="card-layer" bind:this={layerEl} transition:fly={{ y: -8, duration: 150 }}>
     <div class="note-card" style:--tint={card.tint}>
       <i class="ctint"></i>
       <div class="cbar">
@@ -320,19 +438,48 @@
         </button>
       </div>
 
-      <div class="cbody">
-        <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
-        <div class="cmd" onclick={onMdClick}>{@html cardHtml}</div>
+      <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
+      <div class="cbody" class:editing bind:this={bodyEl} onpointerdown={onBodyDown} onclick={onBodyClick}>
+        {#if editing}
+          <div class="cedit">
+            <PinRichEditor
+              value={editText}
+              focusAt={editFocus}
+              onchange={(md) => (editText = md)}
+              onsave={endEdit}
+              oncancel={cancelEdit}
+              onimage={(files) => void addImages(files)}
+            />
+          </div>
+        {:else}
+          <div class="cmd">{@html cardHtml}</div>
+        {/if}
         {#if card.images?.length}
           <div class="cimgs">
-            {#each card.images.slice(0, 3) as src (src)}
-              <button class="cimg" onclick={() => openCard(card)} title="在便签板查看这张图">
+            {#each card.images as src (src)}
+              <!-- svelte-ignore a11y_no_static_element_interactions -->
+              <div class="cimg" title="双击看大图 · 悬停可复制/移除" ondblclick={() => openView(src)}>
                 <img {src} alt="" loading="lazy" draggable="false" />
-              </button>
+                <button class="cimgact copy" onclick={() => void copyImage(src)} title="复制图片" aria-label="复制图片">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <rect x="9" y="9" width="10" height="11" rx="2" />
+                    <path d="M5 15V6a2 2 0 0 1 2-2h7" />
+                  </svg>
+                </button>
+                <button class="cimgact del" onclick={() => removeImage(src)} title="移除图片" aria-label="移除图片">✕</button>
+              </div>
             {/each}
           </div>
         {/if}
       </div>
+
+      {#if editing}
+        <div class="cebar">
+          {#if editErr}<span class="cerr">{editErr}</span>{/if}
+          <button class="cbtn" onclick={cancelEdit} title="放弃修改（Esc）">取消</button>
+          <button class="cbtn save" onclick={endEdit} title="保存（Ctrl/⌘+Enter）">保存</button>
+        </div>
+      {/if}
 
       <div class="cfoot">
         <div class="ctimes">
@@ -376,7 +523,25 @@
           </div>
         </div>
       {/if}
+
+      {#if imgMsg}<div class="cimgmsg">{imgMsg}</div>{/if}
     </div>
+  </div>
+{/if}
+
+{#if viewImg}
+  <!-- 双击图片的全屏大图：点空白 / Esc / 右上角关闭（Esc 只关大图，不落
+       到顶栏收起） -->
+  <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
+  <div
+    class="lightbox"
+    bind:this={lbEl}
+    tabindex="-1"
+    onclick={(e) => { if (e.target === e.currentTarget) viewImg = '' }}
+    onkeydown={(e) => { if (e.key === 'Escape') { e.stopPropagation(); viewImg = '' } }}
+  >
+    <img src={viewImg} alt="" />
+    <button class="lbclose" onclick={() => (viewImg = '')} title="关闭（Esc）" aria-label="关闭大图">✕</button>
   </div>
 {/if}
 
@@ -539,6 +704,58 @@
     scrollbar-width: thin;
     scrollbar-color: color-mix(in srgb, var(--fg) 18%, transparent) transparent;
   }
+  /* 编辑中：正文列撑满行高，编辑器在列内自滚（长文不把卡片顶破） */
+  .cbody.editing {
+    align-items: stretch;
+    overflow: hidden;
+  }
+  .cedit {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+  }
+  /* 编辑操作条：取消/保存右对齐，紧贴底栏上方 */
+  .cebar {
+    flex: none;
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 4px;
+    margin-top: 4px;
+  }
+  .cerr {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    margin-right: auto;
+    font-size: var(--font-size-small);
+    color: var(--danger);
+  }
+  .cbtn {
+    padding: 1px 8px;
+    border: 1px solid var(--line);
+    border-radius: 5px;
+    background: var(--bg);
+    color: var(--muted);
+    font: inherit;
+    font-size: var(--font-size-small);
+    cursor: pointer;
+  }
+  .cbtn:hover {
+    color: var(--fg);
+    border-color: var(--line-strong);
+  }
+  .cbtn.save {
+    border-color: var(--fg);
+    background: var(--fg);
+    color: var(--bg);
+    font-weight: 600;
+  }
+  .cbtn.save:hover {
+    opacity: 0.9;
+  }
   .cmd {
     flex: 1;
     min-width: 0;
@@ -638,23 +855,117 @@
     gap: 4px;
   }
   .cimg {
-    display: block;
+    position: relative;
     width: 56px;
     height: 56px;
-    padding: 0;
     border: 1px solid var(--line);
     border-radius: 5px;
     background: var(--bg-soft);
     overflow: hidden;
+    cursor: zoom-in;
   }
   .cimg img {
     display: block;
     width: 100%;
     height: 100%;
     object-fit: cover;
+    pointer-events: none;
   }
   .cimg:hover {
     border-color: var(--line-strong);
+  }
+  /* 悬停浮出的复制/移除小钮（与板卡贴纸同款） */
+  .cimgact {
+    position: absolute;
+    top: 3px;
+    display: none;
+    place-items: center;
+    width: 16px;
+    height: 16px;
+    padding: 0;
+    border: none;
+    border-radius: 50%;
+    background: color-mix(in srgb, var(--fg) 86%, transparent);
+    color: var(--bg);
+    font: inherit;
+    font-size: 9px;
+    line-height: 1;
+    cursor: pointer;
+  }
+  .cimg:hover .cimgact {
+    display: grid;
+  }
+  .cimgact.copy {
+    left: 3px;
+  }
+  .cimgact.del {
+    right: 3px;
+  }
+  .cimgact.copy svg {
+    width: 10px;
+    height: 10px;
+  }
+  .cimgact:hover {
+    background: var(--fg);
+  }
+  /* 图片操作结果浮条 */
+  .cimgmsg {
+    position: absolute;
+    left: 50%;
+    bottom: 8px;
+    z-index: 6;
+    padding: 2px 8px;
+    border-radius: 6px;
+    background: var(--bg-invert);
+    color: var(--fg-invert);
+    font-size: var(--font-size-small);
+    white-space: nowrap;
+    transform: translateX(-50%);
+    pointer-events: none;
+    box-shadow: 0 4px 12px rgb(0 0 0 / 18%);
+  }
+  /* 双击图片的全屏大图 */
+  .lightbox {
+    position: fixed;
+    inset: 0;
+    z-index: 3000;
+    display: grid;
+    place-items: center;
+    box-sizing: border-box;
+    padding: 4vh 4vw;
+    background: rgb(0 0 0 / 68%);
+    backdrop-filter: blur(3px);
+    cursor: zoom-out;
+    outline: none;
+  }
+  .lightbox img {
+    max-width: 100%;
+    max-height: 100%;
+    border-radius: 6px;
+    background: var(--bg);
+    box-shadow: 0 24px 64px rgb(0 0 0 / 45%);
+    object-fit: contain;
+    cursor: default;
+  }
+  .lbclose {
+    position: absolute;
+    top: 14px;
+    right: 14px;
+    display: grid;
+    place-items: center;
+    width: 30px;
+    height: 30px;
+    padding: 0;
+    border: 1px solid rgb(255 255 255 / 22%);
+    border-radius: 50%;
+    background: rgb(0 0 0 / 35%);
+    color: #fff;
+    font: inherit;
+    font-size: 14px;
+    cursor: pointer;
+  }
+  .lbclose:hover {
+    background: rgb(0 0 0 / 55%);
   }
   .cfoot {
     flex: none;
