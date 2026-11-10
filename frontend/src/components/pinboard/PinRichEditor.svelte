@@ -11,8 +11,9 @@
   import { onDestroy, onMount } from 'svelte'
   import { imageFiles } from '../../lib/pinImage'
   import { pinEditEnter, pinEditLeave } from '../../lib/pinboard.svelte'
+  import { parsePinLine, type PinLineKind } from '../../lib/pinMarkdown'
 
-  type Kind = 'p' | 'h1' | 'h2' | 'h3' | 'todo' | 'bullet'
+  type Kind = PinLineKind
 
   let {
     value = '',
@@ -36,22 +37,12 @@
   let root = $state<HTMLElement>()
   let composing = false
 
-  function parseLine(line: string): { kind: Kind; text: string; checked: boolean } {
-    let m = /^(#{1,3})\s+(.*)$/.exec(line)
-    if (m) return { kind: `h${m[1].length}` as Kind, text: m[2], checked: false }
-    m = /^\s*(?:[-*+]\s+)?\[([ xX]?)\](?:\s(.*))?$/.exec(line)
-    if (m) return { kind: 'todo', text: m[2] ?? '', checked: m[1].toLowerCase() === 'x' }
-    m = /^\s*[-*+]\s+(.*)$/.exec(line)
-    if (m) return { kind: 'bullet', text: m[1], checked: false }
-    return { kind: 'p', text: line, checked: false }
-  }
-
   function bodyOf(blk: HTMLElement): HTMLElement | null {
-    return blk.querySelector(':scope > .btext')
+    return blk.querySelector(':scope > .pin-btext')
   }
 
   function boxOf(blk: HTMLElement): HTMLElement | null {
-    return blk.querySelector(':scope > .box')
+    return blk.querySelector(':scope > .pin-box')
   }
 
   function setText(blk: HTMLElement, text: string): void {
@@ -63,11 +54,11 @@
 
   function makeBlock(kind: Kind, text: string, checked = false): HTMLElement {
     const blk = document.createElement('div')
-    blk.className = 'blk'
+    blk.className = 'pin-blk'
     blk.dataset.kind = kind
     if (kind === 'todo' || kind === 'bullet') {
       const box = document.createElement('span')
-      box.className = 'box'
+      box.className = 'pin-box'
       box.contentEditable = 'false'
       box.dataset.checked = String(checked)
       if (kind === 'todo') {
@@ -77,7 +68,7 @@
       blk.append(box)
     }
     const body = document.createElement('div')
-    body.className = 'btext'
+    body.className = 'pin-btext'
     blk.append(body)
     setText(blk, text)
     return blk
@@ -87,13 +78,13 @@
     if (!root) return
     root.textContent = ''
     for (const line of src.split('\n')) {
-      const b = parseLine(line)
+      const b = parsePinLine(line)
       root.append(makeBlock(b.kind, b.text, b.checked))
     }
   }
 
   function blocks(): HTMLElement[] {
-    return root ? Array.from(root.querySelectorAll<HTMLElement>(':scope > .blk')) : []
+    return root ? Array.from(root.querySelectorAll<HTMLElement>(':scope > .pin-blk')) : []
   }
 
   function blockOf(node: Node | null): HTMLElement | null {
@@ -170,7 +161,7 @@
     const node = r?.startContainer
     if (!r || !node || !root.contains(node)) return false
     const host = node instanceof HTMLElement ? node : node.parentElement
-    if (!host?.closest('.btext')) return false
+    if (!host?.closest('.pin-btext')) return false
     root.focus()
     const sel = window.getSelection()
     if (!sel) return false
@@ -263,7 +254,7 @@
   }
 
   function onPointerDown(e: PointerEvent): void {
-    const box = (e.target as HTMLElement).closest?.('.box') as HTMLElement | null
+    const box = (e.target as HTMLElement).closest?.('.pin-box') as HTMLElement | null
     const blk = box?.parentElement
     if (!box || !blk || !root?.contains(box) || blk.dataset.kind !== 'todo') return
     e.preventDefault()
@@ -372,7 +363,7 @@
     setText(blk, text.slice(0, offset) + lines[0])
     let last = blk
     for (let i = 1; i < lines.length; i++) {
-      const b = parseLine(lines[i])
+      const b = parsePinLine(lines[i])
       const next = makeBlock(b.kind, b.text, b.checked)
       last.after(next)
       last = next
@@ -434,47 +425,49 @@
     outline: none;
     cursor: text;
   }
-  .rich :global(.blk) {
+  /* 正文行块样式全局共用：编辑器是动态 DOM，渲染态是 {@html}，
+     两边不能用 scoped 选择器；行高/边距一致，点正文进编辑器光标才对齐 */
+  :global(.pin-blk) {
     display: flex;
     align-items: flex-start;
     gap: 5px;
     min-height: 1.6em;
   }
-  .rich :global(.blk[data-kind='h1']) {
+  :global(.pin-blk[data-kind='h1']) {
     margin: 5px 0 2px;
   }
-  .rich :global(.blk[data-kind='h2']) {
+  :global(.pin-blk[data-kind='h2']) {
     margin: 4px 0 1px;
   }
-  .rich :global(.blk[data-kind='h3']) {
+  :global(.pin-blk[data-kind='h3']) {
     margin: 3px 0 1px;
   }
-  .rich :global(.blk:first-child) {
+  :global(.pin-blk:first-child) {
     margin-top: 0;
   }
-  .rich :global(.btext) {
+  :global(.pin-btext) {
     flex: 1;
     min-width: 0;
     white-space: pre-wrap;
     overflow-wrap: anywhere;
     outline: none;
   }
-  .rich :global(.blk[data-kind='h1'] .btext) {
+  :global(.pin-blk[data-kind='h1'] .pin-btext) {
     font-size: 1.35em;
     font-weight: 700;
     line-height: 1.35;
   }
-  .rich :global(.blk[data-kind='h2'] .btext) {
+  :global(.pin-blk[data-kind='h2'] .pin-btext) {
     font-size: 1.2em;
     font-weight: 600;
     line-height: 1.35;
   }
-  .rich :global(.blk[data-kind='h3'] .btext) {
+  :global(.pin-blk[data-kind='h3'] .pin-btext) {
     font-size: 1.08em;
     font-weight: 600;
     line-height: 1.4;
   }
-  .rich :global(.box) {
+  :global(.pin-box) {
     flex: none;
     box-sizing: border-box;
     width: 13px;
@@ -487,12 +480,12 @@
       background var(--dur-fast) var(--ease-out),
       border-color var(--dur-fast) var(--ease-out);
   }
-  .rich :global(.blk[data-kind='todo'] .box[data-checked='true']) {
+  :global(.pin-blk[data-kind='todo'] .pin-box[data-checked='true']) {
     border-color: var(--accent);
     background: var(--accent);
     color: var(--bg);
   }
-  .rich :global(.blk[data-kind='todo'] .box[data-checked='true']::after) {
+  :global(.pin-blk[data-kind='todo'] .pin-box[data-checked='true']::after) {
     content: '✓';
     display: block;
     font-size: 9px;
@@ -500,11 +493,25 @@
     line-height: 10px;
     text-align: center;
   }
-  .rich :global(.blk[data-kind='todo'] .box[data-checked='true'] + .btext) {
+  :global(.pin-blk[data-kind='todo'] .pin-box[data-checked='true'] + .pin-btext) {
     color: var(--faint);
     text-decoration: line-through;
   }
-  .rich :global(.blk[data-kind='bullet'] .box) {
+  /* 渲染态待办是原生 checkbox（可直接点）：尺寸与编辑器方块对齐 */
+  :global(.pin-blk[data-kind='todo'] > input[type='checkbox']) {
+    flex: none;
+    box-sizing: border-box;
+    width: 13px;
+    height: 13px;
+    margin: 3px 0 0;
+    accent-color: var(--accent);
+    cursor: pointer;
+  }
+  :global(.pin-blk[data-kind='todo'] > input[type='checkbox']:checked + .pin-btext) {
+    color: var(--faint);
+    text-decoration: line-through;
+  }
+  :global(.pin-blk[data-kind='bullet'] .pin-box) {
     width: 4px;
     height: 4px;
     margin: 0.72em 4px 0 4px;

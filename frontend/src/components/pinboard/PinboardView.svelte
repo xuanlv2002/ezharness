@@ -8,7 +8,7 @@
   · 时间线：左新右旧按天铺开，卡片挂在轴下，点某天就地展开当天详情
     （在板下半部展开，不覆盖时间线），拖卡片跨天改归属、拖回板上变回
     待办。
-  · 当天详情：markdown 渲染、图片、拖动排序；点击卡片就地编辑正文。
+  · 当天详情：行块渲染、图片、拖动排序；点击卡片就地编辑正文。
 
   保存落盘后仍可整体回退：内容级改动（编辑/贴图删图/勾选/完成/删除/
   新建）进撤销栈，Ctrl+Z 逐步撤销、Ctrl+Shift+Z 或 Ctrl+Y 重做（App
@@ -857,99 +857,13 @@
   .dbtn.save:hover {
     opacity: 0.9;
   }
-  /* 正文按 markdown 渲染（与板上便签同款排版） */
+  /* 正文行块渲染（与编辑器同款排版） */
+  /* 正文行块样式在 PinRichEditor：与编辑器同款行高/间距 */
   .dtext {
     font-size: var(--font-size-section);
-    line-height: 1.65;
+    line-height: 1.6;
     font-weight: 500;
-    word-break: break-word;
     cursor: default;
-  }
-  .dtext :global(p) {
-    margin: 0 0 3px;
-  }
-  .dtext :global(p:last-child) {
-    margin-bottom: 0;
-  }
-  .dtext :global(h1),
-  .dtext :global(h2),
-  .dtext :global(h3),
-  .dtext :global(h4) {
-    margin: 6px 0 2px;
-    font-weight: 700;
-    line-height: 1.35;
-  }
-  .dtext :global(h1) {
-    font-size: 1.35em;
-  }
-  .dtext :global(h2) {
-    font-size: 1.2em;
-  }
-  .dtext :global(h3),
-  .dtext :global(h4) {
-    font-size: 1.08em;
-    font-weight: 600;
-  }
-  .dtext :global(ul),
-  .dtext :global(ol) {
-    margin: 1px 0 4px;
-    padding-left: 1.25em;
-  }
-  .dtext :global(li) {
-    margin: 0;
-  }
-  .dtext :global(input[type='checkbox']) {
-    width: 12px;
-    height: 12px;
-    margin: 0 5px 0 0;
-    accent-color: var(--accent);
-    vertical-align: -2px;
-    cursor: pointer;
-  }
-  .dtext :global(li:has(> input[type='checkbox'])) {
-    list-style: none;
-    margin-left: -1.25em;
-  }
-  /* 已勾的待办划线弱化（与编辑器里的完成态一致） */
-  .dtext :global(li:has(> input[type='checkbox']:checked)) {
-    color: var(--faint);
-    text-decoration: line-through;
-  }
-  .dtext :global(code) {
-    padding: 0 4px;
-    border-radius: 4px;
-    background: var(--bg-soft);
-    font-family: var(--font-mono);
-    font-size: 0.9em;
-  }
-  .dtext :global(pre) {
-    margin: 4px 0;
-    padding: 6px 8px;
-    border-radius: 6px;
-    background: var(--bg-soft);
-    overflow-x: auto;
-  }
-  .dtext :global(pre code) {
-    padding: 0;
-    background: none;
-  }
-  .dtext :global(blockquote) {
-    margin: 4px 0;
-    padding-left: 8px;
-    border-left: 2px solid var(--line-strong);
-    color: var(--muted);
-  }
-  .dtext :global(a) {
-    color: var(--accent);
-    text-decoration: none;
-  }
-  .dtext :global(a:hover) {
-    text-decoration: underline;
-  }
-  .dtext :global(hr) {
-    margin: 8px 0;
-    border: none;
-    border-top: 1px solid var(--line);
   }
   /* 归档卡图片：随卡片宽度排，超出高度在卡内滚 */
   .dimgrid {

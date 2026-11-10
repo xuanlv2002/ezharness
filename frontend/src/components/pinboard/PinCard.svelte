@@ -2,7 +2,7 @@
   /*
   板上的一张便签卡：拖动（3px 阈值）、右下角缩放、悬停工具条（✓ 完成 /
   ✕ 删除就地确认）、点击就地编辑（没拖起来就算点击，光标落在点击处）。
-  正文按 markdown 渲染，待办勾选框可直接
+  正文按行块渲染，待办勾选框可直接
   点，超出卡片高度时在正文区域内滚动。图片是贴在卡面上的贴纸：可直接拖入
   图片文件或在编辑器里粘贴，编辑时拖动图片移动、右下角手柄缩放，位置与
   大小随卡片一起存盘；选中后可复制到系统剪贴板，点图片看大图。
@@ -500,7 +500,7 @@
     if (card.h < minH) patchCard(card.id, { h: minH })
   })
 
-  /* 卡片正文按 markdown 渲染；待办勾选框去掉 disabled，点击直接改原文。
+  /* 卡片正文按行块渲染（与编辑器同款，含空行）；待办框点击直接改原文。
      只有图片没有正文时不显示「空便签」占位 */
   const mdHtml = $derived(renderPinMarkdown(card.text || (card.images?.length ? '' : '（空便签）')))
 
@@ -931,7 +931,7 @@
     padding: 11px 12px 8px 15px;
     overflow: hidden;
   }
-  /* 渲染态正文：markdown 排版，可滚动；任务勾选框直接可点 */
+  /* 渲染态正文：行块与编辑器同款（样式在 PinRichEditor），任务框直接可点 */
   .mdbody {
     flex: 1;
     /* 底栏固定常显，正文至少留一行、再多在内部滚动 */
@@ -944,7 +944,6 @@
     overscroll-behavior: contain;
     scrollbar-width: thin;
     scrollbar-color: color-mix(in srgb, var(--fg) 18%, transparent) transparent;
-    word-break: break-word;
     cursor: default;
   }
   /* 底栏：窄卡时间在上、会话在下；宽卡改成左右两列，首行对齐。
@@ -1070,93 +1069,6 @@
     transform: translateX(-50%);
     pointer-events: none;
     box-shadow: 0 4px 12px rgb(0 0 0 / 18%);
-  }
-  .mdbody :global(p) {
-    margin: 0 0 3px;
-  }
-  .mdbody :global(p:last-child) {
-    margin-bottom: 0;
-  }
-  .mdbody :global(h1),
-  .mdbody :global(h2),
-  .mdbody :global(h3),
-  .mdbody :global(h4) {
-    margin: 6px 0 2px;
-    font-weight: 700;
-    line-height: 1.35;
-  }
-  .mdbody :global(h1) {
-    font-size: 1.35em;
-  }
-  .mdbody :global(h2) {
-    font-size: 1.2em;
-  }
-  .mdbody :global(h3),
-  .mdbody :global(h4) {
-    font-size: 1.08em;
-    font-weight: 600;
-  }
-  .mdbody :global(ul),
-  .mdbody :global(ol) {
-    margin: 1px 0 4px;
-    padding-left: 1.25em;
-  }
-  .mdbody :global(li) {
-    margin: 0;
-  }
-  .mdbody :global(input[type='checkbox']) {
-    width: 12px;
-    height: 12px;
-    margin: 0 5px 0 0;
-    accent-color: var(--accent);
-    vertical-align: -2px;
-    cursor: pointer;
-  }
-  /* 任务项去掉圆点，勾选框顶格 */
-  .mdbody :global(li:has(> input[type='checkbox'])) {
-    list-style: none;
-    margin-left: -1.25em;
-  }
-  /* 已勾的待办划线弱化（与编辑器里的完成态一致） */
-  .mdbody :global(li:has(> input[type='checkbox']:checked)) {
-    color: var(--faint);
-    text-decoration: line-through;
-  }
-  .mdbody :global(code) {
-    padding: 0 4px;
-    border-radius: 4px;
-    background: var(--bg-soft);
-    font-family: var(--font-mono);
-    font-size: 0.9em;
-  }
-  .mdbody :global(pre) {
-    margin: 4px 0;
-    padding: 6px 8px;
-    border-radius: 6px;
-    background: var(--bg-soft);
-    overflow-x: auto;
-  }
-  .mdbody :global(pre code) {
-    padding: 0;
-    background: none;
-  }
-  .mdbody :global(blockquote) {
-    margin: 4px 0;
-    padding-left: 8px;
-    border-left: 2px solid var(--line-strong);
-    color: var(--muted);
-  }
-  .mdbody :global(a) {
-    color: var(--accent);
-    text-decoration: none;
-  }
-  .mdbody :global(a:hover) {
-    text-decoration: underline;
-  }
-  .mdbody :global(hr) {
-    margin: 8px 0;
-    border: none;
-    border-top: 1px solid var(--line);
   }
   .edit-err {
     flex: none;
