@@ -756,6 +756,8 @@
   .cbtn.save:hover {
     opacity: 0.9;
   }
+  /* 正文行块（.pin-blk/.pin-btext）样式在 PinRichEditor：渲染态与编辑器
+     共用同一套行高与块间距，这里只定容器字体，与 .rich 对齐 */
   .cmd {
     flex: 1;
     min-width: 0;
@@ -763,90 +765,8 @@
     line-height: 1.6;
     font-weight: 500;
     color: var(--fg);
-    word-break: break-word;
     user-select: text;
     cursor: default;
-  }
-  .cmd :global(p) {
-    margin: 0 0 3px;
-  }
-  .cmd :global(p:last-child) {
-    margin-bottom: 0;
-  }
-  .cmd :global(h1),
-  .cmd :global(h2),
-  .cmd :global(h3),
-  .cmd :global(h4) {
-    margin: 6px 0 2px;
-    font-weight: 700;
-    line-height: 1.35;
-  }
-  .cmd :global(h1) {
-    font-size: 1.35em;
-  }
-  .cmd :global(h2) {
-    font-size: 1.2em;
-  }
-  .cmd :global(h3),
-  .cmd :global(h4) {
-    font-size: 1.08em;
-    font-weight: 600;
-  }
-  .cmd :global(ul),
-  .cmd :global(ol) {
-    margin: 1px 0 4px;
-    padding-left: 1.25em;
-  }
-  .cmd :global(li) {
-    margin: 0;
-  }
-  .cmd :global(input[type='checkbox']) {
-    width: 12px;
-    height: 12px;
-    margin: 0 5px 0 0;
-    accent-color: var(--accent);
-    vertical-align: -2px;
-    cursor: pointer;
-  }
-  .cmd :global(li:has(> input[type='checkbox'])) {
-    list-style: none;
-    margin-left: -1.25em;
-  }
-  .cmd :global(code) {
-    padding: 0 4px;
-    border-radius: 4px;
-    background: var(--bg-soft);
-    font-family: var(--font-mono);
-    font-size: 0.9em;
-  }
-  .cmd :global(pre) {
-    margin: 4px 0;
-    padding: 6px 8px;
-    border-radius: 6px;
-    background: var(--bg-soft);
-    overflow-x: auto;
-  }
-  .cmd :global(pre code) {
-    padding: 0;
-    background: none;
-  }
-  .cmd :global(blockquote) {
-    margin: 4px 0;
-    padding-left: 8px;
-    border-left: 2px solid var(--line-strong);
-    color: var(--muted);
-  }
-  .cmd :global(a) {
-    color: var(--accent);
-    text-decoration: none;
-  }
-  .cmd :global(a:hover) {
-    text-decoration: underline;
-  }
-  .cmd :global(hr) {
-    margin: 8px 0;
-    border: none;
-    border-top: 1px solid var(--line);
   }
   .cimgs {
     flex: none;

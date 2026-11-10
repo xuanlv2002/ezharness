@@ -807,8 +807,9 @@
       display: none;
     }
   }
-  /* 更窄：模型名与上下文百分比也收起（圆环本身仍是量表），整行只剩图标 */
-  @container (max-width: 360px) {
+  /* 更窄（抽屉挤到主列 480 下限时输入条正好 364）：模型名与上下文百分比
+     也收起（圆环本身仍是量表），整行只剩图标 */
+  @container (max-width: 380px) {
     .model-pick .model-btn .model-name {
       display: none;
     }

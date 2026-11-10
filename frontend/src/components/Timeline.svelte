@@ -516,6 +516,8 @@
   .tlwrap {
     position: relative;
     flex: 1;
+    /* 同 .chat：宽度跟随主列被抽屉挤窄，不被消息内容的 min-content 撑开 */
+    min-width: 0;
     min-height: 0;
     display: flex;
   }
@@ -565,6 +567,8 @@
     flex: 1;
     overflow-y: auto;
     overflow-x: hidden; /* 会话区不要横向滚动条（长串断行后此为兜底） */
+    /* 滚动容器也是 flex 项：显式归零最小宽，长串只换行不把列撑宽 */
+    min-width: 0;
     min-height: 0;
     overscroll-behavior: contain;
   }
