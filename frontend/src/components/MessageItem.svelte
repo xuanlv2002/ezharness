@@ -487,7 +487,8 @@
     border: 1px solid color-mix(in srgb, var(--accent) 14%, transparent);
     border-radius: 14px;
     white-space: pre-wrap;
-    word-break: break-word;
+    /* anywhere 才会参与 min-content：长命令/路径不把主列的最小宽度撑大 */
+    overflow-wrap: anywhere;
     max-height: 280px;
     overflow: hidden;
   }

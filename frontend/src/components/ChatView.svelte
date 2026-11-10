@@ -182,6 +182,9 @@
   .chat {
     position: relative;
     flex: 1;
+    /* 抽屉挤窄主列时，会话内容的 min-content（长命令/路径）不能把整列撑宽——
+       否则输入条与消息列会伸出主列、被抽屉盖住 */
+    min-width: 0;
     min-height: 0;
     display: flex;
   }
