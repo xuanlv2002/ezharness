@@ -22,6 +22,7 @@ func BootstrapHub(h *domain.Hub) {
 	} else {
 		h.Models = LoadModelsConfig(ctx, h.Fsys)
 	}
+	h.Media = LoadMediaConfig(ctx, h.Fsys)
 	if _, err := h.Fsys.Read(ctx, "settings.json"); err != nil {
 		h.Settings = domain.DefaultSettings()
 		_ = SaveSettings(ctx, h.Fsys, h.Settings)
@@ -39,16 +40,20 @@ func BootstrapHub(h *domain.Hub) {
 	h.SetActive(h.BootstrapActive())
 }
 
-/* recordUsage 累计主模型用量并落盘（失败记日志不中断轮）。 */
-func recordUsage(h *domain.Hub, u *types.Usage) {
-	if h.ApplyUsage(u) {
+/* recordUsage 累计该会话所用模型的用量并落盘（失败记日志不中断轮）。 */
+func recordUsage(h *domain.Hub, model string, u *types.Usage) {
+	if h.ApplyUsage(model, u) {
 		if err := SaveModelsConfig(context.Background(), h.Fsys, h.ModelsSnapshot()); err != nil {
 			log.Printf("模型用量落盘失败: %v", err)
 		}
 	}
 }
 
-/* LoadModelsConfig 读 models.json，缺失或损坏回落默认值。 */
+/*
+LoadModelsConfig 读 models.json，缺失或损坏回落默认值。
+只认 main；旧版残留的 image/audio/video 字段直接忽略（生成模型只从
+media.json 读取，不做迁移）。
+*/
 func LoadModelsConfig(ctx context.Context, fsys osfs.OS) domain.ModelsConfig {
 	data, err := fsys.Read(ctx, "models.json")
 	if err != nil {
@@ -56,19 +61,44 @@ func LoadModelsConfig(ctx context.Context, fsys osfs.OS) domain.ModelsConfig {
 	}
 	fsys.Restrict("models.json") // 含 apiKey：存量文件启动时收敛为仅属主可读写
 	var mc domain.ModelsConfig
-	if json.Unmarshal(data, &mc) == nil && (len(mc.Main)+len(mc.Image)+len(mc.Audio)) > 0 {
+	if json.Unmarshal(data, &mc) == nil && len(mc.Main) > 0 {
 		return mc
 	}
 	return domain.DefaultModelsConfig()
 }
 
-/* SaveModelsConfig 落盘模型四槽。 */
+/* SaveModelsConfig 落盘语言模型槽。 */
 func SaveModelsConfig(ctx context.Context, fsys osfs.OS, m domain.ModelsConfig) error {
 	data, err := json.MarshalIndent(m, "", "  ")
 	if err != nil {
 		return err
 	}
 	return fsys.WritePrivate(ctx, "models.json", data)
+}
+
+const mediaConfigFile = "media.json"
+
+/*
+	LoadMediaConfig 读 media.json（多媒体生成模型：image/audio/video 三类），
+
+缺失给空配置（三类都未配置是正常态）。
+*/
+func LoadMediaConfig(ctx context.Context, fsys osfs.OS) domain.MediaConfig {
+	var mc domain.MediaConfig
+	if data, err := fsys.Read(ctx, mediaConfigFile); err == nil {
+		fsys.Restrict(mediaConfigFile)
+		_ = json.Unmarshal(data, &mc)
+	}
+	return mc
+}
+
+/* SaveMediaConfig 落盘多媒体生成模型（含 apiKey，属主权限）。 */
+func SaveMediaConfig(ctx context.Context, fsys osfs.OS, m domain.MediaConfig) error {
+	data, err := json.MarshalIndent(m, "", "  ")
+	if err != nil {
+		return err
+	}
+	return fsys.WritePrivate(ctx, mediaConfigFile, data)
 }
 
 /* LoadSettings 读 settings.json，缺失回落默认值。 */
@@ -79,17 +109,19 @@ func LoadSettings(ctx context.Context, fsys osfs.OS) domain.Settings {
 		return out
 	}
 	var s struct {
-		SystemExtra     string   `json:"systemExtra"`
-		TrimPercent     *int     `json:"trimPercent"` // 指针：区分未提交与显式 0（禁用）
-		WorkDir         string   `json:"workDir"`
-		CloseToTray     *bool    `json:"closeToTray"`
-		PetEnabled      *bool    `json:"petEnabled"`
-		DisabledSkills  []string `json:"disabledSkills"`
-		MaxIterations   *int     `json:"maxIterations"`
-		DebugMode       *bool    `json:"debugMode"`
-		ReasoningEffort string   `json:"reasoningEffort"`
-		ApproveMode     string   `json:"approveMode"`
-		PinnedApps      []string `json:"pinnedApps"`
+		SystemExtra      string   `json:"systemExtra"`
+		TrimPercent      *int     `json:"trimPercent"` // 指针：区分未提交与显式 0（禁用）
+		WorkDir          string   `json:"workDir"`
+		CloseToTray      *bool    `json:"closeToTray"`
+		PetEnabled       *bool    `json:"petEnabled"`
+		DisabledSkills   []string `json:"disabledSkills"`
+		MaxIterations    *int     `json:"maxIterations"`
+		DebugMode        *bool    `json:"debugMode"`
+		PinnedApps       []string `json:"pinnedApps"`
+		OffloadThreshold *int     `json:"offloadThreshold"`
+		GenQuotaImage    *int     `json:"genQuotaImage"`
+		GenQuotaAudio    *int     `json:"genQuotaAudio"`
+		GenQuotaVideo    *int     `json:"genQuotaVideo"`
 	}
 	if json.Unmarshal(data, &s) != nil {
 		return out
@@ -112,8 +144,18 @@ func LoadSettings(ctx context.Context, fsys osfs.OS) domain.Settings {
 	if s.DebugMode != nil {
 		out.DebugMode = *s.DebugMode
 	}
-	out.ReasoningEffort = s.ReasoningEffort
-	out.ApproveMode = s.ApproveMode
+	if s.OffloadThreshold != nil {
+		out.OffloadThreshold = clamp(*s.OffloadThreshold, 0, 1048576)
+	}
+	if s.GenQuotaImage != nil {
+		out.GenQuotaImage = clamp(*s.GenQuotaImage, 0, 1000)
+	}
+	if s.GenQuotaAudio != nil {
+		out.GenQuotaAudio = clamp(*s.GenQuotaAudio, 0, 1000)
+	}
+	if s.GenQuotaVideo != nil {
+		out.GenQuotaVideo = clamp(*s.GenQuotaVideo, 0, 1000)
+	}
 	out.PinnedApps = s.PinnedApps
 	return out
 }

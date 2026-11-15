@@ -201,9 +201,9 @@
     { v: 'off', label: '无审批', title: '全部工具直接放行（谨慎）' },
     { v: 'strict', label: '严格审批', title: '每次工具调用都需批准' },
   ] as const
-  const approveMode = $derived((store.settings?.approveMode ?? '') as '' | 'off' | 'strict')
+  const approveMode = $derived((store.status?.approveMode ?? '') as '' | 'off' | 'strict')
   const approveLabel = $derived(APPROVE_MODES.find((m) => m.v === approveMode)?.label ?? '跟随安全配置')
-  const reasonEffort = $derived((store.settings?.reasoningEffort ?? '') as ReasoningEffort)
+  const reasonEffort = $derived((store.status?.reasoningEffort ?? '') as ReasoningEffort)
   const reasonLabel = $derived(REASON_MODES.find((m) => m.v === reasonEffort)?.label ?? '思考·默认')
   /* 窄列短标签：裸「思考/审批」丢档位，短标也带关键字（状态一眼可见） */
   const reasonShort = $derived(!reasonEffort ? '思考·默认' : reasonEffort === 'none' ? '思考·无' : `思考·${reasonEffort}`)
@@ -259,9 +259,22 @@
 <div class="bar" class:focused>
   <div class="fade"></div>
   {#if store.archivingRootId === store.activeId}
-    <div class="status">⇪ 正在归档话题…（完成后即可继续；期间可切换或新建分支）</div>
+    <div class="status">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M4 4h16v4H4z" />
+        <path d="M6 8v12h12V8" />
+        <path d="M12 17v-5M9.5 14.5L12 12l2.5 2.5" />
+      </svg>
+      正在归档话题…（完成后即可继续；期间可切换或新建分支）
+    </div>
   {:else if store.busy && store.lastTool}
-    <div class="status">⚙ {store.lastTool} 执行中…（点击 ⏹ 终止）</div>
+    <div class="status">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="12" cy="12" r="9" />
+        <path d="M12 7v5l3 2" />
+      </svg>
+      {store.lastTool} 执行中…（点击 ⏹ 终止）
+    </div>
   {:else if store.lastStatus}
     <div class="status">{store.lastStatus}</div>
   {/if}
@@ -389,7 +402,7 @@
     </div>
     <div class="reason-pick">
       <button class="model-btn" onclick={toggleReasonMenu} disabled={!store.activeId}
-        title="思考强度（全局，即改即生效）">
+        title="思考强度（本会话，即改即生效）">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
           <path d="M9 18h6M10 22h4" />
           <path d="M12 2a7 7 0 0 0-4 12.7V16h8v-1.3A7 7 0 0 0 12 2z" />
@@ -409,7 +422,7 @@
     </div>
     <div class="approve-pick">
       <button class="model-btn" onclick={toggleApproveMenu} disabled={!store.activeId}
-        title="全局的工具审批档位（实时生效）">
+        title="本会话的工具审批档位（实时生效）">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
           <path d="M12 3l7 3v5c0 4.5-3 8-7 10-4-2-7-5.5-7-10V6z" />
         </svg>
@@ -428,7 +441,7 @@
     </div>
     <div class="model-pick">
       <button class="model-btn" onclick={toggleModelMenu} disabled={!store.activeId}
-        title="切换主模型（下一次输入生效）">
+        title="切换本会话主模型（下一次输入生效）">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
           <rect x="7" y="7" width="10" height="10" rx="2" />
           <path d="M3 9v6M21 9v6" />
@@ -483,6 +496,12 @@
     color: var(--faint);
     padding: 0 4px 8px;
     text-align: right;
+  }
+  .status svg {
+    width: 12px;
+    height: 12px;
+    margin-right: 4px;
+    vertical-align: -2px;
   }
   .attachments {
     display: flex;

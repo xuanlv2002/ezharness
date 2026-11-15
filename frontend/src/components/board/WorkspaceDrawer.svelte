@@ -23,10 +23,10 @@
 
   const open = $derived(store.termDrawerOpen && visible)
   const tool = $derived(store.drawerTool)
-  const TITLES: Record<string, [string, string]> = {
-    term: ['共享终端', '用户与 AI 共写 · 收起不中断'],
-    file: ['资源', '查看 · 编辑 · 发给 AI'],
-    browser: ['共享浏览器', 'AI 操控 · 实时共见'],
+  const TITLES: Record<string, string> = {
+    term: '共享终端',
+    file: '资源',
+    browser: '共享浏览器',
   }
   const title = $derived(TITLES[tool] ?? TITLES.term)
 
@@ -190,7 +190,7 @@
 
 {#if ghost}
   <!-- 脱离中的幽灵卡片（纯 DOM：拖拽期间不开窗口） -->
-  <div class="ghost" style="left:{ghost.x}px;top:{ghost.y}px">{title[0]}</div>
+  <div class="ghost" style="left:{ghost.x}px;top:{ghost.y}px">{title}</div>
 {/if}
 
 <aside
@@ -229,26 +229,24 @@
           <circle cx="5" cy="13" r="1.25" /><circle cx="11" cy="13" r="1.25" />
         </svg>
       </span>
-      <div class="head-text">
-        <h3>{title[0]}</h3>
-        <p>{title[1]}</p>
-      </div>
+      <h3>{title}</h3>
+      {#if tool === 'file'}
+        <!-- 目录面板开关紧跟标题放左侧：抽屉在屏幕右缘，原来贴最右一行
+        按钮离工作区太远（要跨半个屏幕去点）。树从标题栏正下方展开，
+        预览区里不再常驻一枚钮占一行（弹出独立窗没有标题栏，面板内自留） -->
+        <button
+          class="pop"
+          class:active={explorerUI.open}
+          onclick={() => setExplorerOpen(!explorerUI.open)}
+          title={explorerUI.open ? '收起目录面板' : '打开目录面板'}
+        >
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="3" y="4" width="18" height="16" rx="2" />
+            <path d="M9 4v16" />
+          </svg>
+        </button>
+      {/if}
       <div class="actions">
-        {#if tool === 'file'}
-          <!-- 目录面板开关进标题栏：树从标题栏正下方展开，预览区里不再
-          常驻一枚钮占一行（弹出独立窗没有标题栏，面板内自留） -->
-          <button
-            class="pop"
-            class:active={explorerUI.open}
-            onclick={() => setExplorerOpen(!explorerUI.open)}
-            title={explorerUI.open ? '收起目录面板' : '打开目录面板'}
-          >
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-              <rect x="3" y="4" width="18" height="16" rx="2" />
-              <path d="M9 4v16" />
-            </svg>
-          </button>
-        {/if}
         <button class="pop" onclick={() => popOut()} title="弹出为独立窗口（也可按住头部拖出）">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
             <path d="M15 4h5v5" />
@@ -264,7 +262,7 @@
         </button>
       </div>
     </header>
-    <div class="body" class:treedocked={tool === 'file' && explorerUI.open && explorerUI.docked}>
+    <div class="body" class:treedocked={tool === 'file' && explorerUI.open}>
       <div class="pane" class:hidden={tool !== 'term'}>
         <TerminalTab active={open && tool === 'term'} />
       </div>
@@ -339,13 +337,13 @@
     width: var(--pane-w);
     height: 100%;
   }
-  /* 头部 = 拖拽把手（按住拖出抽屉成独立窗口） */
+  /* 头部 = 紧凑单行标题 + 拖拽把手（按住拖出抽屉成独立窗口） */
   header {
     display: flex;
     align-items: center;
-    gap: 10px;
+    gap: 8px;
     flex: none;
-    padding: 12px 12px 12px 14px;
+    padding: 6px 8px 6px 10px;
     border-bottom: 1px solid var(--line);
     background: var(--bg);
     cursor: grab;
@@ -361,8 +359,8 @@
     color: var(--faint);
   }
   .grip svg {
-    width: 11px;
-    height: 11px;
+    width: 10px;
+    height: 10px;
   }
   /* 脱离中的光标幽灵：跟着指针的幽灵卡片（拖拽期不开窗口） */
   .ghost {
@@ -379,28 +377,16 @@
     font-weight: 600;
     box-shadow: 0 6px 20px rgb(0 0 0 / 18%);
   }
-  /* 标题两行：主名 + 一句用途；操作按钮右对齐 */
-  .head-text {
-    flex: 1;
-    min-width: 0;
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-  }
+  /* 单行标题（用途说明不再占第二行）；操作按钮右对齐 */
   h3 {
+    /* 标题按内容占宽（后面的目录开关才能紧跟标题落左侧），过长才收缩 */
+    flex: 0 1 auto;
+    min-width: 0;
+    max-width: 55%;
     margin: 0;
-    font-size: var(--font-size-body);
-    font-weight: 700;
-    line-height: 1.25;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-  .head-text p {
-    margin: 0;
-    font-size: var(--font-size-ui);
-    line-height: 1.25;
-    color: var(--faint);
+    font-size: var(--font-size-section);
+    font-weight: 600;
+    line-height: 1.2;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -409,17 +395,18 @@
     flex: none;
     display: flex;
     align-items: center;
-    gap: 6px;
+    gap: 4px;
+    margin-left: auto;
   }
   .pop {
     display: grid;
     place-items: center;
-    width: 28px;
-    height: 28px;
+    width: 24px;
+    height: 24px;
     border: none;
     background: transparent;
     color: var(--muted);
-    border-radius: 8px;
+    border-radius: 6px;
     cursor: pointer;
     flex: none;
     transition:
@@ -436,8 +423,8 @@
     color: var(--accent, #2563eb);
   }
   .pop svg {
-    width: 15px;
-    height: 15px;
+    width: 14px;
+    height: 14px;
   }
   .body {
     flex: 1;

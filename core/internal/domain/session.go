@@ -811,6 +811,7 @@ Hub 管理应用级单例状态：active 是当前分支，branches 按线根 ID
 type Hub struct {
 	mu        sync.Mutex
 	Models    ModelsConfig
+	Media     MediaConfig
 	Fsys      osfs.OS
 	Settings  Settings
 	ToolRules []ToolRule
@@ -895,6 +896,12 @@ func (s *Session) restoreFrom(snap *hooks.SessionSnap) {
 	s.setHistory(snap.Messages)
 	s.Sess.SetTitle(snap.Title)
 	s.Sess.SetResSnap(snap.Snapshot)
+	// 偏好优先读独立 prefs.json；旧会话没有该文件时回落快照字段
+	prefs := hooks.Prefs{ReasoningEffort: snap.ReasoningEffort, ApproveMode: snap.ApproveMode, ActiveModel: snap.ActiveModel}
+	if p, ok := hooks.LoadPrefs(context.Background(), s.Fsys, snap.ID); ok {
+		prefs = p
+	}
+	s.Sess.SetPrefs(prefs)
 	s.Sess.SetLastOutputAt(snap.LastOutputAt)
 	s.Sess.SeedUsage(snap.Usage)
 	// 恢复水位（旧快照无字段时从历史最后一条 agent_status 兜底）
@@ -957,28 +964,42 @@ func (h *Hub) newSession(id string, rootID string, snap *hooks.SessionSnap) *Ses
 	return s
 }
 
-/* ModelsSnapshot 返回当前模型四槽。 */
+/* ModelsSnapshot 返回当前语言模型槽。 */
 func (h *Hub) ModelsSnapshot() ModelsConfig {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	return h.Models
 }
 
-/* ApplyModels 更新模型四槽（持久化由 service 层完成）。 */
+/* ApplyModels 更新语言模型槽（持久化由 service 层完成）。 */
 func (h *Hub) ApplyModels(m ModelsConfig) {
 	h.mu.Lock()
 	h.Models = m
 	h.mu.Unlock()
 }
 
-/* ApplyUsage 累计主模型用量到启用条目，返回是否有变更。 */
-func (h *Hub) ApplyUsage(u *types.Usage) bool {
+/* MediaSnapshot 返回当前多媒体生成模型配置（media.json 的内存态）。 */
+func (h *Hub) MediaSnapshot() MediaConfig {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.Media
+}
+
+/* ApplyMedia 更新多媒体生成模型配置（持久化由 service 层完成）。 */
+func (h *Hub) ApplyMedia(m MediaConfig) {
+	h.mu.Lock()
+	h.Media = m
+	h.mu.Unlock()
+}
+
+/* ApplyUsage 累计指定会话模型的用量（model 空/失效回落全局默认），返回是否有变更。 */
+func (h *Hub) ApplyUsage(model string, u *types.Usage) bool {
 	if u == nil {
 		return false
 	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	if e := h.Models.ActiveMain(); e != nil {
+	if e := h.Models.ResolveMain(model); e != nil {
 		accumulateUsage(e, u)
 		return true
 	}

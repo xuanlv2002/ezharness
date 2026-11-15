@@ -1,12 +1,13 @@
 /*
 reschange 是 remind hook 的变更段：轮首对比 session 资源基线
-（skills/mcps/apps），有变化才产出条目（由 remind.OnStart 汇总为
+（skills/mcps/models/media/apps），有变化才产出条目（由 remind.OnStart 汇总为
 <resource_change> 消息与 resource.change 事件，并附变更后完整清单）。
 
 基线（ResSnapshot）持久化随 session：sessionstore 落盘、restoreFrom
 还原，重启不重复报。首轮只建基线不 diff（迁移/新建会话不算变更）。
 技能/MCP/可选模型启停也算变更：基线记录启用/停用两份名单，启停切换
-渲染为"启用/停用 <资源> <名>"（与新增/移除一体）；旧格式基线
+渲染为"启用/停用 <资源> <名>"（与新增/移除一体）；多媒体能力按
+"能力|生效模型"签名对比，启用/关闭/换模型渲染为对应变更条目；旧格式基线
 （V 低于 resSnapV，缺停用名单）视为未建，静默重建，不把存量停用
 误报成新增。
 */
@@ -48,7 +49,7 @@ buildChanges 对比资源基线产出变更条目（中文完整短语，模型�
 prev 为 nil（首轮或旧格式）只建基线。技能/MCP/可选模型均按启用清单 +
 停用名单分列，区分「新增/移除」与「启用/停用」。
 */
-func (h *Remind) buildChanges(ctx context.Context) (items []string, skills, mcps, models []StatusMcp, apps []StatusApp, callbacks []callback.Task) {
+func (h *Remind) buildChanges(ctx context.Context) (items []string, skills, mcps, models, media []StatusMcp, apps []StatusApp, callbacks []callback.Task) {
 	var off []string
 	if h.disabled != nil {
 		off = h.disabled()
@@ -104,8 +105,17 @@ func (h *Remind) buildChanges(ctx context.Context) (items []string, skills, mcps
 			sort.Strings(modelsOff)
 		}
 	}
+	// 多媒体能力基线（三种能力固定存在；签名为 "能力|生效模型"，未配置为
+	// "（未配置）"）：启用/关闭/换模型都在 diff 中体现
+	mediaSigs := make([]string, 0, 3)
+	if h.media != nil {
+		media = h.media()
+		for _, m := range media {
+			mediaSigs = append(mediaSigs, m.Name+"|"+m.Desc)
+		}
+	}
 
-	// 长期记忆基线（memory 工具轮内改 / distill 归档应用，下轮 diff 出变更）
+	// 长期记忆基线（memory 工具轮内改，下轮 diff 出变更）
 	memSigs := memorySignatures(ctx, h.fsys)
 	projSigs := projectSignatures(ctx, h.fsys)
 
@@ -141,6 +151,7 @@ func (h *Remind) buildChanges(ctx context.Context) (items []string, skills, mcps
 		if prev.Model != "" && curModel != "" && curModel != prev.Model {
 			items = append(items, "切换模型到 "+curModel)
 		}
+		items = append(items, diffMediaSignatures(prev.Media, mediaSigs)...)
 		items = append(items, diffMemorySignatures(prev.Memory, memSigs)...)
 		items = append(items, diffProjectSignatures(prev.Projects, projSigs)...)
 		items = append(items, diffAppSignatures(prev.Apps, appSigs)...)
@@ -150,8 +161,44 @@ func (h *Remind) buildChanges(ctx context.Context) (items []string, skills, mcps
 	// 推进基线（启用/停用分列）
 	h.store.SetResSnap(&ResSnapshot{V: resSnapV, Skills: onNames, SkillsOff: offNames,
 		Mcps: names(mcps), McpsOff: mcpsOff, Models: names(models), ModelsOff: modelsOff,
-		Model: curModel, Memory: memSigs, Projects: projSigs, Apps: appSigs, Callbacks: callbackSigs})
-	return items, skills, mcps, models, apps, callbacks
+		Media: mediaSigs, Model: curModel, Memory: memSigs, Projects: projSigs, Apps: appSigs, Callbacks: callbackSigs})
+	return items, skills, mcps, models, media, apps, callbacks
+}
+
+/*
+diffMediaSignatures 对比多媒体能力签名（"能力|生效模型"）：未配置→配置
+= 启用能力；配置→未配置 = 关闭能力；模型变化 = 切换模型。三种能力固定
+存在，首轮基线不报。
+*/
+func diffMediaSignatures(oldS, newS []string) []string {
+	parts := func(s string) []string { return strings.SplitN(s, "|", 2) }
+	modelOf := func(p []string) string {
+		if len(p) > 1 {
+			return p[1]
+		}
+		return ""
+	}
+	var out []string
+	for _, s := range newS {
+		p := parts(s)
+		if len(p) < 1 {
+			continue
+		}
+		if i := slices.IndexFunc(oldS, func(o string) bool { return parts(o)[0] == p[0] }); i >= 0 {
+			old := parts(oldS[i])
+			om, nm := modelOf(old), modelOf(p)
+			switch {
+			case om == nm:
+			case om == "" || om == "（未配置）" || om == "（未启用）":
+				out = append(out, "启用"+p[0]+"能力（"+nm+"）")
+			case nm == "" || nm == "（未配置）" || nm == "（未启用）":
+				out = append(out, "关闭"+p[0]+"能力")
+			default:
+				out = append(out, "切换"+p[0]+"模型到 "+nm+"（原 "+om+"）")
+			}
+		}
+	}
+	return out
 }
 
 /* appSignature 生成应用基线签名（描述放最后，允许含分隔符）。 */
@@ -278,8 +325,11 @@ func memorySignatures(ctx context.Context, fsys fs.FileSystem) []string {
 	return out
 }
 
-/* projectSignatures 收集项目签名（"id|name|description|内容字节数"）——
-名称、描述与记忆全文变化都能 diff 出（记忆页手动编辑同样触发）。 */
+/*
+	projectSignatures 收集项目签名（"id|name|description|内容字节数"）——
+
+名称、描述与记忆全文变化都能 diff 出（记忆页手动编辑同样触发）。
+*/
 func projectSignatures(ctx context.Context, fsys fs.FileSystem) []string {
 	projects, err := LoadProjects(ctx, fsys)
 	if err != nil {

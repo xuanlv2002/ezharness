@@ -1,23 +1,22 @@
 <script lang="ts">
-  import { onMount } from 'svelte'
-  import { api, type AppEntry, type CallbackTask } from '../lib/api'
+  import { onDestroy, onMount } from 'svelte'
+  import { api, type AppEntry } from '../lib/api'
   import { store } from '../lib/store.svelte'
-  import { launchApp } from '../lib/apps'
+  import { openAppWindow } from '../lib/apps'
+  import AppLogo from './AppLogo.svelte'
 
-  /* 快应用 = apps/<名>/ 目录应用（app.quick 声明）。desktop 壳 = IPC 开独立
-  子窗口；浏览器访问 = 新标签页直开。声明了后端的应用由后端把终端拉进侧边栏。 */
+  /* 快应用 = apps/<名>/ 目录应用（app.quick 声明）。本页「启动」= 独立窗口
+  （与对话 app:// chip、桌面宠物一致）；只有左侧钉住菜单才在主窗口内嵌打开
+  （QuickAppView）。声明了后端的应用由后端把终端拉进侧边栏（卡片实时显示
+  后端运行态，在跑可一键跳终端）。 */
   let apps = $state<AppEntry[]>([])
-  let callbacks = $state<CallbackTask[]>([])
   let loaded = $state(false)
 
-  /* 应用与定时回调一起拉：卡片上直接展示关联任务与声明的端点 */
-  async function loadAll() {
-    const [{ apps: list }, cb] = await Promise.all([
-      api.getApps(),
-      api.listCallbacks().catch(() => ({ callbacks: [] as CallbackTask[] })),
-    ])
+  /* broadcast：名单确有变化的入口（钉选/卸载/进页）才广播侧栏刷新 */
+  async function loadAll(broadcast = true) {
+    const { apps: list } = await api.getApps()
     apps = list ?? []
-    callbacks = cb.callbacks ?? []
+    if (broadcast) window.dispatchEvent(new Event('ez:apps-changed'))
   }
 
   onMount(async () => {
@@ -27,29 +26,21 @@
       /* 后端不可达时空列表 */
     }
     loaded = true
+    /* 后端运行态是活的（会崩会退）：页面开着就低频跟盘（静默，不广播侧栏） */
+    const timer = setInterval(() => void loadAll(false).catch(() => {}), 15000)
+    onDestroy(() => clearInterval(timer))
   })
 
-  /* appTasks 返回关联到该应用的定时任务。 */
-  function appTasks(name: string): CallbackTask[] {
-    return callbacks.filter((t) => t.kind === 'app' && t.app?.name === name)
-  }
-
-  /* cbSchedule 是卡片 tooltip 里的计划摘要。 */
-  function cbSchedule(t: CallbackTask): string {
-    const s = t.schedule
-    if (s.kind === 'once') return `一次性 ${s.at ?? ''}`
-    if (s.kind === 'interval') return `每 ${s.every ?? ''}`
-    return `cron ${s.cron ?? ''}`
-  }
-
-  /* 启动：desktop 壳子窗口（IPC），web 端新标签页；带后端的应用把它的
-  终端拉到侧边栏（后端可能起不来，失败要出声） */
+  /* 启动：独立窗口打开（带后端的应用后端可能起不来，失败要出声）。启动后
+  静默重拉名单：卡片后端状态立即点亮（后端崩了再点启动即重启，复用逻辑只
+  认活终端） */
   async function launch(a: AppEntry) {
     try {
-      await launchApp(a.name)
+      await openAppWindow(a.name)
     } catch (err) {
       store.lastStatus = `启动快应用失败：${(err as Error).message}`
     }
+    void loadAll(false).catch(() => {})
   }
 
   /* 钉到桌面小助手/取消（图标常驻宠物窗，点击即启动）。core 钉满 3 会
@@ -97,27 +88,18 @@
       {#each apps as a (a.name)}
         <div class="card" role="button" tabindex="0" onkeydown={(e) => e.key === 'Enter' && launch(a)}>
           <div class="top">
-            {#if a.icon}
-              <img class="glyph avatar" src={a.icon} alt="" loading="lazy"
-                onerror={(e) => ((e.currentTarget as HTMLImageElement).style.display = 'none')} />
-            {:else}
-              <div class="glyph live">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-                  <path d="M8 6L3 12l5 6" />
-                  <path d="M16 6l5 6-5 6" />
-                </svg>
-              </div>
-            {/if}
+            <AppLogo size={34} name={a.name} title={a.title} icon={a.icon ?? ''} />
             <span class="kind">{a.kind}</span>
           </div>
           <h2>{a.title}</h2>
           <p class="desc">{a.name}</p>
-          {#if appTasks(a.name).length}
-            <p class="cbline" title={appTasks(a.name).map((t) => `${t.title} · ${cbSchedule(t)}${t.enabled ? '' : ' · 已停用'}`).join('\n')}>
-              ⏱ {appTasks(a.name).length} 个定时回调：{appTasks(a.name)
-                .slice(0, 2)
-                .map((t) => t.title)
-                .join('、')}{appTasks(a.name).length > 2 ? '…' : ''}
+          {#if a.kind === 'service'}
+            <p class="bkline">
+              <span class="bkdot" class:on={a.backendLive}></span>
+              {a.backendLive ? '后端运行中' : '后端未运行'}
+              {#if a.backendLive && a.termId}
+                <button class="bkjump" onclick={() => store.openTermAt(a.termId!)} title="在终端抽屉查看此后端（可看日志、可接管）">查看终端</button>
+              {/if}
             </p>
           {/if}
           {#if a.callbacks?.length}
@@ -256,21 +238,9 @@
     border: 1px solid var(--line);
     color: var(--muted);
   }
-  .glyph.live {
-    background: var(--bg-invert);
-    border-color: var(--bg-invert);
-    color: var(--fg-invert);
-  }
   .glyph svg {
     width: 16px;
     height: 16px;
-  }
-  /* 声明了 icon 的应用：卡片头像直接用图 */
-  .glyph.avatar {
-    width: 34px;
-    height: 34px;
-    border-radius: 10px;
-    object-fit: cover;
   }
   .kind {
     font-family: var(--font-mono);
@@ -306,6 +276,50 @@
     overflow: hidden;
     text-overflow: ellipsis;
   }
+  /* 后端运行态行：状态点 + 一键跳终端（终端池同一来源标记） */
+  .bkline {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: var(--font-size-small);
+    color: var(--muted);
+    white-space: nowrap;
+  }
+  .bkdot {
+    flex: none;
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: #adb6c4;
+  }
+  .bkdot.on {
+    background: #2ecc71;
+    animation: bkbreath 1.6s ease-in-out infinite;
+  }
+  @keyframes bkbreath {
+    0%,
+    100% {
+      opacity: 0.45;
+    }
+    50% {
+      opacity: 1;
+    }
+  }
+  .bkjump {
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    background: transparent;
+    color: var(--muted);
+    font: inherit;
+    font-size: var(--font-size-small);
+    padding: 1px 8px;
+    cursor: pointer;
+    transition: color var(--dur-fast) var(--ease-out), border-color var(--dur-fast) var(--ease-out);
+  }
+  .bkjump:hover {
+    color: var(--fg);
+    border-color: var(--line-strong);
+  }
   .foot {
     display: flex;
     align-items: center;
@@ -323,8 +337,9 @@
     align-items: center;
     gap: 6px;
   }
-  /* 图钉：钉住后实心并点亮 */
-  .pin {
+  /* 卡片图标键（图钉 / 卸载）同规格 */
+  .pin,
+  .del {
     display: grid;
     place-items: center;
     width: 26px;
@@ -340,34 +355,20 @@
     background: var(--bg-soft);
     color: var(--fg);
   }
+  .pin svg,
+  .del svg {
+    width: 13px;
+    height: 13px;
+  }
+  /* 图钉：钉住后实心并点亮 */
   .pin.on {
     color: #f0883e;
     border-color: color-mix(in srgb, #f0883e 40%, var(--line));
   }
-  .pin svg {
-    width: 13px;
-    height: 13px;
-  }
-  /* 卸载：与图钉同规格的图标键，hover 点红提示不可逆 */
-  .del {
-    display: grid;
-    place-items: center;
-    width: 26px;
-    height: 26px;
-    padding: 0;
-    border: 1px solid var(--line);
-    border-radius: 8px;
-    background: transparent;
-    color: var(--faint);
-    cursor: pointer;
-  }
+  /* 卸载 hover 点红提示不可逆 */
   .del:hover {
     background: var(--bg-soft);
     color: var(--danger);
-  }
-  .del svg {
-    width: 13px;
-    height: 13px;
   }
   .run {
     display: inline-flex;

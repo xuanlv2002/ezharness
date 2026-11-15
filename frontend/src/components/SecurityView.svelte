@@ -66,6 +66,10 @@
     'plan:clear': '清除当前计划',
     save_app: '保存快应用 html',
     load_app: '读取快应用调用文档（只读）',
+    'media:image': '文生图（贵价：默认每次审批 + 每日配额；异步任务）',
+    'media:audio': '文本转语音（贵价：默认每次审批 + 每日配额；异步任务）',
+    'media:video': '文生视频（最贵：默认每次审批 + 每日配额最低；异步任务）',
+    'media:status': '查询多媒体生成任务状态（只读）',
     'callback:list': '查看定时回调清单（只读）',
     'callback:create': '创建定时回调',
     'callback:update': '修改定时回调配置',
@@ -92,6 +96,7 @@
     { key: 'file', label: '文件工具', desc: '读写与编辑本机文件' },
     { key: 'term', label: '终端工具', desc: '一次性命令与共享终端' },
     { key: 'browser', label: '浏览器工具', desc: '共享浏览器操控' },
+    { key: 'media', label: '多媒体工具', desc: '图片 / 语音 / 视频生成与任务查询' },
     { key: 'mcp', label: 'MCP 工具', desc: '外部 MCP server 提供的工具' },
     { key: 'system', label: '系统自带工具', desc: '分身 / 快应用等内置能力' },
   ]
@@ -101,15 +106,17 @@
     if (/^(read|write|edit)_file$/.test(base)) return 'file'
     if (base === 'terminal' || base.startsWith('term_')) return 'term'
     if (base.startsWith('browser_')) return 'browser'
+    if (base === 'media') return 'media'
     if (base.startsWith('mcp')) return 'mcp'
     return 'system'
   }
 
   /* 稳定排序：先按工具、再按 action，避免后端返回顺序抖动导致行乱跳 */
-  const BASE_ORDER = ['read_file', 'write_file', 'edit_file', 'terminal', 'term_tab', 'term_action', 'browser_tab', 'browser_action', 'task', 'plan', 'save_app', 'load_app', 'callback', 'sleep', 'ask_user', 'trim_context', 'load_skill', 'mcp.*']
+  const BASE_ORDER = ['read_file', 'write_file', 'edit_file', 'terminal', 'term_tab', 'term_action', 'browser_tab', 'browser_action', 'media', 'task', 'plan', 'save_app', 'load_app', 'callback', 'sleep', 'ask_user', 'trim_context', 'load_skill', 'mcp.*']
   const ACTION_ORDER: Record<string, string[]> = {
     term_action: ['send', 'read'],
     browser_action: ['navigate', 'read', 'eval', 'console', 'network', 'screenshot', 'upload'],
+    media: ['image', 'audio', 'video', 'status'],
     plan: ['new', 'update', 'clear'],
     callback: ['list', 'create', 'update', 'delete', 'enable', 'disable', 'run'],
   }

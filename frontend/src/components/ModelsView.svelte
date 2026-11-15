@@ -12,17 +12,13 @@
   echarts.use([LineChart, GridComponent, LegendComponent, TooltipComponent, CanvasRenderer])
 
   /*
-  「主模型 + 能力槽」三类：main（驱动 agent 循环的唯一对话模型，支持
-  视觉则图片直接进上下文，否则不能读图）/ image（图片生成）/
-  audio（声音生成）——能力槽配置并启用后向 agent 暴露对应
-  工具（image/audio 的工具后续版本提供）。数据 GET/PUT /api/models，
-  每槽至多启用一个，保存后重建 agent。
+  模型页只管大语言模型（models.json）：main 驱动 agent 的对话与工具
+  循环。多模态生成（图片/语音/视频）已独立到「多媒体」页（media.json），
+  这里不再出现生成模型槽位。端点兼容 OpenAI 形态；保存后重建 agent。
   */
   type SlotKey = keyof ModelsConfig
-  const kinds: { key: SlotKey; title: string; hint: string }[] = [
+  const mainKinds: { key: SlotKey; title: string; hint: string }[] = [
     { key: 'main', title: '主模型', hint: '驱动对话与工具循环；勾选"支持视觉"则图片直接进上下文，未勾选则模型无法处理图片' },
-    { key: 'image', title: '图片生成', hint: '启用后向 agent 暴露文生图工具（工具后续版本提供）' },
-    { key: 'audio', title: '声音生成', hint: '启用后向 agent 暴露语音合成工具（工具后续版本提供）' },
   ]
 
   interface HeaderPair {
@@ -39,7 +35,7 @@
   type ModelForm = { mode: 'add'; slot: SlotKey } | { mode: 'edit'; slot: SlotKey; idx: number }
   let form = $state<ModelForm | null>(null)
   let formDraft = $state(blankDraft())
-  const formSlotTitle = $derived(form ? (kinds.find((k) => k.key === form.slot)?.title ?? '') : '')
+  const formSlotTitle = $derived(form ? (mainKinds.find((k) => k.key === form.slot)?.title ?? '') : '')
 
   /* 协议下拉：与输入条菜单同款（原生 select 的弹出菜单不跟主题，展开也有卡顿） */
   const PROTOCOLS = [
@@ -58,21 +54,23 @@
     { label: '1M', v: 1024000 },
   ]
 
-  /* 添加弹框的厂商预设：回填模型名/端点/窗口/视觉/协议，用户只需补 API Key */
-  const PRESETS = [
+  /* 添加弹框的厂商预设（回填模型名/端点，用户只需补 API Key） */
+  const CHAT_PRESETS = [
     { label: '智谱 GLM', name: 'glm-5.3', baseUrl: 'https://open.bigmodel.cn/api/paas/v4', contextWindow: 1024000, vision: false, protocol: 'openai' },
     { label: 'DeepSeek 官方', name: 'deepseek-flash', baseUrl: 'https://api.deepseek.com/v1', contextWindow: 1024000, vision: true, protocol: 'openai' },
     { label: '硅基流动 DeepSeek', name: 'deepseek-ai/DeepSeek-V3.2', baseUrl: 'https://api.siliconflow.cn/v1', contextWindow: 128000, vision: false, protocol: 'openai' },
   ]
   let apiKeyEl: HTMLInputElement | undefined
 
+  /* slotOf 取主模型的可变列表 */
+  function slotOf(_slot: SlotKey): ModelEntry[] | null {
+    return cfg ? cfg.main : null
+  }
+
   onMount(async () => {
     try {
       cfg = await api.getModels()
-      /* 后端空槽可能为 null（Go nil slice），兜底为空数组 */
-      for (const k of kinds) {
-        if (!cfg[k.key]) cfg[k.key] = []
-      }
+      if (!cfg.main) cfg.main = []
     } catch {
       message = '模型数据加载失败（后端不可达）'
     }
@@ -291,29 +289,33 @@
     }
   }
 
-  /* 启用切换：点亮目标为槽内唯一启用；再次点击已启用的条目 = 停用整槽
-  （main 槽除外——对话必须由主模型驱动，后端也会兜底点亮首条） */
+  /* setSlot 把变更写回主模型列表 */
+  function setSlot(slot: SlotKey, list: ModelEntry[]) {
+    if (cfg) cfg.main = list
+  }
+
+  /* 默认模型切换：点亮目标为新会话默认主模型；再次点击已启用的条目不处理
+  （对话必须由主模型驱动，后端也会兜底点亮首条；已有会话在输入框各自切换） */
   function enable(slot: SlotKey, idx: number) {
-    if (!cfg) return
-    if (cfg[slot][idx].enabled) {
-      if (slot === 'main') return
-      cfg[slot] = cfg[slot].map((e) => ({ ...e, enabled: false }))
-    } else {
-      cfg[slot] = cfg[slot].map((e, i) => ({ ...e, enabled: i === idx, disabled: i === idx ? false : e.disabled }))
-    }
+    const cur = slotOf(slot)
+    if (!cur) return
+    if (cur[idx].enabled) return
+    setSlot(slot, cur.map((e, i) => ({ ...e, enabled: i === idx, disabled: i === idx ? false : e.disabled })))
     void persist()
   }
 
   /* 关闭切换：关闭的模型保留配置但不可被调用（model_call/task/主循环都跳过） */
   function toggleClose(slot: SlotKey, idx: number) {
-    if (!cfg) return
-    cfg[slot] = cfg[slot].map((e, i) => (i === idx ? { ...e, disabled: !e.disabled, enabled: !e.disabled ? false : e.enabled } : e))
+    const cur = slotOf(slot)
+    if (!cur) return
+    setSlot(slot, cur.map((e, i) => (i === idx ? { ...e, disabled: !e.disabled, enabled: !e.disabled ? false : e.enabled } : e)))
     void persist()
   }
 
   function remove(slot: SlotKey, idx: number) {
-    if (!cfg) return
-    cfg[slot] = cfg[slot].filter((_, i) => i !== idx)
+    const cur = slotOf(slot)
+    if (!cur) return
+    setSlot(slot, cur.filter((_, i) => i !== idx))
     void persist()
   }
 
@@ -334,7 +336,7 @@
     form = { mode: 'add', slot }
   }
 
-  function applyPreset(p: (typeof PRESETS)[number]) {
+  function applyPreset(p: (typeof CHAT_PRESETS)[number]) {
     formDraft.name = p.name
     formDraft.baseUrl = p.baseUrl
     formDraft.contextWindow = p.contextWindow
@@ -344,8 +346,9 @@
   }
 
   function openEdit(slot: SlotKey, idx: number) {
-    if (!cfg) return
-    const m = cfg[slot][idx]
+    const cur = slotOf(slot)
+    if (!cur) return
+    const m = cur[idx]
     formDraft = {
       name: m.name,
       baseUrl: m.baseUrl,
@@ -360,7 +363,8 @@
   }
 
   function submitForm() {
-    if (!cfg || !form) return
+    const cur = form ? slotOf(form.slot) : null
+    if (!cur || !form) return
     const name = formDraft.name.trim()
     const baseUrl = formDraft.baseUrl.trim()
     if (!name || !baseUrl) return
@@ -375,10 +379,10 @@
       protocol: formDraft.protocol || 'openai',
     }
     if (form.mode === 'add') {
-      cfg[form.slot] = [...cfg[form.slot], { ...entry, enabled: cfg[form.slot].length === 0 }]
+      setSlot(form.slot, [...cur, { ...entry, enabled: cur.length === 0 }])
     } else {
       const { slot, idx } = form
-      cfg[slot] = cfg[slot].map((e, i) => (i === idx ? { ...e, ...entry } : e))
+      setSlot(slot, cur.map((e, i) => (i === idx ? { ...e, ...entry } : e)))
     }
     form = null
     void persist()
@@ -404,7 +408,7 @@
   <div class="head">
     <div>
       <h1>模型</h1>
-      <p class="lead">主模型驱动 agent，能力槽按需兜底——每类启用一个，变更自动保存。</p>
+      <p class="lead">大语言模型驱动 agent 的对话与工具循环；这里点亮的是新会话的默认模型，已有会话在输入框各自切换。变更自动保存。图片/语音/视频生成模型在「多媒体」页单独配置。</p>
     </div>
     <div class="head-right">
       {#if saving}
@@ -426,13 +430,13 @@
   {#if !loaded}
     <p class="lead">加载中…</p>
   {:else if cfg}
-    {#each kinds as k (k.key)}
+    {#snippet slotList(k: { key: SlotKey; title: string; hint: string }, list: ModelEntry[] | null)}
       <section>
-        <h2 title={`${k.hint} · 每类启用一个。`}>{k.title}</h2>
+        <h2 title={`${k.hint} · 点亮的是新会话默认模型（已有会话在输入框各自切换）。`}>{k.title}</h2>
         <div class="list">
-          {#each cfg[k.key] as m, i (m.name + i)}
+          {#each list ?? [] as m, i (m.name + i)}
             <div class="model" class:enabled={m.enabled} class:closed={m.disabled}>
-              <button class="dot" class:on={m.enabled && !m.disabled} onclick={() => enable(k.key, i)} title={m.enabled && !m.disabled ? (k.key === 'main' ? '已启用（主模型必启用）' : '已启用（点击停用）') : '点击启用'}></button>
+              <button class="dot" class:on={m.enabled && !m.disabled} onclick={() => enable(k.key, i)} title={m.enabled && !m.disabled ? (k.key === 'main' ? '新会话默认模型（已有会话不受影响）' : '已启用（点击停用）') : '设为新会话默认模型'}></button>
               <div class="info">
                 <span class="name">{m.name}</span>
                 <span class="meta">{m.disabled ? '已关闭 · ' : ''}{m.protocol && m.protocol !== 'openai' ? `【${m.protocol}】` : ''}{m.baseUrl} · {maskKey(m.apiKey)}{m.contextWindow ? ` · ${fmtTokens(m.contextWindow)} ctx` : ''}{m.vision ? ' · 视觉' : ''}{Object.keys(m.headers ?? {}).length ? ` · ${Object.keys(m.headers ?? {}).length} 个请求头` : ''}</span>
@@ -445,12 +449,16 @@
               </div>
             </div>
           {/each}
-          {#if cfg[k.key].length === 0}
+          {#if !list || list.length === 0}
             <div class="model none">暂无模型</div>
           {/if}
           <button class="add" onclick={() => openAdd(k.key)}>+ 添加模型</button>
         </div>
       </section>
+    {/snippet}
+
+    {#each mainKinds as k (k.key)}
+      {@render slotList(k, cfg.main)}
     {/each}
   {/if}
 </div>
@@ -502,7 +510,7 @@
       {#if form.mode === 'add'}
         <div class="ctx-quick">
           <span class="cq-label">预设</span>
-          {#each PRESETS as p (p.label)}
+          {#each CHAT_PRESETS as p (p.label)}
             <button type="button" class:active={formDraft.name === p.name && formDraft.baseUrl === p.baseUrl} onclick={() => applyPreset(p)}>{p.label}</button>
           {/each}
         </div>

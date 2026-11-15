@@ -25,10 +25,8 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/xuanlv2002/ezloop/event"
-	"github.com/xuanlv2002/ezloop/ext/fs"
 	ezhook "github.com/xuanlv2002/ezloop/hook"
 	"github.com/xuanlv2002/ezloop/provider"
 	"github.com/xuanlv2002/ezloop/types"
@@ -48,10 +46,11 @@ const EventTrimming = event.EventType("session.trimming")
 
 /* TrimInfo 描述一次上下文整理。 */
 type TrimInfo struct {
-	Tokens int  `json:"tokens"` // 触发时的水位（自动路径；工具路径为 0）
-	Folded int  `json:"folded"` // 折叠的早期消息条数
-	Kept   int  `json:"kept"`   // 保留的近期消息条数（不含 marker）
-	Fork   bool `json:"fork"`
+	Tokens  int    `json:"tokens"`            // 触发时的水位（自动路径；工具路径为 0）
+	Folded  int    `json:"folded"`            // 折叠的早期消息条数
+	Kept    int    `json:"kept"`              // 保留的近期消息条数（不含 marker）
+	Fork    bool   `json:"fork"`              // 是否分身内的整理
+	Summary string `json:"summary,omitempty"` // 结构化摘要全文（前端整理条点开看的内容）
 }
 
 const trimSummaryPrompt = "你在整理一段 agent 工作对话的早期上下文，为\"接下来的你\"留存衔接材料。" +
@@ -72,22 +71,24 @@ const trimFoldedKey = "trim_folded"
 
 /* Trim 提供水位自动与模型主动两条整理路径（统一在 OnLoop 串行区执行）。 */
 type Trim struct {
-	provider  provider.ModelProvider
-	trace     *Trace
-	threshold int           // 水位阈值（prompt tokens），<=0 禁用自动整理
-	window    int           // 模型窗口（提示展示水位比例用）
-	fsys      fs.FileSystem // 可空：进度档案 progress.md 落盘前提
-	sessionID func() string // 可空：实时会话 ID（<session> 块同源）
+	provider    provider.ModelProvider
+	trace       *Trace
+	threshold   int           // 水位阈值（prompt tokens），<=0 禁用自动整理
+	window      int           // 模型窗口（提示展示水位比例用）
+	archivePath func() string // 可空：会话存档绝对路径（marker 里给原文地址）
 
 	mu      sync.Mutex                // 并发契约：pending 登记互斥
 	pending map[*types.LoopState]bool // 排队的整理（OnToolStart 登记，OnLoop 消费）
 }
 
-/* NewTrim 创建整理 hook。fsys/sessionID 可空（裸装配与测试）：跳过进度档案写入。 */
-func NewTrim(p provider.ModelProvider, trace *Trace, threshold, window int,
-	fsys fs.FileSystem, sessionID func() string) *Trim {
+/*
+NewTrim 创建整理 hook。archivePath 可空（裸装配与测试）：marker 回退为
+
+	「路径见 <session> 块」。
+*/
+func NewTrim(p provider.ModelProvider, trace *Trace, threshold, window int, archivePath func() string) *Trim {
 	return &Trim{provider: p, trace: trace, threshold: threshold, window: window,
-		fsys: fsys, sessionID: sessionID, pending: map[*types.LoopState]bool{}}
+		archivePath: archivePath, pending: map[*types.LoopState]bool{}}
 }
 
 func (t *Trim) Name() string { return "trim" }
@@ -101,10 +102,10 @@ func (t *Trim) OnStart(_ context.Context, state *types.LoopState) error {
 /* Guide 声明 trim_context 的使用说明（引擎组装期统一追加，顺序与幂等由引擎保证）。 */
 func (t *Trim) Guide() string {
 	return "<tool-guide>\ntrim_context：把早期对话就地折叠为结构化摘要" +
-		"（已完成/正在做/待办/关键事实），并写入进度档案 progress.md（路径见 <session> 块），" +
-		"上下文立即变小，会话与历史档案不变。感觉上下文过长影响专注或质量时主动调用，无需用户同意。" +
+		"（已完成/正在做/待办/关键事实），上下文立即变小，会话与历史档案不变。" +
+		"感觉上下文过长影响专注或质量时主动调用，无需用户同意。" +
 		"整理会保留任务衔接信息，调用后直接继续当前任务，不要重述将被折叠的过程细节；" +
-		"整理后需要更大范围的回忆时先读进度档案。\n</tool-guide>"
+		"整理后需要更大范围的回忆时读会话存档（路径见 <session> 块）。\n</tool-guide>"
 }
 
 /*
@@ -203,26 +204,22 @@ func (t *Trim) doTrim(ctx context.Context, state *types.LoopState, tokens int) (
 		return TrimInfo{}, err
 	}
 	summaryText = normalizeStructuredSummary(summaryText)
-	progressNote := "\n此前的早期对话已折叠出模型上下文（原始记录仍完整保留在会话档案中）。"
-	if perr := t.writeProgress(ctx, summaryText); perr != nil {
-		if t.trace != nil {
-			t.trace.EndSpan(sp, map[string]any{"progress_err": perr.Error()})
-		}
-	} else {
-		progressNote = "\n此前的早期对话已折叠出模型上下文，整理结果已写入进度档案 " +
-			"sessions/" + t.currentSessionID() + "/progress.md（路径见 <session> 块），" +
-			"原始记录仍完整保留在会话存档。"
-	}
 	if t.trace != nil {
 		t.trace.EndSpan(sp, map[string]any{"summary": truncStr(summaryText, 2048)})
 	}
 
 	keptFrom := tailStart(fold, trimKeepTail)
 	tail := fold[keptFrom:]
+	archiveLoc := "原始记录仍完整保留在会话档案中（路径见 <session> 块）"
+	if t.archivePath != nil {
+		if p := t.archivePath(); p != "" {
+			archiveLoc = "原始记录仍完整保留在 " + p + "（可读取全文）"
+		}
+	}
 	marker := types.Message{Role: types.RoleUser, Content: "<" + TrimTag +
 		` kept="` + strconv.Itoa(len(tail)) + `">` +
 		"\n（系统自动整理，非用户发言，无需回应）" +
-		progressNote + "\n当前任务衔接摘要：\n" +
+		"\n此前的早期对话已折叠出模型上下文（" + archiveLoc + "）。\n当前任务衔接摘要：\n" +
 		summaryText + "\n</" + TrimTag + ">"}
 
 	if state.Metadata == nil {
@@ -239,39 +236,9 @@ func (t *Trim) doTrim(ctx context.Context, state *types.LoopState, tokens int) (
 	state.Messages = next
 	state.Metadata["trimmed"] = true
 
-	info := TrimInfo{Tokens: tokens, Folded: keptFrom, Kept: len(tail), Fork: fork}
+	info := TrimInfo{Tokens: tokens, Folded: keptFrom, Kept: len(tail), Fork: fork, Summary: summaryText}
 	state.EmitEvent(EventTrim, info)
 	return info, nil
-}
-
-/*
-writeProgress 把结构化摘要整体重写进进度档案 sessions/<id>/progress.md。
-每次整理覆盖写——新摘要已并入旧摘要的浓缩（链式），重写天然承袭不膨胀；
-模型恢复现场与阶段性续写的入口（<session> 块告知路径）。fsys/sessionID
-未装配返回 nil（跳过，非错误）。
-*/
-func (t *Trim) writeProgress(ctx context.Context, summary string) error {
-	if t.fsys == nil || t.sessionID == nil {
-		return nil
-	}
-	id := t.currentSessionID()
-	if id == "" {
-		return nil
-	}
-	var b strings.Builder
-	b.WriteString("# 任务进度（会话 " + id + "，上下文整理时自动重写）\n\n")
-	b.WriteString("- 最近整理：" + time.Now().Format("2006-01-02 15:04") + "\n")
-	b.WriteString("- 原始对话全文：" + SessionsDir + "/" + id + "/trace.jsonl\n\n")
-	b.WriteString(summary + "\n")
-	return t.fsys.Write(ctx, SessionsDir+"/"+id+"/progress.md", []byte(b.String()))
-}
-
-/* currentSessionID 实时取会话 ID（未装配返回空）。 */
-func (t *Trim) currentSessionID() string {
-	if t.sessionID == nil {
-		return ""
-	}
-	return t.sessionID()
 }
 
 /* FoldedOf 取 state 上累积的折叠段（无则空）。 */

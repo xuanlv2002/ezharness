@@ -1,21 +1,23 @@
 <script lang="ts">
   /*
-  资源页目录树（悬浮面板，从抽屉标题栏正下方展开盖在预览区左侧，不占
-  预览宽度；开关在标题栏，弹出独立窗在面板内）：浏览文件系统，点击
-  文件交给 ResourcePane 打开（树里点永远正常打开，要不要对比在变更
-  清单里手动选）。默认根 = 工作
-  目录（可换：桌面壳原生对话框 / web 端手输路径）；选择过的目录进
-  「最近」清单快速切换，当前根置顶打勾。目录懒加载按层展开（点目录
-  只展开子层，树根不切换）；目录在 git 仓库内、或根目录是容器（多仓库
-  并列）时条目带工作区变更徽标（U 新 / M 改 / D 删——纯观测，不做任何
-  git 操作），git chip 把面板原地切成变更视图（按仓库分组，VS Code 源
-  代码管理样式；点文件直接进 HEAD 对比，再点切回目录）。激活期 3s 轮询
-  根目录与已展开目录，AI 改盘后徽标与列表自动跟进。
+  资源页目录树（固定在资源页左列的实体栏，展开/收起走宽度动画，不做
+  悬浮覆盖）：浏览文件系统，点击文件交给 ResourcePane 打开（树里点永远
+  正常打开，要不要对比在变更清单里手动选）。右键 = 新建文件/文件夹、
+  集成终端/浏览器打开、在资源管理器打开、插入到对话、复制相对/绝对
+  路径。默认根 = 工作目录（可换：桌面壳原生对话框 / web 端手输路径）；
+  选择过的目录进「最近」清单快速切换，当前根置顶打勾。目录懒加载按层
+  展开（点目录只展开子层，树根不切换）；目录在 git 仓库内、或根目录是
+  容器（多仓库并列）时条目带工作区变更徽标（U 新 / M 改 / D 删——纯观
+  测，不做任何 git 操作），git chip 把面板原地切成变更视图（按仓库分组，
+  VS Code 源代码管理样式；点文件直接进 HEAD 对比，再点切回目录）。激活
+  期 3s 轮询根目录与已展开目录，AI 改盘后徽标与列表自动跟进。
   */
 
-  import { onMount } from 'svelte'
+  import { onMount, tick } from 'svelte'
   import { api, statusLetter, type TreeEntry } from '../../lib/api'
-  import { explorer, setExplorerDocked, statusOf } from '../../lib/explorerState.svelte'
+  import { explorer, statusOf } from '../../lib/explorerState.svelte'
+  import { fileBaseName } from '../../lib/textfile'
+  import { termManager } from '../../lib/term'
   import { store } from '../../lib/store.svelte'
   import KindIcon from './KindIcon.svelte'
   import { kindOf } from './registry'
@@ -23,13 +25,11 @@
   let {
     active = false,
     open = true,
-    docked = false,
     onopen,
     onclose,
   }: {
     active?: boolean
     open?: boolean
-    docked?: boolean
     onopen?: (path: string, opts?: { diff?: boolean }) => void
     onclose?: () => void
   } = $props()
@@ -325,17 +325,37 @@
     if (menuOpen && !t.closest('.menu') && !t.closest('.rootbtn')) menuOpen = false
   }
 
-  /* 行右键：插入路径到会话输入框 / 在资源管理器打开（目录与文件通用；
-     web 端无壳时后者禁用） */
-  let ctx = $state<{ x: number; y: number; path: string } | null>(null)
+  /* ── 右键菜单：新建 / 终端 / 浏览器 / 资源管理器 / 插入对话 / 复制 ── */
+  let ctx = $state<{ x: number; y: number; path: string; dir: boolean } | null>(null)
   const canReveal = !!(window as any).ez?.window?.reveal
 
-  function openCtx(e: MouseEvent, path: string) {
+  function openCtx(e: MouseEvent, path: string, dir: boolean) {
     e.preventDefault()
     ctx = {
-      x: Math.min(e.clientX, window.innerWidth - 170),
-      y: Math.min(e.clientY, window.innerHeight - 60),
+      x: Math.min(e.clientX, window.innerWidth - 200),
+      y: Math.min(e.clientY, window.innerHeight - 300),
       path,
+      dir,
+    }
+  }
+
+  /* 树的当前根：相对路径以此为基准（根自身 = "."） */
+  function relPath(p: string): string {
+    const root = explorer.dir.replace(/\\/g, '/').replace(/\/+$/, '')
+    const q = p.replace(/\\/g, '/')
+    return q === root ? '.' : q.startsWith(root + '/') ? q.slice(root.length + 1) : q
+  }
+
+  async function copyCtx(kind: 'rel' | 'abs') {
+    const p = ctx?.path
+    ctx = null
+    if (!p) return
+    const text = kind === 'rel' ? relPath(p) : p.replace(/\\/g, '/')
+    try {
+      await navigator.clipboard.writeText(text)
+      store.lastStatus = kind === 'rel' ? '已复制相对路径' : '已复制绝对路径'
+    } catch {
+      store.lastStatus = '复制失败：剪贴板不可用'
     }
   }
 
@@ -352,19 +372,113 @@
     ctx = null
     if (p) (window as any).ez?.window?.reveal?.(p)
   }
+
+  /* parentDir 取文件所在目录：根级文件（/a.txt、C:\a.txt）落到根，
+     不会把文件自己当 cwd */
+  function parentDir(p: string): string {
+    const i = Math.max(p.lastIndexOf('/'), p.lastIndexOf('\\'))
+    if (i < 0) return p
+    let dir = p.slice(0, i)
+    if (!dir) dir = p.slice(0, 1)
+    else if (/^[A-Za-z]:$/.test(dir)) dir += '/'
+    return dir
+  }
+
+  /* 在集成终端打开：文件取其所在目录，文件夹就是它自己；shell 直接以
+     该目录为初始 cwd（不再用 cd 命令补一刀） */
+  async function openTermCtx() {
+    const p = ctx?.path
+    const isDir = ctx?.dir
+    ctx = null
+    if (!p) return
+    const dir = isDir ? p : parentDir(p)
+    try {
+      const t = await termManager.create(fileBaseName(dir) || undefined, dir, 0, 0, dir)
+      store.openTermAt(t.id)
+    } catch (e) {
+      store.lastStatus = `打开终端失败：${(e as Error).message}`
+    }
+  }
+
+  /* file:// URL（集成浏览器直接读盘，不走带鉴权的文件 API）：POSIX
+     绝对路径 → file:///a/b；Windows 盘符 → file:///C:/a/b */
+  function fileUrl(p: string, dir: boolean): string {
+    const s = p.replace(/\\/g, '/') + (dir && !p.endsWith('/') ? '/' : '')
+    return encodeURI('file://' + (s.startsWith('/') ? '' : '/') + s)
+  }
+
+  function openBrowserCtx() {
+    const p = ctx?.path
+    const isDir = ctx?.dir
+    ctx = null
+    if (p) store.openBrowserUrl(fileUrl(p, isDir))
+  }
+
+  /* ── 新建文件/文件夹（行内命名，不弹窗）：输入行挂目标目录的子层首行，
+     Enter 创建、Esc/失焦取消；建文件后直接打开，建文件夹后展开 ── */
+  let creating = $state<{ dir: string; type: 'file' | 'dir'; value: string } | null>(null)
+  let createErr = $state('')
+  let createInputEl = $state<HTMLInputElement | undefined>()
+
+  async function startCreate(type: 'file' | 'dir') {
+    const p = ctx?.path
+    const isDir = ctx?.dir
+    ctx = null
+    if (!p || !isDir) return
+    createErr = ''
+    if (!listing[p]) await load(p)
+    expanded = { ...expanded, [p]: true }
+    saveExpanded()
+    creating = { dir: p, type, value: '' }
+    await tick()
+    createInputEl?.focus()
+  }
+
+  function cancelCreate() {
+    creating = null
+    createErr = ''
+  }
+
+  async function commitCreate() {
+    const c = creating
+    if (!c) return
+    const name = c.value.trim()
+    if (!name) return cancelCreate()
+    if (/[\\/]/.test(name) || name === '.' || name === '..') {
+      createErr = '名称不能包含路径分隔符'
+      return
+    }
+    const abs = c.dir.replace(/\/+$/, '') + '/' + name
+    try {
+      await api.createPath(abs, c.type === 'dir')
+    } catch (e) {
+      createErr = `新建失败：${(e as Error).message}`
+      return
+    }
+    creating = null
+    createErr = ''
+    await load(c.dir)
+    if (c.type === 'dir') {
+      await load(abs)
+      expanded = { ...expanded, [abs]: true }
+      saveExpanded()
+    } else {
+      onopen?.(abs)
+    }
+  }
 </script>
 
 <svelte:window onpointerdown={onOutside} onkeydown={(e) => e.key === 'Escape' && (ctx = null)} />
 
-<aside class="tree" class:docked class:closed={!open} bind:this={rootEl} onpointerdown={onPanelDown}>
+<aside class="tree" class:closed={!open} bind:this={rootEl} onpointerdown={onPanelDown}>
   <header>
     <!-- 根目录按钮：完整路径（尾部优先显示），点击弹目录下拉；根目录在
          树里没有自己的行，右键菜单挂这里（插入路径到会话 / 资源管理器打开） -->
     <button
       class="rootbtn"
       onclick={() => { menuOpen = !menuOpen; if (menuOpen) changesOpen = false }}
-      oncontextmenu={(e) => openCtx(e, explorer.dir)}
-      title={`${explorer.dir}\n右键：插入路径到会话 / 在资源管理器打开`}
+      oncontextmenu={(e) => openCtx(e, explorer.dir, true)}
+      title={`${explorer.dir}\n右键：新建 / 终端 / 浏览器 / 复制路径`}
     >
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
         <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
@@ -392,17 +506,6 @@
       git{rootChangedCount ? ` ${rootChangedCount}` : ''}
     </button>
     <span class="acts">
-      <button
-        class="abtn"
-        class:on={docked}
-        onclick={() => setExplorerDocked(!docked)}
-        title={docked ? '切回悬浮（盖在预览区上，不占宽）' : '钉到左侧（占据预览宽度，宽屏推荐）'}
-      >
-        <svg viewBox="0 0 24 24" fill={docked ? 'currentColor' : 'none'} stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M12 17v5" />
-          <path d="M9 3h6l-1 6 3 3v2H7v-2l3-3-1-6z" />
-        </svg>
-      </button>
       <button class="abtn" onclick={() => void refresh()} title="刷新">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
           <path d="M21 12a9 9 0 1 1-2.6-6.3" />
@@ -509,11 +612,40 @@
   {/if}
   <div class="rows">
     {#snippet treeNodes(dir: string, depth: number)}
+      {#if creating?.dir === dir}
+        <!-- 行内命名：不弹窗，Enter 创建 / Esc 或失焦取消 -->
+        <div class="create" style="padding-left:{10 + depth * 14}px">
+          <span class="kind">
+            {#if creating.type === 'dir'}
+              <svg class="ficon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+              </svg>
+            {:else}
+              <KindIcon kind="text" />
+            {/if}
+          </span>
+          <input
+            bind:this={createInputEl}
+            bind:value={creating.value}
+            placeholder={creating.type === 'dir' ? '文件夹名' : '文件名'}
+            onkeydown={(e) => {
+              if (e.key === 'Enter') { e.preventDefault(); void commitCreate() }
+              else if (e.key === 'Escape') { e.preventDefault(); cancelCreate() }
+            }}
+            onblur={cancelCreate}
+            spellcheck="false"
+            autocomplete="off"
+          />
+        </div>
+        {#if createErr}
+          <div class="leafhint cerr" style="padding-left:{24 + depth * 14}px">{createErr}</div>
+        {/if}
+      {/if}
       {#each listing[dir]?.entries ?? [] as e (e.name)}
         {@const abs = `${dir}/${e.name}`}
         {#if e.dir}
           {@const st = subtreeStatus(abs)}
-          <button class="row" style="padding-left:{10 + depth * 14}px" onclick={() => void toggleDir(abs)} oncontextmenu={(e) => openCtx(e, abs)} title={abs}>
+          <button class="row" style="padding-left:{10 + depth * 14}px" onclick={() => void toggleDir(abs)} oncontextmenu={(e) => openCtx(e, abs, true)} title={abs}>
             <span class="chev" class:open={expanded[abs]}>
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
                 <path d="M9 6l6 6-6 6" />
@@ -538,7 +670,7 @@
             class:active={abs === explorer.activeFile}
             style="padding-left:{10 + depth * 14}px"
             onclick={() => onopen?.(abs)}
-            oncontextmenu={(e) => openCtx(e, abs)}
+            oncontextmenu={(e) => openCtx(e, abs, false)}
             title={abs}
           >
             <span class="kind"><KindIcon kind={kindOf(abs)} /></span>
@@ -561,103 +693,55 @@
 
 {#if ctx}
   <div class="ctx" style="left:{ctx.x}px; top:{ctx.y}px" role="menu">
-    <button role="menuitem" title="把路径插入会话输入框光标处（可再补充说明后发送）" onclick={insertCtx}>插入路径到会话</button>
+    {#if ctx.dir}
+      <button role="menuitem" onclick={() => void startCreate('file')}>新建文件</button>
+      <button role="menuitem" onclick={() => void startCreate('dir')}>新建文件夹</button>
+      <div class="csep"></div>
+    {/if}
+    <button role="menuitem" onclick={() => void openTermCtx()}>在集成终端打开</button>
+    {#if !ctx.dir}
+      <button role="menuitem" onclick={openBrowserCtx}>在集成浏览器打开</button>
+    {/if}
     <button role="menuitem" disabled={!canReveal} title={canReveal ? '' : '仅桌面端可用'} onclick={revealCtx}>在资源管理器打开</button>
+    <div class="csep"></div>
+    <button role="menuitem" title="把路径插入会话输入框光标处（可再补充说明后发送）" onclick={insertCtx}>插入到对话</button>
+    <button role="menuitem" onclick={() => void copyCtx('rel')}>复制相对路径</button>
+    <button role="menuitem" onclick={() => void copyCtx('abs')}>复制绝对路径</button>
   </div>
 {/if}
 
 <style>
-  /* 悬浮面板：absolute 盖在预览区左侧（.body 是定位上下文），不参与布局
-     ——预览区始终全宽；高度按内容收缩（上限抽屉内高），不高垂到底。
-     不设 overflow: hidden——目录下拉要悬浮溢出面板底缘（面板不随之长
-     高），圆角裁剪由 header / .rows 各自承担 */
+  /* 固定钉在资源页左列（file-pane grid 第一列，整列全高）：展开/收起
+     = 宽度收放，右列内容随之让位。不做悬浮覆盖；内容定宽 260px——宽度
+     动画期间只被右缘裁切，不逐帧重排（文件名/省略号不跳） */
   .tree {
-    position: absolute;
-    top: 0;
-    left: 0;
-    width: 320px;
-    height: auto;
-    min-height: 180px;
-    max-height: 100%;
-    z-index: 20;
+    grid-column: 1;
+    grid-row: 1 / 4;
+    position: relative;
     display: flex;
     flex-direction: column;
-    border: 1px solid var(--line);
-    border-radius: 12px;
-    background: var(--bg);
-    box-shadow: 0 10px 32px rgb(0 0 0 / 14%);
-  }
-  /* 钉住态：不再是悬浮层，成为 file-pane grid 的左列实体栏——整列全
-     高、占布局宽，tab 条与内容只占右列；去圆角/阴影/边框，只留右缘
-     分隔线。position 用 relative 不用 static：面板内的下拉/清单以树头
-     定位，static 会改挂到滚动祖先上 */
-  .tree.docked {
-    position: relative;
-    top: auto;
-    left: auto;
-    width: 260px; /* 最小宽抽屉里 320 太占地，钉住态收窄（文件名省略号兜底） */
+    width: 260px;
     min-width: 0;
     height: auto;
     min-height: 0;
-    max-height: none;
-    z-index: auto;
-    border: none;
-    border-right: 1px solid var(--line);
-    border-radius: 0;
-    box-shadow: none;
-    /* 展开/收起 = 宽度收放（grid auto 列跟随），头栏定宽避免挤压重排，
-       面板 overflow 裁掉探出部分。钉住态面板全高，下拉清单不会越出
-       底缘，overflow 不误伤 */
     overflow: hidden;
+    box-sizing: border-box;
+    border-right: 1px solid var(--line);
+    background: var(--bg);
     transition:
-      width 0.26s var(--ease-out),
-      border-right-width 0.26s var(--ease-out);
+      width 0.24s var(--ease-out),
+      border-right-width 0.24s var(--ease-out);
   }
-  .tree.docked.closed {
+  .tree.closed {
     width: 0;
     border-right-width: 0;
-  }
-  /* 展开动画 = 从左缘整体拉出：内容钉在目标宽度上（只裁切、不重排，
-     行内文字/省略号不逐帧位移），并随宽度动画同步平移——收起时整块
-     滑到裁切缘外，展开时从左缘滑回，而不是钉在原地被逐渐"露出"（那
-     样观感是内容从右边慢慢补齐到位）。位移与宽度同时长同缓动，运动
-     全程同步 */
-  .tree.docked > header,
-  .tree.docked .pathrow,
-  .tree.docked .rows {
-    min-width: 260px;
-    box-sizing: border-box;
-    transform: translateX(-100%);
-    transition: transform 0.26s var(--ease-out);
-  }
-  .tree.docked:not(.closed) > header,
-  .tree.docked:not(.closed) .pathrow,
-  .tree.docked:not(.closed) .rows {
-    transform: translateX(0);
-  }
-  /* 悬浮态收起：向左拉出淡出（absolute 不占布局，无需宽度动画）；
-     visibility 延迟到动画结束再隐藏，展开时立即可见 */
-  .tree:not(.docked) {
-    transition:
-      transform 0.22s var(--ease-out),
-      opacity 0.22s var(--ease-out),
-      visibility 0s linear 0s;
-  }
-  .tree:not(.docked).closed {
-    opacity: 0;
-    transform: translateX(-40px);
     pointer-events: none;
-    visibility: hidden;
-    transition:
-      transform 0.22s var(--ease-out),
-      opacity 0.22s var(--ease-out),
-      visibility 0s linear 0.22s;
   }
-  .tree.docked header {
-    border-radius: 0;
-  }
-  .tree.docked .rows {
-    border-radius: 0;
+  .tree > header,
+  .tree .pathrow,
+  .tree .rows {
+    width: 260px;
+    box-sizing: border-box;
   }
   header {
     flex: none;
@@ -667,7 +751,6 @@
     padding: 6px 8px 6px 8px;
     border-bottom: 1px solid var(--line);
     background: var(--bg-soft);
-    border-radius: 11px 11px 0 0; /* 面板无 overflow 裁剪，圆角自己收 */
     min-width: 0;
   }
   .rootbtn {
@@ -988,10 +1071,6 @@
     color: var(--fg);
     background: var(--line);
   }
-  /* 钉住中：图钉高亮（实心已钉） */
-  .abtn.on {
-    color: var(--accent, #2563eb);
-  }
   .abtn svg {
     width: 12px;
     height: 12px;
@@ -1017,7 +1096,6 @@
     flex: 1;
     min-height: 0;
     overflow: auto;
-    border-radius: 0 0 11px 11px; /* 面板无 overflow 裁剪，圆角自己收 */
     padding: 4px 0 8px;
     scrollbar-width: thin;
     scrollbar-color: var(--line-strong) transparent;
@@ -1131,13 +1209,37 @@
     color: var(--faint);
     font-size: var(--font-size-ui);
   }
+  /* 行内新建：与文件行同缩进、同高，输入框直接嵌在树里 */
+  .create {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    padding: 2px 6px 2px 0;
+    white-space: nowrap;
+  }
+  .create input {
+    flex: 1;
+    min-width: 0;
+    height: 21px;
+    padding: 0 6px;
+    border: 1px solid var(--accent-soft, var(--accent));
+    border-radius: 5px;
+    background: var(--bg);
+    color: var(--fg);
+    font: inherit;
+    font-size: var(--font-size-ui);
+    outline: none;
+  }
+  .leafhint.cerr {
+    color: var(--danger);
+  }
   /* 行右键菜单（fixed 定位，屏幕坐标） */
   .ctx {
     position: fixed;
     z-index: 60;
     display: flex;
     flex-direction: column;
-    min-width: 150px;
+    min-width: 168px;
     padding: 4px;
     border: 1px solid var(--line);
     border-radius: 9px;
@@ -1159,5 +1261,10 @@
   .ctx button:disabled {
     color: var(--faint);
     cursor: default;
+  }
+  .ctx .csep {
+    height: 1px;
+    margin: 4px 2px;
+    background: var(--line);
   }
 </style>

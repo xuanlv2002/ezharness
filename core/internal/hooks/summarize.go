@@ -16,7 +16,7 @@ import (
 	"github.com/xuanlv2002/ezloop/types"
 )
 
-/* 模型摘要调用等待上限（summarize 与 distill 共用）。 */
+/* 模型摘要调用等待上限。 */
 const modelSummaryTimeout = 5 * time.Minute
 
 func summarizeMsgs(ctx context.Context, p provider.ModelProvider, prompt string, msgs []types.Message) (string, error) {

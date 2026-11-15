@@ -8,10 +8,12 @@
   import TitleBar from './components/TitleBar.svelte'
   import ChatView from './components/ChatView.svelte'
   import ModelsView from './components/ModelsView.svelte'
+  import MediaView from './components/media/MediaView.svelte'
   import PinboardView from './components/pinboard/PinboardView.svelte'
   import PinQuickWindow from './components/pinboard/PinQuickWindow.svelte'
   import MemoryView from './components/MemoryView.svelte'
   import ToolsView from './components/ToolsView.svelte'
+  import QuickAppView from './components/QuickAppView.svelte'
   import CallbacksView from './components/CallbacksView.svelte'
   import McpView from './components/McpView.svelte'
   import SecurityView from './components/SecurityView.svelte'
@@ -23,7 +25,7 @@
   import AssistantPet from './components/AssistantPet.svelte'
   import NoticeWindow from './components/NoticeWindow.svelte'
 
-  let view = $state<'chat' | 'pinboard' | 'models' | 'memory' | 'tools' | 'callbacks' | 'mcp' | 'security' | 'settings'>('chat')
+  let view = $state<'chat' | 'pinboard' | 'models' | 'media' | 'memory' | 'tools' | 'app' | 'callbacks' | 'mcp' | 'security' | 'settings'>('chat')
   let expanded = $state(false)
 
   /* 弹出窗口（ez:popout 创建）：只渲染单个工具 pane 的轻布局，无会话/
@@ -167,10 +169,14 @@
           <PinboardView />
         {:else if view === 'models'}
           <ModelsView />
+        {:else if view === 'media'}
+          <MediaView />
         {:else if view === 'memory'}
           <MemoryView onNavigate={(v) => (view = v as typeof view)} />
         {:else if view === 'tools'}
           <ToolsView />
+        {:else if view === 'app'}
+          <QuickAppView />
         {:else if view === 'callbacks'}
           <CallbacksView />
         {:else if view === 'mcp'}
@@ -183,12 +189,13 @@
       {/if}
     </main>
     <!-- 工作区抽屉（终端/文件/画板三工具页）：推挤式右布局列（.app flex
-    行内，打开挤窄 main；pane 常驻挂载保活） -->
-    <WorkspaceDrawer visible={view === 'chat'} />
+    行内，打开挤窄 main；pane 常驻挂载保活）。内嵌快应用页也允许抽屉
+    并存——后端日志/文件可以和应用同屏对照 -->
+    <WorkspaceDrawer visible={view === 'chat' || view === 'app'} />
   </div>
 </div>
 
-<footer class="brand-foot" class:away={view === 'chat' && store.termDrawerOpen}>
+<footer class="brand-foot" class:away={(view === 'chat' || view === 'app') && store.termDrawerOpen}>
   <a href="https://github.com/xuanlv2002/ezharness" target="_blank" rel="noreferrer">ezharness-{pkg.version}</a>
   <span>·</span>
   <a href="https://github.com/xuanlv2002/ezloop" target="_blank" rel="noreferrer">powered by ezloop</a>

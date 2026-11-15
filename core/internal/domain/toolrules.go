@@ -62,6 +62,12 @@ func DefaultToolRules() []ToolRule {
 		{Key: "task", Level: LevelAuto},
 		{Key: "save_app", Level: LevelAsk},
 		{Key: "load_app", Level: LevelAuto}, // 只读应用文档
+		/* 多媒体统一工具按 action 分档：生成类按次计费且单价高，默认每次
+		审批（配额是第二道闸，见 Settings.GenQuota*）；status 只读查询恒免审 */
+		{Key: "media:image", Level: LevelAsk},
+		{Key: "media:audio", Level: LevelAsk},
+		{Key: "media:video", Level: LevelAsk},
+		{Key: "media:status", Level: LevelAuto},
 		/* 定时回调逐 action：list 只读免审，其余动作默认审批。新增 action
 		必须同时列在这里，否则安全页不会出现该行。 */
 		{Key: "callback:list", Level: LevelAuto},

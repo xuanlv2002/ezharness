@@ -6,9 +6,9 @@
 
 **自己用着顺手，就分享给你。**
 
-一个桌面智能体工作台：AI 直接在你的真实环境里干活，每一步可见、可接管。
+通用桌面智能体工作台：办公，创作，学习 -- 一站式Agent应用。
 
-[![Release](https://img.shields.io/badge/release-v1.1.0-blue?logo=github)](https://github.com/xuanlv2002/ezharness/releases)
+[![Release](https://img.shields.io/badge/release-v1.3.0-blue?logo=github)](https://github.com/xuanlv2002/ezharness/releases)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-0078D6)](https://github.com/xuanlv2002/ezharness/releases)
 [![License](https://img.shields.io/badge/license-Apache--2.0-green)](LICENSE)
 [![Docs](https://img.shields.io/badge/docs-online-38bdf8?logo=readthedocs)](https://xuanlv2002.github.io/ezharness/)
@@ -26,15 +26,17 @@
   <img src="docs/assets/demo.gif" alt="ezharness 功能演示" width="860">
 </p>
 
-ezharness 把模型放进你的真实工作环境：文件、终端、浏览器都是真的，人和 agent 共用同一台电脑。交付的成果沉淀为**快应用**——能被打开、复用、也会被下一次对话里的 agent 自己发现和调用；对话折叠为记忆，用得越久工作台越完整。
+ezharness 把模型放进你的真实工作环境：文件、终端、浏览器都是真的，人和 agent 共用同一台电脑；图片、语音、视频生成也在同一张工作台上排队与交付。交付的成果沉淀为**快应用**——能被打开、复用、也会被下一次对话里的 agent 自己发现和调用；长对话折叠为摘要并换代，记忆由你确认后沉淀。
 
 - **真实环境** —— 文件、终端、浏览器直接操作，不是模拟接口
 - **共享终端** —— 人和 agent 写同一个 shell，它敲的命令你看得见、随时接管
 - **共享浏览器** —— 内嵌真实 Chromium，同一个页面原生接管，不是截图转述
-- **会话树** —— 任意消息点「分叉」开新线；「归档」把长对话蒸馏进记忆并换代，一条不丢
-- **快应用** —— agent 现场构建、一键启动的独立小应用，沉淀为可被它自己再次调用的软件单元
+- **会话树** —— 任意消息点「分叉」开新线；「归档」压缩成交接摘要并换代，一条不丢
+- **会话级偏好** —— 思考强度、审批档位、主模型每会话各一套；新会话从来源会话继承
+- **多媒体生成** —— 图片 / 语音 / 视频独立配置模型，工作台、agent 工具与 OpenAPI 共用异步任务流与每日配额
+- **快应用** —— agent 现场构建的独立小应用；可钉到左侧菜单在主窗打开，后端状态与日志在终端分组可见
 - **定时回调** —— 到点向指定会话发消息（运行中先打断）、启动快应用调用声明端点，或执行工作目录里的脚本；会话归档/压缩换代后任务失败，每次触发留记录并通知
-- **上下文工程** —— 修剪 / 摘要 / 沉淀 + 三层记忆，聊得久不失忆
+- **上下文工程** —— 修剪 / 摘要 / 卸载 + 三层记忆，聊得久不失忆
 - **四档审批** —— 每次审批 / 黑名单 / 白名单 / 全免审，决定权留在人手里
 - **MCP** —— http / stdio 接入，探活、启停、热加载；快应用也能直调
 - **魔法画板** —— 丢一张截图圈注要改的地方，一键回填给 agent
@@ -45,13 +47,20 @@ ezharness 把模型放进你的真实工作环境：文件、终端、浏览器�
   <img src="docs/assets/quick-app1.png" width="32%" alt="快应用">
 </p>
 
+<p align="center">
+  <img src="docs/assets/placeholder.svg" width="49%" alt="待补充：多媒体工作台">
+  <img src="docs/assets/placeholder.svg" width="49%" alt="待补充：会话级模型 / 思考 / 审批">
+</p>
+
+<p align="center"><sub>多媒体工作台 · 会话级工具条：截图待补充</sub></p>
+
 ## 快速开始
 
 从 [Releases](https://github.com/xuanlv2002/ezharness/releases) 下载。**exe 在哪运行，配置与数据就在哪生成。**
 
 1. 下载 `ezharness-v<版本>.exe`（绿色版，可改名放入任意文件夹并加入 PATH），或使用安装包；
-2. 打开「模型」页，填入 apiKey 并选择模型；
-3. 回到对话页，把任务交给它——文件整理、脚本编写、报错排查、网页操作都行；
+2. 打开「模型」页填入语言模型 apiKey，并点亮新会话的默认模型；需要生成图片/语音/视频时，到「多媒体 · 模型与限额」配置对应模型；
+3. 回到对话页，把任务交给它——文件整理、脚本编写、报错排查、网页操作、生成素材都行；输入框上方可随时切换本会话的模型 / 思考强度 / 审批档位；
 4. 它需要你时（审批 / 提问），决策卡会出现在时间线与顶栏通知里。
 
 每个平台附 `SHA256SUMS` 校验文件；产物为 ad-hoc 签名，被系统拦截时（SmartScreen「更多信息 → 仍要运行」；macOS 右键「打开」）属正常现象。纯 server 形态：直接运行 `ezharness-core`，浏览器访问 `http://127.0.0.1:<port>`，与桌面端同一份页面。
@@ -61,12 +70,14 @@ ezharness 把模型放进你的真实工作环境：文件、终端、浏览器�
 | 场景 | 怎么玩 |
 | --- | --- |
 | [会话分叉](docs/md/session设计.md) | 对任意消息点「分叉」开新线，多方案并行对比 |
+| [会话级偏好](docs/md/模型配置.md) | 输入框上方的模型 / 思考 / 审批只作用于当前分支；新建线继承来源会话 |
 | [共享终端](docs/md/协同设计.md) | 工作区抽屉的终端里，agent 正在跑的命令你能看见、能接管 |
 | 共享浏览器 | agent 打开网页操作，窗口自动弹出共见，你在同一页面随时接管 |
-| [快应用](docs/md/快应用.md) | 让 agent 做个小工具，生成后一键启动，下次还能被它自己调用 |
+| [快应用](docs/md/快应用.md) | 让 agent 做个小工具，生成后一键启动，下次还能被它自己调用；钉住后从左侧菜单在主窗打开 |
+| [多媒体生成](docs/md/多媒体.md) | 在「多媒体」页直接生成图片/语音/视频；agent 工具与 OpenAPI 的任务汇入同一工作台，按日配额、生成前审批 |
 | [定时回调](docs/md/定时回调.md) | 在「回调」页设定时任务：到点给选定会话发消息、启动快应用调用声明端点，或执行脚本；归档/换代后失败，触发记录与通知可回看 |
 | [MCP](docs/md/mcp设计.md) | 设置页添加 MCP server，agent 自动发现工具 |
-| [认证与 OpenAPI](docs/md/认证与openapi.md) | 脚本 / 快应用 / 外部程序一套令牌直调模型与 MCP |
+| [认证与 OpenAPI](docs/md/认证与openapi.md) | 脚本 / 快应用 / 外部程序一套令牌直调模型、调用 MCP、提交多媒体生成 |
 
 ## 它由什么组成
 
@@ -87,7 +98,7 @@ flowchart TB
 
 ## 文档
 
-**[在线文档](https://xuanlv2002.github.io/ezharness/)**（支持中英文切换，按由浅入深组织）：[模型配置](docs/md/模型配置.md) · [session 管理](docs/md/session设计.md) · [上下文管理](docs/md/上下文设计.md) · [协同工具](docs/md/协同设计.md) · [快应用](docs/md/快应用.md) · [定时回调](docs/md/定时回调.md) · [skill 设计](docs/md/skill设计.md) · [MCP 设计](docs/md/mcp设计.md) · [认证与 OpenAPI](docs/md/认证与openapi.md) · [设计理念](docs/md/设计理念.md)
+**[在线文档](https://xuanlv2002.github.io/ezharness/)**（支持中英文切换，按由浅入深组织）：[模型配置](docs/md/模型配置.md) · [多媒体](docs/md/多媒体.md) · [session 管理](docs/md/session设计.md) · [上下文管理](docs/md/上下文设计.md) · [协同工具](docs/md/协同设计.md) · [快应用](docs/md/快应用.md) · [定时回调](docs/md/定时回调.md) · [skill 设计](docs/md/skill设计.md) · [MCP 设计](docs/md/mcp设计.md) · [认证与 OpenAPI](docs/md/认证与openapi.md) · [计划工具](docs/md/plan设计.md) · [设计理念](docs/md/设计理念.md)
 
 ## 从源码构建
 

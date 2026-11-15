@@ -36,6 +36,7 @@ type Controllers struct {
 	Browser   *BrowserController
 	Workspace *WorkspaceController
 	Pinboard  *PinboardController
+	Media     *MediaController
 }
 
 /*
@@ -131,6 +132,12 @@ func NewRouter(c Controllers, dist fs.FS, tokens *TokenStore) *gin.Engine {
 		open.POST("/model/call", c.Settings.CallModel) // 直调大模型
 		open.POST("/mcp/call", c.Mcp.Call)             // 调 MCP 工具
 		open.GET("/mcp", c.Mcp.OpenList)               // 已启用服务清单（不含配置细节）
+		/* 多媒体生成（异步任务：提交短等待，未完成持 id 轮询；贵价：每日配额统一在 MediaService，超限 429） */
+		open.POST("/image/call", c.Media.ImageCall) // 文生图
+		open.POST("/audio/call", c.Media.AudioCall) // 语音合成
+		open.POST("/video/call", c.Media.VideoCall) // 视频生成（数分钟，wait 后查 jobs）
+		open.GET("/media/jobs", c.Media.JobsGET)    // 最近任务清单
+		open.GET("/media/jobs/:id", c.Media.JobGET) // 任务详情（done 带产物）
 		/* MCP OAuth：SDK/脚本侧发起授权（授权本身由用户在浏览器完成） */
 		open.POST("/mcp/oauth/start", c.Mcp.OAuthStart)
 		open.GET("/mcp/oauth/status", c.Mcp.OAuthStatus)
@@ -156,6 +163,7 @@ func NewRouter(c Controllers, dist fs.FS, tokens *TokenStore) *gin.Engine {
 		api.GET("/stats/hourly", c.Session.HourlyStats)
 
 		api.GET("/sessions/:id", c.Session.History)
+		api.POST("/sessions/:id/prefs", c.Session.SetPrefs) // 本会话模型/思考/审批偏好
 		api.GET("/sessions/:id/prev", c.Session.Prev)
 		api.GET("/sessions/:id/forks/:fid", c.Session.Fork)
 		api.GET("/sessions/:id/events", c.Chat.Events)
@@ -167,11 +175,11 @@ func NewRouter(c Controllers, dist fs.FS, tokens *TokenStore) *gin.Engine {
 
 		api.GET("/settings", c.Settings.GetSettings)
 		api.POST("/settings", c.Settings.UpdateSettings)
-		api.POST("/settings/reasoning", c.Settings.SetReasoning)      // 思考档位（输入框下拉，即改即生效）
-		api.POST("/settings/approve-mode", c.Settings.SetApproveMode) // 审批档位（输入框下拉，即改即生效）
 		api.GET("/models", c.Settings.GetModels)
 		api.POST("/models", c.Settings.UpdateModels)
-		api.POST("/models/activate", c.Settings.ActivateModel) // 主模型切换（输入框选择器；下一次输入生效）
+		api.GET("/media", c.Media.ConfigGET)      // 多媒体生成模型配置（多媒体页数据源）
+		api.POST("/media", c.Media.ConfigPUT)     // 保存并重建 agent（busy 拒绝）
+		api.GET("/media/quota", c.Media.QuotaGET) // 三类生成任务当日用量/限额（工作台配额条）
 		api.GET("/security", c.Settings.GetSecurity)
 		api.POST("/security", c.Settings.UpdateSecurity)
 		api.GET("/memory/config", c.Settings.GetMemoryConfig)
@@ -219,7 +227,9 @@ func NewRouter(c Controllers, dist fs.FS, tokens *TokenStore) *gin.Engine {
 
 		api.GET("/workspace/file", c.Workspace.File)         // 工作目录文件预览（附件 chips 源）
 		api.HEAD("/workspace/file", c.Workspace.File)        // 同上（文件页轮询 Last-Modified 用；gin 不自动映射 HEAD→GET）
+		api.GET("/workspace/meta", c.Workspace.Meta)         // 附件卡轻量元数据（大小 / pptx 页数）
 		api.POST("/workspace/save", c.Workspace.Save)        // 工作目录文本保存（资源查看器·文本）
+		api.POST("/workspace/create", c.Workspace.Create)    // 目录树新建（文件/文件夹）
 		api.POST("/workspace/save-bin", c.Workspace.SaveBin) // 二进制写回（资源查看器·图片画板保存）
 		api.POST("/workspace/stash", c.Workspace.Stash)      // 附件暂存（拖入即落盘 tmp/，发送只传路径引用）
 		api.GET("/workspace/workdir", c.Workspace.WorkDir)   // 解析后的工作目录（目录树默认根）

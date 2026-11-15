@@ -63,24 +63,23 @@ func (s *SysPrompt) SetIdentityFn(fn func() string) {
 	s.mu.Unlock()
 }
 
+/* SessionArchivePath 返回会话存档（session.json）的绝对路径。 */
+func SessionArchivePath(id string) string {
+	wd, _ := os.Getwd() // 进程 cwd 即数据目录（启动时 chdir）
+	return filepath.ToSlash(filepath.Join(wd, SessionsDir, id, "session.json"))
+}
 
 /*
-	SessionIdentityBlock 渲染会话身份块：ID + 存档绝对路径——上下文整理
-
-（trim）折叠的早期对话仍完整保存在存档里，模型据此回忆。
+SessionIdentityBlock 渲染会话身份块：ID + 存档绝对路径——上下文整理（trim）
+折叠的早期对话仍完整保存在存档里，模型据此回忆。
 */
 func SessionIdentityBlock(id string) string {
-	wd, _ := os.Getwd() // 进程 cwd 即数据目录（启动时 chdir）
-	p := filepath.ToSlash(filepath.Join(wd, SessionsDir, id, "session.json"))
-	progress := filepath.ToSlash(filepath.Join(wd, SessionsDir, id, "progress.md"))
+	p := SessionArchivePath(id)
 	return "<session>\n" +
 		"当前会话 ID：" + id + "\n" +
 		"本会话存档：" + p + "\n" +
 		"（这是本会话的完整历史档案：上下文整理折叠掉的早期对话仍完整保留在此文件中，" +
-		"需要回忆本会话细节时读取它。）\n" +
-		"进度档案：" + progress + "\n" +
-		"（每次上下文整理自动重写：已完成/正在做/待办/关键事实。整理后要恢复任务现场、" +
-		"或长任务到达阶段性节点时，先读写这份档案，再按需读存档全文。）\n</session>"
+		"需要回忆本会话细节时读取它。）\n</session>"
 }
 
 /*

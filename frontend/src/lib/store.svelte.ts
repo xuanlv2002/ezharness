@@ -142,6 +142,10 @@ export type Block = { uid: number } & (
   | { kind: 'fork'; forkId: string }
   | { kind: 'decision' } & DecisionData
   | { kind: 'note'; text: string }
+  /* 上下文整理标记（<context_trim> marker / session.trim 事件）：其前
+     （上一个 trim 之后）的区块默认折叠（folded 控制），滚到顶继续上拉
+     自动载入——数据不删，纯渲染层收起（foldBlocks） */
+  | { kind: 'trim'; text: string; full?: string; folded: boolean }
   | { kind: 'status'; text: string; data: StatusPayload | null }
   | { kind: 'resourcechange'; items: string[] }
   | { kind: 'endtick'; icon: string; title: string }
@@ -229,12 +233,25 @@ function endIcon(text: string): string {
   return '·'
 }
 
-/* 提取 <context_trim> 摘要为一行（整理分割线文案；四节结构化摘要从【已完成】节起截取，完整进度在会话目录 progress.md） */
+/* 提取 <context_trim> 的摘要全文（「当前任务衔接摘要：」之后，保留四节换行；
+   旧格式没有该标题时回退到【已完成】起的正文） */
+function trimFull(content: string): string {
+  const m = content.match(/当前任务衔接摘要：\s*([\s\S]*?)<\/context_trim>/)
+  if (m) return m[1].trim()
+  const s = content.match(/【已完成】[\s\S]*?(?=<\/context_trim>)/)
+  return (s?.[0] ?? '').trim()
+}
+
+/* 整理条的一行文案 */
+function trimBrief(full: string): string {
+  const one = full.replace(/\s+/g, ' ').trim()
+  const brief = one.length > 160 ? one.slice(0, 160) + '…' : one
+  return `上下文已整理：此前的对话折叠为摘要。${brief}`
+}
+
+/* 历史重建：marker → 一行文案 */
 function trimText(content: string): string {
-  const m = content.match(/【已完成】\s*([\s\S]*?)<\/context_trim>/)
-  const summary = (m?.[1] ?? '').trim().replace(/\s+/g, ' ')
-  const brief = summary.length > 160 ? summary.slice(0, 160) + '…' : summary
-  return `上下文已整理：此前的对话折叠为摘要（完整进度见会话目录 progress.md）。${brief}`
+  return trimBrief(trimFull(content))
 }
 
 class AppStore {
@@ -257,7 +274,7 @@ class AppStore {
   /* 本轮已处理的记忆待确认操作（op id → 结果）：通知栏与聊天记忆卡共用的确认入口，
      本地记录结果给卡片落定状态（后端返回后待确认项即消失） */
   memoryDecisions = $state<Record<string, 'accept' | 'cancel'>>({})
-  jumpView = $state<'' | 'chat' | 'pinboard' | 'memory' | 'callbacks'>('') // 跳页请求（App 消费后清空）
+  jumpView = $state<'' | 'chat' | 'pinboard' | 'models' | 'media' | 'memory' | 'callbacks' | 'app' | 'tools'>('') // 跳页请求（App 消费后清空）
   view = $state('') // 当前页面（App 同步；顶栏工具键等据此判断抽屉可不可见）
   pinFocus = $state('') // 便签小窗/顶栏预览点条目要定位的卡片 id（PinboardView 消费后清空）
   /* 定时回调通知要展开的任务（回调页消费后清空） */
@@ -627,7 +644,7 @@ class AppStore {
           const detail = endReasonText(m.content)
           if (detail) out.push({ kind: 'endtick', uid: this.nuid(), icon: endIcon(detail), title: detail })
         } else if (m.content.includes('<context_trim')) {
-          out.push({ kind: 'note', uid: this.nuid(), text: trimText(m.content) })
+          out.push({ kind: 'trim', uid: this.nuid(), text: trimText(m.content), full: trimFull(m.content), folded: true })
         } else if (m.content.includes('<loop_guard>')) {
           // 循环护栏提醒：小字条呈现（标签体是人话文本）
           const inner = m.content.replace(/^[\s\S]*?<loop_guard>|<\/loop_guard>[\s\S]*$/g, '').trim()
@@ -825,10 +842,18 @@ class AppStore {
     this.termDrawerOpen = true
   }
 
+  /* ensureWorkspaceView 明确的「打开」动作发生在管理页（快应用/回调/设置
+     …）时先切回工作区——抽屉只在对话与内嵌快应用页上屏，不切回去拉开了
+     也看不见（此前快应用卡片「查看终端」无效即此因）。 */
+  private ensureWorkspaceView() {
+    if (this.view !== 'chat' && this.view !== 'app') this.jumpView = 'chat'
+  }
+
   /* openTermAt 拉开终端抽屉并定位到指定终端（supper_url term:// 点击；
      首次打开时 WS hello 到达后由 TerminalTab 消费定位）。终端已弹出则
      定位请求转发到窗口。 */
   openTermAt(id: string) {
+    this.ensureWorkspaceView()
     if (this.popoutTools.includes('term')) {
       ;(window as any).ez?.popout?.signal('term', 'term', id)
       this.yieldDrawer('term')
@@ -844,6 +869,7 @@ class AppStore {
   async openFileAt(path: string) {
     if (!path) return
     if (await (window as any).ez?.window?.openDir?.(path)) return
+    this.ensureWorkspaceView()
     if (this.popoutTools.includes('file')) {
       ;(window as any).ez?.popout?.signal('file', 'file', path)
       this.yieldDrawer('file')
@@ -863,9 +889,29 @@ class AppStore {
       this.lastStatus = '浏览器仅桌面端可用'
       return
     }
+    this.ensureWorkspaceView()
     ez.browser.focusTab(id)
     if (this.popoutTools.includes('browser')) {
       ez.popout.open('browser')
+      this.yieldDrawer('browser')
+    } else {
+      this.drawerTool = 'browser'
+      this.termDrawerOpen = true
+    }
+  }
+
+  /* openBrowserUrl 用共享浏览器打开一个地址（资源页右键「在集成浏览器
+     打开」）：新建标签并切到浏览器页；浏览器已弹出则聚焦弹出窗。 */
+  openBrowserUrl(url: string) {
+    const ez = (window as any).ez
+    if (!ez?.browser) {
+      this.lastStatus = '浏览器仅桌面端可用'
+      return
+    }
+    this.ensureWorkspaceView()
+    ez.browser.create(url)
+    if (this.popoutTools.includes('browser')) {
+      ez.popout?.open('browser')
       this.yieldDrawer('browser')
     } else {
       this.drawerTool = 'browser'
@@ -945,30 +991,36 @@ class AppStore {
     }
   }
 
-  /* ── 审批模式 / 模型切换（输入框工具条） ── */
+  /* ── 本会话偏好 / 模型切换（输入框工具条） ──
+     思考、审批、主模型都随会话保存：切换分支各自一套，新建会话从来源
+     会话继承（没有来源用默认值）。不再读写全局 settings。 */
 
-  /* 审批三档（全局；工具审批实时读取，即改即生效） */
+  /* 审批三档（本会话；工具审批实时读取，即改即生效） */
   async setApproveMode(mode: '' | 'off' | 'strict') {
-    if (!this.settings || (this.settings.approveMode ?? '') === mode) return
-    const prev = this.settings.approveMode ?? ''
-    this.settings = { ...this.settings, approveMode: mode }
+    const sid = this.activeId
+    if (!sid || !this.status || (this.status.approveMode ?? '') === mode) return
+    const prev = this.status.approveMode ?? ''
+    this.status = { ...this.status, approveMode: mode }
     try {
-      await api.setApproveMode(mode)
+      const r = await api.setSessionPrefs(sid, { approveMode: mode })
+      if (this.activeId === sid && this.status) this.status.approveMode = r.approveMode
     } catch (e) {
-      this.settings = { ...this.settings, approveMode: prev }
+      if (this.activeId === sid && this.status) this.status = { ...this.status, approveMode: prev }
       this.lastStatus = `审批档位切换失败：${(e as Error).message}`
     }
   }
 
-  /* 思考档位切换（全局；请求侧实时读取，即改即生效） */
+  /* 思考档位切换（本会话；请求侧实时读取，即改即生效） */
   async setReasoningEffort(effort: ReasoningEffort) {
-    if (!this.settings || (this.settings.reasoningEffort ?? '') === effort) return
-    const prev = this.settings.reasoningEffort ?? ''
-    this.settings = { ...this.settings, reasoningEffort: effort }
+    const sid = this.activeId
+    if (!sid || !this.status || (this.status.reasoningEffort ?? '') === effort) return
+    const prev = this.status.reasoningEffort ?? ''
+    this.status = { ...this.status, reasoningEffort: effort }
     try {
-      await api.setReasoningEffort(effort)
+      const r = await api.setSessionPrefs(sid, { reasoningEffort: effort })
+      if (this.activeId === sid && this.status) this.status.reasoningEffort = r.reasoningEffort
     } catch (e) {
-      this.settings = { ...this.settings, reasoningEffort: prev }
+      if (this.activeId === sid && this.status) this.status = { ...this.status, reasoningEffort: prev }
       this.lastStatus = `思考档位切换失败：${(e as Error).message}`
     }
   }
@@ -978,7 +1030,7 @@ class AppStore {
     if (this.modelsFetched) return
     try {
       const m = await api.getModels()
-      this.mainModels = m.main ?? []
+      this.mainModels = (m.main ?? []).filter((x) => !x.disabled)
       this.modelsFetched = true
     } catch {
       /* 下次打开再试 */
@@ -990,19 +1042,22 @@ class AppStore {
     this.modelsFetched = false
   }
 
-  /* 切换主模型（下一次输入生效）：状态栏变更行提示（与资源变更同通道，
-     下轮 loop_start 清空——提示寿命与"待生效"窗口一致） */
+  /* 切换本会话主模型（下一次输入生效）：后端只重建该会话的装配；状态栏
+     变更行提示（与资源变更同通道，下轮 loop_start 清空） */
   async activateModel(name: string) {
-    if (!name || name === this.status?.model) return
+    const sid = this.activeId
+    if (!sid || !name || name === this.status?.model) return
     try {
-      const { model: e } = await api.activateModel(name)
+      const r = await api.setSessionPrefs(sid, { model: name })
+      if (this.activeId !== sid) return
       if (this.status) {
-        this.status.model = e.name
-        this.status.modelVision = !!e.vision
+        this.status.model = r.model
+        this.status.modelVision = !!r.modelVision
+        if (r.contextWindow) this.status.contextWindow = r.contextWindow
       }
       this.liveChanges = [
         ...this.liveChanges.filter((x) => !x.startsWith('切换模型')),
-        `切换模型到 ${e.name}（${e.vision ? '支持视觉' : '不支持视觉'}）`,
+        `切换模型到 ${r.model}（${r.modelVision ? '支持视觉' : '不支持视觉'}）`,
       ]
     } catch (err) {
       this.lastStatus = `模型切换失败：${(err as Error).message}`
@@ -1085,7 +1140,7 @@ class AppStore {
 
   async saveSettings(s: Settings) {
     await api.saveSettings(s)
-    this.settings = { ...(this.settings ?? {}), ...s } // 设置页按需提交局部字段，合并而非替换（否则会抹掉思考/审批档）
+    this.settings = { ...(this.settings ?? {}), ...s } // 设置页按需提交局部字段，合并而非替换
     this.lastStatus = '设置已保存（模型与提示即时生效）'
     await this.refreshStatus()
   }
@@ -2131,17 +2186,26 @@ class AppStore {
         break
       }
       case 'session.trimming': {
-        // 水位自动整理开始：时间线提示整理进行中
+        // 水位自动整理开始：时间线提示整理进行中（分身的进分身聊天框）
         const msg = typeof ev.data === 'string' ? ev.data : '上下文正在整理…'
-        this.blocks.push({ kind: 'note', uid: this.nuid(), text: `⇳ ${msg}` })
+        const bsTrim = ev.forkId ? this.ensureFork(ev.forkId).blocks : this.blocks
+        bsTrim.push({ kind: 'note', uid: this.nuid(), text: `⇳ ${msg}` })
         break
       }
       case 'session.trim': {
-        // 整理完成：上下文已就地折叠（marker 已入历史，重建时间线时渲染分割线）
-        this.blocks.push({
-          kind: 'note',
+        // 整理完成：上下文已就地折叠——整理标记（trim 块）挂起，其前内容
+        // 随之收进折叠区（foldBlocks 渲染层裁掉，滚到顶上拉自动载入）；
+        // 分身的进分身框
+        const bsFold = ev.forkId ? this.ensureFork(ev.forkId).blocks : this.blocks
+        const summary = typeof ev.data?.summary === 'string' ? ev.data.summary.trim() : ''
+        bsFold.push({
+          kind: 'trim',
           uid: this.nuid(),
-          text: `上下文已整理：早期对话折叠为摘要（${ev.data?.folded ?? '?'} 条 → 保留最近 ${ev.data?.kept ?? '?'} 条）`,
+          folded: true,
+          full: summary,
+          text: summary
+            ? trimBrief(summary)
+            : `上下文已整理：早期对话折叠为摘要（${ev.data?.folded ?? '?'} 条 → 保留最近 ${ev.data?.kept ?? '?'} 条）`,
         })
         void this.refreshStatus()
         break

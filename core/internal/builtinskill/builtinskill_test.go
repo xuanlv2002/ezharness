@@ -30,3 +30,16 @@ func TestSkillsEmbedded(t *testing.T) {
 		t.Fatal("missing builtin skill: quick-app / callback")
 	}
 }
+
+/* TestMediaSkillEmbedded 校验多媒体技能随应用内嵌（目录名与清单条目是身份，缺失会让 agent 不知道 media 工具/接口的用法）。 */
+func TestMediaSkillEmbedded(t *testing.T) {
+	for _, s := range Skills() {
+		if s.Name == "media" {
+			if s.Description == "" {
+				t.Fatal("media skill has empty description")
+			}
+			return
+		}
+	}
+	t.Fatal("builtin media skill missing")
+}

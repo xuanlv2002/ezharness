@@ -33,11 +33,12 @@ func EnsureLayout() ([]string, error) {
 	ctx := context.Background()
 	fsys := osfs.OS{}
 
-	// 目录：会话/记忆/技能/快应用/日志 + 工作目录下的草稿与截图区
+	// 目录：会话/记忆/技能/快应用/日志 + 工作目录下的草稿、截图与任务归档区
 	workDir := ResolveWorkDir(LoadSettings(ctx, fsys).WorkDir)
 	dirs := []string{
 		"sessions", hooks.LongtermDir, hooks.SkillsDir, AppsDir, "logs", PinboardImagesDir,
 		workDir, filepath.Join(workDir, "tmp"), filepath.Join(workDir, "browser"),
+		filepath.Join(workDir, "tasks"),
 	}
 	for _, d := range dirs {
 		if err := os.MkdirAll(d, 0o755); err != nil {
@@ -48,6 +49,10 @@ func EnsureLayout() ([]string, error) {
 	files := []layoutFile{
 		{"models.json", func(ctx context.Context, fsys osfs.OS) error {
 			return SaveModelsConfig(ctx, fsys, domain.DefaultModelsConfig())
+		}},
+		{"media.json", func(ctx context.Context, fsys osfs.OS) error {
+			// 多媒体生成模型与语言模型分离：首次启动就落空配置，配置页直接可写
+			return SaveMediaConfig(ctx, fsys, domain.MediaConfig{})
 		}},
 		{"settings.json", func(ctx context.Context, fsys osfs.OS) error {
 			return SaveSettings(ctx, fsys, domain.DefaultSettings())

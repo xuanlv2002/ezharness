@@ -1,8 +1,8 @@
 /*
-memory_pending 是记忆待确认操作层：memory 工具与归档 distill 的变更
-不直接写记忆，先落待确认区（memory/pending-ops.json，单文件数组，
-重启不丢）。用户在通知栏逐条确认（应用）或取消（丢弃）——确认应用
-复用与工具一致的写入逻辑；变更随后经 remind 轮首 diff 进 resource_change。
+memory_pending 是记忆待确认操作层：memory 工具的变更不直接写记忆，
+先落待确认区（memory/pending-ops.json，单文件数组，重启不丢）。
+用户在通知栏逐条确认（应用）或取消（丢弃）——确认应用复用与工具一致的
+写入逻辑；变更随后经 remind 轮首 diff 进 resource_change。
 
 进程内互斥锁串行化全部读写：同一轮并行多个 memory 调用各成一条独立
 记录（此前直接写目标文件存在读-改-写竞态，后写覆盖先写丢条目）。
@@ -49,7 +49,6 @@ type PendingMemoryOp struct {
 	Name        string    `json:"name,omitempty"`
 	Description string    `json:"description,omitempty"`
 	Content     string    `json:"content,omitempty"`
-	Source      string    `json:"source"` // ai | distill
 	CreatedAt   time.Time `json:"createdAt"`
 }
 
@@ -136,8 +135,11 @@ func AppendPendingOp(ctx context.Context, fsys fs.FileSystem, op PendingMemoryOp
 	return op, savePendingOpsLocked(ctx, fsys, append(ops, op))
 }
 
-/* DecidePendingOp 确认（accept=true 应用）或取消（丢弃）一条操作，
-返回结果描述（找不到该操作报错）。 */
+/*
+	DecidePendingOp 确认（accept=true 应用）或取消（丢弃）一条操作，
+
+返回结果描述（找不到该操作报错）。
+*/
 func DecidePendingOp(ctx context.Context, fsys fs.FileSystem, id string, accept bool) (string, error) {
 	pendingMu.Lock()
 	defer pendingMu.Unlock()

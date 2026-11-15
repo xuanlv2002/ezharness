@@ -4,8 +4,9 @@
   import DOMPurify from 'dompurify'
   import { api, type ImagePayload } from '../lib/api'
   import { cachedMarkdown } from '../lib/markdown'
-  import { fileBaseName, isImagePath } from '../lib/textfile'
-  import { launchApp } from '../lib/apps'
+  import { fileBaseName, isImagePath, isTextFilePath } from '../lib/textfile'
+  import { fileMeta, fmtBytes, fmtDuration } from '../lib/filemeta'
+  import { openAppWindow } from '../lib/apps'
   import type { CallbackMessageMeta } from '../lib/callbackMessage'
   import { store } from '../lib/store.svelte'
 
@@ -49,9 +50,60 @@
      http(s) 经系统浏览器打开（复用外链拦截）；term://<终端id> 拉开
      共享终端抽屉并定位；app://<快应用名> 打开快应用子窗；
      file://<绝对路径> 拉开抽屉文件页编辑（文本白名单门禁）。其他内容
-     仅展示。流式未闭合时按原文转义显示。 */
+     仅展示。流式未闭合时按原文转义显示。file:// 按类型分流：图片带
+     缩略图、音视频带播放形图标、其余文档形图标（inline SVG，消毒保留）。 */
   const escHtml = (s: string) =>
     s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+
+  const AUDIO_RE = /\.(mp3|wav|ogg|flac|m4a|aac|opus)$/i
+  const VIDEO_RE = /\.(mp4|webm|mov|mkv|avi|m4v)$/i
+
+  /* 文档卡的类型标签（按扩展名，未知回落「文件」） */
+  const DOC_LABELS: Record<string, string> = {
+    pdf: 'PDF 文档',
+    ppt: '演示文稿', pptx: '演示文稿',
+    doc: 'Word 文档', docx: 'Word 文档',
+    xls: '表格', xlsx: '表格', xlsm: '表格', csv: '表格', ods: '表格',
+    md: 'Markdown', markdown: 'Markdown',
+    txt: '文本', log: '文本', json: 'JSON',
+  }
+
+  function extOf(p: string): string {
+    const base = fileBaseName(p).toLowerCase()
+    const i = base.lastIndexOf('.')
+    return i > 0 ? base.slice(i + 1) : ''
+  }
+
+  const ICON_MUSIC =
+    '<path d="M9 18V6l10-2v12"/><circle cx="6.5" cy="18" r="2.5"/><circle cx="16.5" cy="16" r="2.5"/>'
+  const ICON_VIDEO = '<rect x="3" y="5" width="18" height="14" rx="2"/><path d="M10 9.5l5 2.5-5 2.5z"/>'
+
+  /* file:// 附件卡（按类型特殊渲染）：图片大缩略图、音/视频内嵌播放器、
+     办公文档类型块（页数/大小由后端 meta 异步补齐）。整卡点击开资源页；
+     播放器自己的点击不触发（onBodyClick 跳过 audio/video）。 */
+  function fileChip(p: string): string {
+    const name = escHtml(fileBaseName(p))
+    const url = `/api/workspace/file?path=${encodeURIComponent(p)}`
+    const attrs = (extra = '') =>
+      `class="supper-url act fcard${extra}" data-supper-kind="file" data-supper-id="${escHtml(p)}" role="button" tabindex="0" title="${escHtml(p)}"`
+    if (isImagePath(p)) {
+      return `<span ${attrs(' image')} data-ftype="image"><img class="fimg" src="${url}" alt="" loading="lazy"><span class="frow"><span class="fname">${name}</span><span class="fmeta">图片</span></span></span>`
+    }
+    const icon = (body: string) =>
+      `<svg class="fico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${body}</svg>`
+    const frow = (body: string, label: string) =>
+      `<span class="frow">${icon(body)}<span class="fname">${name}</span><span class="fmeta">${label}</span></span>`
+    if (AUDIO_RE.test(p)) {
+      return `<span ${attrs(' media')} data-ftype="audio">${frow(ICON_MUSIC, '音频')}<audio controls preload="metadata" src="${url}"></audio></span>`
+    }
+    if (VIDEO_RE.test(p)) {
+      return `<span ${attrs(' media')} data-ftype="video">${frow(ICON_VIDEO, '视频')}<video controls preload="metadata" src="${url}"></video></span>`
+    }
+    const ext = extOf(p)
+    const label = DOC_LABELS[ext] ?? (isTextFilePath(p) ? '文本' : '文件')
+    const tile = escHtml((ext || 'FILE').toUpperCase().slice(0, 4))
+    return `<span ${attrs(' doc')} data-need-meta="1"><span class="ftile">${tile}</span><span class="fcol"><span class="fname">${name}</span><span class="fmeta">${label}</span></span></span>`
+  }
   marked.use({
     extensions: [
       {
@@ -71,26 +123,31 @@
           if (/^https?:\/\//i.test(t)) {
             return `<a class="supper-url" data-supper-url="${b}" href="${b}">${b}</a>`
           }
+          /* 终端/快应用/浏览器的 chip 前缀统一用线框 SVG（不用 ▤▶▣ 文本符号） */
+          const chipIcon = (body: string) =>
+            `<svg class="fico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${body}</svg>`
           let m = t.match(/^term:\/\/([^\s]+)$/i)
           if (m) {
             const id = escHtml(m[1])
-            return `<span class="supper-url act" data-supper-kind="term" data-supper-id="${id}" role="button" tabindex="0">▤ 终端 ${id}</span>`
+            const ico = chipIcon('<path d="M5 8l4 4-4 4"/><path d="M12 16.5h7"/>')
+            return `<span class="supper-url act" data-supper-kind="term" data-supper-id="${id}" role="button" tabindex="0">${ico}终端 ${id}</span>`
           }
           m = t.match(/^app:\/\/([^\s]+)$/i)
           if (m) {
             const id = escHtml(m[1])
-            return `<span class="supper-url act" data-supper-kind="app" data-supper-id="${id}" role="button" tabindex="0">▶ 快应用 ${id}</span>`
+            const ico = chipIcon('<rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 9h18"/>')
+            return `<span class="supper-url act" data-supper-kind="app" data-supper-id="${id}" role="button" tabindex="0">${ico}快应用 ${id}</span>`
           }
           m = t.match(/^browser:\/\/([^\s]+)$/i)
           if (m) {
             const id = escHtml(m[1])
-            return `<span class="supper-url act" data-supper-kind="browser" data-supper-id="${id}" role="button" tabindex="0">▣ 浏览器 ${id}</span>`
+            const ico = chipIcon(
+              '<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a15 15 0 0 1 0 18M12 3a15 15 0 0 0 0 18"/>',
+            )
+            return `<span class="supper-url act" data-supper-kind="browser" data-supper-id="${id}" role="button" tabindex="0">${ico}浏览器 ${id}</span>`
           }
           m = t.match(/^file:\/\/(.+)$/i)
-          if (m) {
-            const p = m[1].trim()
-            return `<span class="supper-url act" data-supper-kind="file" data-supper-id="${escHtml(p)}" role="button" tabindex="0" title="${escHtml(p)}">${escHtml(fileBaseName(p))}</span>`
-          }
+          if (m) return fileChip(m[1].trim())
           return `<a class="supper-url" data-supper-url="${b}">${b}</a>`
         },
       },
@@ -99,6 +156,8 @@
 
   /* term:// / app:// / file:// chip 点击委托（{@html} 渲染无法直接绑事件） */
   function onBodyClick(e: MouseEvent) {
+    /* 音/视频卡里的播放器自己处理点击（播放、拖动进度），不打开资源页 */
+    if ((e.target as HTMLElement).closest('audio,video')) return
     const el = (e.target as HTMLElement).closest<HTMLElement>('span[data-supper-kind]')
     if (!el) return
     const kind = el.dataset.supperKind
@@ -108,7 +167,9 @@
     } else if (kind === 'browser') {
       store.openBrowserAt(id)
     } else if (kind === 'app') {
-      launchApp(id).catch((err: unknown) => (store.lastStatus = `打开快应用失败：${(err as Error).message}`))
+      /* 对话里的 app:// chip 走独立窗口（与快应用页启动一致）；只有左侧
+         钉住菜单才在主窗口内嵌展示 */
+      openAppWindow(id).catch((err: unknown) => (store.lastStatus = `打开快应用失败：${(err as Error).message}`))
     } else if (kind === 'file') {
       /* 资源页按类型路由（registry）：文本进编辑器、图片进画板、
       html/pdf 有专属查看器、其余占位提示 */
@@ -198,6 +259,20 @@
   })
   const reasoningClipped = $derived(streaming && reasoning.length > 1200)
 
+  /* 附件卡图片加载失败（文件被删/不可读）：藏掉破图并在角标给出状态 */
+  function onThumbError(e: Event) {
+    const el = e.target
+    if (!(el instanceof HTMLImageElement)) return
+    const card = el.closest<HTMLElement>('span.fcard[data-ftype="image"]')
+    if (card) {
+      el.style.display = 'none'
+      const meta = card.querySelector<HTMLElement>('.fmeta')
+      if (meta) meta.textContent = '图片无法预览'
+      return
+    }
+    if (el.closest('span.supper-url')) el.style.display = 'none'
+  }
+
   /* 用户气泡：超过高度折叠，按内容实际高度判断（与字号/换行无关） */
   const USER_BUBBLE_MAX_HEIGHT = 280
   let userBubbleEl = $state<HTMLDivElement>()
@@ -212,6 +287,61 @@
 
   let bodyEl: HTMLDivElement | undefined = $state()
   let mmdSeq = 0
+
+  /* ── 附件卡的异步补料：文档卡补页数/大小，图片补尺寸，音视频补时长 ── */
+  /* decorateChips 把暂缺的元数据补进卡片角标（节点已换代/卸载后丢弃结果） */
+  function decorateChips() {
+    const root = bodyEl
+    if (!root) return
+    root.querySelectorAll<HTMLElement>('span.fcard[data-need-meta]').forEach((card) => {
+      if (card.dataset.metaDone) return
+      card.dataset.metaDone = '1'
+      const p = card.dataset.supperId || ''
+      const meta = card.querySelector<HTMLElement>('.fmeta')
+      if (!p || !meta) return
+      const label = meta.textContent || '文件'
+      void fileMeta(p).then((m) => {
+        if (!card.isConnected) return
+        const bits = [label]
+        if (m.pages) bits.push(`${m.pages} 页`)
+        const size = fmtBytes(m.size)
+        if (size) bits.push(size)
+        meta.textContent = bits.join(' · ')
+      })
+    })
+  }
+
+  /* 流式期每个 delta 都会重排 HTML：补料延迟合并，只处理还没补过的卡 */
+  let chipTimer: ReturnType<typeof setTimeout> | undefined
+  $effect(() => {
+    void mdHtml
+    void streamView
+    void clipHtml
+    void renderBody
+    clearTimeout(chipTimer)
+    chipTimer = setTimeout(decorateChips, 120)
+  })
+  $effect(() => () => clearTimeout(chipTimer))
+
+  /* 图片卡：加载完补自然尺寸 */
+  function onThumbLoad(e: Event) {
+    const el = e.target
+    if (!(el instanceof HTMLImageElement)) return
+    const card = el.closest<HTMLElement>('span.fcard[data-ftype="image"]')
+    const meta = card?.querySelector<HTMLElement>('.fmeta')
+    if (!meta || !el.naturalWidth) return
+    meta.textContent = `图片 · ${el.naturalWidth}×${el.naturalHeight}`
+  }
+
+  /* 音/视频卡：元数据加载完补时长（loadedmetadata 不冒泡，模板用捕获相） */
+  function onMediaMeta(e: Event) {
+    const el = e.target
+    if (!(el instanceof HTMLMediaElement)) return
+    const card = el.closest<HTMLElement>('span.fcard.media')
+    const meta = card?.querySelector<HTMLElement>('.fmeta')
+    if (!meta || !Number.isFinite(el.duration) || el.duration <= 0) return
+    meta.textContent = `${el.tagName === 'AUDIO' ? '音频' : '视频'} · ${fmtDuration(el.duration)}`
+  }
 
   /* 历史正文懒渲染：离屏消息不跑 markdown——大会话/单轮超长时，一次性给
      所有消息建 DOM 是打开会话与切页卡顿的主因。滚到附近（rootMargin
@@ -289,7 +419,13 @@
 {#if role === 'user'}
   <div class="user enter-rise">
     {#if onFork}
-      <button class="forkbtn" onclick={onFork} title="从这条消息分叉：复制到此为止的对话，开一条新分支继续">⑂ 分叉</button>
+      <button class="forkbtn" onclick={onFork} title="从这条消息分叉：复制到此为止的对话，开一条新分支继续">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="6" cy="5" r="2" /><circle cx="6" cy="19" r="2" /><circle cx="18" cy="7" r="2" />
+              <path d="M6 7v10M18 9v2a4 4 0 0 1-4 4H8" />
+            </svg>
+            分叉
+          </button>
     {/if}
     <div class="ucontent" class:cb={!!callback}>
       {#if callback}
@@ -371,7 +507,15 @@
         </details>
       {/if}
       {#if text}
-        <div class="md" class:live={streaming} bind:this={bodyEl} onclick={onBodyClick}>
+        <div
+          class="md"
+          class:live={streaming}
+          bind:this={bodyEl}
+          onclick={onBodyClick}
+          onerrorcapture={onThumbError}
+          onloadcapture={onThumbLoad}
+          onloadedmetadatacapture={onMediaMeta}
+        >
           {#if !renderBody}
             <!-- 离屏占位：滚进 800px 预加载区后替换为真正的 markdown -->
             <div class="md-skel" style:height="{placeholderH}px" aria-hidden="true"></div>
@@ -391,7 +535,13 @@
         <div class="foot">
           {#if streaming}<span class="caret"></span>{/if}
           {#if onFork}
-            <button class="forkbtn" onclick={onFork} title="从这条消息分叉：复制到此为止的对话，开一条新分支继续">⑂ 分叉</button>
+            <button class="forkbtn" onclick={onFork} title="从这条消息分叉：复制到此为止的对话，开一条新分支继续">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="6" cy="5" r="2" /><circle cx="6" cy="19" r="2" /><circle cx="18" cy="7" r="2" />
+              <path d="M6 7v10M18 9v2a4 4 0 0 1-4 4H8" />
+            </svg>
+            分叉
+          </button>
           {/if}
           <button class="copy" onclick={copyText} title="复制原文">
             {copied ? '已复制 ✓' : '复制'}
@@ -402,7 +552,13 @@
       {:else if onFork}
         <!-- 纯思考消息（无正文）：分叉钮悬浮右下不占布局高度，思考与
              后续工具卡紧凑衔接；锚点是同一条消息 -->
-        <button class="forkbtn floating" onclick={onFork} title="从这条消息分叉：复制到此为止的对话，开一条新分支继续">⑂ 分叉</button>
+        <button class="forkbtn floating" onclick={onFork} title="从这条消息分叉：复制到此为止的对话，开一条新分支继续">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="6" cy="5" r="2" /><circle cx="6" cy="19" r="2" /><circle cx="18" cy="7" r="2" />
+              <path d="M6 7v10M18 9v2a4 4 0 0 1-4 4H8" />
+            </svg>
+            分叉
+          </button>
       {/if}
     </div>
   </div>
@@ -423,6 +579,9 @@
   /* 分叉按钮：与复制按钮同款弱化样式，hover 显形 */
   .forkbtn {
     flex: none;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
     font-size: var(--font-size-small);
     color: var(--faint);
     padding: 2px 8px;
@@ -431,6 +590,10 @@
     transition:
       opacity var(--dur-fast) var(--ease-out),
       color var(--dur-fast) var(--ease-out);
+  }
+  .forkbtn svg {
+    width: 12px;
+    height: 12px;
   }
   /* 用户行分叉钮：排在气泡左侧、随气泡走（右对齐时紧贴气泡），贴行底 */
   .user > .forkbtn {
@@ -859,6 +1022,141 @@
   }
   .md :global(span.supper-url) {
     cursor: pointer;
+  }
+  /* 非附件卡 chip 的前缀图标（终端/快应用/浏览器） */
+  .md :global(span.supper-url .fico) {
+    width: 14px;
+    height: 14px;
+    margin: -2px 4px -2px 0;
+    vertical-align: middle;
+    color: var(--muted);
+  }
+  /* file:// 附件卡：按类型特殊渲染——图片大图预览、音视频内嵌播放器、
+     办公文档类型块（页数/大小由后端 meta 异步补齐）。卡片走项目同款
+     1px 边 + 圆角 + 主题变量，不再是迷你药丸 */
+  .md :global(span.supper-url.fcard) {
+    display: inline-flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 7px;
+    padding: 8px;
+    margin: 8px 10px 8px 0;
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    background: var(--bg);
+    color: var(--fg);
+    font-family: inherit;
+    font-size: inherit;
+    line-height: 1.4;
+    white-space: normal;
+    vertical-align: top;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: clip;
+    transition:
+      border-color var(--dur-fast) var(--ease-out),
+      background var(--dur-fast) var(--ease-out);
+  }
+  .md :global(span.supper-url.fcard:hover) {
+    border-color: var(--line-strong);
+    background: var(--bg-soft);
+  }
+  .md :global(.fcard .frow) {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+  }
+  .md :global(.fcard .fico) {
+    flex: none;
+    width: 15px;
+    height: 15px;
+    margin: 0;
+    vertical-align: baseline;
+    color: var(--muted);
+  }
+  .md :global(.fcard .fname) {
+    font-family: var(--font-mono);
+    font-size: var(--font-size-ui);
+    color: var(--fg);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    min-width: 0;
+  }
+  .md :global(.fcard .fmeta) {
+    flex: none;
+    margin-left: auto;
+    padding-left: 8px;
+    font-size: var(--font-size-small);
+    color: var(--faint);
+    white-space: nowrap;
+  }
+  /* 图片卡：固定预览框，contain 不裁切 */
+  .md :global(span.supper-url.fcard.image) {
+    width: min(240px, 100%);
+  }
+  .md :global(.fcard .fimg) {
+    display: block;
+    width: 100%;
+    height: 140px;
+    object-fit: contain;
+    border-radius: 8px;
+    background: var(--bg-soft);
+  }
+  /* 音/视频卡：原生播放器（暗色主题下控件也走暗色） */
+  .md :global(span.supper-url.fcard.media) {
+    width: min(300px, 100%);
+  }
+  .md :global(.fcard audio) {
+    display: block;
+    width: 100%;
+    height: 34px;
+  }
+  .md :global(.fcard video) {
+    display: block;
+    width: 100%;
+    max-height: 180px;
+    border-radius: 8px;
+    background: #000;
+  }
+  :global(html[data-theme='dark']) .md :global(.fcard audio) {
+    color-scheme: dark;
+  }
+  /* 文档卡：类型块 + 文件名 / 页数 / 大小（横向紧凑卡）。选择器带上
+     span.supper-url 才能压过基础卡片的 column 布局 */
+  .md :global(span.supper-url.fcard.doc) {
+    flex-direction: row;
+    align-items: center;
+    gap: 10px;
+    min-width: 190px;
+    max-width: 340px;
+  }
+  .md :global(.fcard .ftile) {
+    flex: none;
+    display: grid;
+    place-items: center;
+    width: 38px;
+    height: 38px;
+    border: 1px solid var(--line);
+    border-radius: 9px;
+    background: var(--bg-soft);
+    color: var(--muted);
+    font-family: var(--font-mono);
+    font-size: var(--font-size-small);
+    font-weight: 700;
+    letter-spacing: 0.02em;
+  }
+  .md :global(.fcard .fcol) {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    flex: 1;
+    min-width: 0;
+  }
+  .md :global(.fcard.doc .fmeta) {
+    margin-left: 0;
+    padding-left: 0;
   }
   .md :global(a.supper-url:hover) {
     border-color: var(--accent);

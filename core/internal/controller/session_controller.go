@@ -2,11 +2,13 @@
 package controller
 
 import (
+	"errors"
 	"net/http"
 	"strconv"
 
 	"github.com/gin-gonic/gin"
 
+	"ezharness/core/internal/domain"
 	"ezharness/core/internal/service"
 )
 
@@ -23,6 +25,32 @@ func (c *SessionController) Bootstrap(g *gin.Context) {
 /* Status GET /api/status。 */
 func (c *SessionController) Status(g *gin.Context) {
 	g.JSON(http.StatusOK, c.Svc.Snapshot(g.Request.Context()))
+}
+
+/*
+SetPrefs POST /api/sessions/:id/prefs（:id=分支根）：本会话的思考档位/
+审批档位/主模型，body 可只带一个字段。模型变更要求会话空闲并重建该会话
+装配（409 = 运行中或归档中）。
+*/
+func (c *SessionController) SetPrefs(g *gin.Context) {
+	var body service.SessionPrefsPatch
+	if err := g.ShouldBindJSON(&body); err != nil {
+		g.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	v, err := c.Svc.SetPrefs(g.Request.Context(), g.Param("id"), body)
+	if err != nil {
+		switch {
+		case errors.Is(err, domain.ErrBusy):
+			g.JSON(http.StatusConflict, gin.H{"error": "会话运行中或归档中，先停止再切换模型"})
+		case errors.Is(err, service.ErrTopicNotFound):
+			g.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		default:
+			g.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		}
+		return
+	}
+	g.JSON(http.StatusOK, v)
 }
 
 /* HourlyStats GET /api/stats/hourly（按小时用量序列,模型面板趋势图）。 */

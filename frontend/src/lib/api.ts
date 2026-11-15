@@ -104,6 +104,8 @@ export interface AppEntry {
   icon?: string // 卡片头像（同源 URL，未声明/越界时缺省）
   pinned?: boolean // 已钉到桌面小助手
   callbacks?: AppCallbackSpec[] // app.quick 声明的定时调用端点
+  backendLive?: boolean // 后端终端在跑（kind=service 才有意义）
+  termId?: string // 在跑的后端终端 id（跳转终端抽屉用；空=未跑）
 }
 
 /* 定时回调计划（后端 callback.Schedule 的 JSON 形状；本机时区） */
@@ -282,8 +284,10 @@ export interface Settings {
   maxIterations?: number // 单轮最大模型迭代次数（0/空 = 默认 64，上限 128）
   offloadThreshold?: number // 工具结果卸载阈值（字节，0 = 默认 4096；超过即卸载到文件只留摘要）
   debugMode?: boolean // 调试模式：模型完整输入写进日志（即改即生效）
-  reasoningEffort?: ReasoningEffort // 思考档位（''=默认不控制；none=关闭；其余为强度分档）
-  approveMode?: '' | 'off' | 'strict' // 审批档位（''=跟随安全配置；off=全放行；strict=全审）
+  /* 生成类模型每日配额（0 = 默认 image 20 / audio 20 / video 3；agent 工具与 OpenAPI 同一计数） */
+  genQuotaImage?: number
+  genQuotaAudio?: number
+  genQuotaVideo?: number
 }
 
 export interface ModelEntry {
@@ -304,8 +308,29 @@ export interface ModelEntry {
 
 export interface ModelsConfig {
   main: ModelEntry[]
+}
+
+/* 会话级偏好（随 session.json 保存，切换/新建会话各自一套） */
+export interface SessionPrefs {
+  ok: boolean
+  reasoningEffort: ReasoningEffort
+  approveMode: '' | 'off' | 'strict'
+  model: string
+  modelVision: boolean
+  contextWindow?: number
+}
+
+export interface SessionPrefsPatch {
+  reasoningEffort?: ReasoningEffort
+  approveMode?: '' | 'off' | 'strict'
+  model?: string
+}
+
+/* 多媒体生成模型配置（media.json，与语言模型分离）：三类各自独立列表 */
+export interface MediaConfig {
   image: ModelEntry[]
   audio: ModelEntry[]
+  video: ModelEntry[]
 }
 
 export interface HourStats {
@@ -320,6 +345,8 @@ export interface HourStats {
 export interface Status {
   model: string
   modelVision: boolean
+  reasoningEffort: ReasoningEffort // 本会话思考档位（''=默认）
+  approveMode: '' | 'off' | 'strict' // 本会话审批档位（''=跟随安全配置）
   sessionId: string
   sessionMsgs: number
   busy: boolean
@@ -494,6 +521,41 @@ export interface ToolRule {
   level: ApproveLevel
   list: string[]
 }
+
+/* 生成类模型产物（任务 done 时填充；磁盘是唯一真身） */
+export interface GenFile {
+  name: string
+  path: string
+  size: number
+  mime: string
+  url?: string // 提供方原始 URL（视频无 b64，体积大）
+  b64?: string // 图片/音频内嵌
+}
+export interface GenQuota {
+  kind: string
+  used: number
+  limit: number
+}
+/* 多媒体异步任务（提交即返回；未完成持 id 轮询） */
+export interface MediaJob {
+  id: string
+  kind: 'image' | 'audio' | 'video' | string
+  status: 'queued' | 'running' | 'done' | 'failed' | string
+  model: string
+  brief: string
+  createdAt: number
+  doneAt?: number
+  files?: GenFile[]
+  quota: GenQuota
+  err?: string
+}
+export interface GenResult {
+  ok: boolean
+  job: MediaJob
+}
+
+/* 三类生成任务的当日配额视图（/api/media/quota；工作台配额条） */
+export type GenQuotaMap = Record<'image' | 'audio' | 'video', GenQuota>
 
 /* 资源页目录树：一层条目 + 目录视角下的 git 仓库工作区变更。git 数组：
    目录在仓库内 = 该仓库一条；容器目录 = 一级子目录里的仓库各一条；
@@ -713,6 +775,10 @@ export const api = {
   saveFile: (path: string, content: string) =>
     post<{ ok: boolean }>('/api/workspace/save', { path, content }),
 
+  /* 目录树新建：dir=true 建文件夹，否则建空文本文件（已存在报错） */
+  createPath: (path: string, dir: boolean) =>
+    post<{ ok: boolean; path: string }>('/api/workspace/create', { path, dir }),
+
   /* 资源页目录树：path 缺省 = 工作目录 */
   tree: (path?: string) =>
     fetch(`/api/workspace/tree${path ? `?path=${encodeURIComponent(path)}` : ''}`).then(json<TreeView>),
@@ -795,21 +861,35 @@ export const api = {
 
   saveModels: (m: ModelsConfig) => post<{ ok: boolean }>('/api/models', m),
 
-  /* 激活主模型（输入框切换器）：唯一启用该条目并重建 agent，下一次输入生效 */
-  activateModel: (name: string) =>
-    post<{ ok: boolean; model: ModelEntry }>('/api/models/activate', { name }),
-
-  /* 审批三档（全局；''=跟随安全配置 | off=无审批 | strict=严格审批），实时生效 */
-  setApproveMode: (mode: '' | 'off' | 'strict') =>
-    post<{ ok: boolean; mode: string }>('/api/settings/approve-mode', { mode }),
-
-  /* 思考强度档位（全局；请求侧实时读取，即改即生效） */
-  setReasoningEffort: (effort: ReasoningEffort) =>
-    post<{ ok: boolean; effort: string }>('/api/settings/reasoning', { effort }),
+  /* 本会话偏好（:id=分支根）：思考档位 / 审批档位 / 主模型，可只传一个字段。
+     模型变更要求会话空闲（409），后端只重建该会话装配 */
+  setSessionPrefs: (rootId: string, patch: SessionPrefsPatch) =>
+    post<SessionPrefs>(`/api/sessions/${encodeURIComponent(rootId)}/prefs`, patch),
 
   /* 直调大模型（OpenAPI 面，与 mcp/call 同级） */
   callModel: (prompt: string, model = '', images: string[] = []) =>
     post<{ result: string }>('/api/open/model/call', { model, prompt, images }),
+
+  /* 多媒体生成模型配置（多媒体页「模型与限额」） */
+  getMedia: () => fetch('/api/media').then(json<MediaConfig>),
+  saveMedia: (m: MediaConfig) => post<{ ok: boolean }>('/api/media', m),
+  /* 当日生成配额（工作台配额条；与任务响应同一计数） */
+  mediaQuota: () => fetch('/api/media/quota').then(json<GenQuotaMap>),
+
+  /* 生成类模型（异步任务：wait_seconds 短等待，未完成持 job.id 轮询；
+     贵价：每日配额统一计数，超限 429；model 省略 = 对应类生效条目） */
+  genImage: (prompt: string, opts: { model?: string; negative_prompt?: string; image_size?: string; batch_size?: number; seed?: number; wait_seconds?: number } = {}) =>
+    post<GenResult>('/api/open/image/call', { prompt, ...opts }),
+
+  genSpeech: (input: string, opts: { model?: string; voice?: string; response_format?: string; speed?: number; wait_seconds?: number } = {}) =>
+    post<GenResult>('/api/open/audio/call', { input, ...opts }),
+
+  /* 视频生成需数分钟：响应基本是执行中的 job，之后 mediaJob 轮询 */
+  genVideo: (prompt: string, opts: { model?: string; duration?: number; resolution?: string; first_frame?: string; last_frame?: string; wait_seconds?: number } = {}) =>
+    post<GenResult>('/api/open/video/call', { prompt, ...opts }),
+
+  mediaJob: (id: string) => fetch(`/api/open/media/jobs/${encodeURIComponent(id)}`).then(json<{ job: MediaJob }>),
+  mediaJobs: (limit = 20) => fetch(`/api/open/media/jobs?limit=${limit}`).then(json<{ jobs: MediaJob[] }>),
 
   getMemoryConfig: () => fetch('/api/memory/config').then(json<MemoryConfig>),
 

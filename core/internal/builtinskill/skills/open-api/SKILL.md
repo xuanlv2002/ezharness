@@ -27,8 +27,15 @@ core 在本机暴露 HTTP API（基址见 system `<local_api>` 段，形如 `htt
 | 端点 | 载荷 | 返回 |
 | --- | --- | --- |
 | `POST /api/open/model/call` | `{prompt, model?(省略=主模型), images?(本机绝对路径≤4张，须视觉模型)}` | `200 {result}`；单次上限 5 分钟不重试 |
+| `POST /api/open/image/call` | `{prompt, model?, negative_prompt?, image_size?("1024x1024"), batch_size?(1-4), seed?, wait_seconds?(0-60，默认10)}` | `200 {ok, job}`（异步任务，见下） |
+| `POST /api/open/audio/call` | `{input(≤5000字), model?, voice?(短名 alex/anna…), response_format?(mp3/wav/opus/pcm), speed?, wait_seconds?}` | 同上 |
+| `POST /api/open/video/call` | `{prompt, model?, duration?(5-15秒), resolution?(480p/768p), first_frame?/last_frame?(URL或本机路径), wait_seconds?}` | 同上（生成需数分钟，响应基本是执行中的 job） |
+| `GET /api/open/media/jobs/:id` | — | `{job}`（done 带 files，failed 带 err） |
+| `GET /api/open/media/jobs?limit=` | — | `{jobs}`（最近任务，新→旧） |
 | `POST /api/open/mcp/call` | `{server, tool, args}`（工具名以清单/schema 为准，勿臆造） | `200 {result}`；未授权 `401+needs_auth` |
 | `GET /api/open/mcp` | — | 已启用服务清单 |
+
+生成类（image/audio/video）是**异步任务**：提交后接口短等待（`wait_seconds`，默认 10 秒上限 60），完成直接带产物；未完成返回执行中的 `job`，持 `job.id` 轮询 `media/jobs/:id`（视频隔 1-2 分钟查一次，不要密轮询）。job 形态：`{id, kind, status(queued|running|done|failed), model, brief, createdAt, files[], err, quota}`——`files[].path` 是产物本机绝对路径（已落盘 `<工作目录>/tmp/`），图片/音频带 `b64`、视频带原始 `url`。贵价模型：**每日配额**统一计数（agent 工具与 OpenAPI 同一份，超限 `429`），失败不扣额；配额在 多媒体·模型与限额 可调。
 
 **错误码**：
 

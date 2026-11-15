@@ -59,12 +59,13 @@ func (c *ChatService) SendSession(rootID, sessionID, text string, refs []hooks.R
 }
 
 func (c *ChatService) send(rootID, expectedID, text string, refs []hooks.RefFile) error {
-	if main := c.Hub.ModelsSnapshot().ActiveMain(); main == nil || main.APIKey == "" {
-		return domain.ErrNoAPIKey
-	}
 	s := c.resolve(rootID)
 	if s == nil {
 		return ErrTopicNotFound
+	}
+	// 发送前按本会话选用的模型校验密钥（模型页的 enabled 仅是新会话默认值）
+	if m := c.Hub.ModelsSnapshot().ResolveMain(s.Sess.Prefs().ActiveModel); m == nil || m.APIKey == "" {
+		return domain.ErrNoAPIKey
 	}
 	if expectedID != "" && s.CurrentID() != expectedID {
 		return domain.ErrSessionChanged
@@ -120,11 +121,11 @@ func (c *ChatService) send(rootID, expectedID, text string, refs []hooks.RefFile
 		s.FinishRun(state, waitErr)
 		cancel() // 释放 turnCtx（决策 select 的 Done 依赖）
 		modelName := ""
-		if m := c.Hub.ModelsSnapshot().ActiveMain(); m != nil {
+		if m := c.Hub.ModelsSnapshot().ResolveMain(s.Sess.Prefs().ActiveModel); m != nil {
 			modelName = m.Name
 		}
 		c.Hub.Stats.AddTurn(usage, modelName)
-		recordUsage(c.Hub, usage) // 主模型条目用量累计并落盘
+		recordUsage(c.Hub, modelName, usage) // 该会话所用模型的条目用量累计并落盘
 		// 轮末刷新线（叶子/活动时间/规模）；未命名线按本代首条真实 user 命名
 		if entry, ok := c.Hub.Topics.Get(s.RootID); ok {
 			msgs := s.History()

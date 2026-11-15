@@ -1,5 +1,6 @@
 <script lang="ts">
   import { tick } from 'svelte'
+  import { findScope } from '../lib/findscope'
 
   /*
   Ctrl+F 页面内查找——纯 DOM 自绘高亮（浏览器 Ctrl+F 的自实现）：
@@ -130,6 +131,8 @@
   }
 
   function openBar() {
+    /* 与资源查看器的文件内查找互斥：两套高亮同时存在会互相干扰 */
+    window.dispatchEvent(new Event('ez-filefind:close'))
     open = true
     requestAnimationFrame(() => {
       inputEl?.focus()
@@ -148,9 +151,15 @@
   }
 
   /* 全局键（capture + stopImmediatePropagation）：Ctrl+F 一律归这里；
-  Esc 只关查找栏，不连坐抽屉的 Esc；F3/Shift+F3 前后跳 */
+  Esc 只关查找栏，不连坐抽屉的 Esc；F3/Shift+F3 前后跳。
+  最近一次指针落在资源查看器里（且当前是可查找的文本 tab）时让位——
+  那边有按文件语义的查找（源码 / 预览 DOM），页面查找搜不到它们。 */
   function onWinKey(e: KeyboardEvent) {
+    const t = e.target as Element | null
+    const targetInPane = !!t && typeof t.closest === 'function' && !!t.closest('.file-pane')
+    const inFile = findScope.enabled && (findScope.file || targetInPane)
     if ((e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === 'f') {
+      if (inFile) return
       e.preventDefault()
       e.stopImmediatePropagation()
       openBar()
@@ -168,6 +177,15 @@
   $effect(() => {
     window.addEventListener('keydown', onWinKey, { capture: true })
     return () => window.removeEventListener('keydown', onWinKey, { capture: true })
+  })
+
+  /* 资源查看器打开文件内查找时收起本栏 */
+  $effect(() => {
+    const onClose = () => {
+      if (open) close()
+    }
+    window.addEventListener('ez-findbar:close', onClose)
+    return () => window.removeEventListener('ez-findbar:close', onClose)
   })
 
   function onInputKey(e: KeyboardEvent) {

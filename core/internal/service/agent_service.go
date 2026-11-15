@@ -60,6 +60,7 @@ type AgentService struct {
 	McpRouter *mcp.Router      // 系统级 MCP router（全局单例注入），可空：不装配 mcp hook
 	McpAuth   *McpAuthManager  // MCP OAuth 管理器（组 OAuth 配置用），可空
 	Callbacks *CallbackService // 定时回调中心，可空：不装配 callback 工具
+	Media     *MediaService    // 生成类模型（image/audio/video），可空：不装配生成工具
 }
 
 /*
@@ -90,12 +91,14 @@ func buildProvider(m *domain.ModelEntry) provider.ModelProvider {
 	}
 }
 
-/* allModelEntries 汇总三槽全部条目（model_call/task 按名取模型的取值域）。 */
+/*
+	allModelEntries 汇总语言模型条目（model_call/task 按名取模型的取值域）。
+
+生成模型在 MediaConfig，与对话模型彻底分离——不进此取值域。
+*/
 func allModelEntries(m domain.ModelsConfig) []domain.ModelEntry {
-	out := make([]domain.ModelEntry, 0, len(m.Main)+len(m.Image)+len(m.Audio))
+	out := make([]domain.ModelEntry, 0, len(m.Main))
 	out = append(out, m.Main...)
-	out = append(out, m.Image...)
-	out = append(out, m.Audio...)
 	return out
 }
 
@@ -190,9 +193,17 @@ func (a *AgentService) Assemble(s *domain.Session, st domain.Settings) {
 		maxIters = 128
 	}
 
-	main := a.Hub.ModelsSnapshot().ActiveMain()
+	prefs := s.Sess.Prefs()
+	main := a.Hub.ModelsSnapshot().ResolveMain(prefs.ActiveModel)
 	if main == nil {
 		main = &domain.ModelEntry{}
+	}
+	// 会话一旦装配就钉住当时生效的模型：之后改全局默认不再牵动它（每个
+	// 会话一套）。被删除/关闭的显式选择不覆盖，重新开启即恢复。
+	if prefs.ActiveModel == "" && main.Name != "" {
+		prefs.ActiveModel = main.Name
+		s.Sess.SetPrefs(prefs)
+		_ = hooks.SavePrefs(context.Background(), s.Fsys, s.ID, prefs)
 	}
 	provider := buildProvider(main)
 
@@ -206,15 +217,15 @@ func (a *AgentService) Assemble(s *domain.Session, st domain.Settings) {
 	} else if snap := s.Snapshot(); snap != nil {
 		sys = hooks.NewSysPrompt(snap.SystemBase, snap.SummaryBlock)
 	} else {
-		sys = hooks.NewSysPrompt(buildSystemBase(ctx, st, s.Fsys, a.Hub.ModelsSnapshot(), s.CurrentID()), "")
+		sys = hooks.NewSysPrompt(buildSystemBase(ctx, st, s.Fsys, a.Hub.ModelsSnapshot(), a.Hub.MediaSnapshot(), s.CurrentID()), "")
 	}
 	s.SetSysP(sys)
 	sys.SetIdentityFn(func() string { return hooks.SessionIdentityBlock(s.ID) }) // 会话身份：ID+存档路径（trim 折叠后的回忆入口）
 	s.Sess.BindSys(sys, main.Name)
 
-	// 审批三档（全局，实时读取即改即生效）：off 全放行 / strict 全审 / '' 跟随安全配置
+	// 审批三档（本会话，实时读取即改即生效）：off 全放行 / strict 全审 / '' 跟随安全配置
 	approver, approveCh := approve.New(func(c *types.ToolCall) bool {
-		switch a.Hub.SettingsSnapshot().ApproveMode {
+		switch s.Sess.Prefs().ApproveMode {
 		case "off":
 			return false
 		case "strict":
@@ -266,7 +277,7 @@ func (a *AgentService) Assemble(s *domain.Session, st domain.Settings) {
 	// 主模型摘要（快照行 + 变更基线共用）：换模型 Reassemble 后读新快照，
 	// 轮首 diff 出「切换模型到 …」与 skill/mcp 同通道进上下文
 	remindHook.SetModelBrief(func() string {
-		m := a.Hub.ModelsSnapshot().ActiveMain()
+		m := a.Hub.ModelsSnapshot().ResolveMain(s.Sess.Prefs().ActiveModel)
 		if m == nil || m.Name == "" {
 			return ""
 		}
@@ -281,18 +292,21 @@ func (a *AgentService) Assemble(s *domain.Session, st domain.Settings) {
 	// 启停基线：停用名单与启用清单互补，区分「新增/移除」与「启用/停用」
 	remindHook.SetMcpOff(func() []string { return mcpOffList(s.Fsys) })
 	remindHook.SetModelOff(func() []string { return modelOffNames(a.Hub.ModelsSnapshot()) })
+	// 多媒体能力清单（三类槽的生效模型）：进 system <media> 固定段；
+	// 启用/关闭/切模型随 resource_change 告知进行中的会话
+	remindHook.SetMedia(func() []hooks.StatusMcp { return mediaStatusList(a.Hub.MediaSnapshot()) })
 	// 计划按分支根持久化（compact 换代不丢），每轮注入 agent_status
 	remindHook.SetPlanRoot(s.RootID)
 	traceHook := hooks.NewTrace(s.Fsys, s.Sess, func() string { return main.Name })
 	trimHook := hooks.NewTrim(provider, traceHook,
-		window*st.TrimPercent/100,             // 水位=窗口百分比，随模型自适应（换模型 Reassemble 重算）
-		window,                                // 模型窗口（整理提示展示水位比例用）
-		s.Fsys, func() string { return s.ID }, // 进度档案 progress.md 落盘
+		window*st.TrimPercent/100, // 水位=窗口百分比，随模型自适应（换模型 Reassemble 重算）
+		window,                    // 模型窗口（整理提示展示水位比例用）
+		func() string { return hooks.SessionArchivePath(s.ID) }, // 摘要里给出原文存档绝对路径
 	)
 
-	// 主模型视觉能力实时判断（换模型 Reassemble 后随设置即时生效）
+	// 本会话主模型视觉能力实时判断（换模型 Reassemble 后随会话偏好即时生效）
 	mainVision := func() bool {
-		m := a.Hub.ModelsSnapshot().ActiveMain()
+		m := a.Hub.ModelsSnapshot().ResolveMain(s.Sess.Prefs().ActiveModel)
 		return m != nil && m.Vision
 	}
 	// read_file 图片分支裁决：开视觉 → 走标记→OnLoop 转图片消息（持久化）；
@@ -306,8 +320,8 @@ func (a *AgentService) Assemble(s *domain.Session, st domain.Settings) {
 
 	// visionguard 最内层（紧贴 provider）：无视觉模型每次实际请求（含 retry）
 	// 剥历史图片消息（请求视图，落盘不动，换回多模态自动恢复）
-	// 思考档位：请求侧覆盖（闭包实时读设置，输入框切换即改即生效）
-	effortWarp := reasoningeffort.Warp(func() string { return a.Hub.SettingsSnapshot().ReasoningEffort })
+	// 思考档位：请求侧覆盖（闭包实时读本会话偏好，输入框切换即改即生效）
+	effortWarp := reasoningeffort.Warp(func() string { return s.Sess.Prefs().ReasoningEffort })
 	// 重试：退避 0.5s 起指数翻倍（0.5/1/2/4/8/16/32/64s，共 8 次退避、
 	// 总尝试 9 次）——并发分身挤出的 429 要等得起；不设总时间上限
 	retryWarp := modelretry.Warp(func(o *modelretry.Options) {
@@ -320,7 +334,7 @@ func (a *AgentService) Assemble(s *domain.Session, st domain.Settings) {
 	// model_call：把一次性子任务（识别/翻译/改写）交给指定模型；视觉任务走这里
 	agentTools = append(agentTools, tools.ModelCall(s.Fsys,
 		func() []domain.ModelEntry { return allModelEntries(a.Hub.ModelsSnapshot()) },
-		func() *domain.ModelEntry { return a.Hub.ModelsSnapshot().ActiveMain() },
+		func() *domain.ModelEntry { return a.Hub.ModelsSnapshot().ResolveMain(s.Sess.Prefs().ActiveModel) },
 		OneShotInvoke))
 	// memory：长期记忆唯一写入通道（提案制，用户在记忆页审阅）
 	agentTools = append(agentTools, tools.Memory(s.Fsys))
@@ -352,6 +366,13 @@ func (a *AgentService) Assemble(s *domain.Session, st domain.Settings) {
 		"mcp_router", hooks.TrimTool, skilltool.ToolName,
 		"model_call", "memory", "plan", "load_app", "term_tab", "term_action",
 		"browser_tab", "browser_action",
+	}
+	// 多媒体统一工具（media）：图片/语音/视频按 action 分派，任务查询同一
+	// 工具。能力未配置/已关闭时工具仍在——调用返回「当前无 xxx 能力」，
+	// 模型如实告知用户；生成是异步任务，提交后短等待，未完成返回任务 id。
+	if a.Media != nil {
+		agentTools = append(agentTools, tools.Media(a.Media))
+		toolNames = append(toolNames, "media")
 	}
 	if a.Callbacks != nil {
 		toolNames = append(toolNames, "callback")
@@ -470,6 +491,9 @@ func (a *AgentService) needsApprove(c *types.ToolCall) bool {
 	}
 	if (name == "browser_tab" || name == "term_tab") && action == "list" {
 		return false // 标签清单只读无副作用，恒免审（new/open/close 才是管控面）
+	}
+	if name == "media" && action != "" && action != "status" && a.Media != nil && !a.Media.HasCapability(action) {
+		return false // 未配置的能力调用只会得到“当前无此能力”的告知，无副作用，不打扰用户审批
 	}
 	rule := findRule(a.Hub.ToolRulesSnapshot(), name, action)
 	if rule == nil {
@@ -735,14 +759,19 @@ func modelOffNames(mc domain.ModelsConfig) []string {
 	return out
 }
 
-/* modelStatusList 汇总可选模型（三槽去重，名字+槽位/视觉能力），供 <models> 段与资源清单共用。 */
+/*
+	modelStatusList 汇总可选对话模型（主槽，名字+视觉能力），供 <models> 段
+
+与资源清单共用。生成类模型不进对话模型清单——它们是「能力槽」，经统一的
+media 工具使用，清单在 <media> 段与 mediaStatusList。
+*/
 func modelStatusList(mc domain.ModelsConfig) []hooks.StatusMcp {
 	seen := map[string]bool{}
 	var out []hooks.StatusMcp
 	for _, slot := range []struct {
 		label   string
 		entries []domain.ModelEntry
-	}{{"对话", mc.Main}, {"图像", mc.Image}, {"语音", mc.Audio}} {
+	}{{"对话", mc.Main}} {
 		for _, e := range slot.entries {
 			if e.Name == "" || seen[e.Name] || e.Disabled {
 				continue
@@ -754,6 +783,32 @@ func modelStatusList(mc domain.ModelsConfig) []hooks.StatusMcp {
 			}
 			out = append(out, hooks.StatusMcp{Name: e.Name, Desc: slot.label + "槽 · " + v})
 		}
+	}
+	return out
+}
+
+/*
+	mediaStatusList 汇总三类多媒体能力的生效模型，供 <media> 段与资源
+
+变更使用；未配置的能力给「（未配置）」占位（三种能力固定列出，模型据此
+直接回复「当前无 X 能力」，不必试探调用）。
+*/
+func mediaStatusList(mc domain.MediaConfig) []hooks.StatusMcp {
+	kinds := []struct {
+		name    string
+		entries []domain.ModelEntry
+	}{
+		{"图片生成", mc.Image},
+		{"语音合成", mc.Audio},
+		{"视频生成", mc.Video},
+	}
+	out := make([]hooks.StatusMcp, 0, len(kinds))
+	for _, k := range kinds {
+		model := "（未启用）"
+		if e := domain.ActiveSlot(k.entries); e != nil && e.Name != "" {
+			model = e.Name
+		}
+		out = append(out, hooks.StatusMcp{Name: k.name, Desc: model})
 	}
 	return out
 }

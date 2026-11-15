@@ -61,7 +61,10 @@ export interface ResTab {
   err: string
   warn: string
   savedAt: string
-  lastMod: string
+  /* 最近一次与磁盘对齐时的指纹（ETag，回退 Last-Modified）：轮询基线 */
+  diskStamp?: string
+  /* 磁盘被外部改过、而本地有未保存修改：内容不被覆盖，保存前弹窗确认 */
+  diskChanged?: boolean
   diff?: boolean // 变更对比视图（文本系 + 所在目录是 git 仓库时可用）
   /* 跨窗口回流后递增：图片 tab 据此重挂（画布状态在内存里，不重挂就
      读不到另一个窗口写回的新图） */

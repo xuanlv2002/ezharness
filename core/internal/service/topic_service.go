@@ -154,7 +154,20 @@ NewBranch 开新线：新 session（SeedKind=new，挂空根）注册并切为�
 索引延迟到首次发言（Send 时落），避免空线粉尘。
 */
 func (t *TopicService) NewBranch() *domain.Session {
+	// 新线继承当前会话的模型/思考/审批偏好；没有来源时用会话零值默认。
+	// 来源没显式选模型时把当时生效的默认模型钉进新会话（每个会话一套，
+	// 之后改全局默认不再牵动它）。
+	var prefs hooks.Prefs
+	if src := t.Hub.ActiveSession(); src != nil {
+		prefs = src.Sess.Prefs()
+	}
+	if prefs.ActiveModel == "" {
+		if m := t.Hub.ModelsSnapshot().ActiveMain(); m != nil {
+			prefs.ActiveModel = m.Name
+		}
+	}
 	s := t.Hub.CreateBranch()
+	s.Sess.SetPrefs(prefs)
 	t.Agents.Assemble(s, t.Hub.SettingsSnapshot())
 	t.Hub.SetActive(s)
 	return s
@@ -192,6 +205,17 @@ func (t *TopicService) Fork(ctx context.Context, sourceID string, anchor int) (*
 	if srcTitle == "" {
 		srcTitle = hooks.FirstUserTitle(src.Messages)
 	}
+	// 偏好以独立 prefs.json 为准（可能比 session.json 新），没有时回落快照字段；
+	// 源没有显式模型时钉住当时生效的默认模型，分叉后与全局默认解耦
+	prefs := hooks.Prefs{ReasoningEffort: src.ReasoningEffort, ApproveMode: src.ApproveMode, ActiveModel: src.ActiveModel}
+	if p, ok := hooks.LoadPrefs(ctx, t.Hub.Fsys, src.ID); ok {
+		prefs = p
+	}
+	if prefs.ActiveModel == "" {
+		if m := t.Hub.ModelsSnapshot().ActiveMain(); m != nil {
+			prefs.ActiveModel = m.Name
+		}
+	}
 	newID := hooks.NewSessionID()
 	now := time.Now().UnixMilli()
 	snap := &hooks.SessionSnap{
@@ -210,10 +234,15 @@ func (t *TopicService) Fork(ctx context.Context, sourceID string, anchor int) (*
 		ForkedFrom:   &hooks.ForkOrigin{SourceID: src.ID, Title: srcTitle, Anchor: anchor},
 		CtxTokens:    src.CtxTokens,
 		CtxWindow:    src.CtxWindow,
+		// 分支继承源会话的模型/思考/审批偏好（与“新会话从跳转来的会话取值”同规）
+		ReasoningEffort: prefs.ReasoningEffort,
+		ApproveMode:     prefs.ApproveMode,
+		ActiveModel:     prefs.ActiveModel,
 	}
 	if err := hooks.SaveSnap(ctx, t.Hub.Fsys, snap); err != nil {
 		return nil, err
 	}
+	_ = hooks.SavePrefs(ctx, t.Hub.Fsys, newID, prefs)
 	// 前缀副本写进 fork 自己的 trace.jsonl：session.json 不落消息，
 	// 重启后 LoadSnap 靠 trace 合成历史，缺这步则 fork 变空壳
 	if err := hooks.AppendMessages(ctx, t.Hub.Fsys, newID, "", snap.Messages); err != nil {
@@ -631,9 +660,9 @@ func (t *TopicService) Compact(ctx context.Context, rootID string) error {
 	st := t.Hub.SettingsSnapshot()
 	info, err := hooks.ArchiveSession(ctx, w.Provider, t.Hub.Fsys, s.Sess, sys,
 		s.Topics, w.Trace, func(nextID string) string {
-			return buildSystemBase(ctx, st, s.Fsys, t.Hub.ModelsSnapshot(), nextID)
+			return buildSystemBase(ctx, st, s.Fsys, t.Hub.ModelsSnapshot(), t.Hub.MediaSnapshot(), nextID)
 		},
-		s.History(), s.ModelView(), ResolveWorkDir(st.WorkDir))
+		s.History(), s.ModelView())
 	if err != nil {
 		return err
 	}

@@ -41,16 +41,17 @@ TrimPercent/WorkDir/CloseToTray/MaxIterations 用指针：区分"未提交该
 常驻 / 0=迭代次数回默认 12）。
 */
 type SettingsView struct {
-	SystemExtra     string  `json:"systemExtra"`
-	TrimPercent     *int    `json:"compactPercent,omitempty"`
-	WorkDir         *string `json:"workDir,omitempty"`
-	CloseToTray     *bool   `json:"closeToTray,omitempty"`
-	PetEnabled      *bool   `json:"petEnabled,omitempty"`
-	MaxIterations   *int    `json:"maxIterations,omitempty"`
-	DebugMode       *bool   `json:"debugMode,omitempty"`
-	ReasoningEffort *string `json:"reasoningEffort,omitempty"` // 思考档位（''=默认 | none | low | high | max）
-	ApproveMode     *string `json:"approveMode,omitempty"`     // 审批档位（''=跟随安全配置 | off=全放行 | strict=全审）
-	OffloadThreshold *int   `json:"offloadThreshold,omitempty"` // 工具结果卸载阈值（字节，0=默认 4096）
+	SystemExtra      string  `json:"systemExtra"`
+	TrimPercent      *int    `json:"compactPercent,omitempty"`
+	WorkDir          *string `json:"workDir,omitempty"`
+	CloseToTray      *bool   `json:"closeToTray,omitempty"`
+	PetEnabled       *bool   `json:"petEnabled,omitempty"`
+	MaxIterations    *int    `json:"maxIterations,omitempty"`
+	DebugMode        *bool   `json:"debugMode,omitempty"`
+	OffloadThreshold *int    `json:"offloadThreshold,omitempty"` // 工具结果卸载阈值（字节，0=默认 4096）
+	GenQuotaImage    *int    `json:"genQuotaImage,omitempty"`    // 生成类每日配额（0=默认 20；image 按张计）
+	GenQuotaAudio    *int    `json:"genQuotaAudio,omitempty"`    // 0=默认 20；audio 按次计
+	GenQuotaVideo    *int    `json:"genQuotaVideo,omitempty"`    // 0=默认 3；video 按次计
 }
 
 /* Get 返回当前行为设置。 */
@@ -59,8 +60,9 @@ func (s *SettingsService) Get() SettingsView {
 	p := st.TrimPercent
 	w := st.WorkDir
 	return SettingsView{SystemExtra: st.SystemExtra, TrimPercent: &p, WorkDir: &w,
-		CloseToTray: &st.CloseToTray, PetEnabled: &st.PetEnabled, DebugMode: &st.DebugMode, ReasoningEffort: &st.ReasoningEffort,
-		ApproveMode: &st.ApproveMode, MaxIterations: &st.MaxIterations, OffloadThreshold: &st.OffloadThreshold} // 回读必须带——漏了它前端回落默认 64，表现为"切页后被重置"
+		CloseToTray: &st.CloseToTray, PetEnabled: &st.PetEnabled, DebugMode: &st.DebugMode,
+		MaxIterations: &st.MaxIterations, OffloadThreshold: &st.OffloadThreshold,
+		GenQuotaImage: &st.GenQuotaImage, GenQuotaAudio: &st.GenQuotaAudio, GenQuotaVideo: &st.GenQuotaVideo} // 回读必须带——漏了它前端回落默认 64，表现为"切页后被重置"
 }
 
 /* Update 保存行为设置并重建 agent（busy 时拒绝；水位随 Reassemble 生效）。 */
@@ -91,17 +93,27 @@ func (s *SettingsService) Update(ctx context.Context, v SettingsView) error {
 		}
 		st.MaxIterations = *v.MaxIterations
 	}
-	if v.ReasoningEffort != nil {
-		if !validReasoningEffort(*v.ReasoningEffort) {
-			return errors.New("思考档位取值非法（空/none/low/medium/high/xhigh/max）")
-		}
-		st.ReasoningEffort = *v.ReasoningEffort
-	}
 	if v.OffloadThreshold != nil {
 		if *v.OffloadThreshold < 0 || *v.OffloadThreshold > 1048576 {
 			return errors.New("工具卸载阈值需在 0-1048576 字节之间（0 = 默认 4096）")
 		}
 		st.OffloadThreshold = *v.OffloadThreshold
+	}
+	for _, q := range []struct {
+		v     *int
+		dst   *int
+		def   int
+		label string
+	}{{v.GenQuotaImage, &st.GenQuotaImage, domain.DefaultGenQuotaImage, "图片"},
+		{v.GenQuotaAudio, &st.GenQuotaAudio, domain.DefaultGenQuotaAudio, "语音"},
+		{v.GenQuotaVideo, &st.GenQuotaVideo, domain.DefaultGenQuotaVideo, "视频"}} {
+		if q.v == nil {
+			continue
+		}
+		if *q.v < 0 || *q.v > 1000 {
+			return fmt.Errorf("%s生成每日配额需在 0-1000 之间（0 = 默认 %d）", q.label, q.def)
+		}
+		*q.dst = *q.v
 	}
 	if st.WorkDir != "" {
 		if abs, err := filepath.Abs(st.WorkDir); err == nil {
@@ -161,20 +173,6 @@ func validReasoningEffort(e string) bool {
 	return false
 }
 
-/* SetReasoningEffort 设置思考档位并落盘（请求侧闭包实时读取，即改即生效，无需重建 agent）。 */
-func (s *SettingsService) SetReasoningEffort(ctx context.Context, effort string) error {
-	if !validReasoningEffort(effort) {
-		return errors.New("思考档位取值非法（空/none/low/medium/high/xhigh/max）")
-	}
-	st := s.Hub.SettingsSnapshot()
-	st.ReasoningEffort = effort
-	if err := SaveSettings(ctx, s.Hub.Fsys, st); err != nil {
-		return err
-	}
-	s.Hub.ApplySettings(st)
-	return nil
-}
-
 /* validApproveMode 校验审批档位：''（跟随安全配置）/ off（全放行）/ strict（全审）。 */
 func validApproveMode(m string) bool {
 	switch m {
@@ -184,21 +182,7 @@ func validApproveMode(m string) bool {
 	return false
 }
 
-/* SetApproveMode 设置审批档位并落盘（工具审批实时读全局快照，即改即生效，无需重建 agent）。 */
-func (s *SettingsService) SetApproveMode(ctx context.Context, mode string) error {
-	if !validApproveMode(mode) {
-		return errors.New("审批档位取值非法（空/off/strict）")
-	}
-	st := s.Hub.SettingsSnapshot()
-	st.ApproveMode = mode
-	if err := SaveSettings(ctx, s.Hub.Fsys, st); err != nil {
-		return err
-	}
-	s.Hub.ApplySettings(st)
-	return nil
-}
-
-/* GetModels 返回模型三槽（空槽归一为 [] 而非 null）。 */
+/* GetModels 返回语言模型列表（空列表归一为 [] 而非 null）。 */
 func (s *SettingsService) GetModels() domain.ModelsConfig {
 	return normalizeModels(s.Hub.ModelsSnapshot())
 }
@@ -208,19 +192,13 @@ func normalizeModels(m domain.ModelsConfig) domain.ModelsConfig {
 	if m.Main == nil {
 		m.Main = []domain.ModelEntry{}
 	}
-	if m.Image == nil {
-		m.Image = []domain.ModelEntry{}
-	}
-	if m.Audio == nil {
-		m.Audio = []domain.ModelEntry{}
-	}
 	return m
 }
 
 /*
-	UpdateModels 保存模型三槽（每槽至多一条启用，main 槽不可为空且必须
+	UpdateModels 保存模型四槽（每槽至多一条启用，main 槽不可为空且必须
 
-有启用条目——能力槽允许全部停用）并重建 agent（busy 时拒绝）。
+有启用条目——能力槽允许全部停用，停用即不装配对应生成工具）并重建 agent（busy 时拒绝）。
 */
 func (s *SettingsService) UpdateModels(ctx context.Context, m domain.ModelsConfig) error {
 	if len(m.Main) == 0 {
@@ -237,7 +215,7 @@ func (s *SettingsService) UpdateModels(ctx context.Context, m domain.ModelsConfi
 		m.Main[0].Enabled = true // 兜底：对话必须由主模型驱动，与 ActiveMain 取首条语义对齐
 	}
 	for slot, entries := range map[string][]domain.ModelEntry{
-		"main": m.Main, "image": m.Image, "audio": m.Audio,
+		"main": m.Main,
 	} {
 		enabled := 0
 		for _, e := range entries {
@@ -253,6 +231,31 @@ func (s *SettingsService) UpdateModels(ctx context.Context, m domain.ModelsConfi
 		return err
 	}
 	s.Hub.ApplyModels(m)
+	return s.Agents.Reassemble(s.Hub.SettingsSnapshot())
+}
+
+/*
+UpdateMedia 保存多媒体生成模型配置（media.json：image/audio/video 三类，
+每类至多一条启用——全部停用即该类工具不装配）并重建 agent（busy 时拒绝）。
+*/
+func (s *SettingsService) UpdateMedia(ctx context.Context, m domain.MediaConfig) error {
+	for kind, entries := range map[string][]domain.ModelEntry{
+		"image": m.Image, "audio": m.Audio, "video": m.Video,
+	} {
+		enabled := 0
+		for _, e := range entries {
+			if e.Enabled {
+				enabled++
+			}
+		}
+		if enabled > 1 {
+			return fmt.Errorf("%s 类至多启用一个模型", kind)
+		}
+	}
+	if err := SaveMediaConfig(ctx, s.Hub.Fsys, m); err != nil {
+		return err
+	}
+	s.Hub.ApplyMedia(m)
 	return s.Agents.Reassemble(s.Hub.SettingsSnapshot())
 }
 
@@ -553,7 +556,7 @@ func (m *MemoryService) DeleteProject(ctx context.Context, id string) error {
 	return nil
 }
 
-/* ── 记忆待确认操作（memory 工具与 distill 落档，通知栏确认）── */
+/* ── 记忆待确认操作（memory 工具落档，通知栏确认）── */
 
 /* MemoryPendingNotices 待确认操作 → 通知条目（跨重启持久）。 */
 func (m *MemoryService) MemoryPendingNotices(ctx context.Context) []domain.PendingNotice {
@@ -795,39 +798,4 @@ func frontmatterName(body string) string {
 		}
 	}
 	return ""
-}
-
-/*
-ActivateMainModel 把 main 槽切换到指定模型（唯一启用该条目）并重建
-agent（busy 时拒绝，运行中的分支保留旧装配到轮结束）。输入框模型
-切换器用：下一次输入即走新模型。
-*/
-func (s *SettingsService) ActivateMainModel(ctx context.Context, name string) (domain.ModelEntry, error) {
-	m := LoadModelsConfig(ctx, s.Hub.Fsys)
-	found := false
-	for i := range m.Main {
-		m.Main[i].Enabled = m.Main[i].Name == name
-		if m.Main[i].Enabled {
-			m.Main[i].Disabled = false
-			found = true
-		}
-	}
-	if !found {
-		return domain.ModelEntry{}, fmt.Errorf("main 槽没有名为 %s 的模型", name)
-	}
-	if err := SaveModelsConfig(ctx, s.Hub.Fsys, normalizeModels(m)); err != nil {
-		return domain.ModelEntry{}, err
-	}
-	s.Hub.ApplyModels(m)
-	if err := s.Agents.Reassemble(s.Hub.SettingsSnapshot()); err != nil {
-		return domain.ModelEntry{}, err
-	}
-	out := domain.ModelEntry{}
-	for _, e := range m.Main {
-		if e.Enabled {
-			out = e
-			break
-		}
-	}
-	return out, nil
 }

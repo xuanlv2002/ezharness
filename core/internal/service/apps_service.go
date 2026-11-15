@@ -48,6 +48,8 @@ type AppEntry struct {
 	Pinned      bool          `json:"pinned"`              // 已钉到桌面小助手
 	Callable    bool          `json:"callable"`            // 应用文档含「Agent 调用」一节
 	Callbacks   []AppCallback `json:"callbacks,omitempty"` // 定时调用端点（回调中心按名引用）
+	BackendLive bool          `json:"backendLive"`         // 后端终端在跑（static 恒 false）
+	TermID      string        `json:"termId,omitempty"`    // 在跑的后端终端 id（跳转联动用；空=未跑）
 }
 
 /* AppCallback 是卡片页展示用的回调端点精简视图（不携带 headers/body）。 */
@@ -85,11 +87,20 @@ type AppsService struct {
 	Hub  *domain.Hub // 钉选列表存全局设置（nil=测试装配，pin 恒 false）
 }
 
-/* List 扫描 apps/ 下的快应用（声明缺失、损坏或入口越界的目录跳过）。 */
+/*
+List 扫描 apps/ 下的快应用（声明缺失、损坏或入口越界的目录跳过）。
+顺带标注后端运行态：终端池里找该来源（快应用·<名>）未退出的会话，
+在跑则带 termId——快应用卡片据此显示后端状态并可跳转终端。
+*/
 func (s *AppsService) List(ctx context.Context) []AppEntry {
 	apps := quickapp.Scan(ctx, s.Fsys)
+	var live []TermInfo
+	if s.Term != nil {
+		live = s.Term.List()
+	}
 	out := make([]AppEntry, 0, len(apps))
 	for _, a := range apps {
+		termID := liveTerm(live, AppOrigin(a.Name))
 		out = append(out, AppEntry{
 			Name:        a.Name,
 			Title:       a.Title,
@@ -97,10 +108,12 @@ func (s *AppsService) List(ctx context.Context) []AppEntry {
 			Version:     a.Version,
 			Kind:        kindOf(a.Spec),
 			Mtime:       appMtime(a.Name + "/" + quickapp.FileName),
-			Icon:        iconURL(a.Name, a.Spec.Icon),
+			Icon:        iconURL(a.Name, a.Icon), // 声明 > 目录探测（quickapp.Load）
 			Pinned:      s.Hub != nil && slices.Contains(s.Hub.SettingsSnapshot().PinnedApps, a.Name),
 			Callable:    a.Callable,
 			Callbacks:   appCallbacks(a.Callbacks),
+			BackendLive: termID != "",
+			TermID:      termID,
 		})
 	}
 	return out
@@ -227,7 +240,7 @@ func appCallbacks(list []quickapp.Callback) []AppCallback {
 	return out
 }
 
-/* iconURL 校验声明的 icon（同 entry 的相对路径约束）并拼成同源 URL；空/越界返回空串。 */
+/* iconURL 校验头像文件名（声明值或目录探测结果，同 entry 的相对路径约束）并拼成同源 URL；空/越界返回空串。 */
 func iconURL(name, icon string) string {
 	if strings.TrimSpace(icon) == "" {
 		return ""

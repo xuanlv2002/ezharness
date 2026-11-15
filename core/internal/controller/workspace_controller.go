@@ -110,8 +110,28 @@ func (c *WorkspaceController) File(g *gin.Context) {
 	零开销，写回后 mtime 变必拿新图）——防启发式缓存直出旧图 */
 	g.Header("Cache-Control", "no-cache")
 	/* 真实 mtime 作 modtime：Last-Modified/304 语义正确，前端文件页
-	轮询 HEAD 对比即可感知磁盘变更（AI write_file 等） */
+	轮询 HEAD 对比即可感知磁盘变更（AI write_file 等）。另给纳秒级
+	ETag：Last-Modified 只到秒，同一秒内的连续写入会被轮询漏掉 */
+	g.Header("ETag", fmt.Sprintf(`"%x-%x"`, info.ModTime().UnixNano(), info.Size()))
 	http.ServeContent(g.Writer, g.Request, filepath.Base(abs), info.ModTime(), f)
+}
+
+/*
+Meta GET /api/workspace/meta?path=<绝对路径>：轻量元数据（大小 + pptx
+幻灯片页数），聊天附件卡的类型化展示用；不读文件内容。
+*/
+func (c *WorkspaceController) Meta(g *gin.Context) {
+	abs, err := c.Svc.Path(g.Query("path"))
+	if err != nil {
+		g.JSON(http.StatusBadRequest, gin.H{"error": "invalid path"})
+		return
+	}
+	m, err := c.Svc.Meta(abs)
+	if err != nil {
+		g.JSON(http.StatusNotFound, gin.H{"error": "file not found"})
+		return
+	}
+	g.JSON(http.StatusOK, m)
 }
 
 /* maxSaveContent 保存内容上限（与前端 file:// 编辑器预检同值）。 */
@@ -145,6 +165,40 @@ func (c *WorkspaceController) Save(g *gin.Context) {
 		return
 	}
 	g.JSON(http.StatusOK, gin.H{"ok": true})
+}
+
+/*
+Create POST /api/workspace/create {path, dir}：资源页目录树的新建
+（dir=true 建目录，否则建空文本文件）。已存在报 409——新建不是覆盖。
+*/
+func (c *WorkspaceController) Create(g *gin.Context) {
+	var req struct {
+		Path string `json:"path"`
+		Dir  bool   `json:"dir"`
+	}
+	if err := g.ShouldBindJSON(&req); err != nil || req.Path == "" {
+		g.JSON(http.StatusBadRequest, gin.H{"error": "invalid body"})
+		return
+	}
+	abs, err := c.Svc.Path(req.Path)
+	if err != nil {
+		g.JSON(http.StatusBadRequest, gin.H{"error": "invalid path"})
+		return
+	}
+	if req.Dir {
+		err = c.Svc.Mkdir(abs)
+	} else {
+		err = c.Svc.CreateFile(g.Request.Context(), abs)
+	}
+	if errors.Is(err, os.ErrExist) {
+		g.JSON(http.StatusConflict, gin.H{"error": "已存在同名文件或目录"})
+		return
+	}
+	if err != nil {
+		g.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	g.JSON(http.StatusOK, gin.H{"ok": true, "path": abs})
 }
 
 /* maxStashSize 单文件暂存上限（20MB）；二进制写回同限。 */

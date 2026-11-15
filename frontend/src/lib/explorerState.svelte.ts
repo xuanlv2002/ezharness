@@ -30,24 +30,15 @@ export function statusOf(path: string): string {
 }
 
 /*
-目录树面板显隐与摆位：开关在「资源」标题栏（抽屉模式，WorkspaceDrawer
-渲染）；弹出独立窗没有标题栏，ResourcePane 面板内自留开关。open 不跨
-会话记忆——每次进入资源抽屉默认收起（ResourcePane 激活时收起），手动
-展开后当次有效。docked = 钉住（面板成为抽屉左侧实体栏，占据布局宽）；
-否则悬浮盖在预览区上，摆位记忆在 localStorage。
+目录树面板显隐：开关在「资源」标题栏（抽屉模式，WorkspaceDrawer 渲染）；
+弹出独立窗没有标题栏，ResourcePane 面板内自留开关。目录栏固定钉在左侧
+（资源页 grid 左列，占据布局宽，不做悬浮覆盖），open 只控制展开/收起。
+open 不跨会话记忆——每次进入资源抽屉默认收起，手动展开后当次有效。
 */
 export const explorerUI = $state({
   open: false,
-  /* 默认钉住：悬浮盖住预览区反而碍事（资源抽屉有最小宽，横向滚动
-     本就可看）；明确切回悬浮（存 '0'）的尊重其选择 */
-  docked: localStorage.getItem('ez-explorer-docked') !== '0',
 })
 
 export function setExplorerOpen(v: boolean) {
   explorerUI.open = v
-}
-
-export function setExplorerDocked(v: boolean) {
-  explorerUI.docked = v
-  localStorage.setItem('ez-explorer-docked', v ? '1' : '0')
 }

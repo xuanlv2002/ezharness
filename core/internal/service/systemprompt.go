@@ -5,10 +5,11 @@ systemprompt 拥有 system base 的全部段文本。分层契约（防漂移的
 函数；跨段只允许标签名引用（"纪律见 <action>"），不允许内容复述。
 工具机制不进 base：terminal、term_ 系、browser_ 系、sleep 的用法在
 各自工具描述里（随工具代码更新），OpenAPI 用法在 open-api 技能，
-trim 等另有 tool-guide——改这些永远不用回来改 base。
+多媒体工具/接口用法在 media 技能，trim 等另有 tool-guide——改这些
+永远不用回来改 base。
 
 段序固定：开篇身份 → SystemExtra → <workspace> 环境 → <memory> 记忆 →
-<skills>/<apps>/<models>/<mcp> 资源清单 → <local_api> 本机 API →
+<skills>/<apps>/<media>/<models>/<mcp> 资源清单 → <local_api> 本机 API →
 <action> 行动准则 → <output> 输出规范。base 只在 session 创建时组装一次
 （同 session 不变）；skill 全文与记忆细节不注入（模型按需用文件工具读取），
 清单变更要等下个 session 才进 system，期间由 remind 变更段的
@@ -37,7 +38,7 @@ import (
 )
 
 /* buildSystemBase 按 fixed 段序拼装 base，空段（未配置/无清单）自动跳过。 */
-func buildSystemBase(ctx context.Context, st domain.Settings, fsys osfs.OS, mc domain.ModelsConfig, sessionID string) string {
+func buildSystemBase(ctx context.Context, st domain.Settings, fsys osfs.OS, mc domain.ModelsConfig, mediaCfg domain.MediaConfig, sessionID string) string {
 	dataDir, _ := os.Getwd() // 进程 cwd 即数据目录（启动时 chdir）
 	workDir := ResolveWorkDir(st.WorkDir)
 	sections := []string{
@@ -48,6 +49,7 @@ func buildSystemBase(ctx context.Context, st domain.Settings, fsys osfs.OS, mc d
 		skillsSection(ctx, fsys, st, dataDir),
 		renderAppsSection(ctx, fsys),
 		callbacksSection(ctx, fsys, sessionID),
+		mediaSection(mediaCfg),
 		modelsSection(mc),
 		mcpSection(fsys),
 		localAPISection(),
@@ -69,7 +71,7 @@ openingSection 开篇：身份一句 + 分段地图一句。具体规则零复�
 */
 func openingSection() string {
 	return "你是 ezharness——持续陪伴用户的设备级 agent，可全权操作本机文件与命令，能用工具就直接动手。\n" +
-		"分段地图：<workspace> 环境与路径纪律 / <memory> 长期记忆 / <skills>·<apps>·<callbacks>·<models>·<mcp> 资源清单 / " +
+		"分段地图：<workspace> 环境与路径纪律 / <memory> 长期记忆 / <skills>·<apps>·<callbacks>·<media>·<models>·<mcp> 资源清单 / " +
 		"<local_api> 本机 API / <action> 行动准则 / <output> 输出规范。"
 }
 
@@ -88,6 +90,9 @@ func workspaceSection(dataDir, workDir string) string {
 		"# - " + p("apps") + "  快应用——apps/<名>/，构建约定见 quick-app 技能\n" +
 		"# 路径纪律：文件读写与命令一律绝对路径；用户给了路径就把检索与读写限定在该路径内，没给路径就只在上面的可写位置内；" +
 		"禁止对盘符根、用户主目录、桌面等宽泛位置做递归搜索或遍历（全盘 find/grep 极易超时卡死）；缺少路径信息先问用户，不要自行上溯目录猜路径；临时文件不要丢在工作目录外\n" +
+		"# 任务归档：一个任务一个目录——没有既定归属的新产物（草稿/脚本/生成文件/命令中间产物）统一放 工作目录/tasks/<YYYYMMDD>-<任务英文短名>/（如 tasks/20261115-img-resize/），" +
+		"动笔产出文件前先建好该目录再往里写，不要把文件散丢在工作目录根部；用户给了目标路径、或任务本来就在改既有项目文件的按用户路径不动；" +
+		"terminal 的重定向输出也写进该目录（绝对路径，cd 不跨命令保留）；任务收尾交付该目录或其中关键文件的入口\n" +
 		"# 禁区：数据目录下的配置与索引文件（settings、models、stats、topics、callbacks 等）由应用管理，不要改写；" +
 		"其他历史会话的存档不要主动翻阅，确有需要先问用户；超长工具结果会被系统自动卸载为文件，按工具结果内的提示取回，不要主动浏览卸载区\n" +
 		"</workspace>"
@@ -256,6 +261,35 @@ func callbacksSection(ctx context.Context, fsys osfs.OS, sessionID string) strin
 	return b.String()
 }
 
+/*
+mediaSection 多媒体能力段：图片/语音/视频三类能力与当前生效模型。未配置
+的能力显式标注「当前无此能力」——模型直接如实回复，不试探调用。生成与
+查询统一走 media 工具；参数、成本与 OpenAPI 用法唯一归属 media 技能
+（机制不在此复述）。三种能力固定列出，轮内启停/切模型见 <resource_change>。
+*/
+func mediaSection(mc domain.MediaConfig) string {
+	kinds := []struct {
+		name    string
+		entries []domain.ModelEntry
+	}{
+		{"图片生成", mc.Image},
+		{"语音合成", mc.Audio},
+		{"视频生成", mc.Video},
+	}
+	var b strings.Builder
+	b.WriteString("<media>\n（当前多媒体生成能力：只有标为可用的才可调用；未启用的（未配置或已关闭）直接如实回复“当前无某能力”，不要试探。" +
+		"生成与任务查询统一走 media 工具，参数/成本先 load_skill media；轮内启用/关闭/换模型见 <resource_change>）")
+	for _, k := range kinds {
+		if e := domain.ActiveSlot(k.entries); e != nil && e.Name != "" {
+			b.WriteString("\navailable_media: " + k.name + " - " + e.Name)
+		} else {
+			b.WriteString("\navailable_media: " + k.name + " - （未启用，当前无此能力）")
+		}
+	}
+	b.WriteString("\n</media>")
+	return b.String()
+}
+
 /* modelsSection 模型清单段：task 与 model_call 的 model 参数取值唯一归属。无模型返回空。 */
 func modelsSection(mc domain.ModelsConfig) string {
 	ms := modelStatusList(mc)
@@ -317,7 +351,7 @@ func actionSection() string {
 		"- 检索网页、查资料、操作网页用共享浏览器（browser_tab / browser_action，真实 Chromium，用户实时共见可直接接管）；与 terminal 互补——一个管本机命令，一个管真实浏览器。\n" +
 		"4. MCP：内置工具够用就不绕道；用前先 tool_list 拉取该服务的工具清单再 tool_call，工具名与参数以 schema 为准，不臆造。\n" +
 		"5. 可并行、相互独立、或会产生大量中间输出的子任务，交 task 分身执行（工具集相同、过程互不干扰，结果直接回传），主对话只接结论；任务描述必须自包含（分身看不到本轮对话之外的语境）：写清目标、输入、涉及的文件绝对路径与期望的返回格式；无依赖的子任务一次并行发多个。\n" +
-		"6. 交付与连续性：任务收尾把成果入口用 <$supper_url> 交付（格式见 <output>），产物放工作目录；上下文被整理后从进度档案恢复现场接着干（路径见 <session> 块），长任务到阶段性节点也可主动把进度补写进该档案。\n" +
+		"6. 交付与连续性：任务收尾把成果入口用 <$supper_url> 交付（格式见 <output>），产物按 <workspace> 任务归档放本任务的 tasks/ 目录、交付其入口；上下文被整理后按衔接摘要继续当前任务，不复述已折叠的过程细节。\n" +
 		"7. 重试纪律：同一手段连续 2 次无可见效果立即停——换手段（如滚不动换 key 翻页）或先建可观测信号（读返回的 url/title/scrollY、截图）确认状态再动；" +
 		"调试先求\"能看见状态\"，再动目标；同一子任务调用约 10 次仍无进展即停手，向用户汇报现状与已试手段；长任务每几步用一句话报进度，不让用户猜你在干嘛。\n" +
 		"8. 界面定位不要用物理像素坐标：截图、窗口位置与缩放会随 DPI、多显示器和窗口移动漂移，模型从截图估算坐标也远不准确，靠坐标点击极易点偏或直接报错。能命令/脚本完成的就不动界面；需要适配缩放时用 DPI/视口信息算尺寸可以，但界面操作一律走 DOM、选择器或键盘语义；截图只用来确认状态和布局，不用来推算点击位置。\n" +

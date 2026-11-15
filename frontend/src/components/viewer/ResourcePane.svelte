@@ -1,11 +1,12 @@
 <script lang="ts">
-  import { onDestroy, onMount } from 'svelte'
+  import { onDestroy, onMount, tick, untrack } from 'svelte'
   import { api } from '../../lib/api'
   import { fileBaseName, normFileKey } from '../../lib/textfile'
   import { store } from '../../lib/store.svelte'
   import { filePane } from '../../lib/filePaneState'
   import { paneTabs } from '../../lib/paneTabs.svelte'
   import { explorer, explorerUI, repoOf, setExplorerOpen } from '../../lib/explorerState.svelte'
+  import { findScope } from '../../lib/findscope'
   import { kindOf, VIEWERS, MAX_BYTES, type ResTab } from './registry'
   import KindIcon from './KindIcon.svelte'
   import ExplorerTree from './ExplorerTree.svelte'
@@ -14,6 +15,7 @@
   import HtmlViewer from './viewers/HtmlViewer.svelte'
   import MarkdownViewer from './viewers/MarkdownViewer.svelte'
   import DiffViewer from './viewers/DiffViewer.svelte'
+  import FileFindBar from './FileFindBar.svelte'
 
   /*
   工作区抽屉·资源查看器（file:// 的消费端，通用框架）：多 tab 按扩展名
@@ -24,8 +26,10 @@
   文本系（text/md/html 原文）单编辑器+tab 状态数据化（单实例重绑）；
   图片 tab per-tab 实例保活（画布状态不可数据化，改动防抖自动写回）。
   状态条统一：保存/Ctrl+S、添加到对话（纯文件引用 chip，经
-  <reference_file> 告知模型）。磁盘变更：激活时每 2s HEAD 轮询
-  Last-Modified（AI 改盘后），干净 tab 自动重载，dirty tab 只提示。
+  <reference_file> 告知模型）。磁盘是唯一真身（VS Code 式）：激活时
+  每 2s HEAD 轮询全部文本 tab 的 Last-Modified——没有未保存修改的
+  tab 直接跟随磁盘重载（AI 改完即显示新内容，无需刷新钮）；有未保存
+  修改的 tab 保留本地内容并记 diskChanged，保存时弹窗确认是否覆盖。
   */
 
   /* push 仅弹出窗口传入：状态变化即上报主进程（关窗回流取最新快照）。
@@ -38,22 +42,159 @@
   let pendingClose = $state('')
   let sending = $state(false)
   let textViewer = $state<TextViewer>()
+  let mdViewer = $state<MarkdownViewer>()
+  let htmlViewer = $state<HtmlViewer>()
+  let findBar = $state<FileFindBar>()
 
   const tab = $derived(tabs.find((t) => t.key === current))
   const dirty = $derived(!!tab && tab.kind !== 'image' && tab.content !== tab.saved)
-  const textish = $derived(!!tab && ['text', 'markdown', 'html'].includes(tab.kind))
-  /* 目录钉住展开时内容满铺（grid 右列）：查看器内部不再叠一层圆角卡片 */
-  const filePaneFlush = $derived(explorerUI.docked && explorerUI.open)
+  const textish = $derived(!!tab && isTextishKind(tab.kind))
+  /* 目录栏展开时内容满铺（grid 右列）：查看器内部不再叠一层圆角卡片 */
+  const filePaneFlush = $derived(explorerUI.open)
   const imageTabs = $derived(tabs.filter((t) => t.kind === 'image'))
   /* 二进制类(pdf/媒体/表格/文档/幻灯片/兜底)统一从 VIEWERS 表取组件即挂 */
   const binViewer = $derived(tab && !textish && tab.kind !== 'image' ? VIEWERS[tab.kind] : undefined)
 
+  /* ── 当前文件内查找（Ctrl+F）──
+     焦点在资源页里时由本组件接管：全局页面查找（FindBar）只管聊天列/
+     页面 DOM，搜不到 textarea 正文与预览 iframe。这里按当前 viewer 的
+     语义去找——text/md/html 原文搜源码，md/html 预览搜渲染后 DOM。 */
+  let findOpen = $state(false)
+  let findQuery = $state('')
+  let findIdx = $state(0)
+  let findCount = $state(0)
+  let findTabKey = ''
+
+  /* 当前 tab 对应的查找实现；差异对比/图片/二进制没有文件内查找 */
+  const fileFinder = $derived.by(() => {
+    if (!tab || !textish || tab.diff) return null
+    if (tab.kind === 'text') return textViewer
+    if (tab.kind === 'markdown') return mdViewer
+    if (tab.kind === 'html') return htmlViewer
+    return null
+  })
+  const canFind = $derived(!!active && !!fileFinder)
+
+  function runFind(q: string, i = 0): void {
+    findQuery = q
+    const r = fileFinder?.find(q, i)
+    findCount = r?.count ?? 0
+    findIdx = r?.index ?? 0
+  }
+
+  async function openFind(): Promise<void> {
+    if (!canFind) return
+    /* 页面查找与文件内查找互斥：两套高亮同时存在会互相干扰 */
+    window.dispatchEvent(new Event('ez-findbar:close'))
+    findOpen = true
+    await tick()
+    findBar?.focus()
+    if (findQuery.trim()) runFind(findQuery, findIdx)
+  }
+
+  function closeFind(): void {
+    findOpen = false
+    findQuery = ''
+    findCount = 0
+    findIdx = 0
+    fileFinder?.clearFind()
+  }
+
+  function stepFind(back: boolean): void {
+    if (!findCount) return
+    runFind(findQuery, findIdx + (back ? -1 : 1))
+  }
+
+  /* tab 切换 / 视图变得不可查找：收起查找条（旧文件的命中不跟过来） */
+  $effect(() => {
+    const k = tab?.key ?? ''
+    if (!canFind) {
+      if (findOpen) closeFind()
+      findTabKey = k
+      return
+    }
+    if (k === findTabKey) return
+    findTabKey = k
+    if (findOpen) closeFind()
+  })
+
+  /* 页面查找（Ctrl+F 在聊天列）打开时收起文件内查找 */
+  $effect(() => {
+    const onClose = () => {
+      if (findOpen) closeFind()
+    }
+    window.addEventListener('ez-filefind:close', onClose)
+    return () => window.removeEventListener('ez-filefind:close', onClose)
+  })
+
+  /* 可查找状态同步给共享标志（FindBar 据此让位） */
+  $effect(() => {
+    findScope.enabled = active && canFind
+    if (!findScope.enabled) findScope.file = false
+  })
+
+  /*
+  Ctrl+F 归属判定：两处都在 window 捕获阶段监听，注册顺序不可依赖，
+  统一走 findScope——最近一次指针落在资源页内（或焦点就在页内）时归
+  文件内查找。点在预览正文这类不可聚焦处时焦点还在 body，单看
+  activeElement 会漏判，所以以指针位置为主。
+  */
+  function onWinKey(e: KeyboardEvent): void {
+    if (!active || !findScope.enabled) return
+    const t = e.target as Element | null
+    const targetInPane = !!t && typeof t.closest === 'function' && !!t.closest('.file-pane')
+    if (!findScope.file && !targetInPane) return
+    if ((e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === 'f') {
+      if (!canFind) return
+      e.preventDefault()
+      e.stopImmediatePropagation()
+      void openFind()
+      return
+    }
+    if (!findOpen) return
+    if (e.key === 'Escape') {
+      e.preventDefault()
+      e.stopImmediatePropagation()
+      closeFind()
+    } else if (e.key === 'F3') {
+      e.preventDefault()
+      e.stopImmediatePropagation()
+      stepFind(e.shiftKey)
+    }
+  }
+
+  $effect(() => {
+    const onDown = (e: PointerEvent) => {
+      const t = e.target as Element | null
+      findScope.file = !!t && typeof t.closest === 'function' && !!t.closest('.file-pane')
+    }
+    /* 键盘 Tab 走焦点变化：焦点离开资源页即撤销指针归属 */
+    const onFocus = (e: FocusEvent) => {
+      const t = e.target as Element | null
+      if (!t || t === document.body || typeof t.closest !== 'function') return
+      findScope.file = !!t.closest('.file-pane')
+    }
+    window.addEventListener('pointerdown', onDown, { capture: true })
+    window.addEventListener('focusin', onFocus)
+    window.addEventListener('keydown', onWinKey, { capture: true })
+    return () => {
+      window.removeEventListener('pointerdown', onDown, { capture: true })
+      window.removeEventListener('focusin', onFocus)
+      window.removeEventListener('keydown', onWinKey, { capture: true })
+    }
+  })
+
   function blankTab(part: Partial<ResTab>): ResTab {
     return {
       key: '', kind: 'text', name: '', content: '', saved: '',
-      loading: false, err: '', warn: '', savedAt: '', lastMod: '',
+      loading: false, err: '', warn: '', savedAt: '', diskStamp: '', diskChanged: false,
       ...part,
     }
+  }
+
+  /* 文本系 = 有可编辑缓冲、能按盘重载的三种 kind（目录/差异/预览共用） */
+  function isTextishKind(kind: ResTab['kind']): boolean {
+    return kind === 'text' || kind === 'markdown' || kind === 'html'
   }
 
   /* 跨窗口快照：tab 状态（含当前选中）整体搬运——草稿也是一张 tmp 图片，
@@ -112,9 +253,12 @@
     current = t.key
   })
 
-  /* 磁盘变更轮询：仅资源页激活且当前 tab 是文本系时进行 */
+  /* 磁盘变更轮询：资源页激活期间进行；激活瞬间先补一轮（关闭期间的
+     外部修改回来即见） */
   $effect(() => {
     if (!active) return
+    /* untrack：pollDisk 同步段会读 tabs 状态，不能让它成为 effect 依赖 */
+    void untrack(() => pollDisk())
     const id = setInterval(() => void pollDisk(), 2000)
     return () => clearInterval(id)
   })
@@ -151,7 +295,7 @@
         }
         cur.content = text
         cur.saved = text
-        cur.lastMod = r.headers.get('last-modified') || ''
+        cur.diskStamp = diskStampOf(r)
       } catch (e) {
         cur.err = `文件读取失败：${(e as Error).message}`
       } finally {
@@ -181,34 +325,105 @@
     if (tab && textish) tab.diff = !tab.diff
   }
 
-  /* 干净 tab 磁盘有更新时自动重载（AI 改盘后）；dirty 只提示不覆盖 */
-  async function pollDisk() {
-    const t = tab
-    if (!t || !t.path || t.kind !== 'text' || t.loading || t.err) return
+  /* 磁盘指纹：优先 ETag（后端按纳秒 mtime+size 生成，同一秒内连续
+     写入也分辨得出），老服务回退 Last-Modified */
+  function diskStampOf(r: Response): string {
+    return r.headers.get('etag') || r.headers.get('last-modified') || ''
+  }
+
+  /* HEAD 取磁盘指纹（本地文件服务；失败返回 null，本轮跳过） */
+  async function headStamp(path: string): Promise<string | null> {
     try {
-      const h = await fetch('/api/workspace/file?path=' + encodeURIComponent(t.path), {
+      const h = await fetch('/api/workspace/file?path=' + encodeURIComponent(path), {
         method: 'HEAD',
         cache: 'no-store',
       })
-      if (!h.ok) return
-      const lm = h.headers.get('last-modified') || ''
-      if (!lm || lm === t.lastMod) return
-      t.lastMod = lm
-      if (t.content !== t.saved) {
-        t.warn = '磁盘文件已被更新（AI 修改）：未自动加载，保存将覆盖'
+      return h.ok ? diskStampOf(h) : null
+    } catch {
+      return null
+    }
+  }
+
+  /* 磁盘变更轮询（全部文本 tab，不只当前——切回来即新内容）：
+     干净 tab 自动重载；有未保存修改的 tab 只记 diskChanged 保留本地
+     内容，保存时再弹窗确认覆盖。轮询本身不并发。 */
+  let polling = false
+
+  async function pollDisk() {
+    if (polling) return
+    polling = true
+    try {
+      for (const t of tabs) {
+        if (!t.path || t.loading || t.err || !isTextishKind(t.kind)) continue
+        /* 用户已把内容改回与磁盘一致：视作干净，下一轮跟盘 */
+        if (t.diskChanged && t.content === t.saved) {
+          t.diskChanged = false
+          t.diskStamp = ''
+        }
+        const stamp = await headStamp(t.path)
+        if (stamp === null || !stamp || stamp === t.diskStamp) continue
+        t.diskStamp = stamp
+        if (t.content !== t.saved) {
+          t.diskChanged = true
+          continue
+        }
+        await reloadContent(t, t.key === current)
+      }
+    } finally {
+      polling = false
+    }
+  }
+
+  /* 从磁盘重读正文回填干净 tab。keepScroll：保当前编辑器滚动位置，
+     读期间用户开始输入（内容不再等于已保存）则放弃本次覆盖。 */
+  async function reloadContent(t: ResTab, keepScroll: boolean) {
+    if (!t.path) return
+    const st = textViewer?.scrollTop() ?? 0
+    const baseline = t.saved
+    try {
+      const r = await fetch('/api/workspace/file?path=' + encodeURIComponent(t.path), { cache: 'no-store' })
+      if (!r.ok) {
+        t.err = `文件读取失败（${r.status}）`
         return
       }
-      const y = await fetch('/api/workspace/file?path=' + encodeURIComponent(t.path), { cache: 'no-store' })
-      if (!y.ok) return
-      const text = await y.text()
-      const st = textViewer?.scrollTop() ?? 0
+      const text = await r.text()
+      if (t.content !== t.saved) {
+        t.diskChanged = true
+        return
+      }
+      /* 读盘期间用户保存过：以刚保存的内容为准，下一轮再对齐磁盘 */
+      if (t.saved !== baseline) return
+      if (text.length > MAX_BYTES) {
+        t.err = '文件过大（>2MB），不支持在线编辑'
+        return
+      }
       t.content = text
       t.saved = text
-      t.savedAt = new Date().toTimeString().slice(0, 5)
-      requestAnimationFrame(() => textViewer?.restoreScroll(st))
-    } catch {
-      /* 轮询失败静默，下轮再试 */
+      t.diskStamp = diskStampOf(r)
+      t.savedAt = ''
+      t.diskChanged = false
+      t.warn = text.includes('\uFFFD') ? '文件疑似非 UTF-8 编码：显示可能乱码，保存后会转为 UTF-8' : ''
+      if (keepScroll) requestAnimationFrame(() => textViewer?.restoreScroll(st))
+    } catch (e) {
+      t.err = `文件读取失败：${(e as Error).message}`
     }
+  }
+
+  /* 覆盖确认（磁盘被外部修改 + 本地有未保存修改）：保存前弹窗，
+     与 VS Code「文件已在磁盘上更改」同语义——覆盖 / 取消 */
+  let overwrite = $state<{ tab: ResTab; resolve: (ok: boolean) => void } | null>(null)
+
+  function askOverwrite(t: ResTab): Promise<boolean> {
+    return new Promise((resolve) => {
+      overwrite?.resolve(false)
+      overwrite = { tab: t, resolve }
+    })
+  }
+
+  function answerOverwrite(ok: boolean) {
+    const cur = overwrite
+    overwrite = null
+    cur?.resolve(ok)
   }
 
   function closeTab(key: string) {
@@ -281,14 +496,27 @@
     if (current === key) current = tabs[Math.min(i, tabs.length - 1)]?.key ?? ''
   }
 
-  async function saveTab(t: ResTab): Promise<boolean> {
+  /* 保存写回。写前先比一次磁盘指纹（轮询有间隔，外部修改可能落在
+     两者之间）：与本地基准不同 = 别处改过，弹窗确认后才覆盖。force
+     供确认后直写。写成功立即以新指纹为基准，下一轮轮询不会把自己的
+     写入误报成「磁盘更新」。 */
+  async function saveTab(t: ResTab, force = false): Promise<boolean> {
     if (!t.path || t.loading || t.content === t.saved) return true
+    if (!force) {
+      if (t.diskStamp) {
+        const stamp = await headStamp(t.path)
+        if (stamp && stamp !== t.diskStamp) t.diskChanged = true
+      }
+      if (t.diskChanged && !(await askOverwrite(t))) return false
+    }
+    if (!tabs.some((x) => x.key === t.key)) return false // 确认期间 tab 被关掉
     try {
       await api.saveFile(t.path, t.content)
       t.saved = t.content
       t.savedAt = new Date().toTimeString().slice(0, 5)
       t.err = ''
-      t.lastMod = '' /* 下一轮轮询重新建档，避免自己的写入误报"磁盘更新" */
+      t.diskChanged = false
+      t.diskStamp = (await headStamp(t.path)) ?? ''
       return true
     } catch (e) {
       t.err = `保存失败：${(e as Error).message}`
@@ -322,15 +550,22 @@
   }
 </script>
 
-<svelte:window onpointerdown={onGlobalDown} onkeydown={(e) => e.key === 'Escape' && (menu = null)} />
+<svelte:window
+  onpointerdown={onGlobalDown}
+  onkeydown={(e) => {
+    if (e.key !== 'Escape') return
+    menu = null
+    if (overwrite) answerOverwrite(false)
+  }}
+/>
 
-<div class="file-pane" class:docked={explorerUI.docked} class:treeopen={explorerUI.open && explorerUI.docked}>
+<div class="file-pane" class:treeopen={explorerUI.open}>
   <!-- 目录面板：悬浮（absolute 盖在预览区左侧）或钉住（grid 左列整列
        全高，tab 条与内容只占右列）。挂在这里而非 .body——钉住时 tab 条
        不再压在目录头上，树与内容等高。常驻挂载不随显隐销毁（展开/收起
        是动画不是重挂，目录缓存也因此秒开） -->
   <!-- 收起时不轮询（常驻挂载后 active 会一直为真，须与显隐合取） -->
-  <ExplorerTree active={active && explorerUI.open} open={explorerUI.open} docked={explorerUI.docked} onopen={openFromTree} onclose={() => setExplorerOpen(false)} />
+  <ExplorerTree active={active && explorerUI.open} open={explorerUI.open} onopen={openFromTree} onclose={() => setExplorerOpen(false)} />
   {#if !hosted || tabs.length}
     <div class="strip">
       {#if !hosted}
@@ -385,9 +620,17 @@
     {:else if tab && tab.kind === 'text'}
       <TextViewer bind:this={textViewer} {tab} {active} onSave={() => void saveTab(tab)} />
     {:else if tab && tab.kind === 'markdown'}
-      <MarkdownViewer {tab} {active} flush={filePaneFlush} onSave={() => void saveTab(tab)} />
+      <MarkdownViewer bind:this={mdViewer} {tab} {active} flush={filePaneFlush} onSave={() => void saveTab(tab)} />
     {:else if tab && tab.kind === 'html'}
-      <HtmlViewer {tab} {active} flush={filePaneFlush} onSave={() => void saveTab(tab)} />
+      <HtmlViewer
+        bind:this={htmlViewer}
+        {tab}
+        {active}
+        flush={filePaneFlush}
+        onSave={() => void saveTab(tab)}
+        onfind={() => void openFind()}
+        onfindclose={closeFind}
+      />
     {:else if tab && binViewer}
       {@const Viewer = binViewer}
       <Viewer {tab} {active} />
@@ -406,6 +649,21 @@
         {/key}
       </div>
     {/each}
+    <!-- 文件内查找条：浮在内容右上；md/html 有「预览/原文」工具条，
+        往下让一行，不压在分段控件/提示上 -->
+    {#if findOpen && canFind}
+      <div class="findslot" class:belowbar={tab?.kind === 'markdown' || tab?.kind === 'html'}>
+        <FileFindBar
+          bind:this={findBar}
+          query={findQuery}
+          count={findCount}
+          index={findIdx}
+          onquery={(q) => runFind(q, 0)}
+          onstep={stepFind}
+          onclose={closeFind}
+        />
+      </div>
+    {/if}
   </div>
 
   {#if tab && textish}
@@ -440,6 +698,7 @@
       <span class="stat">
         {#if tab.err}<i class="bad">{tab.err}</i>
         {:else if tab.warn}<i class="bad">{tab.warn}</i>
+        {:else if tab.diskChanged && dirty}<i class="bad">磁盘已被外部修改 · 保存将覆盖</i>
         {:else if dirty}<i>未保存</i>
         {:else if tab.savedAt}<i>已保存 {tab.savedAt}</i>
         {/if}
@@ -447,6 +706,18 @@
       <span class="tip">
         {tab.kind === 'text' ? '编辑后 Ctrl+S 保存写回' : '可切换预览/原文'}
       </span>
+    </div>
+  {/if}
+
+  <!-- 覆盖确认：磁盘在编辑期间被外部修改，保存会盖掉新内容 -->
+  {#if overwrite}
+    <div class="mask" role="presentation" onclick={() => answerOverwrite(false)}></div>
+    <div class="overmodal" role="alertdialog" aria-modal="true" aria-label="确认覆盖磁盘文件">
+      <p class="otext">「{overwrite.tab.name}」已在磁盘上被修改，保存会覆盖这些新内容。</p>
+      <div class="oacts">
+        <button class="ghost" onclick={() => answerOverwrite(false)}>取消</button>
+        <button class="over" onclick={() => answerOverwrite(true)}>覆盖保存</button>
+      </div>
     </div>
   {/if}
 </div>
@@ -462,13 +733,18 @@
 {/if}
 
 <style>
+  /* 资源页恒为 grid：目录栏占左列整列全高（宽度由它自己的收放动画
+     控制），tab 条/内容/状态条只占右列；树收起后左列宽 0，右列拿满。
+     grid 不能随 open 切回 flex——树收起瞬间会改变整页的布局模式 */
   .file-pane {
-    position: relative; /* 目录悬浮面板（absolute）的定位上下文 */
-    display: flex;
-    flex-direction: column;
+    position: relative;
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr) auto;
+    gap: 0;
+    row-gap: 8px;
     height: 100%;
     min-height: 0;
-    gap: 8px;
   }
   /* 目录面板开关：tab 条最左的常驻小钮（面板本体不再点外部即收，
      这里是显式开关之一，与面板头部 X 等价） */
@@ -535,6 +811,7 @@
     font-weight: 600;
   }
   .body {
+    position: relative;
     flex: 1;
     min-height: 0;
     display: flex;
@@ -544,47 +821,41 @@
     flex: 1;
     min-height: 0;
   }
-  /* 目录面板钉住：file-pane 恒为 grid——树占左列整列全高（tab 条不再
-     压在目录头上），strip 与内容只占右列。列宽随树的展开/收起动画收放
-     （0 列时树不可见）；grid 不能随 open 切换回 flex，否则树收起瞬间
-     以 auto 高度参与列布局，把内容顶到半屏 */
-  .file-pane.docked {
-    display: grid;
-    grid-template-columns: auto minmax(0, 1fr);
-    grid-template-rows: auto minmax(0, 1fr) auto;
-    gap: 0;
-    transition: row-gap 0.26s var(--ease-out);
+  /* 文件内查找条：浮在内容右上（相对 .body 定位，树开合都不跑偏） */
+  .findslot {
+    position: absolute;
+    top: 6px;
+    right: 10px;
+    z-index: 9;
+    display: flex;
+    flex: none;
   }
-  /* 树收起：内容列保持原来的上下呼吸（flex 时代 strip 与 body 的 8px 间距） */
-  .file-pane.docked:not(.treeopen) {
-    row-gap: 8px;
+  .findslot.belowbar {
+    top: 40px;
   }
-  .file-pane.docked :global(.tree) {
-    grid-column: 1;
-    grid-row: 1 / 4;
-  }
-  .file-pane.docked > .strip {
+  /* 右列三块显式落格；树自己声明 grid-column/grid-row（见 ExplorerTree） */
+  .file-pane > .strip {
     grid-column: 2;
     grid-row: 1;
   }
-  .file-pane.docked > .body {
+  .file-pane > .body {
     grid-column: 2;
     grid-row: 2;
   }
   /* 状态条显式落右列末行：grid 自动放置会把它塞进树下面的隐式行 */
-  .file-pane.docked > .statusbar {
+  .file-pane > .statusbar {
     grid-column: 2;
     grid-row: 3;
   }
-  .file-pane.docked.treeopen > .statusbar {
+  .file-pane.treeopen > .statusbar {
     padding: 0 10px 6px;
   }
   /* 树展开时 tab 条成栏、内容是一块整面（去圆角贴齐树缘与 tab 条） */
-  .file-pane.docked.treeopen > .strip {
+  .file-pane.treeopen > .strip {
     padding: 6px 8px;
-    border-bottom: 1px solid var(--line);
+    border-bottom-color: var(--line);
   }
-  .file-pane.docked.treeopen > .body > :global(*) {
+  .file-pane.treeopen > .body > :global(*) {
     border-radius: 0;
     border: none;
   }
@@ -603,6 +874,12 @@
     gap: 6px;
     flex-wrap: wrap;
     flex: none;
+    /* padding / 分隔线与目录栏收放同步过渡，展开时竖直方向不跳 */
+    padding: 0;
+    border-bottom: 1px solid transparent;
+    transition:
+      padding 0.24s var(--ease-out),
+      border-color 0.24s var(--ease-out);
   }
   .strip-item {
     display: flex;
@@ -688,6 +965,57 @@
     border-color: var(--line);
     color: var(--muted);
   }
+  /* 覆盖确认：遮罩只盖资源面板（absolute 不往上找 transform 祖先——
+     弹层相对 .file-pane，抽屉/弹出窗里都不跑偏） */
+  .mask {
+    position: absolute;
+    inset: 0;
+    z-index: 70;
+    border-radius: inherit;
+    background: rgb(0 0 0 / 18%);
+  }
+  .overmodal {
+    position: absolute;
+    z-index: 71;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: min(340px, calc(100% - 32px));
+    padding: 14px 16px;
+    border: 1px solid var(--line-strong);
+    border-radius: 12px;
+    background: var(--bg);
+    box-shadow: 0 12px 32px rgb(0 0 0 / 18%);
+  }
+  .otext {
+    margin: 0 0 12px;
+    font-size: var(--font-size-ui);
+    line-height: 1.5;
+    color: var(--fg);
+  }
+  .oacts {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+  }
+  .oacts button {
+    border: 1px solid var(--line-strong);
+    background: var(--bg);
+    color: var(--fg);
+    border-radius: 7px;
+    padding: 4px 12px;
+    font-size: var(--font-size-ui);
+    cursor: pointer;
+  }
+  .oacts button.ghost {
+    border-color: var(--line);
+    color: var(--muted);
+  }
+  .oacts button.over {
+    border-color: #f0883e;
+    color: #f0883e;
+    font-weight: 600;
+  }
   .empty {
     flex: 1;
     display: flex;
@@ -718,6 +1046,7 @@
     min-height: 24px;
     font-size: var(--font-size-small);
     color: var(--faint);
+    transition: padding 0.24s var(--ease-out);
   }
   .savebtn {
     position: relative;

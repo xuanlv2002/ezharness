@@ -14,7 +14,7 @@
       store.toggleDrawerTool(t)
       return
     }
-    if (store.view !== 'chat') {
+    if (store.view !== 'chat' && store.view !== 'app') {
       store.jumpView = 'chat'
       store.drawerTool = t
       store.termDrawerOpen = true

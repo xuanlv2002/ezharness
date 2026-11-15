@@ -78,6 +78,7 @@ type Remind struct {
 	model     func() string      // 可空：主模型摘要（名称+视觉）；快照行展示 + 变更基线 diff
 	modelList func() []StatusMcp // 可空：可选模型清单（名称+能力）；资源变更 diff + available 清单
 	modelOff  func() []string    // 可空：已关闭模型名（与可用清单互补，启停 diff 用）
+	media     func() []StatusMcp // 可空：多媒体三类能力清单（名称+生效模型/未配置）；变更 diff + available 清单
 	planRoot  string             // 计划归属的分支根 ID（空=不注入计划）
 }
 
@@ -96,8 +97,11 @@ func NewRemind(fsys fs.FileSystem, store *Store, ctxTokens func() int, ctxWindow
 
 func (h *Remind) Name() string { return "remind" }
 
-/* SetModelBrief 注入主模型摘要（"名称（支持/不支持视觉）"；实时读模型快照，
-Assemble 装配后换模型经 Reassemble 重装）。快照段展示 + 资源变更基线 diff 共用。 */
+/*
+	SetModelBrief 注入主模型摘要（"名称（支持/不支持视觉）"；实时读模型快照，
+
+Assemble 装配后换模型经 Reassemble 重装）。快照段展示 + 资源变更基线 diff 共用。
+*/
 func (h *Remind) SetModelBrief(fn func() string) { h.model = fn }
 
 /* SetModelList 注入可选模型清单（名称+能力；实时读快照）——新增/移除走资源变更。 */
@@ -109,14 +113,21 @@ func (h *Remind) SetMcpOff(fn func() []string) { h.mcpOff = fn }
 /* SetModelOff 注入已关闭模型名（与可用清单互补）——启用/停用走资源变更。 */
 func (h *Remind) SetModelOff(fn func() []string) { h.modelOff = fn }
 
+/*
+	SetMedia 注入多媒体能力清单（三类能力 + 生效模型/未配置）——启用、
+
+关闭、切换生成模型走资源变更。
+*/
+func (h *Remind) SetMedia(fn func() []StatusMcp) { h.media = fn }
+
 /* SetPlanRoot 注入计划归属分支根（每轮若有计划则追加进 agent_status）。 */
 func (h *Remind) SetPlanRoot(rootID string) { h.planRoot = rootID }
 
 /* OnStart 轮首两段：变更段（有变化才说话）在前、快照段照旧每轮一条。 */
 func (h *Remind) OnStart(ctx context.Context, state *types.LoopState) error {
-	if items, skills, mcps, models, apps, callbacks := h.buildChanges(ctx); len(items) > 0 {
+	if items, skills, mcps, models, media, apps, callbacks := h.buildChanges(ctx); len(items) > 0 {
 		h.insertBeforeLastUser(state, types.Message{Role: types.RoleUser,
-			Content: renderResChange(items, skills, mcps, models, apps, callbacks)})
+			Content: renderResChange(items, skills, mcps, models, media, apps, callbacks)})
 		state.EmitEvent(EventResChange, items)
 	}
 	data := h.buildSnapshot()
@@ -259,14 +270,14 @@ renderResChange 渲染资源变更记录：变更条目行前缀 "- " 是前端�
 模型据此即时可知全部资源，不必读目录与配置文件发现）。desc 压平换行
 防伪造条目行。
 */
-func renderResChange(items []string, skills, mcps, models []StatusMcp, apps []StatusApp, callbacks []callback.Task) string {
+func renderResChange(items []string, skills, mcps, models, media []StatusMcp, apps []StatusApp, callbacks []callback.Task) string {
 	var b strings.Builder
 	b.WriteString("<" + ResChangeTag + ">")
 	b.WriteString("\n（系统检测到的本轮资源变更，非用户发言，无需回应，无需回溯处理）")
 	for _, it := range items {
 		b.WriteString("\n- " + it)
 	}
-	b.WriteString("\n变更后完整清单（技能、MCP 服务、快应用与定时回调以此为准，不要读取 memory/skills、mcp.json、apps 目录或 callbacks.json 来发现资源）：")
+	b.WriteString("\n变更后完整清单（技能、MCP 服务、多媒体能力、快应用与定时回调以此为准，不要读取 memory/skills、mcp.json、media.json、apps 目录或 callbacks.json 来发现资源）：")
 	if len(skills) > 0 {
 		for _, s := range skills {
 			b.WriteString("\navailable_skill: " + s.Name + " - " + descOrNone(s.Desc))
@@ -315,6 +326,13 @@ func renderResChange(items []string, skills, mcps, models []StatusMcp, apps []St
 			names = append(names, m.Name+"（"+descOrNone(m.Desc)+"）")
 		}
 		b.WriteString("\navailable_model: " + strings.Join(names, "、"))
+	}
+	if len(media) > 0 {
+		var parts []string
+		for _, m := range media {
+			parts = append(parts, m.Name+"="+descOrNone(m.Desc))
+		}
+		b.WriteString("\navailable_media: " + strings.Join(parts, "；"))
 	}
 	b.WriteString("\n</" + ResChangeTag + ">")
 	return b.String()

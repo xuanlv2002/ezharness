@@ -78,7 +78,6 @@ func (t memoryTool) Invoke(ctx context.Context, args json.RawMessage) (string, e
 		saved, err := t.submit(hooks.PendingMemoryOp{
 			Op:        hooks.PendingOpProjectRemove,
 			ProjectID: id,
-			Source:    "ai",
 		})
 		if err != nil {
 			return "", err
@@ -92,7 +91,6 @@ func (t memoryTool) Invoke(ctx context.Context, args json.RawMessage) (string, e
 
 /* submit 校验并落待确认区，返回落盘后的操作。 */
 func (t memoryTool) submit(op hooks.PendingMemoryOp) (*hooks.PendingMemoryOp, error) {
-	op.Source = "ai"
 	op.CreatedAt = time.Now()
 	saved, err := hooks.AppendPendingOp(context.Background(), t.fsys, op)
 	if err != nil {
