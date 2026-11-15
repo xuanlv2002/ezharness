@@ -1,20 +1,122 @@
 <script lang="ts">
   /*
-  HTML 查看器：预览（iframe sandbox 空属性 = 禁脚本禁同源，纯静态
-  渲染，无 XSS 面；相对资源在沙箱内不解析属预期）/ 原文（textarea
-  编辑，Ctrl+S 保存）切换。
+  HTML 查看器：预览（iframe sandbox = 禁脚本，纯静态渲染，无脚本执行
+  面）/ 原文（textarea 编辑，Ctrl+S 保存）切换。
+
+  sandbox 必须放行 allow-same-origin：空 sandbox 的 iframe 是不透明源，
+  其中浏览器自动发起的资源请求会被判定为跨站，SameSite=Strict 的鉴权
+  cookie 不会附带；放行同源后资源请求能正常带 cookie。未加
+  allow-scripts，预览页仍不能执行脚本。
   */
 
+  import { tick } from 'svelte'
+  import { clearDomFind, domFind } from '../../../lib/domfind'
+  import { matchRanges } from '../../../lib/findtext'
+  import { findScope } from '../../../lib/findscope'
   import type { ResTab } from '../registry'
+  import FindLayer from './FindLayer.svelte'
 
   let {
     tab,
     active = false,
     flush = false,
     onSave,
-  }: { tab: ResTab; active?: boolean; flush?: boolean; onSave?: () => void } = $props()
+    onfind,
+    onfindclose,
+  }: {
+    tab: ResTab
+    active?: boolean
+    flush?: boolean
+    onSave?: () => void
+    onfind?: () => void
+    onfindclose?: () => void
+  } = $props()
 
   let preview = $state(true)
+
+  /* ── 文件内查找（ResourcePane 调 Ctrl+F 时驱动本组件）──
+     预览态搜 iframe 渲染后的 DOM（sandbox 放行同源，父页可直接读写），
+     原文态搜源码 */
+  let editorEl = $state<HTMLTextAreaElement>()
+  let frameEl = $state<HTMLIFrameElement>()
+  let findQuery = $state('')
+  let findIndex = $state(0)
+  let findActive = $state(false)
+  let boundKey = ''
+
+  function frameBody(): HTMLElement | null {
+    try {
+      return frameEl?.contentDocument?.body ?? null
+    } catch {
+      return null /* 理论不可达：同源被放行；防御未来 sandbox 策略回退 */
+    }
+  }
+
+  export function find(q: string, i: number): { count: number; index: number } {
+    findQuery = q
+    findActive = !!q.trim()
+    if (!findActive) return { count: 0, index: 0 }
+    if (preview) {
+      const r = domFind(frameBody(), q, i)
+      findIndex = r.index
+      return r
+    }
+    const count = matchRanges(tab.content, q).length
+    const index = count ? ((i % count) + count) % count : 0
+    findIndex = index
+    return { count, index }
+  }
+
+  export function clearFind(): void {
+    findActive = false
+    findQuery = ''
+    findIndex = 0
+    clearDomFind(frameBody())
+  }
+
+  /* 预览/原文切换后按原查询重新定位 */
+  function setPreview(v: boolean): void {
+    if (v === preview) return
+    if (!v) clearDomFind(frameBody())
+    preview = v
+    if (findActive) void tick().then(() => find(findQuery, findIndex))
+  }
+
+  /*
+  srcdoc 重建（正文变化/切 tab）后 iframe 是新文档：查找开着就重刷；
+  同时把指针/键盘归属接进来——iframe 有独立文档，父页 window 收不到
+  它的 pointerdown/keydown，点进预览后 Ctrl+F 会落空。
+  */
+  function onFrameLoad(): void {
+    const doc = frameEl?.contentDocument
+    if (doc) {
+      doc.addEventListener('pointerdown', onFrameDown, true)
+      doc.addEventListener('keydown', onFrameKey, true)
+    }
+    if (findActive) find(findQuery, findIndex)
+  }
+
+  function onFrameDown(): void {
+    findScope.file = true
+  }
+
+  function onFrameKey(e: KeyboardEvent): void {
+    if ((e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === 'f') {
+      e.preventDefault()
+      findScope.file = true
+      onfind?.()
+    } else if (findActive && e.key === 'Escape') {
+      e.preventDefault()
+      clearFind()
+      onfindclose?.()
+    }
+  }
+
+  $effect(() => {
+    if (tab.key === boundKey) return
+    boundKey = tab.key
+    clearFind()
+  })
 
   function onKey(e: KeyboardEvent) {
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's' && !e.isComposing) {
@@ -27,8 +129,8 @@
 <div class="viewer" class:flush>
   <div class="bar">
     <div class="seg">
-      <button class:active={preview} onclick={() => (preview = true)}>预览</button>
-      <button class:active={!preview} onclick={() => (preview = false)}>原文</button>
+      <button class:active={preview} onclick={() => setPreview(true)}>预览</button>
+      <button class:active={!preview} onclick={() => setPreview(false)}>原文</button>
     </div>
     <span class="hint">{preview ? '沙箱静态渲染（禁脚本）' : '编辑后 Ctrl+S 保存'}</span>
   </div>
@@ -37,15 +139,26 @@
   {:else if tab.loading}
     <div class="veil">加载中…</div>
   {:else if preview}
-    <iframe class="frame" title="HTML 预览" sandbox="" srcdoc={tab.content}></iframe>
+    <iframe
+      class="frame"
+      title="HTML 预览"
+      sandbox="allow-same-origin"
+      srcdoc={tab.content}
+      bind:this={frameEl}
+      onload={onFrameLoad}
+    ></iframe>
   {:else}
     <div class="editor-wrap">
       <textarea
+        bind:this={editorEl}
         bind:value={tab.content}
         onkeydown={onKey}
         spellcheck="false"
         placeholder="（空文件）"
       ></textarea>
+      {#if findActive}
+        <FindLayer text={tab.content} query={findQuery} current={findIndex} scrollEl={editorEl} />
+      {/if}
     </div>
   {/if}
 </div>
@@ -124,6 +237,7 @@
     border: none;
   }
   .editor-wrap {
+    position: relative;
     overflow: hidden;
   }
   .editor-wrap textarea {

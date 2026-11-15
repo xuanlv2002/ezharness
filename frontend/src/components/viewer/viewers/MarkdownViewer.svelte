@@ -5,9 +5,13 @@
   ResTab，单实例重绑）。
   */
 
+  import { tick } from 'svelte'
   import { marked } from 'marked'
   import DOMPurify from 'dompurify'
+  import { clearDomFind, domFind } from '../../../lib/domfind'
+  import { matchRanges } from '../../../lib/findtext'
   import type { ResTab } from '../registry'
+  import FindLayer from './FindLayer.svelte'
 
   let {
     tab,
@@ -19,6 +23,54 @@
   marked.setOptions({ breaks: true, gfm: true })
 
   let preview = $state(true)
+
+  /* ── 文件内查找（ResourcePane 调 Ctrl+F 时驱动本组件）──
+     预览态搜渲染后的 DOM（整篇正文），原文态搜源码；切换视图时
+     用同一查询重新定位 */
+  let editorEl = $state<HTMLTextAreaElement>()
+  let mdBodyEl = $state<HTMLDivElement>()
+  let findQuery = $state('')
+  let findIndex = $state(0)
+  let findActive = $state(false)
+  let boundKey = ''
+
+  export function find(q: string, i: number): { count: number; index: number } {
+    findQuery = q
+    findActive = !!q.trim()
+    if (!findActive) return { count: 0, index: 0 }
+    if (preview) {
+      const r = domFind(mdBodyEl, q, i)
+      findIndex = r.index
+      return r
+    }
+    const count = matchRanges(tab.content, q).length
+    const index = count ? ((i % count) + count) % count : 0
+    findIndex = index
+    return { count, index }
+  }
+
+  export function clearFind(): void {
+    findActive = false
+    findQuery = ''
+    findIndex = 0
+    clearDomFind(mdBodyEl)
+  }
+
+  /* 预览/原文切换后按原查询重新定位（原文态的命中随 DOM 一起销毁） */
+  function setPreview(v: boolean): void {
+    if (v === preview) return
+    if (!v) clearDomFind(mdBodyEl)
+    preview = v
+    if (findActive) void tick().then(() => find(findQuery, findIndex))
+  }
+
+  /* 切 tab：旧文件的查询与高亮不跟到新文件 */
+  $effect(() => {
+    if (tab.key === boundKey) return
+    boundKey = tab.key
+    clearFind()
+  })
+
   const html = $derived(tab.content ? DOMPurify.sanitize(marked.parse(tab.content) as string) : '')
 
   function onKey(e: KeyboardEvent) {
@@ -32,8 +84,8 @@
 <div class="viewer" class:flush>
   <div class="bar">
     <div class="seg">
-      <button class:active={preview} onclick={() => (preview = true)}>预览</button>
-      <button class:active={!preview} onclick={() => (preview = false)}>原文</button>
+      <button class:active={preview} onclick={() => setPreview(true)}>预览</button>
+      <button class:active={!preview} onclick={() => setPreview(false)}>原文</button>
     </div>
     {#if !preview}<span class="hint">编辑后 Ctrl+S 保存</span>{/if}
   </div>
@@ -42,17 +94,21 @@
   {:else if tab.loading}
     <div class="veil">加载中…</div>
   {:else if preview}
-    <div class="md-body">
+    <div class="md-body" bind:this={mdBodyEl}>
       {@html html}
     </div>
   {:else}
     <div class="editor-wrap">
       <textarea
+        bind:this={editorEl}
         bind:value={tab.content}
         onkeydown={onKey}
         spellcheck="false"
         placeholder="（空文件）"
       ></textarea>
+      {#if findActive}
+        <FindLayer text={tab.content} query={findQuery} current={findIndex} scrollEl={editorEl} />
+      {/if}
     </div>
   {/if}
 </div>
@@ -268,6 +324,7 @@
     margin-bottom: 0;
   }
   .editor-wrap {
+    position: relative;
     padding: 0;
     overflow: hidden;
   }

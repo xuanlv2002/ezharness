@@ -1,11 +1,12 @@
 <script lang="ts">
-  import { onDestroy, onMount, untrack } from 'svelte'
+  import { onDestroy, onMount, tick, untrack } from 'svelte'
   import { api } from '../../lib/api'
   import { fileBaseName, normFileKey } from '../../lib/textfile'
   import { store } from '../../lib/store.svelte'
   import { filePane } from '../../lib/filePaneState'
   import { paneTabs } from '../../lib/paneTabs.svelte'
   import { explorer, explorerUI, repoOf, setExplorerOpen } from '../../lib/explorerState.svelte'
+  import { findScope } from '../../lib/findscope'
   import { kindOf, VIEWERS, MAX_BYTES, type ResTab } from './registry'
   import KindIcon from './KindIcon.svelte'
   import ExplorerTree from './ExplorerTree.svelte'
@@ -14,6 +15,7 @@
   import HtmlViewer from './viewers/HtmlViewer.svelte'
   import MarkdownViewer from './viewers/MarkdownViewer.svelte'
   import DiffViewer from './viewers/DiffViewer.svelte'
+  import FileFindBar from './FileFindBar.svelte'
 
   /*
   工作区抽屉·资源查看器（file:// 的消费端，通用框架）：多 tab 按扩展名
@@ -40,6 +42,9 @@
   let pendingClose = $state('')
   let sending = $state(false)
   let textViewer = $state<TextViewer>()
+  let mdViewer = $state<MarkdownViewer>()
+  let htmlViewer = $state<HtmlViewer>()
+  let findBar = $state<FileFindBar>()
 
   const tab = $derived(tabs.find((t) => t.key === current))
   const dirty = $derived(!!tab && tab.kind !== 'image' && tab.content !== tab.saved)
@@ -49,6 +54,135 @@
   const imageTabs = $derived(tabs.filter((t) => t.kind === 'image'))
   /* 二进制类(pdf/媒体/表格/文档/幻灯片/兜底)统一从 VIEWERS 表取组件即挂 */
   const binViewer = $derived(tab && !textish && tab.kind !== 'image' ? VIEWERS[tab.kind] : undefined)
+
+  /* ── 当前文件内查找（Ctrl+F）──
+     焦点在资源页里时由本组件接管：全局页面查找（FindBar）只管聊天列/
+     页面 DOM，搜不到 textarea 正文与预览 iframe。这里按当前 viewer 的
+     语义去找——text/md/html 原文搜源码，md/html 预览搜渲染后 DOM。 */
+  let findOpen = $state(false)
+  let findQuery = $state('')
+  let findIdx = $state(0)
+  let findCount = $state(0)
+  let findTabKey = ''
+
+  /* 当前 tab 对应的查找实现；差异对比/图片/二进制没有文件内查找 */
+  const fileFinder = $derived.by(() => {
+    if (!tab || !textish || tab.diff) return null
+    if (tab.kind === 'text') return textViewer
+    if (tab.kind === 'markdown') return mdViewer
+    if (tab.kind === 'html') return htmlViewer
+    return null
+  })
+  const canFind = $derived(!!active && !!fileFinder)
+
+  function runFind(q: string, i = 0): void {
+    findQuery = q
+    const r = fileFinder?.find(q, i)
+    findCount = r?.count ?? 0
+    findIdx = r?.index ?? 0
+  }
+
+  async function openFind(): Promise<void> {
+    if (!canFind) return
+    /* 页面查找与文件内查找互斥：两套高亮同时存在会互相干扰 */
+    window.dispatchEvent(new Event('ez-findbar:close'))
+    findOpen = true
+    await tick()
+    findBar?.focus()
+    if (findQuery.trim()) runFind(findQuery, findIdx)
+  }
+
+  function closeFind(): void {
+    findOpen = false
+    findQuery = ''
+    findCount = 0
+    findIdx = 0
+    fileFinder?.clearFind()
+  }
+
+  function stepFind(back: boolean): void {
+    if (!findCount) return
+    runFind(findQuery, findIdx + (back ? -1 : 1))
+  }
+
+  /* tab 切换 / 视图变得不可查找：收起查找条（旧文件的命中不跟过来） */
+  $effect(() => {
+    const k = tab?.key ?? ''
+    if (!canFind) {
+      if (findOpen) closeFind()
+      findTabKey = k
+      return
+    }
+    if (k === findTabKey) return
+    findTabKey = k
+    if (findOpen) closeFind()
+  })
+
+  /* 页面查找（Ctrl+F 在聊天列）打开时收起文件内查找 */
+  $effect(() => {
+    const onClose = () => {
+      if (findOpen) closeFind()
+    }
+    window.addEventListener('ez-filefind:close', onClose)
+    return () => window.removeEventListener('ez-filefind:close', onClose)
+  })
+
+  /* 可查找状态同步给共享标志（FindBar 据此让位） */
+  $effect(() => {
+    findScope.enabled = active && canFind
+    if (!findScope.enabled) findScope.file = false
+  })
+
+  /*
+  Ctrl+F 归属判定：两处都在 window 捕获阶段监听，注册顺序不可依赖，
+  统一走 findScope——最近一次指针落在资源页内（或焦点就在页内）时归
+  文件内查找。点在预览正文这类不可聚焦处时焦点还在 body，单看
+  activeElement 会漏判，所以以指针位置为主。
+  */
+  function onWinKey(e: KeyboardEvent): void {
+    if (!active || !findScope.enabled) return
+    const t = e.target as Element | null
+    const targetInPane = !!t && typeof t.closest === 'function' && !!t.closest('.file-pane')
+    if (!findScope.file && !targetInPane) return
+    if ((e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === 'f') {
+      if (!canFind) return
+      e.preventDefault()
+      e.stopImmediatePropagation()
+      void openFind()
+      return
+    }
+    if (!findOpen) return
+    if (e.key === 'Escape') {
+      e.preventDefault()
+      e.stopImmediatePropagation()
+      closeFind()
+    } else if (e.key === 'F3') {
+      e.preventDefault()
+      e.stopImmediatePropagation()
+      stepFind(e.shiftKey)
+    }
+  }
+
+  $effect(() => {
+    const onDown = (e: PointerEvent) => {
+      const t = e.target as Element | null
+      findScope.file = !!t && typeof t.closest === 'function' && !!t.closest('.file-pane')
+    }
+    /* 键盘 Tab 走焦点变化：焦点离开资源页即撤销指针归属 */
+    const onFocus = (e: FocusEvent) => {
+      const t = e.target as Element | null
+      if (!t || t === document.body || typeof t.closest !== 'function') return
+      findScope.file = !!t.closest('.file-pane')
+    }
+    window.addEventListener('pointerdown', onDown, { capture: true })
+    window.addEventListener('focusin', onFocus)
+    window.addEventListener('keydown', onWinKey, { capture: true })
+    return () => {
+      window.removeEventListener('pointerdown', onDown, { capture: true })
+      window.removeEventListener('focusin', onFocus)
+      window.removeEventListener('keydown', onWinKey, { capture: true })
+    }
+  })
 
   function blankTab(part: Partial<ResTab>): ResTab {
     return {
@@ -486,9 +620,17 @@
     {:else if tab && tab.kind === 'text'}
       <TextViewer bind:this={textViewer} {tab} {active} onSave={() => void saveTab(tab)} />
     {:else if tab && tab.kind === 'markdown'}
-      <MarkdownViewer {tab} {active} flush={filePaneFlush} onSave={() => void saveTab(tab)} />
+      <MarkdownViewer bind:this={mdViewer} {tab} {active} flush={filePaneFlush} onSave={() => void saveTab(tab)} />
     {:else if tab && tab.kind === 'html'}
-      <HtmlViewer {tab} {active} flush={filePaneFlush} onSave={() => void saveTab(tab)} />
+      <HtmlViewer
+        bind:this={htmlViewer}
+        {tab}
+        {active}
+        flush={filePaneFlush}
+        onSave={() => void saveTab(tab)}
+        onfind={() => void openFind()}
+        onfindclose={closeFind}
+      />
     {:else if tab && binViewer}
       {@const Viewer = binViewer}
       <Viewer {tab} {active} />
@@ -507,6 +649,21 @@
         {/key}
       </div>
     {/each}
+    <!-- 文件内查找条：浮在内容右上；md/html 有「预览/原文」工具条，
+        往下让一行，不压在分段控件/提示上 -->
+    {#if findOpen && canFind}
+      <div class="findslot" class:belowbar={tab?.kind === 'markdown' || tab?.kind === 'html'}>
+        <FileFindBar
+          bind:this={findBar}
+          query={findQuery}
+          count={findCount}
+          index={findIdx}
+          onquery={(q) => runFind(q, 0)}
+          onstep={stepFind}
+          onclose={closeFind}
+        />
+      </div>
+    {/if}
   </div>
 
   {#if tab && textish}
@@ -654,6 +811,7 @@
     font-weight: 600;
   }
   .body {
+    position: relative;
     flex: 1;
     min-height: 0;
     display: flex;
@@ -662,6 +820,18 @@
   .body > :global(*) {
     flex: 1;
     min-height: 0;
+  }
+  /* 文件内查找条：浮在内容右上（相对 .body 定位，树开合都不跑偏） */
+  .findslot {
+    position: absolute;
+    top: 6px;
+    right: 10px;
+    z-index: 9;
+    display: flex;
+    flex: none;
+  }
+  .findslot.belowbar {
+    top: 40px;
   }
   /* 右列三块显式落格；树自己声明 grid-column/grid-row（见 ExplorerTree） */
   .file-pane > .strip {

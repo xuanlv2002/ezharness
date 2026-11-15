@@ -230,22 +230,23 @@
         </svg>
       </span>
       <h3>{title}</h3>
+      {#if tool === 'file'}
+        <!-- 目录面板开关紧跟标题放左侧：抽屉在屏幕右缘，原来贴最右一行
+        按钮离工作区太远（要跨半个屏幕去点）。树从标题栏正下方展开，
+        预览区里不再常驻一枚钮占一行（弹出独立窗没有标题栏，面板内自留） -->
+        <button
+          class="pop"
+          class:active={explorerUI.open}
+          onclick={() => setExplorerOpen(!explorerUI.open)}
+          title={explorerUI.open ? '收起目录面板' : '打开目录面板'}
+        >
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="3" y="4" width="18" height="16" rx="2" />
+            <path d="M9 4v16" />
+          </svg>
+        </button>
+      {/if}
       <div class="actions">
-        {#if tool === 'file'}
-          <!-- 目录面板开关进标题栏：树从标题栏正下方展开，预览区里不再
-          常驻一枚钮占一行（弹出独立窗没有标题栏，面板内自留） -->
-          <button
-            class="pop"
-            class:active={explorerUI.open}
-            onclick={() => setExplorerOpen(!explorerUI.open)}
-            title={explorerUI.open ? '收起目录面板' : '打开目录面板'}
-          >
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-              <rect x="3" y="4" width="18" height="16" rx="2" />
-              <path d="M9 4v16" />
-            </svg>
-          </button>
-        {/if}
         <button class="pop" onclick={() => popOut()} title="弹出为独立窗口（也可按住头部拖出）">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round">
             <path d="M15 4h5v5" />
@@ -378,8 +379,10 @@
   }
   /* 单行标题（用途说明不再占第二行）；操作按钮右对齐 */
   h3 {
-    flex: 1;
+    /* 标题按内容占宽（后面的目录开关才能紧跟标题落左侧），过长才收缩 */
+    flex: 0 1 auto;
     min-width: 0;
+    max-width: 55%;
     margin: 0;
     font-size: var(--font-size-section);
     font-weight: 600;
@@ -393,6 +396,7 @@
     display: flex;
     align-items: center;
     gap: 4px;
+    margin-left: auto;
   }
   .pop {
     display: grid;

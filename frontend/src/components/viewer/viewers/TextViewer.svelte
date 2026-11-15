@@ -11,6 +11,8 @@
 
   import type { ResTab } from '../registry'
   import { highlightCode, langOf } from '../../../lib/codehl'
+  import { matchRanges } from '../../../lib/findtext'
+  import FindLayer from './FindLayer.svelte'
 
   let {
     tab,
@@ -63,6 +65,36 @@
     syncScroll()
   })
 
+  /* ── 文件内查找（ResourcePane 调 Ctrl+F 时驱动本组件）──
+     检索永远针对整份内容（不是可见区），命中画在查找垫层里 */
+  let findQuery = $state('')
+  let findIndex = $state(0)
+  let findActive = $state(false)
+  let boundKey = ''
+
+  /* find 返回总命中数与实际定位序号（index 越界自动绕回） */
+  export function find(q: string, i: number): { count: number; index: number } {
+    findQuery = q
+    findActive = !!q.trim()
+    const count = matchRanges(tab.content, q).length
+    const index = count ? ((i % count) + count) % count : 0
+    findIndex = index
+    return { count, index }
+  }
+
+  export function clearFind(): void {
+    findActive = false
+    findQuery = ''
+    findIndex = 0
+  }
+
+  /* 单实例重绑到新 tab：旧文件的查找状态/命中不能跟过来 */
+  $effect(() => {
+    if (tab.key === boundKey) return
+    boundKey = tab.key
+    clearFind()
+  })
+
   /* 滚动位置导出（磁盘重载后恢复视口） */
   export function scrollTop(): number {
     return editorEl?.scrollTop ?? 0
@@ -87,6 +119,9 @@
     spellcheck="false"
     placeholder="（空文件）"
   ></textarea>
+  {#if findActive}
+    <FindLayer text={tab.content} query={findQuery} current={findIndex} scrollEl={editorEl} />
+  {/if}
   {#if tab.loading}<div class="veil">加载中…</div>{/if}
   {#if tab.err}<div class="veil err">{tab.err}</div>{/if}
 </div>
