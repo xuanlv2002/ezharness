@@ -84,6 +84,7 @@ contextBridge.exposeInMainWorld('ez', {
     navigate: (tabId, url) => ipcRenderer.send('ez-browser:navigate', tabId, url),
     select: (tabId) => ipcRenderer.send('ez-browser:select', tabId),
     close: (tabId) => ipcRenderer.send('ez-browser:close', tabId),
+    reload: (tabId) => ipcRenderer.send('ez-browser:reload', tabId),
     /* 主窗口抽屉页（BrowserPane）：内容区 rect 上报（WebContentsView 贴靠） */
     reportRect: (rect) => ipcRenderer.send('ez-browser:content-rect', rect),
     /* 视图被摘出窗口（弹窗关闭/拖拽取消）后请抽屉页重新上报 rect 回挂 */

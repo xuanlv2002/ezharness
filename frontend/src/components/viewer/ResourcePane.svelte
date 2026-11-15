@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onDestroy, onMount } from 'svelte'
+  import { onDestroy, onMount, untrack } from 'svelte'
   import { api } from '../../lib/api'
   import { fileBaseName, normFileKey } from '../../lib/textfile'
   import { store } from '../../lib/store.svelte'
@@ -24,8 +24,10 @@
   文本系（text/md/html 原文）单编辑器+tab 状态数据化（单实例重绑）；
   图片 tab per-tab 实例保活（画布状态不可数据化，改动防抖自动写回）。
   状态条统一：保存/Ctrl+S、添加到对话（纯文件引用 chip，经
-  <reference_file> 告知模型）。磁盘变更：激活时每 2s HEAD 轮询
-  Last-Modified（AI 改盘后），干净 tab 自动重载，dirty tab 只提示。
+  <reference_file> 告知模型）。磁盘是唯一真身（VS Code 式）：激活时
+  每 2s HEAD 轮询全部文本 tab 的 Last-Modified——没有未保存修改的
+  tab 直接跟随磁盘重载（AI 改完即显示新内容，无需刷新钮）；有未保存
+  修改的 tab 保留本地内容并记 diskChanged，保存时弹窗确认是否覆盖。
   */
 
   /* push 仅弹出窗口传入：状态变化即上报主进程（关窗回流取最新快照）。
@@ -41,7 +43,7 @@
 
   const tab = $derived(tabs.find((t) => t.key === current))
   const dirty = $derived(!!tab && tab.kind !== 'image' && tab.content !== tab.saved)
-  const textish = $derived(!!tab && ['text', 'markdown', 'html'].includes(tab.kind))
+  const textish = $derived(!!tab && isTextishKind(tab.kind))
   /* 目录钉住展开时内容满铺（grid 右列）：查看器内部不再叠一层圆角卡片 */
   const filePaneFlush = $derived(explorerUI.docked && explorerUI.open)
   const imageTabs = $derived(tabs.filter((t) => t.kind === 'image'))
@@ -51,9 +53,14 @@
   function blankTab(part: Partial<ResTab>): ResTab {
     return {
       key: '', kind: 'text', name: '', content: '', saved: '',
-      loading: false, err: '', warn: '', savedAt: '', lastMod: '',
+      loading: false, err: '', warn: '', savedAt: '', diskStamp: '', diskChanged: false,
       ...part,
     }
+  }
+
+  /* 文本系 = 有可编辑缓冲、能按盘重载的三种 kind（目录/差异/预览共用） */
+  function isTextishKind(kind: ResTab['kind']): boolean {
+    return kind === 'text' || kind === 'markdown' || kind === 'html'
   }
 
   /* 跨窗口快照：tab 状态（含当前选中）整体搬运——草稿也是一张 tmp 图片，
@@ -112,9 +119,12 @@
     current = t.key
   })
 
-  /* 磁盘变更轮询：仅资源页激活且当前 tab 是文本系时进行 */
+  /* 磁盘变更轮询：资源页激活期间进行；激活瞬间先补一轮（关闭期间的
+     外部修改回来即见） */
   $effect(() => {
     if (!active) return
+    /* untrack：pollDisk 同步段会读 tabs 状态，不能让它成为 effect 依赖 */
+    void untrack(() => pollDisk())
     const id = setInterval(() => void pollDisk(), 2000)
     return () => clearInterval(id)
   })
@@ -151,7 +161,7 @@
         }
         cur.content = text
         cur.saved = text
-        cur.lastMod = r.headers.get('last-modified') || ''
+        cur.diskStamp = diskStampOf(r)
       } catch (e) {
         cur.err = `文件读取失败：${(e as Error).message}`
       } finally {
@@ -181,34 +191,105 @@
     if (tab && textish) tab.diff = !tab.diff
   }
 
-  /* 干净 tab 磁盘有更新时自动重载（AI 改盘后）；dirty 只提示不覆盖 */
-  async function pollDisk() {
-    const t = tab
-    if (!t || !t.path || t.kind !== 'text' || t.loading || t.err) return
+  /* 磁盘指纹：优先 ETag（后端按纳秒 mtime+size 生成，同一秒内连续
+     写入也分辨得出），老服务回退 Last-Modified */
+  function diskStampOf(r: Response): string {
+    return r.headers.get('etag') || r.headers.get('last-modified') || ''
+  }
+
+  /* HEAD 取磁盘指纹（本地文件服务；失败返回 null，本轮跳过） */
+  async function headStamp(path: string): Promise<string | null> {
     try {
-      const h = await fetch('/api/workspace/file?path=' + encodeURIComponent(t.path), {
+      const h = await fetch('/api/workspace/file?path=' + encodeURIComponent(path), {
         method: 'HEAD',
         cache: 'no-store',
       })
-      if (!h.ok) return
-      const lm = h.headers.get('last-modified') || ''
-      if (!lm || lm === t.lastMod) return
-      t.lastMod = lm
-      if (t.content !== t.saved) {
-        t.warn = '磁盘文件已被更新（AI 修改）：未自动加载，保存将覆盖'
+      return h.ok ? diskStampOf(h) : null
+    } catch {
+      return null
+    }
+  }
+
+  /* 磁盘变更轮询（全部文本 tab，不只当前——切回来即新内容）：
+     干净 tab 自动重载；有未保存修改的 tab 只记 diskChanged 保留本地
+     内容，保存时再弹窗确认覆盖。轮询本身不并发。 */
+  let polling = false
+
+  async function pollDisk() {
+    if (polling) return
+    polling = true
+    try {
+      for (const t of tabs) {
+        if (!t.path || t.loading || t.err || !isTextishKind(t.kind)) continue
+        /* 用户已把内容改回与磁盘一致：视作干净，下一轮跟盘 */
+        if (t.diskChanged && t.content === t.saved) {
+          t.diskChanged = false
+          t.diskStamp = ''
+        }
+        const stamp = await headStamp(t.path)
+        if (stamp === null || !stamp || stamp === t.diskStamp) continue
+        t.diskStamp = stamp
+        if (t.content !== t.saved) {
+          t.diskChanged = true
+          continue
+        }
+        await reloadContent(t, t.key === current)
+      }
+    } finally {
+      polling = false
+    }
+  }
+
+  /* 从磁盘重读正文回填干净 tab。keepScroll：保当前编辑器滚动位置，
+     读期间用户开始输入（内容不再等于已保存）则放弃本次覆盖。 */
+  async function reloadContent(t: ResTab, keepScroll: boolean) {
+    if (!t.path) return
+    const st = textViewer?.scrollTop() ?? 0
+    const baseline = t.saved
+    try {
+      const r = await fetch('/api/workspace/file?path=' + encodeURIComponent(t.path), { cache: 'no-store' })
+      if (!r.ok) {
+        t.err = `文件读取失败（${r.status}）`
         return
       }
-      const y = await fetch('/api/workspace/file?path=' + encodeURIComponent(t.path), { cache: 'no-store' })
-      if (!y.ok) return
-      const text = await y.text()
-      const st = textViewer?.scrollTop() ?? 0
+      const text = await r.text()
+      if (t.content !== t.saved) {
+        t.diskChanged = true
+        return
+      }
+      /* 读盘期间用户保存过：以刚保存的内容为准，下一轮再对齐磁盘 */
+      if (t.saved !== baseline) return
+      if (text.length > MAX_BYTES) {
+        t.err = '文件过大（>2MB），不支持在线编辑'
+        return
+      }
       t.content = text
       t.saved = text
-      t.savedAt = new Date().toTimeString().slice(0, 5)
-      requestAnimationFrame(() => textViewer?.restoreScroll(st))
-    } catch {
-      /* 轮询失败静默，下轮再试 */
+      t.diskStamp = diskStampOf(r)
+      t.savedAt = ''
+      t.diskChanged = false
+      t.warn = text.includes('\uFFFD') ? '文件疑似非 UTF-8 编码：显示可能乱码，保存后会转为 UTF-8' : ''
+      if (keepScroll) requestAnimationFrame(() => textViewer?.restoreScroll(st))
+    } catch (e) {
+      t.err = `文件读取失败：${(e as Error).message}`
     }
+  }
+
+  /* 覆盖确认（磁盘被外部修改 + 本地有未保存修改）：保存前弹窗，
+     与 VS Code「文件已在磁盘上更改」同语义——覆盖 / 取消 */
+  let overwrite = $state<{ tab: ResTab; resolve: (ok: boolean) => void } | null>(null)
+
+  function askOverwrite(t: ResTab): Promise<boolean> {
+    return new Promise((resolve) => {
+      overwrite?.resolve(false)
+      overwrite = { tab: t, resolve }
+    })
+  }
+
+  function answerOverwrite(ok: boolean) {
+    const cur = overwrite
+    overwrite = null
+    cur?.resolve(ok)
   }
 
   function closeTab(key: string) {
@@ -281,14 +362,27 @@
     if (current === key) current = tabs[Math.min(i, tabs.length - 1)]?.key ?? ''
   }
 
-  async function saveTab(t: ResTab): Promise<boolean> {
+  /* 保存写回。写前先比一次磁盘指纹（轮询有间隔，外部修改可能落在
+     两者之间）：与本地基准不同 = 别处改过，弹窗确认后才覆盖。force
+     供确认后直写。写成功立即以新指纹为基准，下一轮轮询不会把自己的
+     写入误报成「磁盘更新」。 */
+  async function saveTab(t: ResTab, force = false): Promise<boolean> {
     if (!t.path || t.loading || t.content === t.saved) return true
+    if (!force) {
+      if (t.diskStamp) {
+        const stamp = await headStamp(t.path)
+        if (stamp && stamp !== t.diskStamp) t.diskChanged = true
+      }
+      if (t.diskChanged && !(await askOverwrite(t))) return false
+    }
+    if (!tabs.some((x) => x.key === t.key)) return false // 确认期间 tab 被关掉
     try {
       await api.saveFile(t.path, t.content)
       t.saved = t.content
       t.savedAt = new Date().toTimeString().slice(0, 5)
       t.err = ''
-      t.lastMod = '' /* 下一轮轮询重新建档，避免自己的写入误报"磁盘更新" */
+      t.diskChanged = false
+      t.diskStamp = (await headStamp(t.path)) ?? ''
       return true
     } catch (e) {
       t.err = `保存失败：${(e as Error).message}`
@@ -322,7 +416,14 @@
   }
 </script>
 
-<svelte:window onpointerdown={onGlobalDown} onkeydown={(e) => e.key === 'Escape' && (menu = null)} />
+<svelte:window
+  onpointerdown={onGlobalDown}
+  onkeydown={(e) => {
+    if (e.key !== 'Escape') return
+    menu = null
+    if (overwrite) answerOverwrite(false)
+  }}
+/>
 
 <div class="file-pane" class:docked={explorerUI.docked} class:treeopen={explorerUI.open && explorerUI.docked}>
   <!-- 目录面板：悬浮（absolute 盖在预览区左侧）或钉住（grid 左列整列
@@ -440,6 +541,7 @@
       <span class="stat">
         {#if tab.err}<i class="bad">{tab.err}</i>
         {:else if tab.warn}<i class="bad">{tab.warn}</i>
+        {:else if tab.diskChanged && dirty}<i class="bad">磁盘已被外部修改 · 保存将覆盖</i>
         {:else if dirty}<i>未保存</i>
         {:else if tab.savedAt}<i>已保存 {tab.savedAt}</i>
         {/if}
@@ -447,6 +549,18 @@
       <span class="tip">
         {tab.kind === 'text' ? '编辑后 Ctrl+S 保存写回' : '可切换预览/原文'}
       </span>
+    </div>
+  {/if}
+
+  <!-- 覆盖确认：磁盘在编辑期间被外部修改，保存会盖掉新内容 -->
+  {#if overwrite}
+    <div class="mask" role="presentation" onclick={() => answerOverwrite(false)}></div>
+    <div class="overmodal" role="alertdialog" aria-modal="true" aria-label="确认覆盖磁盘文件">
+      <p class="otext">「{overwrite.tab.name}」已在磁盘上被修改，保存会覆盖这些新内容。</p>
+      <div class="oacts">
+        <button class="ghost" onclick={() => answerOverwrite(false)}>取消</button>
+        <button class="over" onclick={() => answerOverwrite(true)}>覆盖保存</button>
+      </div>
     </div>
   {/if}
 </div>
@@ -687,6 +801,57 @@
   .confirm button.ghost {
     border-color: var(--line);
     color: var(--muted);
+  }
+  /* 覆盖确认：遮罩只盖资源面板（absolute 不往上找 transform 祖先——
+     弹层相对 .file-pane，抽屉/弹出窗里都不跑偏） */
+  .mask {
+    position: absolute;
+    inset: 0;
+    z-index: 70;
+    border-radius: inherit;
+    background: rgb(0 0 0 / 18%);
+  }
+  .overmodal {
+    position: absolute;
+    z-index: 71;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: min(340px, calc(100% - 32px));
+    padding: 14px 16px;
+    border: 1px solid var(--line-strong);
+    border-radius: 12px;
+    background: var(--bg);
+    box-shadow: 0 12px 32px rgb(0 0 0 / 18%);
+  }
+  .otext {
+    margin: 0 0 12px;
+    font-size: var(--font-size-ui);
+    line-height: 1.5;
+    color: var(--fg);
+  }
+  .oacts {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+  }
+  .oacts button {
+    border: 1px solid var(--line-strong);
+    background: var(--bg);
+    color: var(--fg);
+    border-radius: 7px;
+    padding: 4px 12px;
+    font-size: var(--font-size-ui);
+    cursor: pointer;
+  }
+  .oacts button.ghost {
+    border-color: var(--line);
+    color: var(--muted);
+  }
+  .oacts button.over {
+    border-color: #f0883e;
+    color: #f0883e;
+    font-weight: 600;
   }
   .empty {
     flex: 1;

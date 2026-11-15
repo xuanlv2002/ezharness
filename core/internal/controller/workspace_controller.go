@@ -110,7 +110,9 @@ func (c *WorkspaceController) File(g *gin.Context) {
 	零开销，写回后 mtime 变必拿新图）——防启发式缓存直出旧图 */
 	g.Header("Cache-Control", "no-cache")
 	/* 真实 mtime 作 modtime：Last-Modified/304 语义正确，前端文件页
-	轮询 HEAD 对比即可感知磁盘变更（AI write_file 等） */
+	轮询 HEAD 对比即可感知磁盘变更（AI write_file 等）。另给纳秒级
+	ETag：Last-Modified 只到秒，同一秒内的连续写入会被轮询漏掉 */
+	g.Header("ETag", fmt.Sprintf(`"%x-%x"`, info.ModTime().UnixNano(), info.Size()))
 	http.ServeContent(g.Writer, g.Request, filepath.Base(abs), info.ModTime(), f)
 }
 

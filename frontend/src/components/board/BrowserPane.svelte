@@ -180,6 +180,18 @@
       {:else if curTab?.loading}
         <span class="spinner" title="加载中"></span>
       {/if}
+      <button
+        class="reload"
+        type="button"
+        disabled={!current || busy}
+        onclick={() => ezBrowser()?.reload(current)}
+        title={busy ? 'AI 操作中，暂不能刷新' : '刷新当前页面'}
+      >
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M21 12a9 9 0 1 1-2.6-6.3" />
+          <path d="M21 3v6h-6" />
+        </svg>
+      </button>
     </form>
 
     <!-- 内容区占位：WebContentsView 贴靠于此（主进程管理，页面不可见） -->
@@ -367,6 +379,34 @@
     border-top-color: var(--accent);
     animation: spin 0.8s linear infinite;
     flex: none;
+  }
+  /* 地址栏刷新钮：AI 操作标签时锁住（与地址栏同一把锁） */
+  .reload {
+    flex: none;
+    display: grid;
+    place-items: center;
+    width: 22px;
+    height: 22px;
+    border: none;
+    border-radius: 6px;
+    background: transparent;
+    color: var(--faint);
+    cursor: pointer;
+    transition:
+      color var(--dur-fast) var(--ease-out),
+      background var(--dur-fast) var(--ease-out);
+  }
+  .reload svg {
+    width: 13px;
+    height: 13px;
+  }
+  .reload:hover:not(:disabled) {
+    color: var(--fg);
+    background: var(--bg-soft);
+  }
+  .reload:disabled {
+    opacity: 0.45;
+    cursor: default;
   }
   .content {
     position: relative;

@@ -1008,6 +1008,12 @@ function registerIpc() {
   })
   ipcMain.on('ez-browser:select', (_e, tabId) => selectTab(tabId))
   ipcMain.on('ez-browser:close', (_e, tabId) => closeTab(tabId))
+  /* 地址栏刷新钮：与 navigate 同规则，AI 操作中不抢页面 */
+  ipcMain.on('ez-browser:reload', (_e, tabId) => {
+    const tab = tabs.get(tabId)
+    if (!tab || tab.agentBusy) return
+    tab.view.webContents.reload()
+  })
   /* Ctrl+滚轮：preload 在页面里捕获后转发（sender 就是该标签的 webContents） */
   ipcMain.on('ez-browser:wheel-zoom', (e, dir) => zoomTab(e.sender, dir))
 
