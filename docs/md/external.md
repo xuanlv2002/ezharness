@@ -37,7 +37,17 @@ __ezAll('.item .title').map((el) => el.textContent.trim())
 
 `__ezOne` / `__ezAll` 是页面上下文里注入的查询辅助函数。
 
-## 三、编排与记忆
+## 三、多媒体生成
+
+| 工具 | 参数 | 返回 / 边界 | 默认 |
+| --- | --- | --- | --- |
+| `media` | `action`（image / audio / video / status）、`prompt?`、`negative_prompt?`、`image_size?`、`batch_size?`、`seed?`、`input?`、`voice?`、`format?`、`speed?`、`duration?`、`resolution?`、`ratio?`、`first_frame?`、`last_frame?`、`id?` | 产物绝对路径；未完成给任务 id；status 列最近任务 | image / audio / video 审批，status 免审；每日配额 |
+
+图片、语音、视频共用一个 `media` 工具，按 `action` 分派。提交是异步任务：工具内短等待约 15 秒，完成直接返回产物路径，未完成返回任务 id——隔 1–2 分钟用 `action=status` 查一次，不要密轮询。
+
+能力未配置或已关闭时工具仍然存在，调用返回「当前无…能力」的正常结果，模型应如实告知用户，不重试、不硬凑。任务、产物与配额在「多媒体」页的工作台统一可见；生成模型配置见[多媒体](多媒体.md)，参数与成本详情先 `load_skill media`。
+
+## 四、编排与记忆
 
 | 工具 | 参数 | 返回 / 边界 | 默认 |
 | --- | --- | --- | --- |
@@ -49,7 +59,7 @@ __ezAll('.item .title').map((el) => el.textContent.trim())
 | `sleep` | `seconds`（1–900） | 等待 | 免审 |
 | `callback` | `action`（list / create / update / delete / enable / disable / run）、`id?`、`title?`、`kind?`、`schedule?`、`session?`、`app?`、`script?` | 任务清单 / 变更结果；会话任务绑定选定会话（缺省当前会话），归档/换代后失败 | list 免审，其余审批 |
 
-## 四、技能、MCP 与上下文
+## 五、技能、MCP 与上下文
 
 | 工具 | 参数 | 返回 / 边界 | 默认 |
 | --- | --- | --- | --- |
@@ -59,7 +69,7 @@ __ezAll('.item .title').map((el) => el.textContent.trim())
 | `save_app` | `name`、`html`、`title?`、`version?`、`backend?` 等 | 应用路径 | 审批 |
 | `load_app` | `name` | 元数据 + 文档 + CHANGELOG | 免审 |
 
-## 五、审批规则
+## 六、审批规则
 
 四档策略在设置页选择，即时生效：
 
@@ -74,6 +84,7 @@ __ezAll('.item .title').map((el) => el.textContent.trim())
 
 - 所有 `list` 类动作恒免审：`term_tab list`、`browser_tab list`、`mcp_list`、`tool_list`。
 - 命令与路径白名单分别作用于 `terminal` 与文件写入类工具。
+- 多媒体按 action 分档：`media:image` / `media:audio` / `media:video` 默认审批，`media:status` 免审；每日配额是审批之外的第二道闸。
 - 未登记默认值的工具一律按「需要审批」处理，宁烦不漏。
 - 全局策略可以覆盖单工具的默认值。
 
@@ -84,7 +95,7 @@ __ezAll('.item .title').map((el) => el.textContent.trim())
   <figcaption>审批卡带着完整参数出现在时间线里：可批可拒，拒绝理由会回给模型</figcaption>
 </figure>
 
-## 六、结果多大才会被卸载
+## 七、结果多大才会被卸载
 
 超过阈值（默认 4096 字节）的工具结果会被卸载到文件，上下文只保留摘要头（默认 512 字节，随阈值放宽但封顶 1KB）与绝对路径。豁免：`ask_user`、`task`、`load_skill`、`read_file`（回放工具）。阈值可在设置页调整，上限 1MB。
 
@@ -92,4 +103,4 @@ __ezAll('.item .title').map((el) => el.textContent.trim())
 
 ---
 
-上一篇：[快应用](快应用.md) · 回到[设计理念](设计理念.md)
+上一篇：[定时回调](定时回调.md) · 下一篇：[认证与 OpenAPI](认证与openapi.md)

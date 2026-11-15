@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="675" viewBox="0 0 1200 675">
+  <rect width="1200" height="675" fill="#ffffff"/>
+  <rect x="1" y="1" width="1198" height="673" fill="none" stroke="#e8eaf1" stroke-width="2"/>
+  <text x="600" y="330" text-anchor="middle" font-family="'Segoe UI','Microsoft YaHei',sans-serif" font-size="52" font-weight="600" fill="#111111">待补充</text>
+  <text x="600" y="378" text-anchor="middle" font-family="'Segoe UI','Microsoft YaHei',sans-serif" font-size="20" fill="#626a78">图片占位 · 截图后替换本文件或改 img src</text>
+</svg>
