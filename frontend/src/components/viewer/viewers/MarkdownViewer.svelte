@@ -118,6 +118,13 @@
     font-size: var(--font-size-section);
     line-height: 1.7;
   }
+  /* 预览按正文阅读排：字号/行距比旧版松一档，长文不挤 */
+  .md-body {
+    padding: 16px 20px 24px;
+    font-size: var(--font-size-body);
+    line-height: 1.75;
+    overflow-x: hidden;
+  }
   /* 满铺模式（目录钉住展开）：内容区是一整面，取消内层卡片边框与圆角 */
   .viewer.flush {
     gap: 0;
@@ -130,44 +137,135 @@
     border: none;
     border-radius: 0;
   }
+  /* 标题层级收敛：浏览器默认 h1 2em / h2 1.5em 又粗又大，长文像海报；
+     统一 600 字重、行高 1.35，只有 h2 留一条细分隔线 */
+  .md-body :global(h1),
+  .md-body :global(h2),
+  .md-body :global(h3),
+  .md-body :global(h4),
+  .md-body :global(h5),
+  .md-body :global(h6) {
+    margin: 1.5em 0 0.55em;
+    font-weight: 600;
+    line-height: 1.35;
+    color: var(--fg);
+  }
+  .md-body :global(h1:first-child),
+  .md-body :global(h2:first-child),
+  .md-body :global(h3:first-child),
+  .md-body :global(h4:first-child) {
+    margin-top: 0;
+  }
+  .md-body :global(h1) {
+    font-size: 21px;
+    letter-spacing: -0.01em;
+  }
+  .md-body :global(h2) {
+    font-size: 17px;
+    padding-bottom: 6px;
+    border-bottom: 1px solid var(--line);
+  }
+  .md-body :global(h3) {
+    font-size: 15px;
+  }
+  .md-body :global(h4) {
+    font-size: 14px;
+  }
+  .md-body :global(h5),
+  .md-body :global(h6) {
+    font-size: 13px;
+    color: var(--muted);
+  }
+  .md-body :global(p) {
+    margin: 0.6em 0;
+  }
+  .md-body :global(ul),
+  .md-body :global(ol) {
+    margin: 0.6em 0;
+    padding-left: 1.5em;
+  }
+  .md-body :global(li) {
+    margin: 0.25em 0;
+  }
+  .md-body :global(li > p) {
+    margin: 0.2em 0;
+  }
+  .md-body :global(strong) {
+    font-weight: 600;
+  }
+  .md-body :global(hr) {
+    border: none;
+    border-top: 1px solid var(--line);
+    margin: 1.6em 0;
+  }
+  /* 代码块：一块安静的浅底，不做外框；行内 code 用同一底色但更小 */
   .md-body :global(pre) {
-    background: var(--bg-soft);
+    margin: 0.9em 0;
+    padding: 12px 14px;
     border-radius: 8px;
-    padding: 10px 12px;
-    overflow: auto;
+    background: var(--bg-soft);
+    /* 代码块同样折行：文本类预览不出现横向滚动条 */
+    white-space: pre-wrap;
+    overflow-wrap: break-word;
+    overflow-x: hidden;
     font-family: var(--font-mono);
-    font-size: var(--font-size-section);
+    font-size: 12.5px;
+    line-height: 1.65;
   }
   .md-body :global(code) {
     font-family: var(--font-mono);
-    font-size: var(--font-size-section);
+    font-size: 0.92em;
     background: var(--bg-soft);
     border-radius: 4px;
-    padding: 0 4px;
+    padding: 1px 5px;
   }
   .md-body :global(pre code) {
     background: transparent;
     padding: 0;
+    font-size: inherit;
+    border-radius: 0;
   }
+  /* 表格：只留横向行线，去掉整格网格（满屏框线很吵） */
   .md-body :global(table) {
+    width: 100%;
+    margin: 0.9em 0;
     border-collapse: collapse;
+    font-size: 13px;
   }
   .md-body :global(th),
   .md-body :global(td) {
-    border: 1px solid var(--line);
-    padding: 4px 10px;
+    padding: 6px 10px;
+    text-align: left;
+    border-bottom: 1px solid var(--line);
+    vertical-align: top;
+    overflow-wrap: break-word;
+  }
+  .md-body :global(th) {
+    font-weight: 600;
+    color: var(--muted);
+    background: var(--bg-soft);
+  }
+  .md-body :global(tr:last-child td) {
+    border-bottom: none;
   }
   .md-body :global(img) {
     max-width: 100%;
+    border-radius: 6px;
   }
   .md-body :global(a) {
     color: var(--accent, #2563eb);
   }
   .md-body :global(blockquote) {
+    margin: 0.9em 0;
+    padding: 2px 0 2px 14px;
     border-left: 3px solid var(--line-strong);
-    margin: 0;
-    padding-left: 12px;
     color: var(--muted);
+  }
+  .md-body :global(blockquote > :first-child) {
+    margin-top: 0;
+  }
+  .md-body :global(blockquote > :last-child) {
+    margin-bottom: 0;
   }
   .editor-wrap {
     padding: 0;
@@ -177,13 +275,15 @@
     display: block;
     width: 100%;
     height: 100%;
-    padding: 10px 12px;
+    padding: 14px 16px;
     font-family: var(--font-mono);
-    font-size: var(--font-size-section);
-    line-height: 1.6;
+    font-size: 14px;
+    line-height: 24px;
     tab-size: 4;
     white-space: pre-wrap;
     overflow-wrap: break-word;
+    overflow-x: hidden;
+    overflow-y: auto;
     scrollbar-gutter: stable;
     box-sizing: border-box;
     border: none;

@@ -44,8 +44,8 @@
   const tab = $derived(tabs.find((t) => t.key === current))
   const dirty = $derived(!!tab && tab.kind !== 'image' && tab.content !== tab.saved)
   const textish = $derived(!!tab && isTextishKind(tab.kind))
-  /* 目录钉住展开时内容满铺（grid 右列）：查看器内部不再叠一层圆角卡片 */
-  const filePaneFlush = $derived(explorerUI.docked && explorerUI.open)
+  /* 目录栏展开时内容满铺（grid 右列）：查看器内部不再叠一层圆角卡片 */
+  const filePaneFlush = $derived(explorerUI.open)
   const imageTabs = $derived(tabs.filter((t) => t.kind === 'image'))
   /* 二进制类(pdf/媒体/表格/文档/幻灯片/兜底)统一从 VIEWERS 表取组件即挂 */
   const binViewer = $derived(tab && !textish && tab.kind !== 'image' ? VIEWERS[tab.kind] : undefined)
@@ -425,13 +425,13 @@
   }}
 />
 
-<div class="file-pane" class:docked={explorerUI.docked} class:treeopen={explorerUI.open && explorerUI.docked}>
+<div class="file-pane" class:treeopen={explorerUI.open}>
   <!-- 目录面板：悬浮（absolute 盖在预览区左侧）或钉住（grid 左列整列
        全高，tab 条与内容只占右列）。挂在这里而非 .body——钉住时 tab 条
        不再压在目录头上，树与内容等高。常驻挂载不随显隐销毁（展开/收起
        是动画不是重挂，目录缓存也因此秒开） -->
   <!-- 收起时不轮询（常驻挂载后 active 会一直为真，须与显隐合取） -->
-  <ExplorerTree active={active && explorerUI.open} open={explorerUI.open} docked={explorerUI.docked} onopen={openFromTree} onclose={() => setExplorerOpen(false)} />
+  <ExplorerTree active={active && explorerUI.open} open={explorerUI.open} onopen={openFromTree} onclose={() => setExplorerOpen(false)} />
   {#if !hosted || tabs.length}
     <div class="strip">
       {#if !hosted}
@@ -576,13 +576,18 @@
 {/if}
 
 <style>
+  /* 资源页恒为 grid：目录栏占左列整列全高（宽度由它自己的收放动画
+     控制），tab 条/内容/状态条只占右列；树收起后左列宽 0，右列拿满。
+     grid 不能随 open 切回 flex——树收起瞬间会改变整页的布局模式 */
   .file-pane {
-    position: relative; /* 目录悬浮面板（absolute）的定位上下文 */
-    display: flex;
-    flex-direction: column;
+    position: relative;
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr) auto;
+    gap: 0;
+    row-gap: 8px;
     height: 100%;
     min-height: 0;
-    gap: 8px;
   }
   /* 目录面板开关：tab 条最左的常驻小钮（面板本体不再点外部即收，
      这里是显式开关之一，与面板头部 X 等价） */
@@ -658,47 +663,29 @@
     flex: 1;
     min-height: 0;
   }
-  /* 目录面板钉住：file-pane 恒为 grid——树占左列整列全高（tab 条不再
-     压在目录头上），strip 与内容只占右列。列宽随树的展开/收起动画收放
-     （0 列时树不可见）；grid 不能随 open 切换回 flex，否则树收起瞬间
-     以 auto 高度参与列布局，把内容顶到半屏 */
-  .file-pane.docked {
-    display: grid;
-    grid-template-columns: auto minmax(0, 1fr);
-    grid-template-rows: auto minmax(0, 1fr) auto;
-    gap: 0;
-    transition: row-gap 0.26s var(--ease-out);
-  }
-  /* 树收起：内容列保持原来的上下呼吸（flex 时代 strip 与 body 的 8px 间距） */
-  .file-pane.docked:not(.treeopen) {
-    row-gap: 8px;
-  }
-  .file-pane.docked :global(.tree) {
-    grid-column: 1;
-    grid-row: 1 / 4;
-  }
-  .file-pane.docked > .strip {
+  /* 右列三块显式落格；树自己声明 grid-column/grid-row（见 ExplorerTree） */
+  .file-pane > .strip {
     grid-column: 2;
     grid-row: 1;
   }
-  .file-pane.docked > .body {
+  .file-pane > .body {
     grid-column: 2;
     grid-row: 2;
   }
   /* 状态条显式落右列末行：grid 自动放置会把它塞进树下面的隐式行 */
-  .file-pane.docked > .statusbar {
+  .file-pane > .statusbar {
     grid-column: 2;
     grid-row: 3;
   }
-  .file-pane.docked.treeopen > .statusbar {
+  .file-pane.treeopen > .statusbar {
     padding: 0 10px 6px;
   }
   /* 树展开时 tab 条成栏、内容是一块整面（去圆角贴齐树缘与 tab 条） */
-  .file-pane.docked.treeopen > .strip {
+  .file-pane.treeopen > .strip {
     padding: 6px 8px;
-    border-bottom: 1px solid var(--line);
+    border-bottom-color: var(--line);
   }
-  .file-pane.docked.treeopen > .body > :global(*) {
+  .file-pane.treeopen > .body > :global(*) {
     border-radius: 0;
     border: none;
   }
@@ -717,6 +704,12 @@
     gap: 6px;
     flex-wrap: wrap;
     flex: none;
+    /* padding / 分隔线与目录栏收放同步过渡，展开时竖直方向不跳 */
+    padding: 0;
+    border-bottom: 1px solid transparent;
+    transition:
+      padding 0.24s var(--ease-out),
+      border-color 0.24s var(--ease-out);
   }
   .strip-item {
     display: flex;
@@ -883,6 +876,7 @@
     min-height: 24px;
     font-size: var(--font-size-small);
     color: var(--faint);
+    transition: padding 0.24s var(--ease-out);
   }
   .savebtn {
     position: relative;

@@ -149,6 +149,40 @@ func (c *WorkspaceController) Save(g *gin.Context) {
 	g.JSON(http.StatusOK, gin.H{"ok": true})
 }
 
+/*
+Create POST /api/workspace/create {path, dir}：资源页目录树的新建
+（dir=true 建目录，否则建空文本文件）。已存在报 409——新建不是覆盖。
+*/
+func (c *WorkspaceController) Create(g *gin.Context) {
+	var req struct {
+		Path string `json:"path"`
+		Dir  bool   `json:"dir"`
+	}
+	if err := g.ShouldBindJSON(&req); err != nil || req.Path == "" {
+		g.JSON(http.StatusBadRequest, gin.H{"error": "invalid body"})
+		return
+	}
+	abs, err := c.Svc.Path(req.Path)
+	if err != nil {
+		g.JSON(http.StatusBadRequest, gin.H{"error": "invalid path"})
+		return
+	}
+	if req.Dir {
+		err = c.Svc.Mkdir(abs)
+	} else {
+		err = c.Svc.CreateFile(g.Request.Context(), abs)
+	}
+	if errors.Is(err, os.ErrExist) {
+		g.JSON(http.StatusConflict, gin.H{"error": "已存在同名文件或目录"})
+		return
+	}
+	if err != nil {
+		g.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	g.JSON(http.StatusOK, gin.H{"ok": true, "path": abs})
+}
+
 /* maxStashSize 单文件暂存上限（20MB）；二进制写回同限。 */
 const maxStashSize = 20 << 20
 

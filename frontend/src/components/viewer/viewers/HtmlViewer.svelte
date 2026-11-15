@@ -130,13 +130,15 @@
     display: block;
     width: 100%;
     height: 100%;
-    padding: 10px 12px;
+    padding: 14px 16px;
     font-family: var(--font-mono);
-    font-size: var(--font-size-section);
-    line-height: 1.6;
+    font-size: 14px;
+    line-height: 24px;
     tab-size: 4;
     white-space: pre-wrap;
     overflow-wrap: break-word;
+    overflow-x: hidden;
+    overflow-y: auto;
     scrollbar-gutter: stable;
     box-sizing: border-box;
     border: none;

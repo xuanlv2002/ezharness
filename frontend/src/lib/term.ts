@@ -116,12 +116,13 @@ class TerminalManager {
   }
 
   /* create 的 cols/rows 是看板实际列行数:后端让 shell 按这个宽度启动,
-     首屏提示符的擦除序列不会和窄窗错位。(0/不传由后端用默认尺寸) */
-  async create(name?: string, desc?: string, cols?: number, rows?: number): Promise<TermInfo> {
+     首屏提示符的擦除序列不会和窄窗错位。(0/不传由后端用默认尺寸)
+     dir = 初始目录（资源页「在集成终端打开」），空则用工作目录。 */
+  async create(name?: string, desc?: string, cols?: number, rows?: number, dir?: string): Promise<TermInfo> {
     const r = await fetch('/api/terminal/create', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name, desc, cols, rows }),
+      body: JSON.stringify({ name, desc, cols, rows, dir }),
     })
     if (!r.ok) throw new Error(`新建终端失败: ${r.status}`)
     return r.json()

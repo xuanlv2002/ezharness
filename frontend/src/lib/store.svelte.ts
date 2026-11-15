@@ -842,6 +842,13 @@ class AppStore {
     this.termDrawerOpen = true
   }
 
+  /* ensureWorkspaceView 明确的「打开」动作发生在管理页（快应用/回调/设置
+     …）时先切回工作区——抽屉只在对话与内嵌快应用页上屏，不切回去拉开了
+     也看不见。 */
+  private ensureWorkspaceView() {
+    if (this.view !== 'chat' && this.view !== 'app') this.jumpView = 'chat'
+  }
+
   /* openTermAt 拉开终端抽屉并定位到指定终端（supper_url term:// 点击；
      首次打开时 WS hello 到达后由 TerminalTab 消费定位）。终端已弹出则
      定位请求转发到窗口。 */
@@ -883,6 +890,25 @@ class AppStore {
     ez.browser.focusTab(id)
     if (this.popoutTools.includes('browser')) {
       ez.popout.open('browser')
+      this.yieldDrawer('browser')
+    } else {
+      this.drawerTool = 'browser'
+      this.termDrawerOpen = true
+    }
+  }
+
+  /* openBrowserUrl 用共享浏览器打开一个地址（资源页右键「在集成浏览器
+     打开」）：新建标签并切到浏览器页；浏览器已弹出则聚焦弹出窗。 */
+  openBrowserUrl(url: string) {
+    const ez = (window as any).ez
+    if (!ez?.browser) {
+      this.lastStatus = '浏览器仅桌面端可用'
+      return
+    }
+    this.ensureWorkspaceView()
+    ez.browser.create(url)
+    if (this.popoutTools.includes('browser')) {
+      ez.popout?.open('browser')
       this.yieldDrawer('browser')
     } else {
       this.drawerTool = 'browser'

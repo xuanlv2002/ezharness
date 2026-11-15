@@ -171,6 +171,11 @@ func (s *TerminalService) Create(name, desc, origin string, cols, rows int) (*Te
 	return s.create(s.workDir, name, desc, origin, cols, rows)
 }
 
+/* CreateIn 在指定目录启动终端（资源页「在集成终端打开」）；dir 空则用工作目录。 */
+func (s *TerminalService) CreateIn(dir, name, desc, origin string, cols, rows int) (*TermInfo, error) {
+	return s.create(dir, name, desc, origin, cols, rows)
+}
+
 /* create 是 Create 与 Launch 的公共实现;dir 是 shell 的初始目录,空则用服务 workDir。 */
 func (s *TerminalService) create(dir, name, desc, origin string, cols, rows int) (*TermInfo, error) {
 	if dir == "" {

@@ -220,6 +220,7 @@ func NewRouter(c Controllers, dist fs.FS, tokens *TokenStore) *gin.Engine {
 		api.GET("/workspace/file", c.Workspace.File)         // 工作目录文件预览（附件 chips 源）
 		api.HEAD("/workspace/file", c.Workspace.File)        // 同上（文件页轮询 Last-Modified 用；gin 不自动映射 HEAD→GET）
 		api.POST("/workspace/save", c.Workspace.Save)        // 工作目录文本保存（资源查看器·文本）
+		api.POST("/workspace/create", c.Workspace.Create)    // 目录树新建（文件/文件夹）
 		api.POST("/workspace/save-bin", c.Workspace.SaveBin) // 二进制写回（资源查看器·图片画板保存）
 		api.POST("/workspace/stash", c.Workspace.Stash)      // 附件暂存（拖入即落盘 tmp/，发送只传路径引用）
 		api.GET("/workspace/workdir", c.Workspace.WorkDir)   // 解析后的工作目录（目录树默认根）

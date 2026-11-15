@@ -49,6 +49,22 @@ func (w *WorkspaceService) WriteText(ctx context.Context, abs, content string) e
 	return w.Fsys.Write(ctx, abs, []byte(content))
 }
 
+/* Mkdir 新建目录（含父级）；目标已存在时报 os.ErrExist，不静默复用。 */
+func (w *WorkspaceService) Mkdir(abs string) error {
+	if _, err := os.Stat(abs); err == nil {
+		return os.ErrExist
+	}
+	return os.MkdirAll(abs, 0o755)
+}
+
+/* CreateFile 新建空文本文件（父级一并创建）；已存在报 os.ErrExist，不静默覆盖。 */
+func (w *WorkspaceService) CreateFile(ctx context.Context, abs string) error {
+	if _, err := os.Stat(abs); err == nil {
+		return os.ErrExist
+	}
+	return w.Fsys.Write(ctx, abs, nil)
+}
+
 /* WriteBin 写二进制文件（画板图片原地写回，原子写）。 */
 func (w *WorkspaceService) WriteBin(ctx context.Context, abs string, data []byte) error {
 	return w.Fsys.Write(ctx, abs, data)

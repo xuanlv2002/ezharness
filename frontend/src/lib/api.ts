@@ -713,6 +713,10 @@ export const api = {
   saveFile: (path: string, content: string) =>
     post<{ ok: boolean }>('/api/workspace/save', { path, content }),
 
+  /* 目录树新建：dir=true 建文件夹，否则建空文本文件（已存在报错） */
+  createPath: (path: string, dir: boolean) =>
+    post<{ ok: boolean; path: string }>('/api/workspace/create', { path, dir }),
+
   /* 资源页目录树：path 缺省 = 工作目录 */
   tree: (path?: string) =>
     fetch(`/api/workspace/tree${path ? `?path=${encodeURIComponent(path)}` : ''}`).then(json<TreeView>),
