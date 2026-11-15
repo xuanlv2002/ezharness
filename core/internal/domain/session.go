@@ -811,6 +811,7 @@ Hub 管理应用级单例状态：active 是当前分支，branches 按线根 ID
 type Hub struct {
 	mu        sync.Mutex
 	Models    ModelsConfig
+	Media     MediaConfig
 	Fsys      osfs.OS
 	Settings  Settings
 	ToolRules []ToolRule
@@ -957,17 +958,31 @@ func (h *Hub) newSession(id string, rootID string, snap *hooks.SessionSnap) *Ses
 	return s
 }
 
-/* ModelsSnapshot 返回当前模型四槽。 */
+/* ModelsSnapshot 返回当前语言模型槽。 */
 func (h *Hub) ModelsSnapshot() ModelsConfig {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	return h.Models
 }
 
-/* ApplyModels 更新模型四槽（持久化由 service 层完成）。 */
+/* ApplyModels 更新语言模型槽（持久化由 service 层完成）。 */
 func (h *Hub) ApplyModels(m ModelsConfig) {
 	h.mu.Lock()
 	h.Models = m
+	h.mu.Unlock()
+}
+
+/* MediaSnapshot 返回当前多媒体生成模型配置（media.json 的内存态）。 */
+func (h *Hub) MediaSnapshot() MediaConfig {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.Media
+}
+
+/* ApplyMedia 更新多媒体生成模型配置（持久化由 service 层完成）。 */
+func (h *Hub) ApplyMedia(m MediaConfig) {
+	h.mu.Lock()
+	h.Media = m
 	h.mu.Unlock()
 }
 

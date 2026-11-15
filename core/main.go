@@ -129,7 +129,8 @@ func (a *app) buildRouter() *gin.Engine {
 	}
 	a.mcpAuth.SetRouter(a.mcpRouter)
 
-	agents := &service.AgentService{Hub: hub, Term: termSvc, Browser: a.browser, McpRouter: a.mcpRouter, McpAuth: a.mcpAuth}
+	agents := &service.AgentService{Hub: hub, Term: termSvc, Browser: a.browser, McpRouter: a.mcpRouter, McpAuth: a.mcpAuth,
+		Media: service.NewMediaService(hub)}
 	topicsSvc := &service.TopicService{Hub: hub, Agents: agents}
 	appsSvc := &service.AppsService{Fsys: hub.Fsys, Term: termSvc, Hub: hub}
 	chatSvc := &service.ChatService{Hub: hub}
@@ -160,6 +161,8 @@ func (a *app) buildRouter() *gin.Engine {
 		Browser:   &controller.BrowserController{Svc: a.browser},
 		Workspace: &controller.WorkspaceController{Svc: service.NewWorkspaceService(hub.Fsys, hub)},
 		Pinboard:  &controller.PinboardController{Svc: &service.PinboardService{Fsys: hub.Fsys}},
+		Media: &controller.MediaController{Svc: agents.Media,
+			Settings: &service.SettingsService{Hub: hub, Agents: agents}},
 	}
 	return controller.NewRouter(controllers, distFS(), a.tokens)
 }

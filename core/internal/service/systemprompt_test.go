@@ -18,12 +18,12 @@ base 结构契约的可机检部分：段序固定、段间恰好一个空行、
 */
 func TestBuildSystemBaseStructure(t *testing.T) {
 	base := buildSystemBase(context.Background(), domain.Settings{},
-		osfs.OS{}, domain.ModelsConfig{}, "")
+		osfs.OS{}, domain.ModelsConfig{}, domain.MediaConfig{}, "")
 
 	// 段序固定；<apps> 恒在（空清单也给占位），清单段可缺席时不破坏其余顺序
 	wantOrder := []string{
 		"你是 ezharness", "<workspace>", "<memory>", "<apps>",
-		"<local_api>", "<action>", "<output>",
+		"<media>", "<local_api>", "<action>", "<output>",
 	}
 	last := -1
 	for _, mark := range wantOrder {
@@ -119,5 +119,17 @@ func TestCallbacksSectionSkipsFinished(t *testing.T) {
 	}
 	if !strings.Contains(got, "存活任务") {
 		t.Fatalf("live task missing: %s", got)
+	}
+}
+
+/* 多媒体能力段：已配置列模型名，未配置显式标注“当前无此能力”。 */
+func TestMediaSectionCapabilities(t *testing.T) {
+	mc := domain.MediaConfig{Image: []domain.ModelEntry{{Name: "black-forest-labs/FLUX.1-schnell", Enabled: true}}}
+	got := mediaSection(mc)
+	if !strings.Contains(got, "图片生成 - black-forest-labs/FLUX.1-schnell") {
+		t.Fatalf("configured image model missing: %s", got)
+	}
+	if !strings.Contains(got, "语音合成 - （未启用") || !strings.Contains(got, "视频生成 - （未启用") {
+		t.Fatalf("unconfigured kinds must be explicit: %s", got)
 	}
 }

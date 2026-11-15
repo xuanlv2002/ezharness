@@ -5,10 +5,11 @@ systemprompt 拥有 system base 的全部段文本。分层契约（防漂移的
 函数；跨段只允许标签名引用（"纪律见 <action>"），不允许内容复述。
 工具机制不进 base：terminal、term_ 系、browser_ 系、sleep 的用法在
 各自工具描述里（随工具代码更新），OpenAPI 用法在 open-api 技能，
-trim 等另有 tool-guide——改这些永远不用回来改 base。
+多媒体工具/接口用法在 media 技能，trim 等另有 tool-guide——改这些
+永远不用回来改 base。
 
 段序固定：开篇身份 → SystemExtra → <workspace> 环境 → <memory> 记忆 →
-<skills>/<apps>/<models>/<mcp> 资源清单 → <local_api> 本机 API →
+<skills>/<apps>/<media>/<models>/<mcp> 资源清单 → <local_api> 本机 API →
 <action> 行动准则 → <output> 输出规范。base 只在 session 创建时组装一次
 （同 session 不变）；skill 全文与记忆细节不注入（模型按需用文件工具读取），
 清单变更要等下个 session 才进 system，期间由 remind 变更段的
@@ -37,7 +38,7 @@ import (
 )
 
 /* buildSystemBase 按 fixed 段序拼装 base，空段（未配置/无清单）自动跳过。 */
-func buildSystemBase(ctx context.Context, st domain.Settings, fsys osfs.OS, mc domain.ModelsConfig, sessionID string) string {
+func buildSystemBase(ctx context.Context, st domain.Settings, fsys osfs.OS, mc domain.ModelsConfig, mediaCfg domain.MediaConfig, sessionID string) string {
 	dataDir, _ := os.Getwd() // 进程 cwd 即数据目录（启动时 chdir）
 	workDir := ResolveWorkDir(st.WorkDir)
 	sections := []string{
@@ -48,6 +49,7 @@ func buildSystemBase(ctx context.Context, st domain.Settings, fsys osfs.OS, mc d
 		skillsSection(ctx, fsys, st, dataDir),
 		renderAppsSection(ctx, fsys),
 		callbacksSection(ctx, fsys, sessionID),
+		mediaSection(mediaCfg),
 		modelsSection(mc),
 		mcpSection(fsys),
 		localAPISection(),
@@ -69,7 +71,7 @@ openingSection 开篇：身份一句 + 分段地图一句。具体规则零复�
 */
 func openingSection() string {
 	return "你是 ezharness——持续陪伴用户的设备级 agent，可全权操作本机文件与命令，能用工具就直接动手。\n" +
-		"分段地图：<workspace> 环境与路径纪律 / <memory> 长期记忆 / <skills>·<apps>·<callbacks>·<models>·<mcp> 资源清单 / " +
+		"分段地图：<workspace> 环境与路径纪律 / <memory> 长期记忆 / <skills>·<apps>·<callbacks>·<media>·<models>·<mcp> 资源清单 / " +
 		"<local_api> 本机 API / <action> 行动准则 / <output> 输出规范。"
 }
 
@@ -256,6 +258,35 @@ func callbacksSection(ctx context.Context, fsys osfs.OS, sessionID string) strin
 		b.WriteString(line + "）")
 	}
 	b.WriteString("\n</callbacks>")
+	return b.String()
+}
+
+/*
+mediaSection 多媒体能力段：图片/语音/视频三类能力与当前生效模型。未配置
+的能力显式标注「当前无此能力」——模型直接如实回复，不试探调用。生成与
+查询统一走 media 工具；参数、成本与 OpenAPI 用法唯一归属 media 技能
+（机制不在此复述）。三种能力固定列出，轮内启停/切模型见 <resource_change>。
+*/
+func mediaSection(mc domain.MediaConfig) string {
+	kinds := []struct {
+		name    string
+		entries []domain.ModelEntry
+	}{
+		{"图片生成", mc.Image},
+		{"语音合成", mc.Audio},
+		{"视频生成", mc.Video},
+	}
+	var b strings.Builder
+	b.WriteString("<media>\n（当前多媒体生成能力：只有标为可用的才可调用；未启用的（未配置或已关闭）直接如实回复“当前无某能力”，不要试探。" +
+		"生成与任务查询统一走 media 工具，参数/成本先 load_skill media；轮内启用/关闭/换模型见 <resource_change>）")
+	for _, k := range kinds {
+		if e := domain.ActiveSlot(k.entries); e != nil && e.Name != "" {
+			b.WriteString("\navailable_media: " + k.name + " - " + e.Name)
+		} else {
+			b.WriteString("\navailable_media: " + k.name + " - （未启用，当前无此能力）")
+		}
+	}
+	b.WriteString("\n</media>")
 	return b.String()
 }
 

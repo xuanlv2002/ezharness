@@ -94,6 +94,72 @@ OAuth 时自动弹出授权框，用户在浏览器完成授权后自动重试�
       })
   }
 
+  /* ── 生成类模型（异步任务：提交短等待，未完成拿 job.id 轮询；贵价：每日配额，超限 429）── */
+
+  /*
+    gen.image(prompt, opts?) → Promise<{ok, job}>（job.status=done 时 job.files[].path 为产物本机绝对路径）
+    opts: { model?, negative_prompt?, image_size?('1024x1024'), batch_size?(1-4), seed?, wait_seconds?(0-60，默认 10) }
+  */
+  function genImage(prompt, opts) {
+    opts = opts || {}
+    return post('/api/open/image/call', {
+      prompt: prompt,
+      model: opts.model || '',
+      negative_prompt: opts.negative_prompt || '',
+      image_size: opts.image_size || '',
+      batch_size: opts.batch_size || 1,
+      seed: opts.seed || 0,
+      wait_seconds: opts.wait_seconds == null ? undefined : opts.wait_seconds,
+    }).then(asError)
+  }
+
+  /*
+    gen.speech(input, opts?) → Promise<{ok, job}>
+    opts: { model?, voice?(alex/anna/benjamin/bella/charles/claire/diana), response_format?('mp3'), speed?(0.25-4.0), wait_seconds? }
+  */
+  function genSpeech(input, opts) {
+    opts = opts || {}
+    return post('/api/open/audio/call', {
+      input: input,
+      model: opts.model || '',
+      voice: opts.voice || '',
+      response_format: opts.response_format || '',
+      speed: opts.speed || 0,
+      wait_seconds: opts.wait_seconds == null ? undefined : opts.wait_seconds,
+    }).then(asError)
+  }
+
+  /*
+    gen.video(prompt, opts?) → Promise<{ok, job}>（生成需数分钟：响应是执行中的 job，之后用 gen.job(id) 轮询）
+    opts: { model?, duration?(5-15 秒), resolution?('480p' 省钱 / '768p'), first_frame?/last_frame?（URL 或本机路径）, wait_seconds? }
+  */
+  function genVideo(prompt, opts) {
+    opts = opts || {}
+    return post('/api/open/video/call', {
+      prompt: prompt,
+      model: opts.model || '',
+      duration: opts.duration || 0,
+      resolution: opts.resolution || '',
+      first_frame: opts.first_frame || '',
+      last_frame: opts.last_frame || '',
+      wait_seconds: opts.wait_seconds == null ? undefined : opts.wait_seconds,
+    }).then(asError)
+  }
+
+  /* gen.job(id) → Promise<{job}>：任务详情（done 带 files，failed 带 err）。 */
+  function genJob(id) {
+    return get('/api/open/media/jobs/' + encodeURIComponent(id))
+      .then(asError)
+      .then(function (b) {
+        return b.job
+      })
+  }
+
+  /* gen.jobs() → Promise<{jobs}>：最近任务（新→旧）。 */
+  function genJobs() {
+    return get('/api/open/media/jobs').then(asError)
+  }
+
   /* ── MCP 调用（含 OAuth 弹框与自动重试） ── */
 
   var POLL_MS = 1500
@@ -332,6 +398,7 @@ OAuth 时自动弹出授权框，用户在浏览器完成授权后自动重试�
       token = (o && o.token) || ''
     },
     model: { call: modelCall },
+    gen: { image: genImage, speech: genSpeech, video: genVideo, job: genJob, jobs: genJobs },
     mcp: { call: mcpCall, authorize: mcpAuthorize },
     deepParse: deepParse,
   }

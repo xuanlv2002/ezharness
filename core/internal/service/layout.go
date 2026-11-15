@@ -50,6 +50,10 @@ func EnsureLayout() ([]string, error) {
 		{"models.json", func(ctx context.Context, fsys osfs.OS) error {
 			return SaveModelsConfig(ctx, fsys, domain.DefaultModelsConfig())
 		}},
+		{"media.json", func(ctx context.Context, fsys osfs.OS) error {
+			// 多媒体生成模型与语言模型分离：首次启动就落空配置，配置页直接可写
+			return SaveMediaConfig(ctx, fsys, domain.MediaConfig{})
+		}},
 		{"settings.json", func(ctx context.Context, fsys osfs.OS) error {
 			return SaveSettings(ctx, fsys, domain.DefaultSettings())
 		}},

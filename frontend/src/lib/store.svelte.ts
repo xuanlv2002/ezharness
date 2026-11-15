@@ -274,7 +274,7 @@ class AppStore {
   /* 本轮已处理的记忆待确认操作（op id → 结果）：通知栏与聊天记忆卡共用的确认入口，
      本地记录结果给卡片落定状态（后端返回后待确认项即消失） */
   memoryDecisions = $state<Record<string, 'accept' | 'cancel'>>({})
-  jumpView = $state<'' | 'chat' | 'pinboard' | 'memory' | 'callbacks'>('') // 跳页请求（App 消费后清空）
+  jumpView = $state<'' | 'chat' | 'pinboard' | 'models' | 'media' | 'memory' | 'callbacks' | 'app' | 'tools'>('') // 跳页请求（App 消费后清空）
   view = $state('') // 当前页面（App 同步；顶栏工具键等据此判断抽屉可不可见）
   pinFocus = $state('') // 便签小窗/顶栏预览点条目要定位的卡片 id（PinboardView 消费后清空）
   /* 定时回调通知要展开的任务（回调页消费后清空） */

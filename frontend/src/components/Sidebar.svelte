@@ -7,7 +7,7 @@
   import { openAppInside } from '../lib/apps'
   import { quickApp } from '../lib/quickApp.svelte'
 
-  type View = 'chat' | 'pinboard' | 'models' | 'memory' | 'tools' | 'app' | 'callbacks' | 'mcp' | 'security' | 'settings'
+  type View = 'chat' | 'pinboard' | 'models' | 'media' | 'memory' | 'tools' | 'app' | 'callbacks' | 'mcp' | 'security' | 'settings'
 
   let {
     view,
@@ -36,6 +36,11 @@
       key: 'models',
       label: '模型',
       icon: '<rect x="7" y="7" width="10" height="10" rx="2"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M5 5l2 2M17 17l2 2M19 5l-2 2M7 17l-2 2"/>',
+    },
+    {
+      key: 'media',
+      label: '多媒体',
+      icon: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18"/><path d="M10 12.5l5 3-5 3z"/>',
     },
     {
       key: 'memory',

@@ -8,6 +8,7 @@
   import TitleBar from './components/TitleBar.svelte'
   import ChatView from './components/ChatView.svelte'
   import ModelsView from './components/ModelsView.svelte'
+  import MediaView from './components/media/MediaView.svelte'
   import PinboardView from './components/pinboard/PinboardView.svelte'
   import PinQuickWindow from './components/pinboard/PinQuickWindow.svelte'
   import MemoryView from './components/MemoryView.svelte'
@@ -24,7 +25,7 @@
   import AssistantPet from './components/AssistantPet.svelte'
   import NoticeWindow from './components/NoticeWindow.svelte'
 
-  let view = $state<'chat' | 'pinboard' | 'models' | 'memory' | 'tools' | 'app' | 'callbacks' | 'mcp' | 'security' | 'settings'>('chat')
+  let view = $state<'chat' | 'pinboard' | 'models' | 'media' | 'memory' | 'tools' | 'app' | 'callbacks' | 'mcp' | 'security' | 'settings'>('chat')
   let expanded = $state(false)
 
   /* 弹出窗口（ez:popout 创建）：只渲染单个工具 pane 的轻布局，无会话/
@@ -168,6 +169,8 @@
           <PinboardView />
         {:else if view === 'models'}
           <ModelsView />
+        {:else if view === 'media'}
+          <MediaView />
         {:else if view === 'memory'}
           <MemoryView onNavigate={(v) => (view = v as typeof view)} />
         {:else if view === 'tools'}

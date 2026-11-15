@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"log"
+	"slices"
 
 	"github.com/xuanlv2002/ezloop/types"
 
@@ -16,12 +17,15 @@ import (
 /* BootstrapHub 装配领域根：加载配置与索引并恢复活动会话。 */
 func BootstrapHub(h *domain.Hub) {
 	ctx := context.Background()
+	// 存量迁移先行：旧版 models.json 里的生成模型槽搬进 media.json
+	MigrateGenModels(ctx, h.Fsys)
 	if _, err := h.Fsys.Read(ctx, "models.json"); err != nil {
 		h.Models = domain.DefaultModelsConfig()
 		_ = SaveModelsConfig(ctx, h.Fsys, h.Models)
 	} else {
 		h.Models = LoadModelsConfig(ctx, h.Fsys)
 	}
+	h.Media = LoadMediaConfig(ctx, h.Fsys)
 	if _, err := h.Fsys.Read(ctx, "settings.json"); err != nil {
 		h.Settings = domain.DefaultSettings()
 		_ = SaveSettings(ctx, h.Fsys, h.Settings)
@@ -56,19 +60,83 @@ func LoadModelsConfig(ctx context.Context, fsys osfs.OS) domain.ModelsConfig {
 	}
 	fsys.Restrict("models.json") // 含 apiKey：存量文件启动时收敛为仅属主可读写
 	var mc domain.ModelsConfig
-	if json.Unmarshal(data, &mc) == nil && (len(mc.Main)+len(mc.Image)+len(mc.Audio)) > 0 {
+	if json.Unmarshal(data, &mc) == nil && len(mc.Main) > 0 {
 		return mc
 	}
 	return domain.DefaultModelsConfig()
 }
 
-/* SaveModelsConfig 落盘模型四槽。 */
+/* SaveModelsConfig 落盘语言模型槽。 */
 func SaveModelsConfig(ctx context.Context, fsys osfs.OS, m domain.ModelsConfig) error {
 	data, err := json.MarshalIndent(m, "", "  ")
 	if err != nil {
 		return err
 	}
 	return fsys.WritePrivate(ctx, "models.json", data)
+}
+
+const mediaConfigFile = "media.json"
+
+/* LoadMediaConfig 读 media.json（多媒体生成模型：image/audio/video 三类），
+缺失给空配置（三类都未配置是正常态）。 */
+func LoadMediaConfig(ctx context.Context, fsys osfs.OS) domain.MediaConfig {
+	var mc domain.MediaConfig
+	if data, err := fsys.Read(ctx, mediaConfigFile); err == nil {
+		fsys.Restrict(mediaConfigFile)
+		_ = json.Unmarshal(data, &mc)
+	}
+	return mc
+}
+
+/* SaveMediaConfig 落盘多媒体生成模型（含 apiKey，属主权限）。 */
+func SaveMediaConfig(ctx context.Context, fsys osfs.OS, m domain.MediaConfig) error {
+	data, err := json.MarshalIndent(m, "", "  ")
+	if err != nil {
+		return err
+	}
+	return fsys.WritePrivate(ctx, mediaConfigFile, data)
+}
+
+/*
+MigrateGenModels 存量迁移：旧版把生成模型放在 models.json 的
+image/audio/video 槽——启动时一次性搬进 media.json（按名去重合并），
+models.json 回写为只剩 main。幂等：搬空后再跑无事发生。
+*/
+func MigrateGenModels(ctx context.Context, fsys osfs.OS) {
+	data, err := fsys.Read(ctx, "models.json")
+	if err != nil {
+		return
+	}
+	var legacy struct {
+		Main  []domain.ModelEntry `json:"main"`
+		Image []domain.ModelEntry `json:"image"`
+		Audio []domain.ModelEntry `json:"audio"`
+		Video []domain.ModelEntry `json:"video"`
+	}
+	if json.Unmarshal(data, &legacy) != nil {
+		return
+	}
+	if len(legacy.Image) == 0 && len(legacy.Audio) == 0 && len(legacy.Video) == 0 {
+		return
+	}
+	media := LoadMediaConfig(ctx, fsys)
+	merge := func(dst *[]domain.ModelEntry, add []domain.ModelEntry) {
+		for _, e := range add {
+			if e.Name == "" {
+				continue
+			}
+			if !slices.ContainsFunc(*dst, func(x domain.ModelEntry) bool { return x.Name == e.Name }) {
+				*dst = append(*dst, e)
+			}
+		}
+	}
+	merge(&media.Image, legacy.Image)
+	merge(&media.Audio, legacy.Audio)
+	merge(&media.Video, legacy.Video)
+	if err := SaveMediaConfig(ctx, fsys, media); err != nil {
+		return // 迁移失败不阻塞启动：旧文件下次启动再试
+	}
+	_ = SaveModelsConfig(ctx, fsys, domain.ModelsConfig{Main: legacy.Main})
 }
 
 /* LoadSettings 读 settings.json，缺失回落默认值。 */
