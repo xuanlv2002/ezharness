@@ -2,9 +2,12 @@
 package service
 
 import (
+	"archive/zip"
 	"context"
 	"os"
 	"path/filepath"
+	"regexp"
+	"strings"
 
 	"ezharness/core/internal/domain"
 	"ezharness/core/internal/osfs"
@@ -33,6 +36,52 @@ func (w *WorkspaceService) OpenFile(abs string) (*os.File, os.FileInfo, error) {
 		return nil, nil, os.ErrInvalid
 	}
 	return f, info, nil
+}
+
+/* FileMeta 是附件卡的轻量元数据（聊天里 file:// 文档卡展示页数/大小）。 */
+type FileMeta struct {
+	Size  int64 `json:"size"`
+	Pages int   `json:"pages,omitempty"` // pptx 幻灯片数（其余格式不回）
+}
+
+/* pptxSlideRe 只匹配幻灯片正文（排除 _rels 与 slideLayouts）。 */
+var pptxSlideRe = regexp.MustCompile(`^ppt/slides/slide\d+\.xml$`)
+
+/*
+Meta 取文件轻量元数据：大小 +（pptx）幻灯片数。只读 zip 中央目录的
+条目名，不解压任何内容——聊天里的附件卡每次渲染最多请求一次，开销可忽略。
+*/
+func (w *WorkspaceService) Meta(abs string) (FileMeta, error) {
+	info, err := os.Stat(abs)
+	if err != nil {
+		return FileMeta{}, err
+	}
+	if info.IsDir() {
+		return FileMeta{}, os.ErrInvalid
+	}
+	m := FileMeta{Size: info.Size()}
+	if strings.EqualFold(filepath.Ext(abs), ".pptx") {
+		if pages, err := pptxSlides(abs); err == nil {
+			m.Pages = pages
+		}
+	}
+	return m, nil
+}
+
+/* pptxSlides 数 pptx 幻灯片（zip 中央目录条目名即可）。 */
+func pptxSlides(abs string) (int, error) {
+	zr, err := zip.OpenReader(abs)
+	if err != nil {
+		return 0, err
+	}
+	defer zr.Close()
+	n := 0
+	for _, f := range zr.File {
+		if pptxSlideRe.MatchString(f.Name) {
+			n++
+		}
+	}
+	return n, nil
 }
 
 /* StatTarget 检查写回目标存在且是文件。 */

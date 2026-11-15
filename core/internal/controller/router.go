@@ -229,6 +229,7 @@ func NewRouter(c Controllers, dist fs.FS, tokens *TokenStore) *gin.Engine {
 
 		api.GET("/workspace/file", c.Workspace.File)         // 工作目录文件预览（附件 chips 源）
 		api.HEAD("/workspace/file", c.Workspace.File)        // 同上（文件页轮询 Last-Modified 用；gin 不自动映射 HEAD→GET）
+		api.GET("/workspace/meta", c.Workspace.Meta)         // 附件卡轻量元数据（大小 / pptx 页数）
 		api.POST("/workspace/save", c.Workspace.Save)        // 工作目录文本保存（资源查看器·文本）
 		api.POST("/workspace/create", c.Workspace.Create)    // 目录树新建（文件/文件夹）
 		api.POST("/workspace/save-bin", c.Workspace.SaveBin) // 二进制写回（资源查看器·图片画板保存）

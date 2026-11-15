@@ -116,6 +116,24 @@ func (c *WorkspaceController) File(g *gin.Context) {
 	http.ServeContent(g.Writer, g.Request, filepath.Base(abs), info.ModTime(), f)
 }
 
+/*
+Meta GET /api/workspace/meta?path=<绝对路径>：轻量元数据（大小 + pptx
+幻灯片页数），聊天附件卡的类型化展示用；不读文件内容。
+*/
+func (c *WorkspaceController) Meta(g *gin.Context) {
+	abs, err := c.Svc.Path(g.Query("path"))
+	if err != nil {
+		g.JSON(http.StatusBadRequest, gin.H{"error": "invalid path"})
+		return
+	}
+	m, err := c.Svc.Meta(abs)
+	if err != nil {
+		g.JSON(http.StatusNotFound, gin.H{"error": "file not found"})
+		return
+	}
+	g.JSON(http.StatusOK, m)
+}
+
 /* maxSaveContent 保存内容上限（与前端 file:// 编辑器预检同值）。 */
 const maxSaveContent = 2 << 20
 
