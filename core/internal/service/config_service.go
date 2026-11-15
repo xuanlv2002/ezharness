@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"log"
-	"slices"
 
 	"github.com/xuanlv2002/ezloop/types"
 
@@ -17,8 +16,6 @@ import (
 /* BootstrapHub 装配领域根：加载配置与索引并恢复活动会话。 */
 func BootstrapHub(h *domain.Hub) {
 	ctx := context.Background()
-	// 存量迁移先行：旧版 models.json 里的生成模型槽搬进 media.json
-	MigrateGenModels(ctx, h.Fsys)
 	if _, err := h.Fsys.Read(ctx, "models.json"); err != nil {
 		h.Models = domain.DefaultModelsConfig()
 		_ = SaveModelsConfig(ctx, h.Fsys, h.Models)
@@ -52,7 +49,11 @@ func recordUsage(h *domain.Hub, model string, u *types.Usage) {
 	}
 }
 
-/* LoadModelsConfig 读 models.json，缺失或损坏回落默认值。 */
+/*
+LoadModelsConfig 读 models.json，缺失或损坏回落默认值。
+只认 main；旧版残留的 image/audio/video 字段直接忽略（生成模型只从
+media.json 读取，不做迁移）。
+*/
 func LoadModelsConfig(ctx context.Context, fsys osfs.OS) domain.ModelsConfig {
 	data, err := fsys.Read(ctx, "models.json")
 	if err != nil {
@@ -100,48 +101,6 @@ func SaveMediaConfig(ctx context.Context, fsys osfs.OS, m domain.MediaConfig) er
 	return fsys.WritePrivate(ctx, mediaConfigFile, data)
 }
 
-/*
-MigrateGenModels 存量迁移：旧版把生成模型放在 models.json 的
-image/audio/video 槽——启动时一次性搬进 media.json（按名去重合并），
-models.json 回写为只剩 main。幂等：搬空后再跑无事发生。
-*/
-func MigrateGenModels(ctx context.Context, fsys osfs.OS) {
-	data, err := fsys.Read(ctx, "models.json")
-	if err != nil {
-		return
-	}
-	var legacy struct {
-		Main  []domain.ModelEntry `json:"main"`
-		Image []domain.ModelEntry `json:"image"`
-		Audio []domain.ModelEntry `json:"audio"`
-		Video []domain.ModelEntry `json:"video"`
-	}
-	if json.Unmarshal(data, &legacy) != nil {
-		return
-	}
-	if len(legacy.Image) == 0 && len(legacy.Audio) == 0 && len(legacy.Video) == 0 {
-		return
-	}
-	media := LoadMediaConfig(ctx, fsys)
-	merge := func(dst *[]domain.ModelEntry, add []domain.ModelEntry) {
-		for _, e := range add {
-			if e.Name == "" {
-				continue
-			}
-			if !slices.ContainsFunc(*dst, func(x domain.ModelEntry) bool { return x.Name == e.Name }) {
-				*dst = append(*dst, e)
-			}
-		}
-	}
-	merge(&media.Image, legacy.Image)
-	merge(&media.Audio, legacy.Audio)
-	merge(&media.Video, legacy.Video)
-	if err := SaveMediaConfig(ctx, fsys, media); err != nil {
-		return // 迁移失败不阻塞启动：旧文件下次启动再试
-	}
-	_ = SaveModelsConfig(ctx, fsys, domain.ModelsConfig{Main: legacy.Main})
-}
-
 /* LoadSettings 读 settings.json，缺失回落默认值。 */
 func LoadSettings(ctx context.Context, fsys osfs.OS) domain.Settings {
 	out := domain.DefaultSettings()
@@ -150,17 +109,19 @@ func LoadSettings(ctx context.Context, fsys osfs.OS) domain.Settings {
 		return out
 	}
 	var s struct {
-		SystemExtra     string   `json:"systemExtra"`
-		TrimPercent     *int     `json:"trimPercent"` // 指针：区分未提交与显式 0（禁用）
-		WorkDir         string   `json:"workDir"`
-		CloseToTray     *bool    `json:"closeToTray"`
-		PetEnabled      *bool    `json:"petEnabled"`
-		DisabledSkills  []string `json:"disabledSkills"`
-		MaxIterations   *int     `json:"maxIterations"`
-		DebugMode       *bool    `json:"debugMode"`
-		ReasoningEffort string   `json:"reasoningEffort"`
-		ApproveMode     string   `json:"approveMode"`
-		PinnedApps      []string `json:"pinnedApps"`
+		SystemExtra      string   `json:"systemExtra"`
+		TrimPercent      *int     `json:"trimPercent"` // 指针：区分未提交与显式 0（禁用）
+		WorkDir          string   `json:"workDir"`
+		CloseToTray      *bool    `json:"closeToTray"`
+		PetEnabled       *bool    `json:"petEnabled"`
+		DisabledSkills   []string `json:"disabledSkills"`
+		MaxIterations    *int     `json:"maxIterations"`
+		DebugMode        *bool    `json:"debugMode"`
+		PinnedApps       []string `json:"pinnedApps"`
+		OffloadThreshold *int     `json:"offloadThreshold"`
+		GenQuotaImage    *int     `json:"genQuotaImage"`
+		GenQuotaAudio    *int     `json:"genQuotaAudio"`
+		GenQuotaVideo    *int     `json:"genQuotaVideo"`
 	}
 	if json.Unmarshal(data, &s) != nil {
 		return out
@@ -183,8 +144,18 @@ func LoadSettings(ctx context.Context, fsys osfs.OS) domain.Settings {
 	if s.DebugMode != nil {
 		out.DebugMode = *s.DebugMode
 	}
-	out.ReasoningEffort = s.ReasoningEffort
-	out.ApproveMode = s.ApproveMode
+	if s.OffloadThreshold != nil {
+		out.OffloadThreshold = clamp(*s.OffloadThreshold, 0, 1048576)
+	}
+	if s.GenQuotaImage != nil {
+		out.GenQuotaImage = clamp(*s.GenQuotaImage, 0, 1000)
+	}
+	if s.GenQuotaAudio != nil {
+		out.GenQuotaAudio = clamp(*s.GenQuotaAudio, 0, 1000)
+	}
+	if s.GenQuotaVideo != nil {
+		out.GenQuotaVideo = clamp(*s.GenQuotaVideo, 0, 1000)
+	}
 	out.PinnedApps = s.PinnedApps
 	return out
 }

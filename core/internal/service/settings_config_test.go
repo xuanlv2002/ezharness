@@ -22,6 +22,10 @@ func TestSettingsRoundTrip(t *testing.T) {
 	st.DisabledSkills = []string{"pdf", "csv"}
 	st.MaxIterations = 100
 	st.DebugMode = true
+	st.OffloadThreshold = 8192
+	st.GenQuotaImage = 30
+	st.GenQuotaAudio = 12
+	st.GenQuotaVideo = 5
 	if err := SaveSettings(context.Background(), fsys, st); err != nil {
 		t.Fatal(err)
 	}
@@ -39,12 +43,18 @@ func TestSettingsRoundTrip(t *testing.T) {
 	if !got.DebugMode {
 		t.Fatal("调试模式丢失")
 	}
+	if got.OffloadThreshold != 8192 || got.GenQuotaImage != 30 || got.GenQuotaAudio != 12 || got.GenQuotaVideo != 5 {
+		t.Fatalf("卸载阈值 / 生成配额丢失: %+v", got)
+	}
 
 	// 越界值落盘后按上限读回
 	st.MaxIterations = 999
 	st.TrimPercent = 999
+	st.OffloadThreshold = 9999999
+	st.GenQuotaImage = 5000
 	_ = SaveSettings(context.Background(), fsys, st)
-	if got = LoadSettings(context.Background(), fsys); got.MaxIterations != 128 || got.TrimPercent != 100 {
+	if got = LoadSettings(context.Background(), fsys); got.MaxIterations != 128 || got.TrimPercent != 100 ||
+		got.OffloadThreshold != 1048576 || got.GenQuotaImage != 1000 {
 		t.Fatalf("越界未收敛: %+v", got)
 	}
 }

@@ -109,17 +109,15 @@ func (m ModelsConfig) ResolveMain(name string) *ModelEntry {
 /* Settings 是可热更的行为设置（审批策略独立于 toolRules.json）。 */
 type Settings struct {
 	SystemExtra      string   `json:"systemExtra"`
-	TrimPercent      int      `json:"trimPercent"`               // 上下文整理水位（模型窗口百分比，0=禁用自动整理）
-	WorkDir          string   `json:"workDir"`                   // 工作目录（terminal 默认目录；空=数据目录下 workspace/，相对=相对数据目录）
-	CloseToTray      bool     `json:"closeToTray"`               // 桌面端点关闭 = 最小化到托盘（关窗时实时读取，即改即生效）
-	PetEnabled       bool     `json:"petEnabled"`                // 桌面悬浮球开关（desktop 壳启动时读取；关=不建窗，设置页可重开）
-	DisabledSkills   []string `json:"disabledSkills"`            // 已禁用 skill 的目录名（load_skill/状态面板实时读取，system 清单下个 session 生效）
-	MaxIterations    int      `json:"maxIterations"`             // 单轮对话的最大模型迭代次数（0 = 默认 64，上限 128；随 Reassemble 生效）
-	DebugMode        bool     `json:"debugMode"`                 // 调试模式：把每次模型请求的全量输入写进日志（modeldump 实时读取，即改即生效）
-	PinnedApps       []string `json:"pinnedApps,omitempty"`      // 钉到桌面小助手的快应用名（快应用页/宠物窗轮询读取，即改即生效）
-	ReasoningEffort  string   `json:"reasoningEffort,omitempty"` // 旧版全局思考档位（保留兼容；现行每会话偏好见 hooks.Prefs）
-	ApproveMode      string   `json:"approveMode,omitempty"`     // 旧版全局审批档位（保留兼容；现行每会话偏好见 hooks.Prefs）
-	OffloadThreshold int      `json:"offloadThreshold"`          // 工具结果卸载阈值（字节；超过即卸载到文件只留摘要头，0=默认 4096；摘要头随阈值分档封顶 1KB；随 Reassemble 生效）
+	TrimPercent      int      `json:"trimPercent"`          // 上下文整理水位（模型窗口百分比，0=禁用自动整理）
+	WorkDir          string   `json:"workDir"`              // 工作目录（terminal 默认目录；空=数据目录下 workspace/，相对=相对数据目录）
+	CloseToTray      bool     `json:"closeToTray"`          // 桌面端点关闭 = 最小化到托盘（关窗时实时读取，即改即生效）
+	PetEnabled       bool     `json:"petEnabled"`           // 桌面悬浮球开关（desktop 壳启动时读取；关=不建窗，设置页可重开）
+	DisabledSkills   []string `json:"disabledSkills"`       // 已禁用 skill 的目录名（load_skill/状态面板实时读取，system 清单下个 session 生效）
+	MaxIterations    int      `json:"maxIterations"`        // 单轮对话的最大模型迭代次数（0 = 默认 64，上限 128；随 Reassemble 生效）
+	DebugMode        bool     `json:"debugMode"`            // 调试模式：把每次模型请求的全量输入写进日志（modeldump 实时读取，即改即生效）
+	PinnedApps       []string `json:"pinnedApps,omitempty"` // 钉到桌面小助手的快应用名（快应用页/宠物窗轮询读取，即改即生效）
+	OffloadThreshold int      `json:"offloadThreshold"`     // 工具结果卸载阈值（字节；超过即卸载到文件只留摘要头，0=默认 4096；摘要头随阈值分档封顶 1KB；随 Reassemble 生效）
 	/* 生成类模型（image/audio/video）每日调用配额（agent 工具与 OpenAPI 同一计数；
 	0 = 用默认。这三类按次计费且单价高，配额是审批之外的第二道闸 */
 	GenQuotaImage int `json:"genQuotaImage,omitempty"`

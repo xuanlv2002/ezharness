@@ -1,8 +1,7 @@
 /*
 media 用例测试：异步任务引擎（提交→短等待→产物/任务id、失败退还、
 部分成功对账）、配额（计数/跨日重置/超限/重启恢复退还）、三类端点的
-请求-响应回路（httptest 假上游），以及存量配置迁移（models.json 的
-生成槽 → media.json）。
+请求-响应回路（httptest 假上游）。
 */
 package service
 
@@ -188,8 +187,11 @@ func TestMediaSpeechJob(t *testing.T) {
 	}
 }
 
-/* TestMediaVideoJob 视频任务回路：提交→轮询（两态后成功）→下载；Failed 退额；
-短等待未完成时返回执行中快照（异步语义）。 */
+/*
+	TestMediaVideoJob 视频任务回路：提交→轮询（两态后成功）→下载；Failed 退额；
+
+短等待未完成时返回执行中快照（异步语义）。
+*/
 func TestMediaVideoJob(t *testing.T) {
 	var polls int
 	var submitted map[string]any
@@ -285,39 +287,5 @@ func TestMediaJobListAndStatus(t *testing.T) {
 	}
 	if _, ok := svc.Job("nope"); ok {
 		t.Fatal("不存在的 id 应 miss")
-	}
-}
-
-/* TestMigrateGenModels 存量迁移：models.json 的生成槽搬进 media.json（按名去重），
-models.json 只剩 main；幂等。 */
-func TestMigrateGenModels(t *testing.T) {
-	t.Chdir(t.TempDir())
-	fsys := osfs.OS{}
-	ctx := context.Background()
-	old := `{"main":[{"name":"chat","baseUrl":"https://x/v1","enabled":true}],
-		"image":[{"name":"flux","baseUrl":"https://s/v1","apiKey":"k1","enabled":true}],
-		"audio":[{"name":"tts","baseUrl":"https://s/v1","apiKey":"k2","enabled":false}]}`
-	if err := fsys.Write(ctx, "models.json", []byte(old)); err != nil {
-		t.Fatal(err)
-	}
-
-	MigrateGenModels(ctx, fsys)
-
-	mc := LoadModelsConfig(ctx, fsys)
-	if len(mc.Main) != 1 || mc.Main[0].Name != "chat" {
-		t.Fatalf("models.json 应只剩 main: %+v", mc)
-	}
-	media := LoadMediaConfig(ctx, fsys)
-	if len(media.Image) != 1 || media.Image[0].Name != "flux" || media.Image[0].APIKey != "k1" {
-		t.Fatalf("image 迁移: %+v", media.Image)
-	}
-	if len(media.Audio) != 1 || media.Audio[0].Enabled {
-		t.Fatalf("audio 迁移（保留停用态）: %+v", media.Audio)
-	}
-
-	/* 幂等：再跑一遍不重复 */
-	MigrateGenModels(ctx, fsys)
-	if media = LoadMediaConfig(ctx, fsys); len(media.Image) != 1 {
-		t.Fatalf("迁移应幂等: %+v", media.Image)
 	}
 }

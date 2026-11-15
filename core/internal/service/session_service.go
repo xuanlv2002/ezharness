@@ -122,11 +122,10 @@ func (s *SessionService) Bootstrap(ctx context.Context) BootstrapData {
 	userItems, _ := hooks.LoadItems(ctx, s.Hub.Fsys, hooks.UserJson)
 	soulItems, _ := hooks.LoadItems(ctx, s.Hub.Fsys, hooks.SoulJson)
 	return BootstrapData{
-		SessionID: sess.RootID,
-		LeafID:    sess.ID,
-		Branches:  buildBranchViews(s.Hub),
-		Settings: SettingsView{SystemExtra: st.SystemExtra, TrimPercent: &p, WorkDir: &w,
-			ReasoningEffort: &st.ReasoningEffort, ApproveMode: &st.ApproveMode},
+		SessionID:    sess.RootID,
+		LeafID:       sess.ID,
+		Branches:     buildBranchViews(s.Hub),
+		Settings:     SettingsView{SystemExtra: st.SystemExtra, TrimPercent: &p, WorkDir: &w},
 		Status:       s.Snapshot(ctx),
 		MemoryExists: len(userItems) > 0 || len(soulItems) > 0,
 	}

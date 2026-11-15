@@ -241,55 +241,6 @@ func (c *SettingsController) ToggleSkill(g *gin.Context) {
 	g.JSON(http.StatusOK, gin.H{"ok": true})
 }
 
-/* ActivateModel POST /api/models/activate：主模型切换（输入框选择器；下一次输入生效）。 */
-func (c *SettingsController) ActivateModel(g *gin.Context) {
-	var req struct {
-		Name string `json:"name"`
-	}
-	if err := g.ShouldBindJSON(&req); err != nil || req.Name == "" {
-		g.JSON(http.StatusBadRequest, gin.H{"error": "name required"})
-		return
-	}
-	e, err := c.Settings.ActivateMainModel(g.Request.Context(), req.Name)
-	if err != nil {
-		g.JSON(http.StatusConflict, gin.H{"error": err.Error()})
-		return
-	}
-	g.JSON(http.StatusOK, gin.H{"ok": true, "model": e})
-}
-
-/* SetReasoning POST /api/settings/reasoning：思考强度档位（输入框下拉；请求侧实时读取，即改即生效）。 */
-func (c *SettingsController) SetReasoning(g *gin.Context) {
-	var req struct {
-		Effort string `json:"effort"`
-	}
-	if err := g.ShouldBindJSON(&req); err != nil {
-		g.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
-	if err := c.Settings.SetReasoningEffort(g.Request.Context(), req.Effort); err != nil {
-		g.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
-	g.JSON(http.StatusOK, gin.H{"ok": true, "effort": req.Effort})
-}
-
-/* SetApproveMode POST /api/settings/approve-mode：工具审批档位（输入框下拉；工具审批实时读取，即改即生效）。 */
-func (c *SettingsController) SetApproveMode(g *gin.Context) {
-	var req struct {
-		Mode string `json:"mode"`
-	}
-	if err := g.ShouldBindJSON(&req); err != nil {
-		g.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
-	if err := c.Settings.SetApproveMode(g.Request.Context(), req.Mode); err != nil {
-		g.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
-	g.JSON(http.StatusOK, gin.H{"ok": true, "mode": req.Mode})
-}
-
 /*
 CallModel POST /api/open/model/call：直调大模型（OpenAPI 面，与 /api/open/mcp/call 同级
 系统内置能力）。body {model?, prompt, images?: [路径]}；返回 {result}。

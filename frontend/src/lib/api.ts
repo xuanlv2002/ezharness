@@ -284,8 +284,6 @@ export interface Settings {
   maxIterations?: number // 单轮最大模型迭代次数（0/空 = 默认 64，上限 128）
   offloadThreshold?: number // 工具结果卸载阈值（字节，0 = 默认 4096；超过即卸载到文件只留摘要）
   debugMode?: boolean // 调试模式：模型完整输入写进日志（即改即生效）
-  reasoningEffort?: ReasoningEffort // 思考档位（''=默认不控制；none=关闭；其余为强度分档）
-  approveMode?: '' | 'off' | 'strict' // 审批档位（''=跟随安全配置；off=全放行；strict=全审）
   /* 生成类模型每日配额（0 = 默认 image 20 / audio 20 / video 3；agent 工具与 OpenAPI 同一计数） */
   genQuotaImage?: number
   genQuotaAudio?: number
@@ -863,22 +861,10 @@ export const api = {
 
   saveModels: (m: ModelsConfig) => post<{ ok: boolean }>('/api/models', m),
 
-  /* 激活主模型（旧版全局切换器，保留接口；前端已改为会话级偏好） */
-  activateModel: (name: string) =>
-    post<{ ok: boolean; model: ModelEntry }>('/api/models/activate', { name }),
-
   /* 本会话偏好（:id=分支根）：思考档位 / 审批档位 / 主模型，可只传一个字段。
      模型变更要求会话空闲（409），后端只重建该会话装配 */
   setSessionPrefs: (rootId: string, patch: SessionPrefsPatch) =>
     post<SessionPrefs>(`/api/sessions/${encodeURIComponent(rootId)}/prefs`, patch),
-
-  /* 审批三档（全局；''=跟随安全配置 | off=无审批 | strict=严格审批），实时生效 */
-  setApproveMode: (mode: '' | 'off' | 'strict') =>
-    post<{ ok: boolean; mode: string }>('/api/settings/approve-mode', { mode }),
-
-  /* 思考强度档位（全局；请求侧实时读取，即改即生效） */
-  setReasoningEffort: (effort: ReasoningEffort) =>
-    post<{ ok: boolean; effort: string }>('/api/settings/reasoning', { effort }),
 
   /* 直调大模型（OpenAPI 面，与 mcp/call 同级） */
   callModel: (prompt: string, model = '', images: string[] = []) =>

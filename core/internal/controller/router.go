@@ -175,14 +175,11 @@ func NewRouter(c Controllers, dist fs.FS, tokens *TokenStore) *gin.Engine {
 
 		api.GET("/settings", c.Settings.GetSettings)
 		api.POST("/settings", c.Settings.UpdateSettings)
-		api.POST("/settings/reasoning", c.Settings.SetReasoning)      // 思考档位（输入框下拉，即改即生效）
-		api.POST("/settings/approve-mode", c.Settings.SetApproveMode) // 审批档位（输入框下拉，即改即生效）
 		api.GET("/models", c.Settings.GetModels)
 		api.POST("/models", c.Settings.UpdateModels)
-		api.POST("/models/activate", c.Settings.ActivateModel) // 主模型切换（输入框选择器；下一次输入生效）
-		api.GET("/media", c.Media.ConfigGET)                   // 多媒体生成模型配置（多媒体页数据源）
-		api.POST("/media", c.Media.ConfigPUT)                  // 保存并重建 agent（busy 拒绝）
-		api.GET("/media/quota", c.Media.QuotaGET)              // 三类生成任务当日用量/限额（工作台配额条）
+		api.GET("/media", c.Media.ConfigGET)      // 多媒体生成模型配置（多媒体页数据源）
+		api.POST("/media", c.Media.ConfigPUT)     // 保存并重建 agent（busy 拒绝）
+		api.GET("/media/quota", c.Media.QuotaGET) // 三类生成任务当日用量/限额（工作台配额条）
 		api.GET("/security", c.Settings.GetSecurity)
 		api.POST("/security", c.Settings.UpdateSecurity)
 		api.GET("/memory/config", c.Settings.GetMemoryConfig)
