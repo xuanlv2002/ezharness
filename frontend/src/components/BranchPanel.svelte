@@ -3,7 +3,8 @@
   分支面板：会话树的"线"列表（叶子到根的路线），按更新时间分组。
   条目 = 分支（根 ID 身份，compact 换代不换条目）；指示器：
   橙点呼吸 = 有轮运行中（含后台分支）；⚠ 待审批。操作：点击切换
-  （状态/审批随之切换）、顶部开新线、行尾归档。
+  （状态/审批随之切换）、顶部开新线、行尾归档、行尾收藏（★ 名单
+  localStorage 持久，收藏组固定置顶——重要分支不沉底）。
   悬浮覆盖抽屉：浮在聊天内容之上（不占布局宽度），点外部收起。
   */
   import { fly } from 'svelte/transition'
@@ -68,6 +69,7 @@
   const groups = $derived.by(() => {
     const out: { label: string; items: BranchView[] }[] = []
     for (const b of store.branches) {
+      if (stars.has(b.id)) continue // 收藏的进置顶组，不重复进时间组
       const label = groupLabel(b.updatedAt || b.createdAt)
       const last = out[out.length - 1]
       if (last && last.label === label) last.items.push(b)
@@ -75,6 +77,32 @@
     }
     return out
   })
+
+  /* ── 收藏分支：★ 名单 localStorage 持久（rootId 身份，compact 换代不变）；
+     收藏组固定置顶，重要分支不会被时间与新增话题沉底 ── */
+  const starsKey = 'ezh.branch.stars'
+  let stars = $state<Set<string>>(
+    (() => {
+      try {
+        return new Set(JSON.parse(localStorage.getItem(starsKey) || '[]') as string[])
+      } catch {
+        return new Set<string>()
+      }
+    })(),
+  )
+  const favs = $derived(store.branches.filter((b) => stars.has(b.id)))
+
+  function toggleStar(b: BranchView) {
+    const s = new Set(stars)
+    if (s.has(b.id)) s.delete(b.id)
+    else s.add(b.id)
+    stars = s
+    try {
+      localStorage.setItem(starsKey, JSON.stringify([...s]))
+    } catch {
+      /* 存储不可用时仅本次生效 */
+    }
+  }
 </script>
 
 <svelte:window onpointerdown={onGlobalPointerDown} />
@@ -109,25 +137,55 @@
         </svg>
         开启新分支
       </button>
+      {#snippet row(b: BranchView)}
+        <div class="branch" class:cur={b.active || b.id === store.activeId} role="button" tabindex="0"
+          onclick={() => switchTo(b)}
+          onkeydown={(e) => (e.key === 'Enter' || e.key === ' ') && switchTo(b)}>
+          <span class="st" class:on={b.running || b.waiting} class:run={b.running}></span>
+          <span class="t-text">{b.title || '未命名分支'}</span>
+          {#if b.kind === 'fork'}
+            <i class="kbadge" title={b.origin?.title ? `来自 session：${b.origin.title}` : 'fork 产生的分支'}>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <circle cx="6" cy="5" r="2" /><circle cx="6" cy="19" r="2" /><circle cx="18" cy="7" r="2" />
+                <path d="M6 7v10M18 9v2a4 4 0 0 1-4 4H8" />
+              </svg>
+            </i>
+          {/if}
+          {#if b.archiving || b.id === store.archivingRootId}<em class="flag arc-ing">归档中</em>{/if}
+          {#if b.waiting}<em class="flag">待审批</em>{/if}
+          <span class="tm" title={b.updatedAt || b.createdAt ? new Date(b.updatedAt || b.createdAt!).toLocaleString() : ''}>
+            {timeLabel(b.updatedAt || b.createdAt)}
+          </span>
+          <button class="star" class:on={stars.has(b.id)}
+            onclick={(e) => { e.stopPropagation(); toggleStar(b) }}
+            title={stars.has(b.id) ? '取消收藏（回到时间分组）' : '收藏此分支（置顶显示，不随时间沉底）'}>
+            <svg viewBox="0 0 24 24" fill={stars.has(b.id) ? 'currentColor' : 'none'} stroke="currentColor" stroke-width="1.7" stroke-linejoin="round">
+              <path d="M12 3.6l2.6 5.4 5.9.8-4.3 4.1 1.1 5.9-5.3-2.9-5.3 2.9 1.1-5.9L3.5 9.8l5.9-.8z" />
+            </svg>
+          </button>
+          <button class="arc" disabled={b.archiving || b.id === store.archivingRootId || b.running}
+            onclick={(e) => { e.stopPropagation(); void store.compactTopic(b.id) }}
+            title="归档此话题：总结归档并开新会话（同线换代，树上加一代）">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M4 4h16v4H4z" />
+              <path d="M6 8v12h12V8" />
+              <path d="M12 17v-5M9.5 14.5L12 12l2.5 2.5" />
+            </svg>
+          </button>
+        </div>
+      {/snippet}
+      {#if favs.length}
+        <div class="glabel fav">
+          <svg viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round">
+            <path d="M12 3.6l2.6 5.4 5.9.8-4.3 4.1 1.1 5.9-5.3-2.9-5.3 2.9 1.1-5.9L3.5 9.8l5.9-.8z" />
+          </svg>
+          收藏
+        </div>
+        {#each favs as b (b.id)}{@render row(b)}{/each}
+      {/if}
       {#each groups as g (g.label)}
         <div class="glabel">{g.label}</div>
-        {#each g.items as b (b.id)}
-          <div class="branch" class:cur={b.active || b.id === store.activeId} role="button" tabindex="0"
-            onclick={() => switchTo(b)}
-            onkeydown={(e) => (e.key === 'Enter' || e.key === ' ') && switchTo(b)}>
-            <span class="st" class:on={b.running || b.waiting} class:run={b.running}></span>
-            <span class="t-text">{b.title || '未命名分支'}</span>
-            {#if b.kind === 'fork'}<i class="kbadge" title={b.origin?.title ? `来自 session：${b.origin.title}` : 'fork 产生的分支'}>⑂</i>{/if}
-            {#if b.archiving || b.id === store.archivingRootId}<em class="flag arc-ing">归档中</em>{/if}
-            {#if b.waiting}<em class="flag">待审批</em>{/if}
-            <span class="tm" title={b.updatedAt || b.createdAt ? new Date(b.updatedAt || b.createdAt!).toLocaleString() : ''}>
-              {timeLabel(b.updatedAt || b.createdAt)}
-            </span>
-            <button class="arc" disabled={b.archiving || b.id === store.archivingRootId || b.running}
-              onclick={(e) => { e.stopPropagation(); void store.compactTopic(b.id) }}
-              title="归档此话题：总结归档并开新会话（同线换代，树上加一代）">⇪</button>
-          </div>
-        {/each}
+        {#each g.items as b (b.id)}{@render row(b)}{/each}
       {/each}
       {#if store.branches.length === 0}
         <div class="empty">暂无分支——点「开启新分支」开一条。</div>
@@ -310,12 +368,18 @@
   }
   .kbadge {
     flex: none;
-    font-size: var(--font-size-small);
+    display: grid;
+    place-items: center;
+    width: 17px;
+    height: 17px;
     font-style: normal;
     color: var(--accent);
     background: var(--accent-soft);
     border-radius: 5px;
-    padding: 0 5px;
+  }
+  .kbadge svg {
+    width: 11px;
+    height: 11px;
   }
   .flag {
     flex: none;
@@ -355,6 +419,58 @@
   .branch:hover .arc,
   .arc:focus-visible {
     opacity: 1;
+  }
+  /* 收藏星标：hover 行时浮现；已收藏常亮金色（收藏组里的行一眼可辨） */
+  .star {
+    flex: none;
+    display: grid;
+    place-items: center;
+    width: 22px;
+    height: 22px;
+    border: none;
+    border-radius: 6px;
+    background: transparent;
+    color: var(--faint);
+    line-height: 1;
+    cursor: pointer;
+    opacity: 0;
+    transition: opacity var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out),
+      background var(--dur-fast) var(--ease-out);
+  }
+  .star svg {
+    width: 14px;
+    height: 14px;
+  }
+  .branch:hover .star,
+  .star:focus-visible {
+    opacity: 1;
+  }
+  .star.on {
+    opacity: 1;
+    color: #e3b341;
+  }
+  .star:hover {
+    color: #e3b341;
+    background: var(--bg);
+  }
+  .star:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+  }
+  /* 收藏组标题：金色星标点题（SVG 图标，不用 emoji/文字符号） */
+  .glabel.fav {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    color: #b0862a;
+  }
+  .glabel.fav svg {
+    width: 12px;
+    height: 12px;
+  }
+  .arc svg {
+    width: 13px;
+    height: 13px;
   }
   .arc:hover {
     color: var(--fg);
