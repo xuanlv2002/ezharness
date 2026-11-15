@@ -104,6 +104,8 @@ export interface AppEntry {
   icon?: string // 卡片头像（同源 URL，未声明/越界时缺省）
   pinned?: boolean // 已钉到桌面小助手
   callbacks?: AppCallbackSpec[] // app.quick 声明的定时调用端点
+  backendLive?: boolean // 后端终端在跑（kind=service 才有意义）
+  termId?: string // 在跑的后端终端 id（跳转终端抽屉用；空=未跑）
 }
 
 /* 定时回调计划（后端 callback.Schedule 的 JSON 形状；本机时区） */

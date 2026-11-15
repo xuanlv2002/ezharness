@@ -844,7 +844,7 @@ class AppStore {
 
   /* ensureWorkspaceView 明确的「打开」动作发生在管理页（快应用/回调/设置
      …）时先切回工作区——抽屉只在对话与内嵌快应用页上屏，不切回去拉开了
-     也看不见。 */
+     也看不见（此前快应用卡片「查看终端」无效即此因）。 */
   private ensureWorkspaceView() {
     if (this.view !== 'chat' && this.view !== 'app') this.jumpView = 'chat'
   }
@@ -853,6 +853,7 @@ class AppStore {
      首次打开时 WS hello 到达后由 TerminalTab 消费定位）。终端已弹出则
      定位请求转发到窗口。 */
   openTermAt(id: string) {
+    this.ensureWorkspaceView()
     if (this.popoutTools.includes('term')) {
       ;(window as any).ez?.popout?.signal('term', 'term', id)
       this.yieldDrawer('term')
@@ -868,6 +869,7 @@ class AppStore {
   async openFileAt(path: string) {
     if (!path) return
     if (await (window as any).ez?.window?.openDir?.(path)) return
+    this.ensureWorkspaceView()
     if (this.popoutTools.includes('file')) {
       ;(window as any).ez?.popout?.signal('file', 'file', path)
       this.yieldDrawer('file')
@@ -887,6 +889,7 @@ class AppStore {
       this.lastStatus = '浏览器仅桌面端可用'
       return
     }
+    this.ensureWorkspaceView()
     ez.browser.focusTab(id)
     if (this.popoutTools.includes('browser')) {
       ez.popout.open('browser')

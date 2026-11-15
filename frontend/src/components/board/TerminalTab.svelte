@@ -8,11 +8,16 @@
   import { store } from '../../lib/store.svelte'
   import { theme, type Theme } from '../../lib/theme.svelte'
   import { paneTabs } from '../../lib/paneTabs.svelte'
+  import AppLogo from '../AppLogo.svelte'
+  import { api, type AppEntry } from '../../lib/api'
 
   /*
   魔法看板·终端 tab:顶部切换条(全部终端,含 AI 新建的,来源在 tooltip)
   + 每终端一个 xterm 实例(display:none keep-alive,切回不丢屏)。
   首次激活建连;无终端时空态 + 新建按钮(不隐式建);断线重连靠 hello 快照恢复。
+  快应用后端(来源"快应用·<名>")单独分组排在工作终端后:服务是长驻的,
+  和干活终端混排既看不清也容易误关——活着的后端关闭弹框显式确认
+  (关了对应应用就不可用),已退出的直接关。
   */
   let { active = false }: { active?: boolean } = $props()
 
@@ -30,6 +35,49 @@
   let ro: ResizeObserver | undefined
 
   const enc = new TextEncoder()
+
+  /* ── 快应用后端分组与关闭保护 ── */
+  const APP_ORIGIN = '快应用·'
+  const isAppTerm = (s: TermInfo) => s.origin.startsWith(APP_ORIGIN)
+  const workTerms = $derived(sessions.filter((s) => !isAppTerm(s)))
+  const appTerms = $derived(sessions.filter(isAppTerm))
+  const appNameOf = (s: TermInfo) => s.origin.slice(APP_ORIGIN.length)
+
+  /* 后端条目用应用自己的头像（清单里的 icon，缺省首字块）而不是统一的
+     闪电 emoji——emoji 带固定色，与主题和项目图标风格都不搭 */
+  let appMeta = $state<Record<string, { title: string; icon: string }>>({})
+  function metaOf(name: string) {
+    return appMeta[name] ?? { title: name, icon: '' }
+  }
+
+  async function loadAppMeta() {
+    try {
+      const { apps } = await api.getApps()
+      const map: Record<string, { title: string; icon: string }> = {}
+      for (const a of (apps ?? []) as AppEntry[]) map[a.name] = { title: a.title, icon: a.icon ?? '' }
+      appMeta = map
+    } catch {
+      /* core 不可达：保留现状（首字块兜底） */
+    }
+  }
+
+  /* 活着的后端终端关闭：弹框显式确认，不做隐性二次点击 */
+  let stopTarget = $state<TermInfo | null>(null)
+
+  function closeOne(e: Event, s: TermInfo) {
+    e.stopPropagation()
+    if (isAppTerm(s) && !s.exited) {
+      stopTarget = s
+      return
+    }
+    void termManager.close(s.id)
+  }
+
+  function stopBackend() {
+    const s = stopTarget
+    stopTarget = null
+    if (s) void termManager.close(s.id)
+  }
 
   /* 终端双色板：跟应用主题（暗板取 GitHub Dark 系，ANSI 全段在深底上可辨）。 */
   const TERM_THEMES: Record<Theme, ITheme> = {
@@ -224,11 +272,6 @@
     }
   }
 
-  function closeOne(e: Event, id: string) {
-    e.stopPropagation()
-    void termManager.close(id)
-  }
-
   function fitCurrent() {
     if (!active || !root || root.clientWidth === 0) return
     const t = terms.get(current)
@@ -278,6 +321,11 @@
 
   onMount(() => {
     if (active) init()
+    /* 后端条目头像：启动拉一次；快应用页钉选/新建/卸载后广播，跟着刷新 */
+    void loadAppMeta()
+    const onApps = () => void loadAppMeta()
+    window.addEventListener('ez:apps-changed', onApps)
+    return () => window.removeEventListener('ez:apps-changed', onApps)
   })
 
   $effect(() => {
@@ -299,17 +347,38 @@
 
 <div class="term-tab">
   <div class="strip">
-    {#each sessions as s (s.id)}
+    {#if workTerms.length && appTerms.length}<span class="grouplab">工作</span>{/if}
+    {#each workTerms as s (s.id)}
       <button class="strip-item" class:active={current === s.id} onclick={() => switchTo(s.id)} title="{s.name}{s.desc ? ` · ${s.desc}` : ''} · 来源 {s.origin || '?'}">
         <span class="dot" class:exited={s.exited}></span>
         <span class="name">{s.name}</span>
-        <span class="x" onclick={(e) => closeOne(e, s.id)} role="button" tabindex="-1" title="关闭">
+        <span class="x" onclick={(e) => closeOne(e, s)} role="button" tabindex="-1" title="关闭">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round">
             <path d="M6 6l12 12M18 6L6 18" />
           </svg>
         </span>
       </button>
     {/each}
+    {#if appTerms.length}
+      <span class="grouplab" title="快应用的后端服务终端（agent 启动应用时拉起；应用卸载时自动收掉）">快应用后端</span>
+      {#each appTerms as s (s.id)}
+        <button class="strip-item app" class:active={current === s.id} onclick={() => switchTo(s.id)} title="{s.name}{s.desc ? ` · ${s.desc}` : ''} · 来源 {s.origin || '?'}">
+          <span class="dot" class:exited={s.exited}></span>
+          <AppLogo
+            size={13}
+            name={appNameOf(s)}
+            title={metaOf(appNameOf(s)).title}
+            icon={metaOf(appNameOf(s)).icon}
+          />
+          <span class="name">{appNameOf(s)}</span>
+          <span class="x" onclick={(e) => closeOne(e, s)} role="button" tabindex="-1" title="关闭（先确认再停止后端）">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round">
+              <path d="M6 6l12 12M18 6L6 18" />
+            </svg>
+          </span>
+        </button>
+      {/each}
+    {/if}
     <button class="new" onclick={() => void createOne()} title="新建终端">+</button>
     <span class="conn" class:off={!connected}>{connected ? '' : '重连中…'}</span>
   </div>
@@ -325,6 +394,18 @@
       </div>
     {/if}
   </div>
+
+  {#if stopTarget}
+    <div class="mask" onclick={() => (stopTarget = null)}></div>
+    <div class="modal" role="dialog" aria-label="停止快应用后端">
+      <p class="mtitle">停止「{metaOf(appNameOf(stopTarget)).title}」的后端？</p>
+      <p class="mtext">后端服务会随之退出，应用将不可用。</p>
+      <div class="macts">
+        <button class="btn" onclick={() => (stopTarget = null)}>取消</button>
+        <button class="btn danger" onclick={stopBackend}>停止后端</button>
+      </div>
+    </div>
+  {/if}
 </div>
 
 <style>
@@ -366,6 +447,15 @@
     background: var(--bg-soft);
     color: var(--fg);
     font-weight: 600;
+  }
+  /* 分组标签：后端组在工作终端之后，弱化存在但一眼可分 */
+  .grouplab {
+    flex: none;
+    padding: 0 2px;
+    font-size: var(--font-size-small);
+    color: var(--faint);
+    user-select: none;
+    white-space: nowrap;
   }
   .name {
     max-width: 120px;
@@ -461,5 +551,67 @@
     padding: 8px 18px;
     font-size: var(--font-size-section);
     font-weight: 600;
+  }
+  /* 停止后端确认弹框：遮罩 + 居中卡片，两个动作键，无多余分割线 */
+  .mask {
+    position: fixed;
+    inset: 0;
+    z-index: 70;
+    background: rgb(0 0 0 / 18%);
+  }
+  .modal {
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    z-index: 71;
+    width: min(340px, 88vw);
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 18px;
+    background: var(--bg);
+    border: 1px solid var(--line-strong);
+    border-radius: 12px;
+    box-shadow: 0 16px 48px rgb(0 0 0 / 20%);
+  }
+  .mtitle {
+    font-size: var(--font-size-body);
+    font-weight: 600;
+    color: var(--fg);
+  }
+  .mtext {
+    font-size: var(--font-size-ui);
+    line-height: 1.6;
+    color: var(--muted);
+  }
+  .macts {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    margin-top: 4px;
+  }
+  .btn {
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: transparent;
+    color: var(--muted);
+    font: inherit;
+    font-size: var(--font-size-ui);
+    padding: 6px 14px;
+    cursor: pointer;
+  }
+  .btn:hover {
+    border-color: var(--line-strong);
+    color: var(--fg);
+  }
+  .btn.danger {
+    background: #c0392b;
+    border-color: #c0392b;
+    color: #fff;
+  }
+  .btn.danger:hover {
+    background: #a93226;
+    border-color: #a93226;
   }
 </style>
