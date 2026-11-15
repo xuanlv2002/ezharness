@@ -664,11 +664,6 @@
     border-radius: 50%;
     background: #e74c3c;
   }
-  .section-head {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-  }
   .msg {
     font-size: var(--font-size-ui);
     color: var(--muted);
@@ -822,27 +817,18 @@
   .tokenRow button:hover:not(:disabled) {
     background: var(--bg-soft);
   }
-  input,
-  select,
-  textarea {
+  input {
     border: 1px solid var(--line);
     border-radius: 8px;
     padding: 8px 10px;
     font-family: var(--font-mono);
     font-size: var(--font-size-section);
     outline: none;
-    resize: vertical;
     background: var(--bg);
     color: var(--fg);
     transition: border-color var(--dur-fast) var(--ease-out);
   }
-  textarea {
-    font-family: var(--font-ui);
-    font-size: var(--font-size-section);
-  }
-  input:focus,
-  select:focus,
-  textarea:focus {
+  input:focus {
     border-color: var(--line-strong);
   }
   .primary {
@@ -854,10 +840,6 @@
     padding: 8px 18px;
     font-size: var(--font-size-section);
     font-weight: 500;
-  }
-  .saving {
-    font-size: var(--font-size-ui);
-    color: var(--faint);
   }
   .fold {
     display: flex;

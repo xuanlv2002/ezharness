@@ -259,9 +259,22 @@
 <div class="bar" class:focused>
   <div class="fade"></div>
   {#if store.archivingRootId === store.activeId}
-    <div class="status">⇪ 正在归档话题…（完成后即可继续；期间可切换或新建分支）</div>
+    <div class="status">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M4 4h16v4H4z" />
+        <path d="M6 8v12h12V8" />
+        <path d="M12 17v-5M9.5 14.5L12 12l2.5 2.5" />
+      </svg>
+      正在归档话题…（完成后即可继续；期间可切换或新建分支）
+    </div>
   {:else if store.busy && store.lastTool}
-    <div class="status">⚙ {store.lastTool} 执行中…（点击 ⏹ 终止）</div>
+    <div class="status">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="12" cy="12" r="9" />
+        <path d="M12 7v5l3 2" />
+      </svg>
+      {store.lastTool} 执行中…（点击 ⏹ 终止）
+    </div>
   {:else if store.lastStatus}
     <div class="status">{store.lastStatus}</div>
   {/if}
@@ -483,6 +496,12 @@
     color: var(--faint);
     padding: 0 4px 8px;
     text-align: right;
+  }
+  .status svg {
+    width: 12px;
+    height: 12px;
+    margin-right: 4px;
+    vertical-align: -2px;
   }
   .attachments {
     display: flex;
