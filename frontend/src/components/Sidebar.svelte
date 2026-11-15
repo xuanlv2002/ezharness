@@ -1,8 +1,13 @@
 <script lang="ts">
+  import { onMount } from 'svelte'
   import Logo from './Logo.svelte'
+  import AppLogo from './AppLogo.svelte'
+  import { api, type AppEntry } from '../lib/api'
   import { store } from '../lib/store.svelte'
+  import { openAppInside } from '../lib/apps'
+  import { quickApp } from '../lib/quickApp.svelte'
 
-  type View = 'chat' | 'pinboard' | 'models' | 'memory' | 'tools' | 'callbacks' | 'mcp' | 'security' | 'settings'
+  type View = 'chat' | 'pinboard' | 'models' | 'memory' | 'tools' | 'app' | 'callbacks' | 'mcp' | 'security' | 'settings'
 
   let {
     view,
@@ -63,6 +68,35 @@
   设置不入数组——底部固定钮独立渲染 */
   const work = items.filter((i) => i.key === 'chat' || i.key === 'pinboard' || i.key === 'tools' || i.key === 'callbacks')
   const config = items.filter((i) => !work.includes(i))
+
+  /* ── 钉住的快应用：与桌面小助手同一份 pin 名单（api.pinApp 共用），
+     单独一块挂在对话组与 harness 组之间；点击在主窗口内嵌打开
+     （QuickAppView 承载，不弹独立窗口）── */
+  let pinnedApps = $state<AppEntry[]>([])
+
+  async function refreshPinned() {
+    try {
+      const { apps } = await api.getApps()
+      pinnedApps = (apps ?? []).filter((a) => a.pinned)
+    } catch {
+      /* 后端不可达保持现状 */
+    }
+  }
+
+  onMount(() => {
+    void refreshPinned()
+    /* 快应用页钉/取消/卸载后广播；侧栏同窗监听即时跟上 */
+    window.addEventListener('ez:apps-changed', () => void refreshPinned())
+  })
+
+  async function openApp(a: AppEntry) {
+    try {
+      await openAppInside(a.name)
+      onNavigate('app')
+    } catch (err) {
+      store.lastStatus = `打开快应用失败：${(err as Error).message}`
+    }
+  }
 </script>
 
 <nav class="menu" class:expanded>
@@ -84,6 +118,22 @@
       <span class="label">{it.label}</span>
     </button>
   {/each}
+
+  <!-- 钉住的快应用：独立一块（对话组与 harness 组之间），点击即启动 -->
+  {#if pinnedApps.length}
+    <div class="group-sep"></div>
+    {#each pinnedApps as a (a.name)}
+      <button
+        class="nav app"
+        class:active={view === 'app' && quickApp.current?.name === a.name}
+        onclick={() => void openApp(a)}
+        title={`打开快应用：${a.title || a.name}`}
+      >
+        <AppLogo size={18} name={a.name} title={a.title} icon={a.icon ?? ''} />
+        <span class="label">{a.title || a.name}</span>
+      </button>
+    {/each}
+  {/if}
 
   <div class="group-sep"></div>
   <span class="group-title">harness</span>
@@ -239,6 +289,8 @@
   .spacer {
     flex: 1;
   }
+  /* ── 钉住的快应用入口：与 nav 同规格；头像走 AppLogo（无 icon 回落
+     首字块，不再用闪电占位）── */
   .group-sep {
     flex: none;
     height: 1px;

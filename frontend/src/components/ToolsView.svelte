@@ -2,7 +2,7 @@
   import { onMount } from 'svelte'
   import { api, type AppEntry, type CallbackTask } from '../lib/api'
   import { store } from '../lib/store.svelte'
-  import { launchApp } from '../lib/apps'
+  import { openAppWindow } from '../lib/apps'
 
   /* 快应用 = apps/<名>/ 目录应用（app.quick 声明）。desktop 壳 = IPC 开独立
   子窗口；浏览器访问 = 新标签页直开。声明了后端的应用由后端把终端拉进侧边栏。 */
@@ -10,14 +10,16 @@
   let callbacks = $state<CallbackTask[]>([])
   let loaded = $state(false)
 
-  /* 应用与定时回调一起拉：卡片上直接展示关联任务与声明的端点 */
-  async function loadAll() {
+  /* 应用与定时回调一起拉：卡片上直接展示关联任务与声明的端点；
+     名单变化的入口广播侧栏，钉住/卸载即时反映到左侧菜单 */
+  async function loadAll(broadcast = true) {
     const [{ apps: list }, cb] = await Promise.all([
       api.getApps(),
       api.listCallbacks().catch(() => ({ callbacks: [] as CallbackTask[] })),
     ])
     apps = list ?? []
     callbacks = cb.callbacks ?? []
+    if (broadcast) window.dispatchEvent(new Event('ez:apps-changed'))
   }
 
   onMount(async () => {
@@ -42,11 +44,11 @@
     return `cron ${s.cron ?? ''}`
   }
 
-  /* 启动：desktop 壳子窗口（IPC），web 端新标签页；带后端的应用把它的
-  终端拉到侧边栏（后端可能起不来，失败要出声） */
+  /* 启动：独立窗口（desktop 壳子窗口 / web 新标签页）；后端可能起不来，
+  失败要出声 */
   async function launch(a: AppEntry) {
     try {
-      await launchApp(a.name)
+      await openAppWindow(a.name)
     } catch (err) {
       store.lastStatus = `启动快应用失败：${(err as Error).message}`
     }

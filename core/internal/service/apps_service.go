@@ -97,7 +97,7 @@ func (s *AppsService) List(ctx context.Context) []AppEntry {
 			Version:     a.Version,
 			Kind:        kindOf(a.Spec),
 			Mtime:       appMtime(a.Name + "/" + quickapp.FileName),
-			Icon:        iconURL(a.Name, a.Spec.Icon),
+			Icon:        iconURL(a.Name, a.Icon),
 			Pinned:      s.Hub != nil && slices.Contains(s.Hub.SettingsSnapshot().PinnedApps, a.Name),
 			Callable:    a.Callable,
 			Callbacks:   appCallbacks(a.Callbacks),
@@ -227,7 +227,7 @@ func appCallbacks(list []quickapp.Callback) []AppCallback {
 	return out
 }
 
-/* iconURL 校验声明的 icon（同 entry 的相对路径约束）并拼成同源 URL；空/越界返回空串。 */
+/* iconURL 校验头像文件名（声明值或目录探测结果，同 entry 的相对路径约束）并拼成同源 URL；空/越界返回空串。 */
 func iconURL(name, icon string) string {
 	if strings.TrimSpace(icon) == "" {
 		return ""

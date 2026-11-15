@@ -5,7 +5,7 @@
   import { api, type ImagePayload } from '../lib/api'
   import { cachedMarkdown } from '../lib/markdown'
   import { fileBaseName, isImagePath } from '../lib/textfile'
-  import { launchApp } from '../lib/apps'
+  import { openAppWindow } from '../lib/apps'
   import type { CallbackMessageMeta } from '../lib/callbackMessage'
   import { store } from '../lib/store.svelte'
 
@@ -108,7 +108,9 @@
     } else if (kind === 'browser') {
       store.openBrowserAt(id)
     } else if (kind === 'app') {
-      launchApp(id).catch((err: unknown) => (store.lastStatus = `打开快应用失败：${(err as Error).message}`))
+      /* 对话里的 app:// chip 走独立窗口（与快应用页启动一致）；只有左侧
+         钉住菜单才在主窗口内嵌展示 */
+      openAppWindow(id).catch((err: unknown) => (store.lastStatus = `打开快应用失败：${(err as Error).message}`))
     } else if (kind === 'file') {
       /* 资源页按类型路由（registry）：文本进编辑器、图片进画板、
       html/pdf 有专属查看器、其余占位提示 */

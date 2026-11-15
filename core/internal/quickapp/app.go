@@ -38,6 +38,37 @@ var (
 	agentCallRe = regexp.MustCompile(`(?im)^#{1,6}[^\n]*agent\s*(调用|call)`)
 )
 
+/*
+iconCandidates 是 app.quick 未声明 icon 时按序探测的常见头像文件名
+（小写比较）。应用目录里已经放了 icon.svg 却忘了写声明时，界面仍能
+用应用自己的 logo，而不是回落成通用占位图。
+*/
+var iconCandidates = []string{
+	"icon.svg", "icon.png",
+	"favicon.svg", "favicon.ico", "favicon.png",
+	"logo.svg", "logo.png",
+}
+
+/* detectIcon 在应用目录里找候选头像文件，返回实际文件名；没有返回空串。 */
+func detectIcon(ctx context.Context, fsys fs.FileSystem, rel string) string {
+	entries, err := fsys.List(ctx, rel)
+	if err != nil {
+		return ""
+	}
+	files := make(map[string]string, len(entries))
+	for _, e := range entries {
+		if !e.IsDir {
+			files[strings.ToLower(e.Name)] = e.Name
+		}
+	}
+	for _, want := range iconCandidates {
+		if name, ok := files[want]; ok {
+			return name
+		}
+	}
+	return ""
+}
+
 /* Load 解析单个应用；名字非法/目录不是快应用返回 ErrNotFound。 */
 func Load(ctx context.Context, fsys fs.FileSystem, name string) (Info, error) {
 	if !ValidName(name) {
@@ -59,6 +90,10 @@ func Load(ctx context.Context, fsys fs.FileSystem, name string) (Info, error) {
 	if err != nil {
 		return Info{}, err
 	}
+	icon := strings.TrimSpace(spec.Icon)
+	if icon == "" {
+		icon = detectIcon(ctx, fsys, rel)
+	}
 	info := Info{
 		Name:        name,
 		Title:       titleOf(ctx, fsys, rel, spec, entry, name),
@@ -66,7 +101,7 @@ func Load(ctx context.Context, fsys fs.FileSystem, name string) (Info, error) {
 		Version:     strings.TrimSpace(spec.Version),
 		Entry:       entry,
 		Backend:     strings.TrimSpace(spec.Backend),
-		Icon:        strings.TrimSpace(spec.Icon),
+		Icon:        icon,
 		Callbacks:   spec.Callbacks,
 		Spec:        spec,
 	}

@@ -1,7 +1,8 @@
 <script lang="ts">
   import { onMount } from 'svelte'
   import EzAvatar from './EzAvatar.svelte'
-  import { launchApp as openApp } from '../lib/apps'
+  /* 宠物窗是独立小窗：应用在它自己（或主进程）开的窗口里打开，不内嵌 */
+  import { openAppWindow as openApp } from '../lib/apps'
   import { DUE_COLOR, DUE_ORDER, dueLevel, type DueLevel } from '../lib/pinDue'
 
   /*

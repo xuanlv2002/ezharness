@@ -84,6 +84,30 @@ func TestAppsList(t *testing.T) {
 	}
 }
 
+/* 头像：声明优先；未声明时探测目录里的常见头像文件名；都没有为空。 */
+func TestAppsIcon(t *testing.T) {
+	t.Chdir(t.TempDir())
+	_ = os.MkdirAll("apps", 0o755)
+	makeApp(t, "declared", `{"icon":"art/custom.png"}`, "index.html", "<html></html>")
+	makeApp(t, "detected", `{}`, "index.html", "<html></html>")
+	_ = os.WriteFile("apps/detected/icon.svg", []byte("<svg/>"), 0o644)
+	makeApp(t, "none", `{}`, "index.html", "<html></html>")
+
+	got := map[string]AppEntry{}
+	for _, e := range (&AppsService{Fsys: osfs.OS{}}).List(context.Background()) {
+		got[e.Name] = e
+	}
+	if e := got["declared"]; e.Icon != "/apps/declared/art/custom.png" {
+		t.Fatalf("声明优先: %q", e.Icon)
+	}
+	if e := got["detected"]; e.Icon != "/apps/detected/icon.svg" {
+		t.Fatalf("目录探测: %q", e.Icon)
+	}
+	if e := got["none"]; e.Icon != "" {
+		t.Fatalf("无头像应为空: %q", e.Icon)
+	}
+}
+
 /* 启动：纯前端只回入口路径；带后端则把命令送进以应用目录为 cwd 的终端。 */
 func TestAppsLaunch(t *testing.T) {
 	t.Chdir(t.TempDir())
