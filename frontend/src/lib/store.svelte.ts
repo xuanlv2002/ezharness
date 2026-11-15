@@ -142,6 +142,10 @@ export type Block = { uid: number } & (
   | { kind: 'fork'; forkId: string }
   | { kind: 'decision' } & DecisionData
   | { kind: 'note'; text: string }
+  /* 上下文整理标记（<context_trim> marker / session.trim 事件）：其前
+     （上一个 trim 之后）的区块默认折叠（folded 控制），滚到顶继续上拉
+     自动载入——数据不删，纯渲染层收起（foldBlocks） */
+  | { kind: 'trim'; text: string; full?: string; folded: boolean }
   | { kind: 'status'; text: string; data: StatusPayload | null }
   | { kind: 'resourcechange'; items: string[] }
   | { kind: 'endtick'; icon: string; title: string }
@@ -229,12 +233,25 @@ function endIcon(text: string): string {
   return '·'
 }
 
-/* 提取 <context_trim> 摘要为一行（整理分割线文案；四节结构化摘要从【已完成】节起截取，完整进度在会话目录 progress.md） */
+/* 提取 <context_trim> 的摘要全文（「当前任务衔接摘要：」之后，保留四节换行；
+   旧格式没有该标题时回退到【已完成】起的正文） */
+function trimFull(content: string): string {
+  const m = content.match(/当前任务衔接摘要：\s*([\s\S]*?)<\/context_trim>/)
+  if (m) return m[1].trim()
+  const s = content.match(/【已完成】[\s\S]*?(?=<\/context_trim>)/)
+  return (s?.[0] ?? '').trim()
+}
+
+/* 整理条的一行文案 */
+function trimBrief(full: string): string {
+  const one = full.replace(/\s+/g, ' ').trim()
+  const brief = one.length > 160 ? one.slice(0, 160) + '…' : one
+  return `上下文已整理：此前的对话折叠为摘要。${brief}`
+}
+
+/* 历史重建：marker → 一行文案 */
 function trimText(content: string): string {
-  const m = content.match(/【已完成】\s*([\s\S]*?)<\/context_trim>/)
-  const summary = (m?.[1] ?? '').trim().replace(/\s+/g, ' ')
-  const brief = summary.length > 160 ? summary.slice(0, 160) + '…' : summary
-  return `上下文已整理：此前的对话折叠为摘要（完整进度见会话目录 progress.md）。${brief}`
+  return trimBrief(trimFull(content))
 }
 
 class AppStore {
@@ -627,7 +644,7 @@ class AppStore {
           const detail = endReasonText(m.content)
           if (detail) out.push({ kind: 'endtick', uid: this.nuid(), icon: endIcon(detail), title: detail })
         } else if (m.content.includes('<context_trim')) {
-          out.push({ kind: 'note', uid: this.nuid(), text: trimText(m.content) })
+          out.push({ kind: 'trim', uid: this.nuid(), text: trimText(m.content), full: trimFull(m.content), folded: true })
         } else if (m.content.includes('<loop_guard>')) {
           // 循环护栏提醒：小字条呈现（标签体是人话文本）
           const inner = m.content.replace(/^[\s\S]*?<loop_guard>|<\/loop_guard>[\s\S]*$/g, '').trim()
@@ -2131,17 +2148,26 @@ class AppStore {
         break
       }
       case 'session.trimming': {
-        // 水位自动整理开始：时间线提示整理进行中
+        // 水位自动整理开始：时间线提示整理进行中（分身的进分身聊天框）
         const msg = typeof ev.data === 'string' ? ev.data : '上下文正在整理…'
-        this.blocks.push({ kind: 'note', uid: this.nuid(), text: `⇳ ${msg}` })
+        const bsTrim = ev.forkId ? this.ensureFork(ev.forkId).blocks : this.blocks
+        bsTrim.push({ kind: 'note', uid: this.nuid(), text: `⇳ ${msg}` })
         break
       }
       case 'session.trim': {
-        // 整理完成：上下文已就地折叠（marker 已入历史，重建时间线时渲染分割线）
-        this.blocks.push({
-          kind: 'note',
+        // 整理完成：上下文已就地折叠——整理标记（trim 块）挂起，其前内容
+        // 随之收进折叠区（foldBlocks 渲染层裁掉，滚到顶上拉自动载入）；
+        // 分身的进分身框
+        const bsFold = ev.forkId ? this.ensureFork(ev.forkId).blocks : this.blocks
+        const summary = typeof ev.data?.summary === 'string' ? ev.data.summary.trim() : ''
+        bsFold.push({
+          kind: 'trim',
           uid: this.nuid(),
-          text: `上下文已整理：早期对话折叠为摘要（${ev.data?.folded ?? '?'} 条 → 保留最近 ${ev.data?.kept ?? '?'} 条）`,
+          folded: true,
+          full: summary,
+          text: summary
+            ? trimBrief(summary)
+            : `上下文已整理：早期对话折叠为摘要（${ev.data?.folded ?? '?'} 条 → 保留最近 ${ev.data?.kept ?? '?'} 条）`,
         })
         void this.refreshStatus()
         break

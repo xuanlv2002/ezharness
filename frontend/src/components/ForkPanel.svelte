@@ -16,6 +16,7 @@
   let openGroups = $state<Set<number>>(new Set())
 
   const fork = $derived(store.forks[store.activeForkId])
+  /* 分身抽屉是完整执行记录，不做折叠：整理标记只作信息条展示 */
   const rows = $derived(fork ? buildRows(fork.blocks) : [])
 
   function toggleGroup(key: number) {

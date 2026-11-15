@@ -285,9 +285,9 @@ func (a *AgentService) Assemble(s *domain.Session, st domain.Settings) {
 	remindHook.SetPlanRoot(s.RootID)
 	traceHook := hooks.NewTrace(s.Fsys, s.Sess, func() string { return main.Name })
 	trimHook := hooks.NewTrim(provider, traceHook,
-		window*st.TrimPercent/100,             // 水位=窗口百分比，随模型自适应（换模型 Reassemble 重算）
-		window,                                // 模型窗口（整理提示展示水位比例用）
-		s.Fsys, func() string { return s.ID }, // 进度档案 progress.md 落盘
+		window*st.TrimPercent/100, // 水位=窗口百分比，随模型自适应（换模型 Reassemble 重算）
+		window,                    // 模型窗口（整理提示展示水位比例用）
+		func() string { return hooks.SessionArchivePath(s.ID) }, // 摘要里给出原文存档绝对路径
 	)
 
 	// 主模型视觉能力实时判断（换模型 Reassemble 后随设置即时生效）

@@ -2,6 +2,10 @@
 rows 是时间线的行组装（主时间线与分身抽屉共用）：user 块独立成行，
 其余块并入其后的回复组；组内连续 tool 段 ≥ TOOL_GROUP_MIN 折成摘要。
 组 key 用前置 user 块 uid——组内中段增删不换 key，流式与展开态不抖。
+foldBlocks 是上下文整理（trim）的渲染折叠：折叠态 trim 块把「上一个
+trim 之后 → 自己」的区块裁掉（数据保留）。折叠不是展开/关闭开关：
+主时间线在滚到顶后继续上拉时自动载入（一次性置 folded=false），
+之后按普通历史走行窗口的懒加载。
 */
 
 import type { Block } from './store.svelte'
@@ -55,4 +59,31 @@ export function buildRows(blocks: Block[]): Row[] {
   }
   flushGroup()
   return out
+}
+
+/*
+foldBlocks 裁掉被折叠的 trim 区段：每个折叠态 trim 块吃掉「上一个
+trim 之后 → 自己」的全部区块（trim 块自身保留作整理标记，其后的
+内容永远可见）。无折叠 trim 时原数组直返（零开销快路径）。
+*/
+export function foldBlocks(blocks: Block[]): Block[] {
+  let anyFolded = false
+  const trims: number[] = []
+  for (let i = 0; i < blocks.length; i++) {
+    const b = blocks[i]
+    if (b.kind === 'trim') {
+      trims.push(i)
+      if (b.folded) anyFolded = true
+    }
+  }
+  if (!anyFolded) return blocks
+  const hide = new Set<number>()
+  let prev = -1
+  for (const ti of trims) {
+    if ((blocks[ti] as Extract<Block, { kind: 'trim' }>).folded) {
+      for (let i = prev + 1; i < ti; i++) hide.add(i)
+    }
+    prev = ti
+  }
+  return blocks.filter((_, i) => !hide.has(i))
 }

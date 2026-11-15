@@ -40,7 +40,7 @@ func TestArchiveSession(t *testing.T) {
 		{Role: types.RoleUser, Content: "近期问题"},
 	}
 	info, err := ArchiveSession(ctx, fakeProvider{"交接摘要"}, fsys, store, sys, topics, trace,
-		func(string) string { return "rebuilt base" }, oldSnap.Messages, view, "C:/work/ezharness")
+		func(string) string { return "rebuilt base" }, oldSnap.Messages, view)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -114,7 +114,7 @@ func TestTrimArchiveFullOnDisk(t *testing.T) {
 	store := NewStore(fsys, "s1")
 	sys := NewSysPrompt("base", "")
 	store.BindSys(sys, "fake")
-	tr := NewTrim(fakeProvider{"摘要"}, nil, 100, 1000, nil, nil)
+	tr := NewTrim(fakeProvider{"摘要"}, nil, 100, 1000, nil)
 
 	// 第一轮：q1..a3 两次问答后整理（q1,a1 折叠，marker+q2..a3 保留）→ 落盘
 	state := newTestState([]types.Message{

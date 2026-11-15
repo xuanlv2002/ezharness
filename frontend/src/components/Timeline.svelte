@@ -1,7 +1,7 @@
 <script lang="ts">
   import { tick } from 'svelte'
   import { store, type Block } from '../lib/store.svelte'
-  import { buildRows } from '../lib/rows'
+  import { buildRows, foldBlocks } from '../lib/rows'
   import Logo from './Logo.svelte'
   import EzAvatar from './EzAvatar.svelte'
   import ThreadRows from './ThreadRows.svelte'
@@ -10,8 +10,11 @@
   let el: HTMLDivElement
   let stick = true
 
-  /* 行模型见 lib/rows（主时间线与分身抽屉共用同一组装） */
-  const rows = $derived(buildRows(store.blocks))
+  /* 行模型见 lib/rows（主时间线与分身抽屉共用同一组装）；渲染前先过
+     上下文整理折叠（折叠区不建行、不进轮次导航；滚到顶继续上拉自动
+     载入，不做展开/关闭开关） */
+  const shown = $derived(foldBlocks(store.blocks))
+  const rows = $derived(buildRows(shown))
 
   /* 大会话只挂最近一段行：打开/切页时不必为整段历史建 DOM、跑 markdown。
      窗口同时受行数与正文字数约束——上下文塞满的会话行数可能不多，但每条
@@ -38,7 +41,7 @@
       if (b.kind === 'assistant') n += b.text.length + b.reasoning.length
       else if (b.kind === 'user') n += b.text.length
       else if (b.kind === 'tool') n += 200
-      else if (b.kind === 'note') n += b.text.length
+      else if (b.kind === 'note' || b.kind === 'trim') n += b.text.length
       else n += 200
     }
     return n
@@ -74,6 +77,19 @@
   const visibleRows = $derived(rows.slice(start))
   const hiddenRows = $derived(start)
 
+  /* 当前唯一可见的折叠 trim（foldBlocks 保证同一时刻至多一条折叠分隔线
+     在 rows 里）：滚到顶继续上拉时先自动加载它的早期对话，再走上一话题 */
+  type TrimBlock = Extract<Block, { kind: 'trim' }>
+  const foldedTrim = $derived.by(() => {
+    for (const r of rows) {
+      if (r.kind === 'user') continue
+      for (const seg of r.segs) {
+        if (seg.type === 'one' && seg.b.kind === 'trim' && seg.b.folded) return seg.b as TrimBlock
+      }
+    }
+    return null
+  })
+
   async function showEarlier() {
     if (!el || start <= 0) return
     rowSession = store.activeId
@@ -82,9 +98,10 @@
   }
 
   /* 右侧轮次导航：每轮用户输入一行，点击回溯、滚动跟随高亮（纯图片轮次也算）。
-     收起时只显示最近 5 个刻度；悬浮展开全部轮次，列高封顶后可滚动选择 */
+     收起时只显示最近 5 个刻度；悬浮展开全部轮次，列高封顶后可滚动选择。
+     折叠区内的轮次不进导航（点了也滚不到，滚到顶上拉加载后才出现） */
   const turns = $derived(
-    store.blocks.filter(
+    shown.filter(
       (b): b is Extract<Block, { kind: 'user' }> =>
         b.kind === 'user' && (!!b.text.trim() || !!b.images?.length),
     ),
@@ -233,7 +250,7 @@
     })()
   })
 
-  /* 空状态判定：note/status/resourcechange/endtick/imgload 是系统自动记录
+  /* 空状态判定：note/status/resourcechange/endtick/imgload/trim 是系统自动记录
      （压缩翻页后的新会话仅含一条 <end_reason> 收尾），不算对话内容——
      只剩系统记录时仍展示欢迎页 */
   const empty = $derived(
@@ -243,7 +260,8 @@
         b.kind !== 'status' &&
         b.kind !== 'resourcechange' &&
         b.kind !== 'endtick' &&
-        b.kind !== 'imgload',
+        b.kind !== 'imgload' &&
+        b.kind !== 'trim',
     ),
   )
 
@@ -260,14 +278,22 @@
      达阈值拉出上一会话；指示器随拉动量渐显，内容展开动画 ── */
   let pull = $state(0)
   let loading = $state(false)
+  let loadKind = $state<'trim' | 'earlier' | 'prev'>('prev')
   let settle = $state(false) // 松手回弹：换用更慢的缓动，跟着手指的拉动用短过渡
   let settleTimer: ReturnType<typeof setTimeout> | undefined
   const THRESHOLD = 64
   const MAX_PULL = 96
 
+  /* 上拉带能加载什么：先折叠的早期对话，再窗口外的更早消息，最后上一话题 */
+  const trimReady = $derived(!!foldedTrim && start === 0)
+  const pullKind = $derived<'trim' | 'earlier' | 'prev'>(trimReady ? 'trim' : start > 0 ? 'earlier' : 'prev')
+  const canPullLoad = $derived(trimReady || start > 0 || store.hasPrev)
+  const pullText = $derived(
+    pullKind === 'trim' ? '加载早期对话' : pullKind === 'earlier' ? '加载更早的消息' : '加载上一话题',
+  )
   const armed = $derived(pull >= THRESHOLD)
   /* 没有更早内容只在拉动过程中可见，松手即随 pull 归零一起消失 */
-  const showNoMore = $derived(!store.hasPrev && pull > 0)
+  const showNoMore = $derived(!canPullLoad && pull > 0)
   const showPull = $derived(pull > 0 || loading)
 
   function atTop(): boolean {
@@ -305,7 +331,7 @@
       pull = Math.min(MAX_PULL, pull + Math.max(2, Math.min(28, -dy * 0.35)))
       /* 松手等待与回弹同一节奏：到阈值直接触发加载（trigger 内部先把
          位移归零），未到阈值回弹；两者都不在顶部滞留 */
-      wheelTimer = store.hasPrev && pull >= THRESHOLD
+      wheelTimer = canPullLoad && pull >= THRESHOLD
         ? setTimeout(() => void trigger(), 40)
         : setTimeout(cancelPull, 40)
     } else if (e.deltaY > 0) {
@@ -336,17 +362,19 @@
 
   function onTouchEnd() {
     touching = false
-    if (store.hasPrev && armed) void trigger()
+    if (canPullLoad && armed) void trigger()
     else cancelPull()
   }
 
   async function trigger() {
     if (loading) return
-    if (!store.hasPrev) {
+    const kind = pullKind
+    if ((kind === 'prev' && !store.hasPrev) || (kind === 'trim' && !foldedTrim)) {
       cancelPull()
       return
     }
     clearTimeout(wheelTimer)
+    loadKind = kind
     loading = true
     /* 加载态由悬浮指示器自己显示，拉起的正文立即回弹，不再保持位移 */
     settle = true
@@ -354,14 +382,33 @@
     settleTimer = setTimeout(() => (settle = false), 200)
     pull = 0
     const prevHeight = el?.scrollHeight ?? 0
-    await store.loadPrev()
-    /* 用户主动拉出的上一会话整段可见（不再受窗口限制） */
-    rowStart = 0
-    rowSession = store.activeId
+    const prevTop = el?.scrollTop ?? 0
+    if (kind === 'trim') {
+      const tb = foldedTrim
+      if (tb) {
+        tb.folded = false
+        /* 展开会带回整段早期对话：仍按行窗口只挂最近一批（更早的走
+           「显示更早」），避免一次挂满 DOM */
+        const post = buildRows(foldBlocks(store.blocks))
+        const idx = post.findIndex(
+          (r) => r.kind !== 'user' && r.segs.some((s) => s.type === 'one' && s.b === tb),
+        )
+        rowSession = store.activeId
+        rowStart = idx > ROW_STEP ? idx - ROW_STEP : 0
+      }
+    } else if (kind === 'earlier') {
+      rowSession = store.activeId
+      rowStart = earlierStart(start)
+    } else {
+      await store.loadPrev()
+      /* 用户主动拉出的上一会话整段可见（不再受窗口限制） */
+      rowStart = 0
+      rowSession = store.activeId
+    }
     await tick()
     loading = false
     // prepend 高度补偿：视口停在原有内容处，不跳顶
-    if (el) el.scrollTop = el.scrollHeight - prevHeight
+    if (el) el.scrollTop = prevTop + (el.scrollHeight - prevHeight)
   }
 
   function onScroll() {
@@ -425,7 +472,7 @@
     {#if !empty}
       {#if hiddenRows > 0}
         <button class="earlier" onclick={() => void showEarlier()}>
-          ↑ 显示更早的消息（还有 {hiddenRows} 行未展开）
+          ↑ 显示更早的消息（还有 {hiddenRows} 行未加载）
         </button>
       {/if}
       <ThreadRows
@@ -458,8 +505,8 @@
         <p class="lead">想让它做什么？</p>
         <p class="sub">它可全权操作本机——文件、终端、浏览器。</p>
         <QuickStart />
-        {#if store.hasPrev}
-          <p class="hint">↑ 下拉可查看上一话题</p>
+        {#if canPullLoad}
+          <p class="hint">↑ 下拉可查看{trimReady ? '早期对话' : start > 0 ? '更早的消息' : '上一话题'}</p>
         {/if}
       </div>
     {/if}
@@ -469,12 +516,16 @@
        transform 跟手，回弹只动合成层，不触发整条时间线重排 -->
   <div
     class="pullind"
-    class:armed={armed && store.hasPrev}
+    class:armed={armed && canPullLoad}
     class:show={showPull}
     aria-hidden={!showPull}>
     <span class="arrow" class:spin={loading}>{loading ? '⟳' : showNoMore ? '·' : '↓'}</span>
     <span class="ptext">
-      {#if loading}加载上一话题…{:else if showNoMore}没有更早的会话了{:else if armed}松开加载上一话题{:else}下拉加载上一话题{/if}
+      {#if loading}{loadKind === 'trim'
+          ? '加载早期对话…'
+          : loadKind === 'earlier'
+            ? '加载更早的消息…'
+            : '加载上一话题…'}{:else if showNoMore}没有更早的内容了{:else if armed}松开{pullText}{:else}下拉{pullText}{/if}
     </span>
   </div>
   {#if turns.length >= 2}
@@ -685,8 +736,8 @@
   .inner.settle {
     transition: transform 0.05s cubic-bezier(0.25, 0.8, 0.3, 1);
   }
-  /* 大会话窗口的顶部分界：点一下往前多展开一段（不自动加载，避免快速
-     滚到顶时把整段历史一次性全挂上） */
+  /* 大会话窗口的顶部分界：点一下或滚到顶继续上拉（pull-to-load）往前
+     多加载一批——按批限制，避免快速滚到顶时把整段历史一次性全挂上 */
   .earlier {
     align-self: center;
     border: 1px dashed var(--line-strong);

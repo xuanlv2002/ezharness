@@ -633,7 +633,7 @@ func (t *TopicService) Compact(ctx context.Context, rootID string) error {
 		s.Topics, w.Trace, func(nextID string) string {
 			return buildSystemBase(ctx, st, s.Fsys, t.Hub.ModelsSnapshot(), nextID)
 		},
-		s.History(), s.ModelView(), ResolveWorkDir(st.WorkDir))
+		s.History(), s.ModelView())
 	if err != nil {
 		return err
 	}

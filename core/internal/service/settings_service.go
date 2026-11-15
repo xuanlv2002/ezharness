@@ -553,7 +553,7 @@ func (m *MemoryService) DeleteProject(ctx context.Context, id string) error {
 	return nil
 }
 
-/* ── 记忆待确认操作（memory 工具与 distill 落档，通知栏确认）── */
+/* ── 记忆待确认操作（memory 工具落档，通知栏确认）── */
 
 /* MemoryPendingNotices 待确认操作 → 通知条目（跨重启持久）。 */
 func (m *MemoryService) MemoryPendingNotices(ctx context.Context) []domain.PendingNotice {

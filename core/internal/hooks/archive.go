@@ -41,22 +41,19 @@ const archiveSummaryPrompt = "为切换到全新会话生成精炼交接摘要�
 	"300 字以内，自包含——新会话除了这份摘要与本会话存档路径外没有任何上下文。"
 
 /*
-ArchiveSession 执行归档换代：沉淀长期记忆（user/soul 覆盖写 + 项目记忆
-工作流，失败静默降级）→ 摘要模型视图 → 旧库封存 → 写新库初始快照
+ArchiveSession 执行归档换代：摘要模型视图 → 旧库封存 → 写新库初始快照
 （空 messages + 新 system + compress 边，重启可恢复形态）→ 内存切换
 （sys 热更、SetID/SetPrev、trace 换库、话题线换代）。
 rebuildBase 接收新会话 ID，用于重建与新身份一致的系统提示；full 是
-渲染全量历史（话题标题与线规模），view 是模型视图（摘要输入），workDir
-是当前工作目录（项目沉淀的 projectId 线索）。
+渲染全量历史（话题标题与线规模），view 是模型视图（摘要输入）。
 */
 func ArchiveSession(ctx context.Context, p provider.ModelProvider, fsys fs.FileSystem,
 	sess *Store, sys *SysPrompt, topics *Topics, trace *Trace,
-	rebuildBase func(nextID string) string, full, view []types.Message, workDir string) (CompactInfo, error) {
+	rebuildBase func(nextID string) string, full, view []types.Message) (CompactInfo, error) {
 	oldID := sess.ID()
 	if oldID == "" {
 		return CompactInfo{}, errors.New("no session to archive")
 	}
-	_ = distillToMemory(ctx, p, fsys, view, workDir) // 沉淀步：增值动作，失败不阻断归档
 	summaryText, err := summarizeMsgs(ctx, p, archiveSummaryPrompt, view)
 	if err != nil {
 		return CompactInfo{}, err
@@ -84,8 +81,7 @@ func ArchiveSession(ctx context.Context, p provider.ModelProvider, fsys fs.FileS
 		base = b
 	}
 	summaryBlock := "<compact-summary>\n上一会话已归档：原始记录在 " + prevPath +
-		"/trace.jsonl（可读取全文）；值得长期保留的用户信息、以及用户对你的要求已沉淀进长期记忆" +
-		"（user/soul 条目随上下文常驻，见 <memory> 段；项目记忆索引在同段）。\n" +
+		"/trace.jsonl（可读取全文）。\n" +
 		"本会话开始前的交接摘要：\n" + summaryText + "\n</compact-summary>"
 
 	sys.Set(base, summaryBlock) // 新 system 两段生效（sys 是会话持有的热更实例）

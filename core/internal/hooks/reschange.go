@@ -105,7 +105,7 @@ func (h *Remind) buildChanges(ctx context.Context) (items []string, skills, mcps
 		}
 	}
 
-	// 长期记忆基线（memory 工具轮内改 / distill 归档应用，下轮 diff 出变更）
+	// 长期记忆基线（memory 工具轮内改，下轮 diff 出变更）
 	memSigs := memorySignatures(ctx, h.fsys)
 	projSigs := projectSignatures(ctx, h.fsys)
 
