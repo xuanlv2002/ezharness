@@ -75,7 +75,7 @@ func DefaultModelsConfig() ModelsConfig {
 	}
 }
 
-/* ActiveMain 返回主模型槽的生效条目（enabled 优先且跳过已关闭,否则首条未关闭；全关/空槽 nil）。 */
+/* ActiveMain 返回主模型槽的默认条目（enabled 优先且跳过已关闭,否则首条未关闭；全关/空槽 nil）。 */
 func (m ModelsConfig) ActiveMain() *ModelEntry {
 	for i := range m.Main {
 		if m.Main[i].Enabled && !m.Main[i].Disabled {
@@ -90,6 +90,22 @@ func (m ModelsConfig) ActiveMain() *ModelEntry {
 	return nil
 }
 
+/*
+ResolveMain 解析会话的主模型：name 非空且存在且未关闭时用它；name 为空、
+条目被删或已关闭时回落 ActiveMain（全局默认）。会话切换模型只写会话
+偏好，不改 models.json 的 enabled 位。
+*/
+func (m ModelsConfig) ResolveMain(name string) *ModelEntry {
+	if name != "" {
+		for i := range m.Main {
+			if m.Main[i].Name == name && !m.Main[i].Disabled {
+				return &m.Main[i]
+			}
+		}
+	}
+	return m.ActiveMain()
+}
+
 /* Settings 是可热更的行为设置（审批策略独立于 toolRules.json）。 */
 type Settings struct {
 	SystemExtra      string   `json:"systemExtra"`
@@ -101,8 +117,8 @@ type Settings struct {
 	MaxIterations    int      `json:"maxIterations"`             // 单轮对话的最大模型迭代次数（0 = 默认 64，上限 128；随 Reassemble 生效）
 	DebugMode        bool     `json:"debugMode"`                 // 调试模式：把每次模型请求的全量输入写进日志（modeldump 实时读取，即改即生效）
 	PinnedApps       []string `json:"pinnedApps,omitempty"`      // 钉到桌面小助手的快应用名（快应用页/宠物窗轮询读取，即改即生效）
-	ReasoningEffort  string   `json:"reasoningEffort,omitempty"` // 思考强度档位（''=不控制 | none=关闭 | low/high/max；请求侧经 reasoningeffort warp 即改即生效）
-	ApproveMode      string   `json:"approveMode,omitempty"`     // 审批档位（''=跟随安全配置 | off=全放行 | strict=全审；工具审批实时读取全局快照）
+	ReasoningEffort  string   `json:"reasoningEffort,omitempty"` // 旧版全局思考档位（保留兼容；现行每会话偏好见 hooks.Prefs）
+	ApproveMode      string   `json:"approveMode,omitempty"`     // 旧版全局审批档位（保留兼容；现行每会话偏好见 hooks.Prefs）
 	OffloadThreshold int      `json:"offloadThreshold"`          // 工具结果卸载阈值（字节；超过即卸载到文件只留摘要头，0=默认 4096；摘要头随阈值分档封顶 1KB；随 Reassemble 生效）
 	/* 生成类模型（image/audio/video）每日调用配额（agent 工具与 OpenAPI 同一计数；
 	0 = 用默认。这三类按次计费且单价高，配额是审批之外的第二道闸 */

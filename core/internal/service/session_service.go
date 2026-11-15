@@ -5,7 +5,9 @@ package service
 
 import (
 	"context"
+	"fmt"
 	"slices"
+	"strings"
 
 	"github.com/xuanlv2002/ezloop/ext/hook/skill"
 	"github.com/xuanlv2002/ezloop/types"
@@ -19,6 +21,86 @@ import (
 type SessionService struct {
 	Hub       *domain.Hub
 	Callbacks *CallbackService // 可空：状态卡展示当前会话定时回调
+	Agents    *AgentService    // 可空：切换会话模型时重建该会话装配
+}
+
+/* SessionPrefsPatch 是会话偏好的局部更新（nil = 不改）。 */
+type SessionPrefsPatch struct {
+	ReasoningEffort *string `json:"reasoningEffort"`
+	ApproveMode     *string `json:"approveMode"`
+	Model           *string `json:"model"`
+}
+
+/* SessionPrefsView 是更新后的会话偏好与解析出的主模型。 */
+type SessionPrefsView struct {
+	OK              bool   `json:"ok"`
+	ReasoningEffort string `json:"reasoningEffort"`
+	ApproveMode     string `json:"approveMode"`
+	Model           string `json:"model"`
+	ModelVision     bool   `json:"modelVision"`
+	ContextWindow   int    `json:"contextWindow"`
+}
+
+/*
+SetPrefs 更新本会话的思考档位/审批档位/主模型。模型变化需要会话空闲并
+重建该会话装配（provider 与上下文窗口随模型走）；思考/审批由请求侧与
+审批闭包实时读取，无需重建。偏好立即写入会话目录的 prefs.json，轮末
+快照另存一份。
+*/
+func (s *SessionService) SetPrefs(ctx context.Context, rootID string, patch SessionPrefsPatch) (SessionPrefsView, error) {
+	sess := s.Hub.SessionOf(rootID)
+	if sess == nil {
+		return SessionPrefsView{}, ErrTopicNotFound
+	}
+	p := sess.Sess.Prefs()
+	modelChanged := false
+	if patch.ReasoningEffort != nil {
+		if !validReasoningEffort(*patch.ReasoningEffort) {
+			return SessionPrefsView{}, fmt.Errorf("思考档位取值非法（空/none/low/medium/high/xhigh/max）")
+		}
+		p.ReasoningEffort = *patch.ReasoningEffort
+	}
+	if patch.ApproveMode != nil {
+		if !validApproveMode(*patch.ApproveMode) {
+			return SessionPrefsView{}, fmt.Errorf("审批档位取值非法（空/off/strict）")
+		}
+		p.ApproveMode = *patch.ApproveMode
+	}
+	if patch.Model != nil {
+		name := strings.TrimSpace(*patch.Model)
+		if name != "" {
+			found := false
+			for _, e := range s.Hub.ModelsSnapshot().Main {
+				if e.Name == name && !e.Disabled {
+					found = true
+					break
+				}
+			}
+			if !found {
+				return SessionPrefsView{}, fmt.Errorf("模型 %s 不存在或已关闭", name)
+			}
+		}
+		if name != p.ActiveModel {
+			modelChanged = true
+		}
+		p.ActiveModel = name
+	}
+	if modelChanged && (sess.Busy() || sess.Archiving()) {
+		return SessionPrefsView{}, domain.ErrBusy
+	}
+	sess.Sess.SetPrefs(p)
+	if err := hooks.SavePrefs(ctx, s.Hub.Fsys, sess.ID, p); err != nil {
+		return SessionPrefsView{}, err
+	}
+	if modelChanged && s.Agents != nil {
+		s.Agents.Assemble(sess, s.Hub.SettingsSnapshot())
+	}
+	main := s.Hub.ModelsSnapshot().ResolveMain(p.ActiveModel)
+	out := SessionPrefsView{OK: true, ReasoningEffort: p.ReasoningEffort, ApproveMode: p.ApproveMode}
+	if main != nil {
+		out.Model, out.ModelVision, out.ContextWindow = main.Name, main.Vision, main.ContextWindow
+	}
+	return out, nil
 }
 
 /* BootstrapData 是前端启动所需的全量数据。 */
@@ -69,23 +151,25 @@ type HistoryData struct {
 
 /* Status 是右栏状态卡数据（命中率与用量为本会话口径，切会话/重启清零）。 */
 type Status struct {
-	Model         string          `json:"model"`
-	ModelVision   bool            `json:"modelVision"` // 主模型是否支持视觉输入（false 时带图发送前端提示省略）
-	SessionID     string          `json:"sessionId"`
-	RootID        string          `json:"rootId"`
-	SessionMsgs   int             `json:"sessionMsgs"`
-	Busy          bool            `json:"busy"`
-	ContextTokens int             `json:"contextTokens"`
-	ContextWindow int             `json:"contextWindow"` // 主模型窗口（水位条分母）
-	TrimPercent   int             `json:"trimPercent"`   // 自动整理阈值（窗口百分比，水位条阈值线；0=禁用）
-	CacheHitRate  float64         `json:"cacheHitRate"`
-	PromptTokens  int             `json:"promptTokens"` // 本会话累计输入（命中率分母）
-	Turns         int             `json:"turns"`
-	Tools         []string        `json:"tools"`
-	McpServers    []string        `json:"mcpServers"`
-	Skills        []string        `json:"skills"`
-	TopicsCount   int             `json:"topicsCount"`
-	Callbacks     []CallbackBrief `json:"callbacks,omitempty"` // 绑定当前会话的定时回调
+	Model           string          `json:"model"`
+	ModelVision     bool            `json:"modelVision"`     // 主模型是否支持视觉输入（false 时带图发送前端提示省略）
+	ReasoningEffort string          `json:"reasoningEffort"` // 本会话思考档位（''=默认）
+	ApproveMode     string          `json:"approveMode"`     // 本会话审批档位（''=跟随安全配置）
+	SessionID       string          `json:"sessionId"`
+	RootID          string          `json:"rootId"`
+	SessionMsgs     int             `json:"sessionMsgs"`
+	Busy            bool            `json:"busy"`
+	ContextTokens   int             `json:"contextTokens"`
+	ContextWindow   int             `json:"contextWindow"` // 主模型窗口（水位条分母）
+	TrimPercent     int             `json:"trimPercent"`   // 自动整理阈值（窗口百分比，水位条阈值线；0=禁用）
+	CacheHitRate    float64         `json:"cacheHitRate"`
+	PromptTokens    int             `json:"promptTokens"` // 本会话累计输入（命中率分母）
+	Turns           int             `json:"turns"`
+	Tools           []string        `json:"tools"`
+	McpServers      []string        `json:"mcpServers"`
+	Skills          []string        `json:"skills"`
+	TopicsCount     int             `json:"topicsCount"`
+	Callbacks       []CallbackBrief `json:"callbacks,omitempty"` // 绑定当前会话的定时回调
 }
 
 /* Snapshot 汇总活动会话状态。 */
@@ -128,9 +212,10 @@ func (s *SessionService) Snapshot(ctx context.Context) Status {
 		}
 		skills = append(skills, e.Name)
 	}
+	prefs := sess.Sess.Prefs()
 	vision := false
 	modelName := ""
-	if m := s.Hub.ModelsSnapshot().ActiveMain(); m != nil {
+	if m := s.Hub.ModelsSnapshot().ResolveMain(prefs.ActiveModel); m != nil {
 		vision, modelName = m.Vision, m.Name
 	}
 	var callbacks []CallbackBrief
@@ -138,23 +223,25 @@ func (s *SessionService) Snapshot(ctx context.Context) Status {
 		callbacks = s.Callbacks.Brief(sess.CurrentID())
 	}
 	return Status{
-		Model:         modelName,
-		ModelVision:   vision,
-		SessionID:     sess.ID,
-		RootID:        sess.RootID,
-		SessionMsgs:   len(sess.History()),
-		Busy:          sess.Busy(),
-		ContextTokens: ctxTokens,
-		ContextWindow: ctxWindow,
-		TrimPercent:   s.Hub.SettingsSnapshot().TrimPercent,
-		CacheHitRate:  hit,
-		PromptTokens:  u.PromptTokens,
-		Turns:         s.Hub.Stats.Turns(),
-		Tools:         tools,
-		McpServers:    mcp,
-		Skills:        skills,
-		TopicsCount:   len(s.Hub.Topics.Load()),
-		Callbacks:     callbacks,
+		Model:           modelName,
+		ModelVision:     vision,
+		ReasoningEffort: prefs.ReasoningEffort,
+		ApproveMode:     prefs.ApproveMode,
+		SessionID:       sess.ID,
+		RootID:          sess.RootID,
+		SessionMsgs:     len(sess.History()),
+		Busy:            sess.Busy(),
+		ContextTokens:   ctxTokens,
+		ContextWindow:   ctxWindow,
+		TrimPercent:     s.Hub.SettingsSnapshot().TrimPercent,
+		CacheHitRate:    hit,
+		PromptTokens:    u.PromptTokens,
+		Turns:           s.Hub.Stats.Turns(),
+		Tools:           tools,
+		McpServers:      mcp,
+		Skills:          skills,
+		TopicsCount:     len(s.Hub.Topics.Load()),
+		Callbacks:       callbacks,
 	}
 }
 

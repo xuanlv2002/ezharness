@@ -146,7 +146,7 @@ func (a *app) buildRouter() *gin.Engine {
 		Boot:      &a.boot,
 	}
 	controllers := controller.Controllers{
-		Session: &controller.SessionController{Svc: &service.SessionService{Hub: hub, Callbacks: agents.Callbacks}},
+		Session: &controller.SessionController{Svc: &service.SessionService{Hub: hub, Callbacks: agents.Callbacks, Agents: agents}},
 		Chat:    &controller.ChatController{Svc: chatSvc, Memory: &service.MemoryService{Hub: hub}, Callbacks: agents.Callbacks},
 		Settings: &controller.SettingsController{
 			Settings: &service.SettingsService{Hub: hub, Agents: agents},

@@ -163,6 +163,7 @@ func NewRouter(c Controllers, dist fs.FS, tokens *TokenStore) *gin.Engine {
 		api.GET("/stats/hourly", c.Session.HourlyStats)
 
 		api.GET("/sessions/:id", c.Session.History)
+		api.POST("/sessions/:id/prefs", c.Session.SetPrefs) // 本会话模型/思考/审批偏好
 		api.GET("/sessions/:id/prev", c.Session.Prev)
 		api.GET("/sessions/:id/forks/:fid", c.Session.Fork)
 		api.GET("/sessions/:id/events", c.Chat.Events)

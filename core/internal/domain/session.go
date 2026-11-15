@@ -896,6 +896,12 @@ func (s *Session) restoreFrom(snap *hooks.SessionSnap) {
 	s.setHistory(snap.Messages)
 	s.Sess.SetTitle(snap.Title)
 	s.Sess.SetResSnap(snap.Snapshot)
+	// 偏好优先读独立 prefs.json；旧会话没有该文件时回落快照字段
+	prefs := hooks.Prefs{ReasoningEffort: snap.ReasoningEffort, ApproveMode: snap.ApproveMode, ActiveModel: snap.ActiveModel}
+	if p, ok := hooks.LoadPrefs(context.Background(), s.Fsys, snap.ID); ok {
+		prefs = p
+	}
+	s.Sess.SetPrefs(prefs)
 	s.Sess.SetLastOutputAt(snap.LastOutputAt)
 	s.Sess.SeedUsage(snap.Usage)
 	// 恢复水位（旧快照无字段时从历史最后一条 agent_status 兜底）
@@ -986,14 +992,14 @@ func (h *Hub) ApplyMedia(m MediaConfig) {
 	h.mu.Unlock()
 }
 
-/* ApplyUsage 累计主模型用量到启用条目，返回是否有变更。 */
-func (h *Hub) ApplyUsage(u *types.Usage) bool {
+/* ApplyUsage 累计指定会话模型的用量（model 空/失效回落全局默认），返回是否有变更。 */
+func (h *Hub) ApplyUsage(model string, u *types.Usage) bool {
 	if u == nil {
 		return false
 	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	if e := h.Models.ActiveMain(); e != nil {
+	if e := h.Models.ResolveMain(model); e != nil {
 		accumulateUsage(e, u)
 		return true
 	}

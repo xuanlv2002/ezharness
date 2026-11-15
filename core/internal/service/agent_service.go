@@ -193,9 +193,17 @@ func (a *AgentService) Assemble(s *domain.Session, st domain.Settings) {
 		maxIters = 128
 	}
 
-	main := a.Hub.ModelsSnapshot().ActiveMain()
+	prefs := s.Sess.Prefs()
+	main := a.Hub.ModelsSnapshot().ResolveMain(prefs.ActiveModel)
 	if main == nil {
 		main = &domain.ModelEntry{}
+	}
+	// 会话一旦装配就钉住当时生效的模型：之后改全局默认不再牵动它（每个
+	// 会话一套）。被删除/关闭的显式选择不覆盖，重新开启即恢复。
+	if prefs.ActiveModel == "" && main.Name != "" {
+		prefs.ActiveModel = main.Name
+		s.Sess.SetPrefs(prefs)
+		_ = hooks.SavePrefs(context.Background(), s.Fsys, s.ID, prefs)
 	}
 	provider := buildProvider(main)
 
@@ -215,9 +223,9 @@ func (a *AgentService) Assemble(s *domain.Session, st domain.Settings) {
 	sys.SetIdentityFn(func() string { return hooks.SessionIdentityBlock(s.ID) }) // 会话身份：ID+存档路径（trim 折叠后的回忆入口）
 	s.Sess.BindSys(sys, main.Name)
 
-	// 审批三档（全局，实时读取即改即生效）：off 全放行 / strict 全审 / '' 跟随安全配置
+	// 审批三档（本会话，实时读取即改即生效）：off 全放行 / strict 全审 / '' 跟随安全配置
 	approver, approveCh := approve.New(func(c *types.ToolCall) bool {
-		switch a.Hub.SettingsSnapshot().ApproveMode {
+		switch s.Sess.Prefs().ApproveMode {
 		case "off":
 			return false
 		case "strict":
@@ -269,7 +277,7 @@ func (a *AgentService) Assemble(s *domain.Session, st domain.Settings) {
 	// 主模型摘要（快照行 + 变更基线共用）：换模型 Reassemble 后读新快照，
 	// 轮首 diff 出「切换模型到 …」与 skill/mcp 同通道进上下文
 	remindHook.SetModelBrief(func() string {
-		m := a.Hub.ModelsSnapshot().ActiveMain()
+		m := a.Hub.ModelsSnapshot().ResolveMain(s.Sess.Prefs().ActiveModel)
 		if m == nil || m.Name == "" {
 			return ""
 		}
@@ -296,9 +304,9 @@ func (a *AgentService) Assemble(s *domain.Session, st domain.Settings) {
 		func() string { return hooks.SessionArchivePath(s.ID) }, // 摘要里给出原文存档绝对路径
 	)
 
-	// 主模型视觉能力实时判断（换模型 Reassemble 后随设置即时生效）
+	// 本会话主模型视觉能力实时判断（换模型 Reassemble 后随会话偏好即时生效）
 	mainVision := func() bool {
-		m := a.Hub.ModelsSnapshot().ActiveMain()
+		m := a.Hub.ModelsSnapshot().ResolveMain(s.Sess.Prefs().ActiveModel)
 		return m != nil && m.Vision
 	}
 	// read_file 图片分支裁决：开视觉 → 走标记→OnLoop 转图片消息（持久化）；
@@ -312,8 +320,8 @@ func (a *AgentService) Assemble(s *domain.Session, st domain.Settings) {
 
 	// visionguard 最内层（紧贴 provider）：无视觉模型每次实际请求（含 retry）
 	// 剥历史图片消息（请求视图，落盘不动，换回多模态自动恢复）
-	// 思考档位：请求侧覆盖（闭包实时读设置，输入框切换即改即生效）
-	effortWarp := reasoningeffort.Warp(func() string { return a.Hub.SettingsSnapshot().ReasoningEffort })
+	// 思考档位：请求侧覆盖（闭包实时读本会话偏好，输入框切换即改即生效）
+	effortWarp := reasoningeffort.Warp(func() string { return s.Sess.Prefs().ReasoningEffort })
 	// 重试：退避 0.5s 起指数翻倍（0.5/1/2/4/8/16/32/64s，共 8 次退避、
 	// 总尝试 9 次）——并发分身挤出的 429 要等得起；不设总时间上限
 	retryWarp := modelretry.Warp(func(o *modelretry.Options) {
@@ -326,7 +334,7 @@ func (a *AgentService) Assemble(s *domain.Session, st domain.Settings) {
 	// model_call：把一次性子任务（识别/翻译/改写）交给指定模型；视觉任务走这里
 	agentTools = append(agentTools, tools.ModelCall(s.Fsys,
 		func() []domain.ModelEntry { return allModelEntries(a.Hub.ModelsSnapshot()) },
-		func() *domain.ModelEntry { return a.Hub.ModelsSnapshot().ActiveMain() },
+		func() *domain.ModelEntry { return a.Hub.ModelsSnapshot().ResolveMain(s.Sess.Prefs().ActiveModel) },
 		OneShotInvoke))
 	// memory：长期记忆唯一写入通道（提案制，用户在记忆页审阅）
 	agentTools = append(agentTools, tools.Memory(s.Fsys))

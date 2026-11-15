@@ -43,9 +43,9 @@ func BootstrapHub(h *domain.Hub) {
 	h.SetActive(h.BootstrapActive())
 }
 
-/* recordUsage 累计主模型用量并落盘（失败记日志不中断轮）。 */
-func recordUsage(h *domain.Hub, u *types.Usage) {
-	if h.ApplyUsage(u) {
+/* recordUsage 累计该会话所用模型的用量并落盘（失败记日志不中断轮）。 */
+func recordUsage(h *domain.Hub, model string, u *types.Usage) {
+	if h.ApplyUsage(model, u) {
 		if err := SaveModelsConfig(context.Background(), h.Fsys, h.ModelsSnapshot()); err != nil {
 			log.Printf("模型用量落盘失败: %v", err)
 		}
@@ -77,8 +77,11 @@ func SaveModelsConfig(ctx context.Context, fsys osfs.OS, m domain.ModelsConfig) 
 
 const mediaConfigFile = "media.json"
 
-/* LoadMediaConfig 读 media.json（多媒体生成模型：image/audio/video 三类），
-缺失给空配置（三类都未配置是正常态）。 */
+/*
+	LoadMediaConfig 读 media.json（多媒体生成模型：image/audio/video 三类），
+
+缺失给空配置（三类都未配置是正常态）。
+*/
 func LoadMediaConfig(ctx context.Context, fsys osfs.OS) domain.MediaConfig {
 	var mc domain.MediaConfig
 	if data, err := fsys.Read(ctx, mediaConfigFile); err == nil {

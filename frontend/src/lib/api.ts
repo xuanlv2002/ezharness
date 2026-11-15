@@ -312,6 +312,22 @@ export interface ModelsConfig {
   main: ModelEntry[]
 }
 
+/* 会话级偏好（随 session.json 保存，切换/新建会话各自一套） */
+export interface SessionPrefs {
+  ok: boolean
+  reasoningEffort: ReasoningEffort
+  approveMode: '' | 'off' | 'strict'
+  model: string
+  modelVision: boolean
+  contextWindow?: number
+}
+
+export interface SessionPrefsPatch {
+  reasoningEffort?: ReasoningEffort
+  approveMode?: '' | 'off' | 'strict'
+  model?: string
+}
+
 /* 多媒体生成模型配置（media.json，与语言模型分离）：三类各自独立列表 */
 export interface MediaConfig {
   image: ModelEntry[]
@@ -331,6 +347,8 @@ export interface HourStats {
 export interface Status {
   model: string
   modelVision: boolean
+  reasoningEffort: ReasoningEffort // 本会话思考档位（''=默认）
+  approveMode: '' | 'off' | 'strict' // 本会话审批档位（''=跟随安全配置）
   sessionId: string
   sessionMsgs: number
   busy: boolean
@@ -845,9 +863,14 @@ export const api = {
 
   saveModels: (m: ModelsConfig) => post<{ ok: boolean }>('/api/models', m),
 
-  /* 激活主模型（输入框切换器）：唯一启用该条目并重建 agent，下一次输入生效 */
+  /* 激活主模型（旧版全局切换器，保留接口；前端已改为会话级偏好） */
   activateModel: (name: string) =>
     post<{ ok: boolean; model: ModelEntry }>('/api/models/activate', { name }),
+
+  /* 本会话偏好（:id=分支根）：思考档位 / 审批档位 / 主模型，可只传一个字段。
+     模型变更要求会话空闲（409），后端只重建该会话装配 */
+  setSessionPrefs: (rootId: string, patch: SessionPrefsPatch) =>
+    post<SessionPrefs>(`/api/sessions/${encodeURIComponent(rootId)}/prefs`, patch),
 
   /* 审批三档（全局；''=跟随安全配置 | off=无审批 | strict=严格审批），实时生效 */
   setApproveMode: (mode: '' | 'off' | 'strict') =>

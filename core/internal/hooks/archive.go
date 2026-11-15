@@ -86,27 +86,33 @@ func ArchiveSession(ctx context.Context, p provider.ModelProvider, fsys fs.FileS
 
 	sys.Set(base, summaryBlock) // 新 system 两段生效（sys 是会话持有的热更实例）
 
-	// 新库初始快照先落盘：内存切换后任一时刻重启，新库都是可恢复形态
+	// 新库初始快照先落盘：内存切换后任一时刻重启，新库都是可恢复形态。
+	// 模型/思考/审批偏好随线换代：compact 不重置用户的会话选择。
+	prefs := sess.Prefs()
 	root := sess.LineRoot()
 	now := time.Now()
 	initSnap := SessionSnap{
-		ID:             newID,
-		CreatedAt:      now.UnixMilli(),
-		Messages:       nil,
-		SystemPrompt:   sys.Prompt(),
-		SystemBase:     base,
-		SummaryBlock:   summaryBlock,
-		TargetID:       oldID,
-		SeedKind:       "compress",
-		LineRoot:       root,
-		CompactSummary: summaryText,
-		CtxWindow:      old.CtxWindow,
-		StartedAt:      now,
-		EndedAt:        now,
+		ID:              newID,
+		CreatedAt:       now.UnixMilli(),
+		Messages:        nil,
+		SystemPrompt:    sys.Prompt(),
+		SystemBase:      base,
+		SummaryBlock:    summaryBlock,
+		TargetID:        oldID,
+		SeedKind:        "compress",
+		LineRoot:        root,
+		CompactSummary:  summaryText,
+		CtxWindow:       old.CtxWindow,
+		ReasoningEffort: prefs.ReasoningEffort,
+		ApproveMode:     prefs.ApproveMode,
+		ActiveModel:     prefs.ActiveModel,
+		StartedAt:       now,
+		EndedAt:         now,
 	}
 	if err := SaveSnap(ctx, fsys, &initSnap); err != nil {
 		return CompactInfo{}, err
 	}
+	_ = SavePrefs(ctx, fsys, newID, prefs) // 模型/思考/审批偏好随线换代
 
 	sess.SetID(newID) // 用量/折叠档案/边清零，lineRoot 保留（换代不换线）
 	sess.SetPrev(oldID, summaryText)

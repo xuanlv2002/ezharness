@@ -294,8 +294,8 @@
     if (cfg) cfg.main = list
   }
 
-  /* 启用切换：点亮目标为主模型的唯一启用；再次点击已启用的条目不处理
-  （对话必须由主模型驱动，后端也会兜底点亮首条） */
+  /* 默认模型切换：点亮目标为新会话默认主模型；再次点击已启用的条目不处理
+  （对话必须由主模型驱动，后端也会兜底点亮首条；已有会话在输入框各自切换） */
   function enable(slot: SlotKey, idx: number) {
     const cur = slotOf(slot)
     if (!cur) return
@@ -408,7 +408,7 @@
   <div class="head">
     <div>
       <h1>模型</h1>
-      <p class="lead">大语言模型驱动 agent 的对话与工具循环；变更自动保存。图片/语音/视频生成模型在「多媒体」页单独配置。</p>
+      <p class="lead">大语言模型驱动 agent 的对话与工具循环；这里点亮的是新会话的默认模型，已有会话在输入框各自切换。变更自动保存。图片/语音/视频生成模型在「多媒体」页单独配置。</p>
     </div>
     <div class="head-right">
       {#if saving}
@@ -432,11 +432,11 @@
   {:else if cfg}
     {#snippet slotList(k: { key: SlotKey; title: string; hint: string }, list: ModelEntry[] | null)}
       <section>
-        <h2 title={`${k.hint} · 每类启用一个。`}>{k.title}</h2>
+        <h2 title={`${k.hint} · 点亮的是新会话默认模型（已有会话在输入框各自切换）。`}>{k.title}</h2>
         <div class="list">
           {#each list ?? [] as m, i (m.name + i)}
             <div class="model" class:enabled={m.enabled} class:closed={m.disabled}>
-              <button class="dot" class:on={m.enabled && !m.disabled} onclick={() => enable(k.key, i)} title={m.enabled && !m.disabled ? (k.key === 'main' ? '已启用（主模型必启用）' : '已启用（点击停用）') : '点击启用'}></button>
+              <button class="dot" class:on={m.enabled && !m.disabled} onclick={() => enable(k.key, i)} title={m.enabled && !m.disabled ? (k.key === 'main' ? '新会话默认模型（已有会话不受影响）' : '已启用（点击停用）') : '设为新会话默认模型'}></button>
               <div class="info">
                 <span class="name">{m.name}</span>
                 <span class="meta">{m.disabled ? '已关闭 · ' : ''}{m.protocol && m.protocol !== 'openai' ? `【${m.protocol}】` : ''}{m.baseUrl} · {maskKey(m.apiKey)}{m.contextWindow ? ` · ${fmtTokens(m.contextWindow)} ctx` : ''}{m.vision ? ' · 视觉' : ''}{Object.keys(m.headers ?? {}).length ? ` · ${Object.keys(m.headers ?? {}).length} 个请求头` : ''}</span>

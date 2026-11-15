@@ -72,34 +72,47 @@ type SnapEdge struct {
 
 /* SessionSnap 是一次会话的快照（Messages 由 LoadSnap 从 trace.jsonl 合成）。 */
 type SessionSnap struct {
-	ID             string          `json:"id"`
-	CreatedAt      int64           `json:"createdAt"`
-	Title          string          `json:"title,omitempty"` // session 自己的名称（本代首条 user；与线标题独立）
-	Input          string          `json:"input,omitempty"`
-	Messages       []types.Message `json:"-"`                      // 运行时合成：trace.jsonl 消息行（剥 system）
-	MsgCount       int             `json:"msgCount,omitempty"`     // 消息条数（树/列表免读 trace 全文）
-	SystemPrompt   string          `json:"systemPrompt"`           // 渲染后完整 system（恢复零逻辑）
-	SystemBase     string          `json:"systemBase"`             // 基础段（人格+记忆+skill/mcp 列表）
-	SummaryBlock   string          `json:"summaryBlock,omitempty"` // compact 摘要段
-	Tools          []string        `json:"tools,omitempty"`
-	Model          string          `json:"model,omitempty"`
-	CompactSummary string          `json:"compactSummary,omitempty"` // 上一 session 的摘要
-	TargetID       string          `json:"targetId,omitempty"`       // 向上边目标（""=空根）
-	Anchor         int             `json:"anchor,omitempty"`         // fork：复制的消息前缀长度
-	SeedKind       string          `json:"seedKind,omitempty"`       // new | fork | compress
-	LineRoot       string          `json:"lineRoot,omitempty"`       // 所属分支根 ID（冗余，链操作 O(1)）
-	ForkedFrom     *ForkOrigin     `json:"forkedFrom,omitempty"`     // 分叉出处（展示元数据）
-	ForkAnswer     string          `json:"forkAnswer,omitempty"`     // 分身的最终回答（列表摘要免读 trace）
-	LastOutputAt   int64           `json:"lastOutputAt,omitempty"`   // agent_status 距上次输出用
-	Snapshot       *ResSnapshot    `json:"snapshot,omitempty"`       // 资源清单快照（nil = 基线未建）
-	Usage          types.Usage     `json:"usage"`                    // 本会话累计用量（状态卡展示）
-	CtxTokens      int             `json:"ctxTokens,omitempty"`      // 最近一次模型调用的上下文水位
-	CtxWindow      int             `json:"ctxWindow,omitempty"`      // 主模型上下文窗口
-	Iterations     int             `json:"iterations"`
-	StopReason     string          `json:"stopReason"`
-	StartedAt      time.Time       `json:"startedAt"`
-	EndedAt        time.Time       `json:"endedAt"`
-	Archived       bool            `json:"archived"` // compact 后上一世代封存，不作恢复候选
+	ID              string          `json:"id"`
+	CreatedAt       int64           `json:"createdAt"`
+	Title           string          `json:"title,omitempty"` // session 自己的名称（本代首条 user；与线标题独立）
+	Input           string          `json:"input,omitempty"`
+	Messages        []types.Message `json:"-"`                      // 运行时合成：trace.jsonl 消息行（剥 system）
+	MsgCount        int             `json:"msgCount,omitempty"`     // 消息条数（树/列表免读 trace 全文）
+	SystemPrompt    string          `json:"systemPrompt"`           // 渲染后完整 system（恢复零逻辑）
+	SystemBase      string          `json:"systemBase"`             // 基础段（人格+记忆+skill/mcp 列表）
+	SummaryBlock    string          `json:"summaryBlock,omitempty"` // compact 摘要段
+	Tools           []string        `json:"tools,omitempty"`
+	Model           string          `json:"model,omitempty"`
+	CompactSummary  string          `json:"compactSummary,omitempty"`  // 上一 session 的摘要
+	TargetID        string          `json:"targetId,omitempty"`        // 向上边目标（""=空根）
+	Anchor          int             `json:"anchor,omitempty"`          // fork：复制的消息前缀长度
+	SeedKind        string          `json:"seedKind,omitempty"`        // new | fork | compress
+	LineRoot        string          `json:"lineRoot,omitempty"`        // 所属分支根 ID（冗余，链操作 O(1)）
+	ForkedFrom      *ForkOrigin     `json:"forkedFrom,omitempty"`      // 分叉出处（展示元数据）
+	ForkAnswer      string          `json:"forkAnswer,omitempty"`      // 分身的最终回答（列表摘要免读 trace）
+	LastOutputAt    int64           `json:"lastOutputAt,omitempty"`    // agent_status 距上次输出用
+	Snapshot        *ResSnapshot    `json:"snapshot,omitempty"`        // 资源清单快照（nil = 基线未建）
+	ReasoningEffort string          `json:"reasoningEffort,omitempty"` // 本会话思考档位（''=默认）
+	ApproveMode     string          `json:"approveMode,omitempty"`     // 本会话审批档位（''=跟随安全配置）
+	ActiveModel     string          `json:"activeModel,omitempty"`     // 本会话主模型名（空=全局启用条目）
+	Usage           types.Usage     `json:"usage"`                     // 本会话累计用量（状态卡展示）
+	CtxTokens       int             `json:"ctxTokens,omitempty"`       // 最近一次模型调用的上下文水位
+	CtxWindow       int             `json:"ctxWindow,omitempty"`       // 主模型上下文窗口
+	Iterations      int             `json:"iterations"`
+	StopReason      string          `json:"stopReason"`
+	StartedAt       time.Time       `json:"startedAt"`
+	EndedAt         time.Time       `json:"endedAt"`
+	Archived        bool            `json:"archived"` // compact 后上一世代封存，不作恢复候选
+}
+
+/*
+Prefs 是随会话保存的模型与请求偏好：思考档位、审批档位、主模型名。
+新会话从“跳转来的会话”复制一份，没有来源时为空/默认；不写全局设置。
+*/
+type Prefs struct {
+	ReasoningEffort string `json:"reasoningEffort,omitempty"`
+	ApproveMode     string `json:"approveMode,omitempty"`
+	ActiveModel     string `json:"activeModel,omitempty"`
 }
 
 /* Store 实现 EndHook：轮末追加消息行并覆盖写状态。 */
@@ -110,6 +123,7 @@ type Store struct {
 	title    string     // session 自己的名称（与线标题独立：线=分支身份，session=世代名）
 	sys      *SysPrompt // system 唯一来源，OnEnd 取值 pin 进快照
 	tool     string     // 主模型名（宿主注入）
+	prefs    Prefs      // 本会话模型/思考/审批偏好（随快照落盘）
 	snap     *ResSnapshot
 	last     int64                       // lastOutputAt（status hook 维护）
 	prevID   string                      // compact 链：上一 session ID（SetPrev 设置）
@@ -251,6 +265,20 @@ func (h *Store) SetResSnap(s *ResSnapshot) {
 	h.mu.Unlock()
 }
 
+/* Prefs 返回本会话偏好副本（模型/思考/审批；零值=默认）。 */
+func (h *Store) Prefs() Prefs {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.prefs
+}
+
+/* SetPrefs 更新本会话偏好（compact 换代不清：偏好随线走）。 */
+func (h *Store) SetPrefs(p Prefs) {
+	h.mu.Lock()
+	h.prefs = p
+	h.mu.Unlock()
+}
+
 /* SetPrev 记录 compact 链引用（compact hook 在切新会话时调用）。 */
 func (h *Store) SetPrev(oldID, summary string) {
 	h.mu.Lock()
@@ -333,21 +361,27 @@ func (h *Store) OnEnd(ctx context.Context, state *types.LoopState) error {
 		h.mu.Unlock()
 	}
 
+	h.mu.Lock()
+	prefs := h.prefs
+	h.mu.Unlock()
 	out := SessionSnap{
-		ID:           id,
-		CreatedAt:    state.StartedAt.UnixMilli(),
-		Title:        title,
-		Input:        state.Input,
-		Messages:     msgs,
-		MsgCount:     len(msgs),
-		Tools:        toolNames(state),
-		Iterations:   state.Iteration,
-		StopReason:   string(state.StopReason),
-		StartedAt:    state.StartedAt,
-		EndedAt:      state.EndedAt,
-		LastOutputAt: last,
-		Snapshot:     snap,
-		LineRoot:     lineRoot,
+		ID:              id,
+		CreatedAt:       state.StartedAt.UnixMilli(),
+		Title:           title,
+		Input:           state.Input,
+		Messages:        msgs,
+		MsgCount:        len(msgs),
+		Tools:           toolNames(state),
+		Iterations:      state.Iteration,
+		StopReason:      string(state.StopReason),
+		StartedAt:       state.StartedAt,
+		EndedAt:         state.EndedAt,
+		LastOutputAt:    last,
+		Snapshot:        snap,
+		ReasoningEffort: prefs.ReasoningEffort,
+		ApproveMode:     prefs.ApproveMode,
+		ActiveModel:     prefs.ActiveModel,
+		LineRoot:        lineRoot,
 	}
 	if !fork && h.runID == id { // 主循环且本轮未切库：累计用量与水位（fork 只存增量；compact 切库轮的用量不计入新库）
 		h.mu.Lock()
@@ -640,6 +674,39 @@ func SaveSnap(ctx context.Context, fsys fs.FileSystem, s *SessionSnap) error {
 		return err
 	}
 	return fsys.Write(ctx, SessionsDir+"/"+s.ID+"/session.json", data)
+}
+
+/* PrefsPath 是会话偏好的独立落盘位置（与 session.json 分开，避免轮末状态写回与输入框切换互相覆盖）。 */
+func PrefsPath(id string) string {
+	return SessionsDir + "/" + id + "/prefs.json"
+}
+
+/*
+LoadPrefs 读会话偏好；文件不存在（旧会话/尚未切换过）返回 ok=false，
+调用方回落到 session.json 里随快照保存的同名字段。
+*/
+func LoadPrefs(ctx context.Context, fsys fs.FileSystem, id string) (Prefs, bool) {
+	data, err := fsys.Read(ctx, PrefsPath(id))
+	if err != nil {
+		return Prefs{}, false
+	}
+	var p Prefs
+	if json.Unmarshal(data, &p) != nil {
+		return Prefs{}, false
+	}
+	return p, true
+}
+
+/*
+SavePrefs 立即写会话偏好（输入框切换后不等到下一轮）。独立文件，
+空白分支也能落盘；轮末 OnEnd 仍会把偏好抄进 session.json 作为兼容备份。
+*/
+func SavePrefs(ctx context.Context, fsys fs.FileSystem, id string, p Prefs) error {
+	data, err := json.MarshalIndent(p, "", "  ")
+	if err != nil {
+		return err
+	}
+	return fsys.Write(ctx, PrefsPath(id), data)
 }
 
 /* ForkSummary 是 fork 分身的列表摘要（历史重建 fork 卡片用）。 */

@@ -181,7 +181,7 @@ func validReasoningEffort(e string) bool {
 	return false
 }
 
-/* SetReasoningEffort 设置思考档位并落盘（请求侧闭包实时读取，即改即生效，无需重建 agent）。 */
+/* SetReasoningEffort 设置旧版全局思考档位（保留兼容；现行走会话偏好 /api/sessions/:id/prefs）。 */
 func (s *SettingsService) SetReasoningEffort(ctx context.Context, effort string) error {
 	if !validReasoningEffort(effort) {
 		return errors.New("思考档位取值非法（空/none/low/medium/high/xhigh/max）")
@@ -204,7 +204,7 @@ func validApproveMode(m string) bool {
 	return false
 }
 
-/* SetApproveMode 设置审批档位并落盘（工具审批实时读全局快照，即改即生效，无需重建 agent）。 */
+/* SetApproveMode 设置旧版全局审批档位（保留兼容；现行走会话偏好 /api/sessions/:id/prefs）。 */
 func (s *SettingsService) SetApproveMode(ctx context.Context, mode string) error {
 	if !validApproveMode(mode) {
 		return errors.New("审批档位取值非法（空/off/strict）")

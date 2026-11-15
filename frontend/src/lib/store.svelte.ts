@@ -991,30 +991,36 @@ class AppStore {
     }
   }
 
-  /* ── 审批模式 / 模型切换（输入框工具条） ── */
+  /* ── 本会话偏好 / 模型切换（输入框工具条） ──
+     思考、审批、主模型都随会话保存：切换分支各自一套，新建会话从来源
+     会话继承（没有来源用默认值）。不再读写全局 settings。 */
 
-  /* 审批三档（全局；工具审批实时读取，即改即生效） */
+  /* 审批三档（本会话；工具审批实时读取，即改即生效） */
   async setApproveMode(mode: '' | 'off' | 'strict') {
-    if (!this.settings || (this.settings.approveMode ?? '') === mode) return
-    const prev = this.settings.approveMode ?? ''
-    this.settings = { ...this.settings, approveMode: mode }
+    const sid = this.activeId
+    if (!sid || !this.status || (this.status.approveMode ?? '') === mode) return
+    const prev = this.status.approveMode ?? ''
+    this.status = { ...this.status, approveMode: mode }
     try {
-      await api.setApproveMode(mode)
+      const r = await api.setSessionPrefs(sid, { approveMode: mode })
+      if (this.activeId === sid && this.status) this.status.approveMode = r.approveMode
     } catch (e) {
-      this.settings = { ...this.settings, approveMode: prev }
+      if (this.activeId === sid && this.status) this.status = { ...this.status, approveMode: prev }
       this.lastStatus = `审批档位切换失败：${(e as Error).message}`
     }
   }
 
-  /* 思考档位切换（全局；请求侧实时读取，即改即生效） */
+  /* 思考档位切换（本会话；请求侧实时读取，即改即生效） */
   async setReasoningEffort(effort: ReasoningEffort) {
-    if (!this.settings || (this.settings.reasoningEffort ?? '') === effort) return
-    const prev = this.settings.reasoningEffort ?? ''
-    this.settings = { ...this.settings, reasoningEffort: effort }
+    const sid = this.activeId
+    if (!sid || !this.status || (this.status.reasoningEffort ?? '') === effort) return
+    const prev = this.status.reasoningEffort ?? ''
+    this.status = { ...this.status, reasoningEffort: effort }
     try {
-      await api.setReasoningEffort(effort)
+      const r = await api.setSessionPrefs(sid, { reasoningEffort: effort })
+      if (this.activeId === sid && this.status) this.status.reasoningEffort = r.reasoningEffort
     } catch (e) {
-      this.settings = { ...this.settings, reasoningEffort: prev }
+      if (this.activeId === sid && this.status) this.status = { ...this.status, reasoningEffort: prev }
       this.lastStatus = `思考档位切换失败：${(e as Error).message}`
     }
   }
@@ -1024,7 +1030,7 @@ class AppStore {
     if (this.modelsFetched) return
     try {
       const m = await api.getModels()
-      this.mainModels = m.main ?? []
+      this.mainModels = (m.main ?? []).filter((x) => !x.disabled)
       this.modelsFetched = true
     } catch {
       /* 下次打开再试 */
@@ -1036,19 +1042,22 @@ class AppStore {
     this.modelsFetched = false
   }
 
-  /* 切换主模型（下一次输入生效）：状态栏变更行提示（与资源变更同通道，
-     下轮 loop_start 清空——提示寿命与"待生效"窗口一致） */
+  /* 切换本会话主模型（下一次输入生效）：后端只重建该会话的装配；状态栏
+     变更行提示（与资源变更同通道，下轮 loop_start 清空） */
   async activateModel(name: string) {
-    if (!name || name === this.status?.model) return
+    const sid = this.activeId
+    if (!sid || !name || name === this.status?.model) return
     try {
-      const { model: e } = await api.activateModel(name)
+      const r = await api.setSessionPrefs(sid, { model: name })
+      if (this.activeId !== sid) return
       if (this.status) {
-        this.status.model = e.name
-        this.status.modelVision = !!e.vision
+        this.status.model = r.model
+        this.status.modelVision = !!r.modelVision
+        if (r.contextWindow) this.status.contextWindow = r.contextWindow
       }
       this.liveChanges = [
         ...this.liveChanges.filter((x) => !x.startsWith('切换模型')),
-        `切换模型到 ${e.name}（${e.vision ? '支持视觉' : '不支持视觉'}）`,
+        `切换模型到 ${r.model}（${r.modelVision ? '支持视觉' : '不支持视觉'}）`,
       ]
     } catch (err) {
       this.lastStatus = `模型切换失败：${(err as Error).message}`
@@ -1131,7 +1140,7 @@ class AppStore {
 
   async saveSettings(s: Settings) {
     await api.saveSettings(s)
-    this.settings = { ...(this.settings ?? {}), ...s } // 设置页按需提交局部字段，合并而非替换（否则会抹掉思考/审批档）
+    this.settings = { ...(this.settings ?? {}), ...s } // 设置页按需提交局部字段，合并而非替换
     this.lastStatus = '设置已保存（模型与提示即时生效）'
     await this.refreshStatus()
   }
