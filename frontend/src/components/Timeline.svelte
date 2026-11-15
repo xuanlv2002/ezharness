@@ -503,7 +503,7 @@
       <div class="empty">
         <div class="mark"><EzAvatar size={56} random><Logo size={56} /></EzAvatar></div>
         <p class="lead">想让它做什么？</p>
-        <p class="sub">它可全权操作本机——文件、终端、浏览器。</p>
+        <p class="sub">办公，创作，学习 -- 一站式Agent应用</p>
         <QuickStart />
         {#if canPullLoad}
           <p class="hint">↑ 下拉可查看{trimReady ? '早期对话' : start > 0 ? '更早的消息' : '上一话题'}</p>
