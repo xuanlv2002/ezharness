@@ -1,15 +1,18 @@
 <script lang="ts">
   /*
   HTML 查看器：预览（iframe sandbox = 禁脚本，纯静态渲染，无脚本执行
-  面）/ 原文（textarea 编辑，Ctrl+S 保存）切换。
+  面）/ 原文（textarea 编辑，Ctrl+S 保存）切换。预览前把相对资源引用
+  （src/href/poster）按文件所在目录改写成工作目录文件服务 URL
+  （respaths）——沙箱 iframe 里相对地址本会按 SPA 地址解析而全部 404。
 
   sandbox 必须放行 allow-same-origin：空 sandbox 的 iframe 是不透明源，
-  其中浏览器自动发起的资源请求会被判定为跨站，SameSite=Strict 的鉴权
-  cookie 不会附带；放行同源后资源请求能正常带 cookie。未加
-  allow-scripts，预览页仍不能执行脚本。
+  其中发起的图片/CSS 请求被判定为跨站，SameSite=Strict 的鉴权 cookie
+  不会附带，/api/workspace/file 全部 401（表现为图片裂开）。放行同源后
+  资源请求正常带 cookie；未加 allow-scripts，预览页仍不能执行脚本。
   */
 
   import { tick } from 'svelte'
+  import { fileResUrl, resolveLocalRef } from '../../../lib/respaths'
   import { clearDomFind, domFind } from '../../../lib/domfind'
   import { matchRanges } from '../../../lib/findtext'
   import { findScope } from '../../../lib/findscope'
@@ -118,6 +121,19 @@
     clearFind()
   })
 
+  /* 属性值形态：双引号 / 单引号 / 裸值三种引法都认 */
+  const RES_ATTR_RE = /\b(src|href|poster|data)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'`<>]+))/gi
+
+  const framed = $derived.by(() => {
+    if (!tab.path) return tab.content
+    return tab.content.replace(RES_ATTR_RE, (whole, attr: string, dq?: string, sq?: string, bare?: string) => {
+      const raw = dq ?? sq ?? bare ?? ''
+      const abs = resolveLocalRef(tab.path!, raw)
+      if (!abs) return whole
+      return `${attr}="${fileResUrl(abs)}"`
+    })
+  })
+
   function onKey(e: KeyboardEvent) {
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's' && !e.isComposing) {
       e.preventDefault()
@@ -132,7 +148,7 @@
       <button class:active={preview} onclick={() => setPreview(true)}>预览</button>
       <button class:active={!preview} onclick={() => setPreview(false)}>原文</button>
     </div>
-    <span class="hint">{preview ? '沙箱静态渲染（禁脚本）' : '编辑后 Ctrl+S 保存'}</span>
+    <span class="hint">{preview ? '沙箱静态渲染（禁脚本；本地资源按文件目录解析）' : '编辑后 Ctrl+S 保存'}</span>
   </div>
   {#if tab.err}
     <div class="veil err">{tab.err}</div>
@@ -143,7 +159,7 @@
       class="frame"
       title="HTML 预览"
       sandbox="allow-same-origin"
-      srcdoc={tab.content}
+      srcdoc={framed}
       bind:this={frameEl}
       onload={onFrameLoad}
     ></iframe>

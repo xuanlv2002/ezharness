@@ -2,12 +2,16 @@
   /*
   Markdown 查看器：预览（marked + DOMPurify，与聊天渲染同栈）/ 原文
   （textarea 编辑，Ctrl+S 保存）切换。tab 状态数据化（content 存
-  ResTab，单实例重绑）。
+  ResTab，单实例重绑）。预览里的相对资源（![](img/x.png) 等）按文件
+  所在目录改写到工作目录文件服务直出（respaths）；指向本地文件的链接
+  点击在资源页打开（data-file-link 委托），不在 SPA 里裸跳。
   */
 
   import { tick } from 'svelte'
   import { marked } from 'marked'
   import DOMPurify from 'dompurify'
+  import { store } from '../../../lib/store.svelte'
+  import { fileResUrl, resolveLocalRef } from '../../../lib/respaths'
   import { clearDomFind, domFind } from '../../../lib/domfind'
   import { matchRanges } from '../../../lib/findtext'
   import type { ResTab } from '../registry'
@@ -71,7 +75,47 @@
     clearFind()
   })
 
-  const html = $derived(tab.content ? DOMPurify.sanitize(marked.parse(tab.content) as string) : '')
+  /* 媒体 src 改写白名单（href 只认链接类标签） */
+  const SRC_TAGS = new Set(['IMG', 'VIDEO', 'AUDIO', 'SOURCE', 'EMBED', 'TRACK', 'IMAGE'])
+
+  /* 消毒期改写本地资源引用：src → 文件服务 URL；href → 占位 # +
+     data-file-link（点击委托进资源页）。无 tab.path（草稿等）不改写 */
+  function attrHook(base: string, node: Element, data: { attrName: string; attrValue: string }) {
+    const tag = node.tagName
+    const isMediaSrc = data.attrName === 'src' || data.attrName === 'xlink:href'
+    const isLinkHref = data.attrName === 'href' && (tag === 'A' || tag === 'AREA')
+    if (!isMediaSrc && !isLinkHref) return
+    if (isMediaSrc && !SRC_TAGS.has(tag)) return
+    const abs = resolveLocalRef(base, data.attrValue)
+    if (!abs) return
+    if (isLinkHref) {
+      node.setAttribute('data-file-link', abs)
+      data.attrValue = '#'
+    } else {
+      data.attrValue = fileResUrl(abs)
+    }
+  }
+
+  const html = $derived.by(() => {
+    if (!tab.content) return ''
+    const parsed = marked.parse(tab.content) as string
+    if (!tab.path) return DOMPurify.sanitize(parsed)
+    const hook = (node: Element, data: { attrName: string; attrValue: string }) =>
+      attrHook(tab.path!, node, data)
+    DOMPurify.addHook('uponSanitizeAttribute', hook)
+    const out = DOMPurify.sanitize(parsed)
+    DOMPurify.removeHook('uponSanitizeAttribute')
+    return out
+  })
+
+  /* 本地文件链接点击：在资源页打开（不在 SPA 里裸跳相对地址） */
+  function onPreviewClick(e: MouseEvent) {
+    const a = (e.target as HTMLElement).closest<HTMLAnchorElement>('a[data-file-link]')
+    if (!a) return
+    e.preventDefault()
+    const p = a.dataset.fileLink || ''
+    if (p) store.openFileAt(p)
+  }
 
   function onKey(e: KeyboardEvent) {
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's' && !e.isComposing) {
@@ -94,7 +138,7 @@
   {:else if tab.loading}
     <div class="veil">加载中…</div>
   {:else if preview}
-    <div class="md-body" bind:this={mdBodyEl}>
+    <div class="md-body" bind:this={mdBodyEl} onclick={onPreviewClick}>
       {@html html}
     </div>
   {:else}
