@@ -197,11 +197,9 @@
     if (lastCut > 0 && src.length - lastCut <= STREAM_TAIL + CUT_HYST) return lastCut
     const max = src.length - STREAM_TAIL
     if (max <= 0) return 0
-    /* 无空行长文（整段代码/JSON）回退单换行、再退硬切：始终返回正 cut，
-       否则尾段=全文，每 delta 全量 parse（O(n²)）会打满主线程 */
+    /* 只在空行切：单换行/硬切会把同一个段落拆成两段，渲染多出一个空行 */
     let cut = src.lastIndexOf('\n\n', max)
-    if (cut <= 0) cut = src.lastIndexOf('\n', max)
-    if (cut <= 0) cut = max
+    if (cut <= 0) return 0
     let fences = 0
     let openFence = -1
     for (let i = 0; i < cut; ) {
@@ -213,9 +211,9 @@
       if (nl === -1 || nl >= cut) break
       i = nl + 1
     }
-    /* 未闭合围栏：切点退到围栏起点让围栏整体留在尾段；围栏起于文件头
-       （openFence=0）时退化成尾段=全文，退回硬切保尾段有界 */
-    if (fences % 2 === 1) cut = openFence > 0 ? openFence : max
+    /* 切点落在未闭合围栏里：退到围栏起点；围栏从文件头开始则不分段 */
+    if (fences % 2 === 1) cut = openFence > 0 ? openFence : 0
+    if (cut <= 0) return 0
     lastCut = cut
     return cut
   }
