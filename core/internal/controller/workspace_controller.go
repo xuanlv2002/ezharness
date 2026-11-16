@@ -117,8 +117,8 @@ func (c *WorkspaceController) File(g *gin.Context) {
 }
 
 /*
-Meta GET /api/workspace/meta?path=<绝对路径>：轻量元数据（大小 + pptx
-幻灯片页数），聊天附件卡的类型化展示用；不读文件内容。
+Meta GET /api/workspace/meta?path=<绝对路径>：轻量元数据（大小 + 是否
+目录 + pptx 幻灯片页数），聊天附件卡的类型化展示用；不读文件内容。
 */
 func (c *WorkspaceController) Meta(g *gin.Context) {
 	abs, err := c.Svc.Path(g.Query("path"))

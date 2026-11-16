@@ -51,7 +51,8 @@
      共享终端抽屉并定位；app://<快应用名> 打开快应用子窗；
      file://<绝对路径> 拉开抽屉文件页编辑（文本白名单门禁）。其他内容
      仅展示。流式未闭合时按原文转义显示。file:// 按类型分流：图片带
-     缩略图、音视频带播放形图标、其余文档形图标（inline SVG，消毒保留）。 */
+     缩略图、音视频带播放形图标、目录带文件夹图标（meta 异步识别）、
+     其余文档形图标（inline SVG，消毒保留）。 */
   const escHtml = (s: string) =>
     s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
 
@@ -77,6 +78,7 @@
   const ICON_MUSIC =
     '<path d="M9 18V6l10-2v12"/><circle cx="6.5" cy="18" r="2.5"/><circle cx="16.5" cy="16" r="2.5"/>'
   const ICON_VIDEO = '<rect x="3" y="5" width="18" height="14" rx="2"/><path d="M10 9.5l5 2.5-5 2.5z"/>'
+  const ICON_FOLDER = '<path d="M3 8a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>'
 
   /* file:// 附件卡（按类型特殊渲染）：图片大缩略图、音/视频内嵌播放器、
      办公文档类型块（页数/大小由后端 meta 异步补齐）。整卡点击开资源页；
@@ -300,6 +302,16 @@
       const label = meta.textContent || '文件'
       void fileMeta(p).then((m) => {
         if (!card.isConnected) return
+        /* 路径上看不出目录（没有扩展名约定），meta 回了才换成文件夹卡 */
+        if (m.dir) {
+          card.classList.add('dir')
+          const tile = card.querySelector<HTMLElement>('.ftile')
+          if (tile) {
+            tile.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">${ICON_FOLDER}</svg>`
+          }
+          meta.textContent = '文件夹'
+          return
+        }
         const bits = [label]
         if (m.pages) bits.push(`${m.pages} 页`)
         const size = fmtBytes(m.size)
@@ -1144,6 +1156,14 @@
     font-size: var(--font-size-small);
     font-weight: 700;
     letter-spacing: 0.02em;
+  }
+  /* 目录卡：meta 确认后换文件夹图标 */
+  .md :global(.fcard.dir .ftile) {
+    color: var(--accent);
+  }
+  .md :global(.fcard.dir .ftile svg) {
+    width: 18px;
+    height: 18px;
   }
   .md :global(.fcard .fcol) {
     display: flex;
