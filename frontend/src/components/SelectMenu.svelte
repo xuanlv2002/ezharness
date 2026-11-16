@@ -1,9 +1,6 @@
 <script lang="ts">
-  /*
-  自绘下拉选择：触发按钮 + 浮层菜单。菜单 portal 到 body，fixed 坐标才
-  相对视口——弹窗自身有 transform，内联 fixed 会被它的盒模型困住。
-  回调页的筛选、会话/快应用目标与间隔单位共用它，保持同一套下拉观感。
-  */
+  /* 自绘下拉选择：触发按钮 + 浮层菜单，多处页面共用同一套下拉观感。
+     菜单 portal 到 body——弹窗自身有 transform，内联 fixed 会被困住。 */
 
   interface SelectOption {
     value: string

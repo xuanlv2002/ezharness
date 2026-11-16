@@ -1,7 +1,6 @@
 <script lang="ts">
-  /* 时间线行渲染的唯一实现：主会话（Timeline）与分身抽屉（ForkPanel）共用，
-     保证两处块类型、工具卡、记忆 diff、资源变更、图片与收尾提示完全一致。
-     两处差异只有头像尺寸/神态和是否播放历史入场动画，由 props 控制。 */
+  /* 时间线行渲染的唯一实现：主会话与分身抽屉共用，保证两处块类型、工具卡
+     等渲染完全一致；差异只有头像与入场动画，由 props 控制。 */
   import { store } from '../lib/store.svelte'
   import { TOOL_GROUP_MIN, type Row } from '../lib/rows'
   import EzAvatar from './EzAvatar.svelte'

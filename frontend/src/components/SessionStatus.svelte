@@ -1,8 +1,6 @@
 <script lang="ts">
-  /*
-  会话级运行状态入口（输入条内）：上下文占用圆环，点开向上弹出状态卡。
-  通知是全局的、留在顶栏；状态只属于当前会话，跟输入框同列。
-  */
+  /* 会话级运行状态入口（输入条内）：上下文占用圆环，点开向上弹出状态卡。
+     通知是全局的、留在顶栏；状态只属于当前会话，跟输入框同列。 */
   import { store } from '../lib/store.svelte'
   import StatusCard from './StatusCard.svelte'
 

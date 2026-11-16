@@ -1,12 +1,5 @@
 <script lang="ts">
-  /*
-  便签小窗的拖动排序：卡片本体浮在指针下，原位置留出等高的空档（不画
-  插入线）；空档位置按拖动开始时的条目中线判定，列表重排不会带着落点抖。
-  松手把目标顺序写回 ord。
-
-  items 已是展示顺序；row 片段只画条目内容，外层的点击/拖动/焦点由这里
-  统一处理。
-  */
+  /* 便签小窗的拖动排序：卡片浮在指针下，原位置留等高空档，松手写回 ord */
   import { onDestroy } from 'svelte'
   import type { Snippet } from 'svelte'
   import type { PinCard } from '../../lib/api'
@@ -80,14 +73,14 @@
     }
     /* window 监听不依赖指针捕获：拖出窗口/失焦也能收尾 */
     window.addEventListener('pointermove', onDragMove)
-    window.addEventListener('pointerup', onDragUp)
+    window.addEventListener('pointerup', finishDrag)
     window.addEventListener('pointercancel', onDragCancel)
     window.addEventListener('blur', onDragCancel)
   }
 
   function stopDragListeners(): void {
     window.removeEventListener('pointermove', onDragMove)
-    window.removeEventListener('pointerup', onDragUp)
+    window.removeEventListener('pointerup', finishDrag)
     window.removeEventListener('pointercancel', onDragCancel)
     window.removeEventListener('blur', onDragCancel)
   }
@@ -135,10 +128,6 @@
     if (e.clientY < lr.top + 24) listEl.scrollTop -= 8
     else if (e.clientY > lr.bottom - 24) listEl.scrollTop += 8
     insertAt = insertIndex(e.clientY)
-  }
-
-  function onDragUp(e: PointerEvent): void {
-    finishDrag(e)
   }
 
   function onDragCancel(): void {

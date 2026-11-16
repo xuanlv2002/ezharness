@@ -1,13 +1,6 @@
 <script lang="ts">
-  /*
-  多媒体·模型与限额：image/audio/video 三类生成模型的独立配置
-  （media.json，与语言模型彻底分离），以及每日生成配额。变更自动保存；
-  agent 运行中保存会被后端拒绝（下一轮再改）。
-
-  一类只启用一个模型：打开某行的开关即把同类其余条目置为停用；关闭
-  已启用的开关 = 整类能力关闭（agent 的 media 工具调用会返回“当前无
-  此能力”）。配置页保持单层平铺：分区头 + 行，不做卡片套卡片。
-  */
+  /* 多媒体·模型与限额：三类生成模型独立配置（media.json）+ 每日配额，变更自动保存 */
+  /* 一类只启用一个：开某行开关即停用同类其余；关掉已启用的 = 整类能力关闭 */
 
   import { onMount } from 'svelte'
   import { api, type MediaConfig, type ModelEntry } from '../../lib/api'
@@ -87,7 +80,7 @@
     return listOf(k).find((m) => m.enabled && !m.disabled)
   }
 
-  async function persist(): Promise<void> {
+  async function save(): Promise<void> {
     if (!media) return
     saving = true
     msg = ''
@@ -122,14 +115,14 @@
     } else {
       setList(k, cur.map((e, i) => ({ ...e, enabled: i === idx, disabled: i === idx ? false : e.disabled })))
     }
-    void persist()
+    void save()
   }
 
   function remove(k: Kind, idx: number): void {
     const cur = listOf(k)
     if (!cur[idx]) return
     setList(k, cur.filter((_, i) => i !== idx))
-    void persist()
+    void save()
   }
 
   function blankDraft(): void {
@@ -187,7 +180,7 @@
       )
     }
     form = null
-    void persist()
+    void save()
   }
 
   function maskKey(k: string): string {

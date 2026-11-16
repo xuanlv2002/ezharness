@@ -2,15 +2,7 @@
   import { onMount } from 'svelte'
   import { api, type ApproveLevel } from '../lib/api'
 
-  /*
-  安全：对 agent 的操作管控（区别于应用设置——这里全是 agent 域）。
-  一行一条策略，键是工具名，或"工具名:action"（term_action / browser_action
-  逐 action 配档）。名单概念只有三类：终端命令（terminal、term_action:send）、
-  文件路径（write_file/edit_file 白名单）、mcp（server.tool）；其中命令与 mcp
-  四档（审批/黑名单/白名单/免审），路径只有 审批/白名单/免审，其余工具纯按
-  工具名两档（每次审批 / 全部免审）。策略数据由后端下发（toolRules.json），
-  保存即时生效（无需重建 agent）。
-  */
+  /* 安全：agent 操作管控（一行一策略，键=工具名或"工具名:action"；三类名单 + 档位），保存即时生效 */
   type Level = ApproveLevel
   type ListKind = 'command' | 'path' | 'mcpTool'
 
@@ -147,8 +139,8 @@
     loaded = true
   })
 
-  /* persist 自动保存（档位/名单变更即时提交）。 */
-  async function persist() {
+  /* save 自动保存（档位/名单变更即时提交）。 */
+  async function save() {
     if (!rules.length) return
     saving = true
     message = ''
@@ -164,7 +156,7 @@
 
   function setRule(r: RuleRow, lv: Level) {
     r.level = lv
-    void persist()
+    void save()
   }
 
   /* 合并式工具（term_action / browser_action）的逐 action 行折叠在工具行里 */
@@ -176,7 +168,7 @@
   /* 工具级一键：把该工具所有 action 设成同一档（只改允许该档的项） */
   function setAll(rows: RuleRow[], lv: Level) {
     for (const r of rows) if (levelsOf(r.key).includes(lv)) r.level = lv
-    void persist()
+    void save()
   }
   /* 全部 action 同档时返回该档，否则空（工具行两个按钮都不点亮） */
   function sharedLevel(rows: RuleRow[]): Level | '' {
@@ -210,12 +202,12 @@
     const v = (newList[r.key] || '').trim()
     if (v && !r.list.includes(v)) r.list = [...r.list, v]
     newList[r.key] = ''
-    void persist()
+    void save()
   }
 
   function removeEntry(r: RuleRow, entry: string) {
     r.list = r.list.filter((x) => x !== entry)
-    void persist()
+    void save()
   }
 </script>
 

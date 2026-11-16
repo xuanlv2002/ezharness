@@ -1,17 +1,5 @@
 <script lang="ts">
-  /*
-  资源页目录树（固定在资源页左列的实体栏，展开/收起走宽度动画，不做
-  悬浮覆盖）：浏览文件系统，点击文件交给 ResourcePane 打开（树里点永远
-  正常打开，要不要对比在变更清单里手动选）。右键 = 新建文件/文件夹、
-  集成终端/浏览器打开、在资源管理器打开、插入到对话、复制相对/绝对
-  路径。默认根 = 工作目录（可换：桌面壳原生对话框 / web 端手输路径）；
-  选择过的目录进「最近」清单快速切换，当前根置顶打勾。目录懒加载按层
-  展开（点目录只展开子层，树根不切换）；目录在 git 仓库内、或根目录是
-  容器（多仓库并列）时条目带工作区变更徽标（U 新 / M 改 / D 删——纯观
-  测，不做任何 git 操作），git chip 把面板原地切成变更视图（按仓库分组，
-  VS Code 源代码管理样式；点文件直接进 HEAD 对比，再点切回目录）。激活
-  期 3s 轮询根目录与已展开目录，AI 改盘后徽标与列表自动跟进。
-  */
+  /* 资源页目录树：浏览文件系统（点击文件开 ResourcePane，右键操作，激活期 3s 轮询，git 变更显徽标） */
 
   import { onMount, tick } from 'svelte'
   import { api, statusLetter, type TreeEntry } from '../../lib/api'
@@ -140,10 +128,6 @@
     }
     return m
   })
-
-  function subtreeStatus(dir: string): { n: number; mod: boolean; add: boolean } {
-    return subtree.get(dir) ?? { n: 0, mod: false, add: false }
-  }
 
   /* git 计数只统计当前根目录子树内的变更（仓库其他位置的变更不进来，
      数字与所见目录对得上） */
@@ -638,7 +622,7 @@
       {#each listing[dir]?.entries ?? [] as e (e.name)}
         {@const abs = `${dir}/${e.name}`}
         {#if e.dir}
-          {@const st = subtreeStatus(abs)}
+          {@const st = subtree.get(abs) ?? { n: 0, mod: false, add: false }}
           <button class="row" style="padding-left:{10 + depth * 14}px" onclick={() => void toggleDir(abs)} oncontextmenu={(e) => openCtx(e, abs, true)} title={abs}>
             <span class="chev" class:open={expanded[abs]}>
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
@@ -678,7 +662,7 @@
       {/if}
     {/snippet}
     {@render treeNodes(explorer.dir, 0)}
-    {#if !listing[explorer.dir] && !listing[explorer.dir]?.err}
+    {#if !listing[explorer.dir]}
       <div class="leafhint" style="padding-left:10px">加载中…</div>
     {/if}
   </div>

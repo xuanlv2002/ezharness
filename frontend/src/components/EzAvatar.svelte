@@ -13,12 +13,8 @@
 </script>
 
 <script lang="ts">
-  /*
-  ezharness 表情头像：动画用 anim.webp（透明底），静帧用 still.png；
-  加载失败回退 children（ez 字样 / Logo）。
-  run：运行中＝spin 转圈；animate=false 用静帧（历史回复组，不产生
-  播放开销）；random：空页面从 POOL 随机轮换；period：轮换间隔毫秒。
-  */
+  /* ezharness 表情头像：动画用 anim.webp，静帧用 still.png，加载失败回退
+     children；历史回复组走静帧，不产生动画播放开销。 */
   let {
     size = 26,
     run = false,

@@ -15,7 +15,6 @@ import (
 	"time"
 
 	"github.com/xuanlv2002/ezloop/core"
-	"github.com/xuanlv2002/ezloop/event"
 	"github.com/xuanlv2002/ezloop/ext/hook/approve"
 	"github.com/xuanlv2002/ezloop/ext/hook/askuser"
 	"github.com/xuanlv2002/ezloop/ext/hook/mcp"
@@ -204,18 +203,6 @@ func (s *Session) CtxTokens() int {
 func (s *Session) SetCtxTokens(n int) {
 	s.mu.Lock()
 	s.ctxTokens = n
-	s.mu.Unlock()
-}
-
-/*
-	SetIdentity 同步会话标识（话题轮换/compact 后），水位清零
-
-（恢复场景由调用方随后按快照重注）。RootID 不变：换代不换线。
-*/
-func (s *Session) SetIdentity(id string) {
-	s.mu.Lock()
-	s.ID = id
-	s.ctxTokens = 0
 	s.mu.Unlock()
 }
 
@@ -441,28 +428,34 @@ func (s *Session) SubscribeWithReplay() (frames [][]byte, turnActive bool, ch <-
 本轮消息要等 FinishRun 才并入历史，getHistory 里没有）。
 */
 func (s *Session) Publish(e Event) {
-	if e.Type == "loop_start" && e.ForkID == "" && len(s.turnRefs) > 0 {
-		// 载荷扩为 {text, files, fileRefs}：items 空 = 附件 chip，非空 = 引用 chip
-		var text string
-		_ = json.Unmarshal(e.Data, &text)
-		type namedPath struct {
-			Name string `json:"name"`
-			Path string `json:"path"`
-		}
-		payload := struct {
-			Text     string          `json:"text"`
-			Files    []namedPath     `json:"files,omitempty"`
-			FileRefs []hooks.RefFile `json:"fileRefs,omitempty"`
-		}{Text: text}
-		for _, r := range s.turnRefs {
-			if len(r.Items) == 0 {
-				payload.Files = append(payload.Files, namedPath{Name: filepath.Base(filepath.FromSlash(r.Path)), Path: r.Path})
-			} else {
-				payload.FileRefs = append(payload.FileRefs, r)
+	if e.Type == "loop_start" && e.ForkID == "" {
+		/* turnRefs 读写都在锁内：这里先持锁取引用再扩载荷，避免与 StartRun 的写入竞争 */
+		s.mu.Lock()
+		refs := s.turnRefs
+		s.mu.Unlock()
+		if len(refs) > 0 {
+			// 载荷扩为 {text, files, fileRefs}：items 空 = 附件 chip，非空 = 引用 chip
+			var text string
+			_ = json.Unmarshal(e.Data, &text)
+			type namedPath struct {
+				Name string `json:"name"`
+				Path string `json:"path"`
 			}
-		}
-		if b, err := json.Marshal(payload); err == nil {
-			e.Data = b
+			payload := struct {
+				Text     string          `json:"text"`
+				Files    []namedPath     `json:"files,omitempty"`
+				FileRefs []hooks.RefFile `json:"fileRefs,omitempty"`
+			}{Text: text}
+			for _, r := range refs {
+				if len(r.Items) == 0 {
+					payload.Files = append(payload.Files, namedPath{Name: filepath.Base(filepath.FromSlash(r.Path)), Path: r.Path})
+				} else {
+					payload.FileRefs = append(payload.FileRefs, r)
+				}
+			}
+			if b, err := json.Marshal(payload); err == nil {
+				e.Data = b
+			}
 		}
 	}
 	data, err := json.Marshal(e)
@@ -639,19 +632,6 @@ func replayable(t string) bool {
 	return true
 }
 
-/* PendingFrames 返回未决请求帧快照（SSE 建立时重放）。 */
-func (s *Session) PendingFrames() [][]byte {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	out := make([][]byte, 0, len(s.pending))
-	for _, e := range s.pending {
-		if data, err := json.Marshal(e); err == nil {
-			out = append(out, data)
-		}
-	}
-	return out
-}
-
 /* SnapTool 是流式快照里的构造期工具调用（累积量，非增量）。 */
 type SnapTool struct {
 	Index int    `json:"index"`
@@ -755,18 +735,7 @@ func (s *Session) PendingNotices() []PendingNotice {
 	return out
 }
 
-/*
-ReplayFrames 返回 SSE 建立时的重放帧：轮进行中回放整轮聚合帧
-（user 输入/模型回复/工具卡/决策——刷新后时间线完整重建；已决
-审批由其后的 decision.resolved 帧纠正），空闲时退化为未决请求帧。
-*/
-func (s *Session) ReplayFrames() [][]byte {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.replayFramesLocked()
-}
-
-// replayFramesLocked 是 ReplayFrames 的无锁实现（调用方须持有 s.mu）：
+// replayFramesLocked 返回 SSE 建立时的重放帧（调用方须持有 s.mu）：
 // SubscribeWithReplay 在同一次持锁内取快照，避免与订阅注册之间出现
 // 丢帧/重帧窗口。
 func (s *Session) replayFramesLocked() [][]byte {
@@ -1040,6 +1009,3 @@ func (h *Hub) ApplyToolRules(rules []ToolRule) {
 	h.ToolRules = rules
 	h.mu.Unlock()
 }
-
-/* event 包别名（供 service 引用统一出口）。 */
-type E = event.Event

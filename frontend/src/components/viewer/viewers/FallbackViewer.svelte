@@ -1,8 +1,6 @@
 <script lang="ts">
   /*
-  Fallback 查看器：暂无专属查看器的资源类型（ppt/zip/二进制…）的占位
-  提示——每种资源后续逐个补充专属 viewer（registry 注册 + ResourcePane
-  挂载），此处只说明与路径。
+  Fallback 查看器：暂无专属查看器的资源类型（ppt/zip/二进制…）的占位提示。
   */
 
   import type { ResTab } from '../registry'

@@ -1,9 +1,6 @@
 <script lang="ts">
-  /*
-  多媒体页：工作台（生成 + 任务流）与「模型与限额」两个分区。媒体模型
-  配置与语言模型彻底分离；agent 工具和 OpenAPI 提交的生成任务都落在
-  MediaService 的同一份任务档案里，工作台轮询即见。
-  */
+  /* 多媒体页：工作台（生成 + 任务流）与「模型与限额」两个分区，媒体模型
+     配置与语言模型彻底分离。 */
 
   import { onMount } from 'svelte'
   import { api, type MediaConfig } from '../../lib/api'

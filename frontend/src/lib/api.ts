@@ -116,14 +116,8 @@ export interface CallbackSchedule {
   cron?: string // cron：分 时 日 月 周
 }
 
+/* 会话目标：sessionId 指定叶会话（归档/compact 换代后失败），缺省由后端绑定当前会话 */
 export interface CallbackSessionTarget {
-  sessionId?: string // session 模式：创建任务时的叶 session ID（归档/compact 换代后失败）
-  mode: 'session' | 'new'
-  message: string
-}
-
-/* 创建/更新的会话目标：sessionId 指定叶会话，缺省由后端绑定当前会话 */
-export interface CallbackSessionInput {
   sessionId?: string
   mode: 'session' | 'new'
   message: string
@@ -179,7 +173,7 @@ export interface CallbackSpec {
   kind: 'session' | 'app' | 'script'
   enabled?: boolean
   schedule: CallbackSchedule
-  session?: CallbackSessionInput
+  session?: CallbackSessionTarget
   app?: CallbackAppTarget
   script?: CallbackScriptTarget
 }
@@ -866,10 +860,6 @@ export const api = {
   setSessionPrefs: (rootId: string, patch: SessionPrefsPatch) =>
     post<SessionPrefs>(`/api/sessions/${encodeURIComponent(rootId)}/prefs`, patch),
 
-  /* 直调大模型（OpenAPI 面，与 mcp/call 同级） */
-  callModel: (prompt: string, model = '', images: string[] = []) =>
-    post<{ result: string }>('/api/open/model/call', { model, prompt, images }),
-
   /* 多媒体生成模型配置（多媒体页「模型与限额」） */
   getMedia: () => fetch('/api/media').then(json<MediaConfig>),
   saveMedia: (m: MediaConfig) => post<{ ok: boolean }>('/api/media', m),
@@ -888,7 +878,6 @@ export const api = {
   genVideo: (prompt: string, opts: { model?: string; duration?: number; resolution?: string; first_frame?: string; last_frame?: string; wait_seconds?: number } = {}) =>
     post<GenResult>('/api/open/video/call', { prompt, ...opts }),
 
-  mediaJob: (id: string) => fetch(`/api/open/media/jobs/${encodeURIComponent(id)}`).then(json<{ job: MediaJob }>),
   mediaJobs: (limit = 20) => fetch(`/api/open/media/jobs?limit=${limit}`).then(json<{ jobs: MediaJob[] }>),
 
   getMemoryConfig: () => fetch('/api/memory/config').then(json<MemoryConfig>),
@@ -914,13 +903,6 @@ export const api = {
     const qs = q.toString()
     return fetch(`/api/memory/tree${qs ? `?${qs}` : ''}`).then(json<SessionTreePage>)
   },
-
-  /* 手动归档开关（活动/运行中的当前叶会被后端拒绝） */
-  archiveSession: (id: string, archived: boolean) =>
-    post<{ ok: boolean; archived: boolean }>(`/api/sessions/${id}/archive`, { archived }),
-
-  deleteTopic: (id: string) =>
-    fetch(`/api/topics/${id}`, { method: 'DELETE' }).then(json<{ ok: boolean }>),
 
   saveSecurity: (rules: ToolRule[]) => post<{ ok: boolean }>('/api/security', { rules }),
 

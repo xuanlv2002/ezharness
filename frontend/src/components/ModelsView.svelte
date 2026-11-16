@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte'
-  import { api, type ModelEntry, type ModelsConfig, type HourStats } from '../lib/api'
+  import { api, type ModelsConfig, type HourStats } from '../lib/api'
   import { store } from '../lib/store.svelte'
   import { theme } from '../lib/theme.svelte'
   import * as echarts from 'echarts/core'
@@ -11,15 +11,8 @@
 
   echarts.use([LineChart, GridComponent, LegendComponent, TooltipComponent, CanvasRenderer])
 
-  /*
-  模型页只管大语言模型（models.json）：main 驱动 agent 的对话与工具
-  循环。多模态生成（图片/语音/视频）已独立到「多媒体」页（media.json），
-  这里不再出现生成模型槽位。端点兼容 OpenAI 形态；保存后重建 agent。
-  */
-  type SlotKey = keyof ModelsConfig
-  const mainKinds: { key: SlotKey; title: string; hint: string }[] = [
-    { key: 'main', title: '主模型', hint: '驱动对话与工具循环；勾选"支持视觉"则图片直接进上下文，未勾选则模型无法处理图片' },
-  ]
+  /* 模型页只管大语言模型（models.json）：main 驱动对话与工具循环，生成模型在「多媒体」页 */
+  const MAIN_HINT = '驱动对话与工具循环；勾选"支持视觉"则图片直接进上下文，未勾选则模型无法处理图片'
 
   interface HeaderPair {
     key: string
@@ -32,10 +25,9 @@
   let message = $state('')
 
   /* 添加/编辑共用同一个弹框与草稿：列表行内不再展开长表单 */
-  type ModelForm = { mode: 'add'; slot: SlotKey } | { mode: 'edit'; slot: SlotKey; idx: number }
+  type ModelForm = { mode: 'add' } | { mode: 'edit'; idx: number }
   let form = $state<ModelForm | null>(null)
   let formDraft = $state(blankDraft())
-  const formSlotTitle = $derived(form ? (mainKinds.find((k) => k.key === form.slot)?.title ?? '') : '')
 
   /* 协议下拉：与输入条菜单同款（原生 select 的弹出菜单不跟主题，展开也有卡顿） */
   const PROTOCOLS = [
@@ -61,11 +53,6 @@
     { label: '硅基流动 DeepSeek', name: 'deepseek-ai/DeepSeek-V3.2', baseUrl: 'https://api.siliconflow.cn/v1', contextWindow: 128000, vision: false, protocol: 'openai' },
   ]
   let apiKeyEl: HTMLInputElement | undefined
-
-  /* slotOf 取主模型的可变列表 */
-  function slotOf(_slot: SlotKey): ModelEntry[] | null {
-    return cfg ? cfg.main : null
-  }
 
   onMount(async () => {
     try {
@@ -273,8 +260,8 @@
     return () => window.removeEventListener('resize', onResize)
   })
 
-  /* persist 自动保存（所有变更即时提交，busy 时 409 提示等待本轮结束）。 */
-  async function persist() {
+  /* save 自动保存（所有变更即时提交，busy 时 409 提示等待本轮结束）。 */
+  async function save() {
     if (!cfg) return
     saving = true
     message = ''
@@ -289,34 +276,25 @@
     }
   }
 
-  /* setSlot 把变更写回主模型列表 */
-  function setSlot(slot: SlotKey, list: ModelEntry[]) {
-    if (cfg) cfg.main = list
-  }
-
   /* 默认模型切换：点亮目标为新会话默认主模型；再次点击已启用的条目不处理
   （对话必须由主模型驱动，后端也会兜底点亮首条；已有会话在输入框各自切换） */
-  function enable(slot: SlotKey, idx: number) {
-    const cur = slotOf(slot)
-    if (!cur) return
-    if (cur[idx].enabled) return
-    setSlot(slot, cur.map((e, i) => ({ ...e, enabled: i === idx, disabled: i === idx ? false : e.disabled })))
-    void persist()
+  function enable(idx: number) {
+    if (!cfg || cfg.main[idx].enabled) return
+    cfg.main = cfg.main.map((e, i) => ({ ...e, enabled: i === idx, disabled: i === idx ? false : e.disabled }))
+    void save()
   }
 
   /* 关闭切换：关闭的模型保留配置但不可被调用（model_call/task/主循环都跳过） */
-  function toggleClose(slot: SlotKey, idx: number) {
-    const cur = slotOf(slot)
-    if (!cur) return
-    setSlot(slot, cur.map((e, i) => (i === idx ? { ...e, disabled: !e.disabled, enabled: !e.disabled ? false : e.enabled } : e)))
-    void persist()
+  function toggleClose(idx: number) {
+    if (!cfg) return
+    cfg.main = cfg.main.map((e, i) => (i === idx ? { ...e, disabled: !e.disabled, enabled: !e.disabled ? false : e.enabled } : e))
+    void save()
   }
 
-  function remove(slot: SlotKey, idx: number) {
-    const cur = slotOf(slot)
-    if (!cur) return
-    setSlot(slot, cur.filter((_, i) => i !== idx))
-    void persist()
+  function remove(idx: number) {
+    if (!cfg) return
+    cfg.main = cfg.main.filter((_, i) => i !== idx)
+    void save()
   }
 
   /* pairsToRecord 过滤空键后转 map（与 McpView 同模式）。 */
@@ -330,10 +308,10 @@
     return { name: '', baseUrl: '', apiKey: '', contextWindow: 128000, protocol: 'openai', vision: false, pairs: [] as HeaderPair[] }
   }
 
-  function openAdd(slot: SlotKey) {
+  function openAdd() {
     formDraft = blankDraft()
     protocolOpen = false
-    form = { mode: 'add', slot }
+    form = { mode: 'add' }
   }
 
   function applyPreset(p: (typeof CHAT_PRESETS)[number]) {
@@ -345,10 +323,9 @@
     apiKeyEl?.focus()
   }
 
-  function openEdit(slot: SlotKey, idx: number) {
-    const cur = slotOf(slot)
-    if (!cur) return
-    const m = cur[idx]
+  function openEdit(idx: number) {
+    const m = cfg?.main[idx]
+    if (!m) return
     formDraft = {
       name: m.name,
       baseUrl: m.baseUrl,
@@ -359,11 +336,11 @@
       pairs: Object.entries(m.headers ?? {}).map(([key, value]) => ({ key, value })),
     }
     protocolOpen = false
-    form = { mode: 'edit', slot, idx }
+    form = { mode: 'edit', idx }
   }
 
   function submitForm() {
-    const cur = form ? slotOf(form.slot) : null
+    const cur = cfg?.main
     if (!cur || !form) return
     const name = formDraft.name.trim()
     const baseUrl = formDraft.baseUrl.trim()
@@ -379,13 +356,13 @@
       protocol: formDraft.protocol || 'openai',
     }
     if (form.mode === 'add') {
-      setSlot(form.slot, [...cur, { ...entry, enabled: cur.length === 0 }])
+      cfg!.main = [...cur, { ...entry, enabled: cur.length === 0 }]
     } else {
-      const { slot, idx } = form
-      setSlot(slot, cur.map((e, i) => (i === idx ? { ...e, ...entry } : e)))
+      const { idx } = form
+      cfg!.main = cur.map((e, i) => (i === idx ? { ...e, ...entry } : e))
     }
     form = null
-    void persist()
+    void save()
   }
 
   function maskKey(k: string): string {
@@ -397,10 +374,6 @@
     if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`
     if (n >= 1000) return `${(n / 1000).toFixed(1)}k`
     return String(n)
-  }
-
-  function defaultBase(): string {
-    return 'https://api.siliconflow.cn/v1'
   }
 </script>
 
@@ -430,36 +403,30 @@
   {#if !loaded}
     <p class="lead">加载中…</p>
   {:else if cfg}
-    {#snippet slotList(k: { key: SlotKey; title: string; hint: string }, list: ModelEntry[] | null)}
-      <section>
-        <h2 title={`${k.hint} · 点亮的是新会话默认模型（已有会话在输入框各自切换）。`}>{k.title}</h2>
-        <div class="list">
-          {#each list ?? [] as m, i (m.name + i)}
-            <div class="model" class:enabled={m.enabled} class:closed={m.disabled}>
-              <button class="dot" class:on={m.enabled && !m.disabled} onclick={() => enable(k.key, i)} title={m.enabled && !m.disabled ? (k.key === 'main' ? '新会话默认模型（已有会话不受影响）' : '已启用（点击停用）') : '设为新会话默认模型'}></button>
-              <div class="info">
-                <span class="name">{m.name}</span>
-                <span class="meta">{m.disabled ? '已关闭 · ' : ''}{m.protocol && m.protocol !== 'openai' ? `【${m.protocol}】` : ''}{m.baseUrl} · {maskKey(m.apiKey)}{m.contextWindow ? ` · ${fmtTokens(m.contextWindow)} ctx` : ''}{m.vision ? ' · 视觉' : ''}{Object.keys(m.headers ?? {}).length ? ` · ${Object.keys(m.headers ?? {}).length} 个请求头` : ''}</span>
-              </div>
-              <div class="usage">
-                <span class="tokens" title="累计用量（输入/输出/缓存命中）">↑{fmtTokens(m.inTokens || 0)} ↓{fmtTokens(m.outTokens || 0)}{m.cacheTokens ? ` ⚡${fmtTokens(m.cacheTokens)}` : ''}</span>
-                <button class="del" onclick={() => openEdit(k.key, i)} title="编辑">编辑</button>
-                <button class="del" onclick={() => toggleClose(k.key, i)} title={m.disabled ? '重新开启（恢复可调用）' : '关闭（保留配置,不可被调用）'}>{m.disabled ? '开启' : '关闭'}</button>
-                <button class="del" onclick={() => remove(k.key, i)} title="删除">删除</button>
-              </div>
+    <section>
+      <h2 title={`${MAIN_HINT} · 点亮的是新会话默认模型（已有会话在输入框各自切换）。`}>主模型</h2>
+      <div class="list">
+        {#each cfg.main as m, i (m.name + i)}
+          <div class="model" class:enabled={m.enabled} class:closed={m.disabled}>
+            <button class="dot" class:on={m.enabled && !m.disabled} onclick={() => enable(i)} title={m.enabled && !m.disabled ? '新会话默认模型（已有会话不受影响）' : '设为新会话默认模型'}></button>
+            <div class="info">
+              <span class="name">{m.name}</span>
+              <span class="meta">{m.disabled ? '已关闭 · ' : ''}{m.protocol && m.protocol !== 'openai' ? `【${m.protocol}】` : ''}{m.baseUrl} · {maskKey(m.apiKey)}{m.contextWindow ? ` · ${fmtTokens(m.contextWindow)} ctx` : ''}{m.vision ? ' · 视觉' : ''}{Object.keys(m.headers ?? {}).length ? ` · ${Object.keys(m.headers ?? {}).length} 个请求头` : ''}</span>
             </div>
-          {/each}
-          {#if !list || list.length === 0}
-            <div class="model none">暂无模型</div>
-          {/if}
-          <button class="add" onclick={() => openAdd(k.key)}>+ 添加模型</button>
-        </div>
-      </section>
-    {/snippet}
-
-    {#each mainKinds as k (k.key)}
-      {@render slotList(k, cfg.main)}
-    {/each}
+            <div class="usage">
+              <span class="tokens" title="累计用量（输入/输出/缓存命中）">↑{fmtTokens(m.inTokens || 0)} ↓{fmtTokens(m.outTokens || 0)}{m.cacheTokens ? ` ⚡${fmtTokens(m.cacheTokens)}` : ''}</span>
+              <button class="del" onclick={() => openEdit(i)} title="编辑">编辑</button>
+              <button class="del" onclick={() => toggleClose(i)} title={m.disabled ? '重新开启（恢复可调用）' : '关闭（保留配置,不可被调用）'}>{m.disabled ? '开启' : '关闭'}</button>
+              <button class="del" onclick={() => remove(i)} title="删除">删除</button>
+            </div>
+          </div>
+        {/each}
+        {#if cfg.main.length === 0}
+          <div class="model none">暂无模型</div>
+        {/if}
+        <button class="add" onclick={() => openAdd()}>+ 添加模型</button>
+      </div>
+    </section>
   {/if}
 </div>
 
@@ -502,7 +469,7 @@
     <header class="form-head">
       <div>
         <h3>{form.mode === 'add' ? '添加模型' : '编辑模型'}</h3>
-        <p class="form-sub">{formSlotTitle} · 变更保存后下一轮生效</p>
+        <p class="form-sub">主模型 · 变更保存后下一轮生效</p>
       </div>
       <button class="form-close" onclick={() => (form = null)} title="关闭">✕</button>
     </header>
@@ -543,7 +510,7 @@
       </div>
       <label class="fld">
         <span>API 端点</span>
-        <input type="text" placeholder={defaultBase()} bind:value={formDraft.baseUrl} />
+        <input type="text" placeholder="https://api.siliconflow.cn/v1" bind:value={formDraft.baseUrl} />
       </label>
       <label class="fld">
         <span>API Key</span>

@@ -1,12 +1,7 @@
 <script lang="ts">
   /*
-  文本查看器（txt/代码）：纯 textarea 编辑（Ctrl+S 保存）。tab 状态
-  数据化（ResourcePane 持有，本组件单实例重绑）。支持的语言（见
-  codehl.langOf）在 textarea 底下垫一层高亮 pre——文字本身透明、光标/
-  选择/编辑/滚动全走原生 textarea，输入法组字期间退回普通文本，组字
-  结束再叠回高亮。
-
-  文本与代码统一软折行：长行在可视宽度内折行，不出现横向滚动条。
+  文本查看器（txt/代码）：纯 textarea 编辑（Ctrl+S 保存），语法高亮是底下垫的一层透明 pre
+  （输入法组字期间退回普通文本）；文本与代码统一软折行。tab 状态数据化（ResourcePane 持有）。
   */
 
   import type { ResTab } from '../registry'

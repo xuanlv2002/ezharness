@@ -1,14 +1,6 @@
 /*
-Package config 管理 ezharness 的结构配置（应用根 ezharness.json）：
-端口与数据目录——只描述 harness 本质结构，不含任何配置记录。
-
-模型、行为设置、mcp、session、记忆等配置记录与数据全部存放于
-数据目录（models.json / settings.json / mcp.json / memory.md /
-sessions/），结构随数据建模独立演进。
-
-应用根 = exe 所在目录：exe 在哪运行，配置与数据就在哪生成（安装版
-与自编译同规则）。数据目录 dataDir 启动即 chdir，ezloop 各 hook 的
-相对路径存储自动落入。文件不存在时自动创建默认（零配置可启动）。
+Package config 管理应用根 ezharness.json 的结构配置（端口与数据目录）。
+应用根 = exe 所在目录；数据目录 dataDir 启动即 chdir，文件缺失自动创建默认（零配置可启动）。
 */
 package config
 

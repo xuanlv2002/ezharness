@@ -155,7 +155,7 @@ func TestStreamSnapshotReplay(t *testing.T) {
 
 	var frame Event
 	found := false
-	for _, b := range s.ReplayFrames() {
+	for _, b := range s.replayFramesLocked() {
 		var e Event
 		if json.Unmarshal(b, &e) == nil && e.Type == "stream.snapshot" {
 			frame, found = e, true
@@ -175,7 +175,7 @@ func TestStreamSnapshotReplay(t *testing.T) {
 	// 构造期工具增量也进快照；model_end 后快照让位聚合帧
 	publish("tool_chunk", map[string]any{"index": 0, "nameDelta": "write_", "argsDelta": `{"path"`})
 	publish("model_end", ModelEndData{Content: "你好", Reasoning: "想一想"})
-	for _, b := range s.ReplayFrames() {
+	for _, b := range s.replayFramesLocked() {
 		var e Event
 		if json.Unmarshal(b, &e) == nil && e.Type == "stream.snapshot" {
 			t.Fatal("model_end 后快照帧应丢弃")
@@ -228,7 +228,7 @@ func TestPublishKeepsLifecycleFrames(t *testing.T) {
 /* StartRunFor 按叶 ID 投递：compact 换代后拒绝，不写到新会话。 */
 func TestStartRunForRejectsChangedSession(t *testing.T) {
 	s := &Session{}
-	s.SetIdentity("s1")
+	s.ID = "s1"
 	_, _, err := s.StartRunFor("s2", context.Background(), "hello", nil)
 	if !errors.Is(err, ErrSessionChanged) {
 		t.Fatalf("StartRunFor changed session = %v", err)

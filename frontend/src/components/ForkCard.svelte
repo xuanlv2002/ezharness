@@ -1,8 +1,6 @@
 <script lang="ts">
-  /*
-  分身入口卡：主时间线里 task 调用的唯一呈现（过程细节一律进抽屉）。
-  点击打开 ForkPanel 查看完整执行记录；done 后附答案首行预览。
-  */
+  /* 分身入口卡：主时间线里 task 调用的唯一呈现（过程细节一律进抽屉），
+     点击打开抽屉；done 后附答案首行预览。 */
   import { store } from '../lib/store.svelte'
   import type { ForkState } from '../lib/store.svelte'
 

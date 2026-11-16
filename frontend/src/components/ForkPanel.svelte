@@ -1,11 +1,6 @@
 <script lang="ts">
-  /*
-  分身抽屉：task 分身的独立聊天框。主时间线只留入口卡（ForkCard），
-  点击打开本抽屉查看完整执行记录（任务输入→思考→工具→决策→交付）。
-  分身的审批/询问/OAuth 决策卡路由到此（通知栏点击跳转定位），非模态
-  半开——主对话仍可见。多分身时顶部 tab 切换。
-  行模型/吸底/活动指示与 Timeline 同构（lib/rows 共用组装）。
-  */
+  /* 分身抽屉：task 分身的独立聊天框，呈现完整执行记录；审批/询问等决策卡
+     路由到此（非模态半开，主对话仍可见），多分身时顶部 tab 切换。 */
   import { store } from '../lib/store.svelte'
   import { buildRows } from '../lib/rows'
   import ThreadRows from './ThreadRows.svelte'

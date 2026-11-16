@@ -1,7 +1,5 @@
 /*
-registry 是资源查看器的类型路由（单一来源）：按扩展名判定资源种类，
-ResourcePane 据此挂载对应 viewer 组件。新增资源种类 = 加 kind 判定 +
-viewer 组件 + ResourcePane 注册挂载，框架与其余 viewer 不动。
+资源查看器的类型路由（单一来源）：按扩展名判定资源种类，ResourcePane 据此挂载对应 viewer 组件。
 */
 
 import type { Component } from 'svelte'

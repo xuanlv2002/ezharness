@@ -1,15 +1,6 @@
 <script lang="ts">
-  /*
-  完成时间线（日期轴）：从今天往过去铺开，左新右旧，无记录的日子也占
-  位（空天只有一根刻度）。完成的卡片挂在日期轴下方（顶部色条 + 小夹子，
-  像晾在绳上），悬停向上提起一整行（高度不变、压在左邻卡下面，长文点开
-  当天看）；命中用几何热区（原位置 ∪ 上移位置），滚轮横向滚动、滚动条隐藏。
-
-  拖拽改归属或当天顺序：卡片本体跟着指针走，目标日期挂在卡片下方；落到
-  任何一天（含原天）都置为该天第一个，落到另一天时写 day（拖回真实完成
-  日则删除）；拖回便签板 → 交父级还原成待办卡。落点判定带 7px 迟滞、状态
-  只在下发目标变化时才切（提示不逐帧重播）。
-  */
+  /* 完成时间线（日期轴）：完成的卡片挂在日期轴下方，悬停提起整行，滚轮横滚 */
+  /* 拖拽改归属/顺序：落到另一天写 day（拖回真实完成日删除），拖回便签板还原成待办 */
   import { onDestroy, onMount } from 'svelte'
   import type { PinRecord } from '../../lib/api'
   import { byDayOrder, dayKeyOf, dayOf, moveRecordDay } from '../../lib/pinboard.svelte'
@@ -169,14 +160,14 @@
       /* 老浏览器/异常指针 id：忽略，window 监听仍可用 */
     }
     window.addEventListener('pointermove', onDragMove)
-    window.addEventListener('pointerup', onDragUp)
+    window.addEventListener('pointerup', finishDrag)
     window.addEventListener('pointercancel', onDragCancel)
     window.addEventListener('blur', onDragCancel)
   }
 
   function stopDragListeners() {
     window.removeEventListener('pointermove', onDragMove)
-    window.removeEventListener('pointerup', onDragUp)
+    window.removeEventListener('pointerup', finishDrag)
     window.removeEventListener('pointercancel', onDragCancel)
     window.removeEventListener('blur', onDragCancel)
   }
@@ -224,10 +215,6 @@
     dragY = e.clientY
     const target = groupAtX(e.clientX)
     if (target !== overDay) overDay = target // 只在落点真变时切（提示不闪）
-  }
-
-  function onDragUp(e: PointerEvent) {
-    finishDrag(e)
   }
 
   /* finishDrag 统一收尾：e=null（窗口失焦/组件销毁）只取消，不改归属 */

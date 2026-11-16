@@ -8,7 +8,6 @@ package hooks
 import (
 	"context"
 	"encoding/json"
-	"strings"
 	"sync"
 
 	"github.com/xuanlv2002/ezloop/ext/fs"
@@ -168,20 +167,4 @@ func (t *Topics) Get(id string) (TopicEntry, bool) {
 		}
 	}
 	return TopicEntry{}, false
-}
-
-/* Match 按 id 前缀或标题/摘要包含过滤。q 为空返回全部。 */
-func (t *Topics) Match(q string) []TopicEntry {
-	list := t.Load()
-	if q == "" {
-		return list
-	}
-	var out []TopicEntry
-	for _, e := range list {
-		if strings.HasPrefix(e.ID, q) ||
-			strings.Contains(e.Title, q) || strings.Contains(e.Summary, q) {
-			out = append(out, e)
-		}
-	}
-	return out
 }

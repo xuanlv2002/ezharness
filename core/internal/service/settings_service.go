@@ -196,7 +196,7 @@ func normalizeModels(m domain.ModelsConfig) domain.ModelsConfig {
 }
 
 /*
-	UpdateModels 保存模型四槽（每槽至多一条启用，main 槽不可为空且必须
+	UpdateModels 保存模型列表（至多一条启用，main 槽不可为空且必须
 
 有启用条目——能力槽允许全部停用，停用即不装配对应生成工具）并重建 agent（busy 时拒绝）。
 */
@@ -214,18 +214,14 @@ func (s *SettingsService) UpdateModels(ctx context.Context, m domain.ModelsConfi
 	if !mainOn {
 		m.Main[0].Enabled = true // 兜底：对话必须由主模型驱动，与 ActiveMain 取首条语义对齐
 	}
-	for slot, entries := range map[string][]domain.ModelEntry{
-		"main": m.Main,
-	} {
-		enabled := 0
-		for _, e := range entries {
-			if e.Enabled {
-				enabled++
-			}
+	enabled := 0
+	for _, e := range m.Main {
+		if e.Enabled {
+			enabled++
 		}
-		if enabled > 1 {
-			return fmt.Errorf("%s 槽至多启用一个模型", slot)
-		}
+	}
+	if enabled > 1 {
+		return errors.New("main 槽至多启用一个模型")
 	}
 	if err := SaveModelsConfig(ctx, s.Hub.Fsys, normalizeModels(m)); err != nil {
 		return err

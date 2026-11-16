@@ -1,8 +1,7 @@
 <script lang="ts">
   /*
-  音视频查看器：原生 <video>/<audio> 直指工作目录文件服务（后端
-  ServeContent 原生支持 Range,拖动进度条可用）。容器/编码 Chromium
-  不支持时给出明确提示（mkv/avi 内编码常见不支持）。
+  音视频查看器：原生 <video>/<audio> 直指工作目录文件服务（后端原生支持 Range，进度条可拖）；
+  容器/编码 Chromium 不支持时给出明确提示。
   */
 
   import type { ResTab } from '../registry'

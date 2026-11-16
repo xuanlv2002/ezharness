@@ -181,9 +181,6 @@ func diffMediaSignatures(oldS, newS []string) []string {
 	var out []string
 	for _, s := range newS {
 		p := parts(s)
-		if len(p) < 1 {
-			continue
-		}
 		if i := slices.IndexFunc(oldS, func(o string) bool { return parts(o)[0] == p[0] }); i >= 0 {
 			old := parts(oldS[i])
 			om, nm := modelOf(old), modelOf(p)
@@ -359,11 +356,11 @@ func diffMemorySignatures(oldS, newS []string) []string {
 		k := key(s)
 		if i := slices.IndexFunc(oldS, func(o string) bool { return key(o) == k }); i >= 0 {
 			if text(oldS[i]) != text(s) {
-				out = append(out, "更新记忆 "+k+"："+oneLine80(text(s)))
+				out = append(out, "更新记忆 "+k+"："+oneLine(text(s), 80))
 			}
 			continue
 		}
-		out = append(out, "新增记忆 "+k+"："+oneLine80(text(s)))
+		out = append(out, "新增记忆 "+k+"："+oneLine(text(s), 80))
 	}
 	for _, s := range oldS {
 		k := key(s)
@@ -395,14 +392,6 @@ func diffProjectSignatures(oldS, newS []string) []string {
 		}
 	}
 	return out
-}
-
-/* oneLine80 截一行摘要（变更条目回显用）。 */
-func oneLine80(s string) string {
-	if r := []rune(s); len(r) > 80 {
-		return string(r[:80]) + "…"
-	}
-	return s
 }
 
 /* names 取摘要清单的名字序列（基线 diff 用）。 */

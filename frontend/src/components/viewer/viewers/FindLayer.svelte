@@ -1,13 +1,7 @@
 <script lang="ts">
   /*
-  文本编辑器的查找垫层：textarea 不能给局部文字上底色，这里在它上面
-  叠一层排版完全一致的透明 <pre>——只画命中 <mark> 的背景，文字透明，
-  因此底下的正文/语法高亮照常可见。滚动位置跟随 textarea；当前命中
-  变化时把 textarea 滚到它的 1/3 高度处。
-
-  TextViewer（带语法高亮垫层）与 markdown/html 的原文编辑器共用。
-  排版参数（14px/24px、14/16 内边距、软折行、稳定滚动条槽）与三处
-  textarea 保持一致，改字号/内边距时要一起改。
+  文本编辑器的查找垫层：textarea 不能给局部文字上底色，在其上叠一层排版一致的透明 <pre>，
+  只画命中 <mark> 的背景，正文/语法高亮照常可见。TextViewer 与 markdown/html 的原文编辑器共用。
   */
 
   import { tick } from 'svelte'

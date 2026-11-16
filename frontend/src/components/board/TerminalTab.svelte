@@ -11,14 +11,8 @@
   import AppLogo from '../AppLogo.svelte'
   import { api, type AppEntry } from '../../lib/api'
 
-  /*
-  魔法看板·终端 tab:顶部切换条(全部终端,含 AI 新建的,来源在 tooltip)
-  + 每终端一个 xterm 实例(display:none keep-alive,切回不丢屏)。
-  首次激活建连;无终端时空态 + 新建按钮(不隐式建);断线重连靠 hello 快照恢复。
-  快应用后端(来源"快应用·<名>")单独分组排在工作终端后:服务是长驻的,
-  和干活终端混排既看不清也容易误关——活着的后端关闭弹框显式确认
-  (关了对应应用就不可用),已退出的直接关。
-  */
+  /* 魔法看板·终端 tab：每终端一个 xterm 实例（切走不丢屏）；快应用后端
+     单独分组、关闭需显式确认——长驻服务混在干活终端里容易误关。 */
   let { active = false }: { active?: boolean } = $props()
 
   let root: HTMLElement | undefined = $state()

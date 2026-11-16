@@ -213,7 +213,7 @@
     approveOpen = false
     reasonOpen = false
     modelOpen = !modelOpen
-    if (modelOpen) void store.ensureModels()
+    if (modelOpen) void store.loadModels()
   }
 
   function pickModel(name: string) {

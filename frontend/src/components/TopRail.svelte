@@ -1,13 +1,10 @@
 <script lang="ts">
-  /*
-  顶栏右侧：便签小点（板上每张待办一颗，点开挂下完整便签）、主题切换
-  与全局通知铃铛。会话级的状态不在这里（见输入条内的 SessionStatus）。
-  工作区工具三键在搜索框左侧（TitleBar 的 TopTools）。
-  */
+  /* 顶栏右侧：便签小点（板上每张待办一颗，点开挂下完整便签）、主题切换
+     与全局通知铃铛——只放全局的，会话级状态归输入条。 */
   import { onMount } from 'svelte'
   import { store } from '../lib/store.svelte'
   import { theme, toggleTheme } from '../lib/theme.svelte'
-  import { board, ensurePinboard } from '../lib/pinboard.svelte'
+  import { board, loadPinboard } from '../lib/pinboard.svelte'
   import NoticePanel from './NoticePanel.svelte'
   import PinRack from './pinboard/PinRack.svelte'
 
@@ -17,7 +14,7 @@
 
   onMount(() => {
     /* 顶栏便签小点常驻：先拉一次板，小点才有数据 */
-    void ensurePinboard()
+    void loadPinboard()
     const t = setInterval(() => (now = Date.now()), 30000)
     return () => clearInterval(t)
   })
@@ -99,7 +96,7 @@
         }}
         onJump={(n) => {
           noticeOpen = false
-          void store.jumpToNotice(n)
+          void store.jumpToNoticeRef(n)
         }}
         onDismiss={(id) => store.dismissNotice(id)}
       />

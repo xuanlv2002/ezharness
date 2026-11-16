@@ -1,10 +1,7 @@
 <script lang="ts">
   /*
-  Markdown 查看器：预览（marked + DOMPurify，与聊天渲染同栈）/ 原文
-  （textarea 编辑，Ctrl+S 保存）切换。tab 状态数据化（content 存
-  ResTab，单实例重绑）。预览里的相对资源（![](img/x.png) 等）按文件
-  所在目录改写到工作目录文件服务直出（respaths）；指向本地文件的链接
-  点击在资源页打开（data-file-link 委托），不在 SPA 里裸跳。
+  Markdown 查看器：预览（marked + DOMPurify，与聊天渲染同栈）/ 原文编辑（Ctrl+S 保存）切换。
+  预览里的相对资源按文件所在目录改写到工作目录文件服务直出，本地文件链接在资源页打开。
   */
 
   import { tick } from 'svelte'

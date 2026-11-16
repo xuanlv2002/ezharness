@@ -3,8 +3,7 @@
   import { store } from '../lib/store.svelte'
 
   /* 标题栏搜索：技能 / MCP / 设置三类通查。技能与 MCP 首次聚焦时拉取，
-     设置项为静态清单（锚点对应设置页各 section）。选中后写 store.jumpAnchor，
-     目标页消费并滚动/定位。 */
+     设置项为静态清单；选中后写 store.jumpAnchor 供目标页滚动定位。 */
   let { onNavigate }: { onNavigate: (v: string) => void } = $props()
 
   type Kind = 'skill' | 'mcp' | 'settings'

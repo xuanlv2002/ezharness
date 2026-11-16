@@ -48,12 +48,6 @@ type HourStats struct {
 	Models map[string]*ModelUsage `json:"models,omitempty"`
 }
 
-/* StatsView 是 stats 的下发视图。 */
-type StatsView struct {
-	FirstSeen int64 `json:"firstSeen"`
-	Turns     int   `json:"turns"`
-}
-
 type statsFileLayout struct {
 	FirstSeen int64                 `json:"firstSeen"` // UnixMilli
 	Turns     int                   `json:"turns"`
@@ -166,35 +160,11 @@ func (s *Stats) Hourly() []HourView {
 	return out
 }
 
-/* Total 返回累计用量副本。 */
-func (s *Stats) Total() types.Usage {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.total
-}
-
 /* Turns 返回累计轮数。 */
 func (s *Stats) Turns() int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.turns
-}
-
-/* DaysServed 返回已服务天数（首启起算，当天为 0）。 */
-func (s *Stats) DaysServed() int {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return int(time.Since(s.firstSeen).Hours() / 24)
-}
-
-/* CacheHitRate 返回缓存命中率（cached/prompt，prompt 为 0 时 0）。 */
-func (s *Stats) CacheHitRate() float64 {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.total.PromptTokens == 0 {
-		return 0
-	}
-	return float64(s.total.CachedTokens) / float64(s.total.PromptTokens)
 }
 
 func (s *Stats) saveLocked() error {

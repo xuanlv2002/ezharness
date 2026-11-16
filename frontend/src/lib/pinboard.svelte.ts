@@ -1,11 +1,5 @@
-/*
-便签板的共享态：整块板经 /api/pinboard 落盘（数据目录 pinboard.json），
-前端防抖提交。布局常量、色板、整理算法与归档语义都在这里——组件只做
-交互。
-
-归档语义（与方案文档一致）：doneAt 是事实，永远等于点完成那一刻；day
-只表达「归到哪一天」，只在手工拖时间线时写，拖回真实完成日即删除。
-*/
+/* 便签板共享态：整块板经 /api/pinboard 落盘，前端防抖提交；布局常量与整理算法在这里，组件只做交互 */
+/* 归档语义：doneAt 是事实（点完成那一刻）；day 只在手工拖时间线时写，拖回真实完成日即删除 */
 import { api } from './api'
 import type { PinCard, PinboardData, PinRecord, PinSessionRef } from './api'
 
@@ -80,8 +74,8 @@ function applyPinboard(d: PinboardData): void {
   board.err = ''
 }
 
-/* ensurePinboard 首次使用时拉整块板（PinboardView 与状态卡共用）。 */
-export async function ensurePinboard(): Promise<void> {
+/* loadPinboard 首次使用时拉整块板（PinboardView 与状态卡共用）。 */
+export async function loadPinboard(): Promise<void> {
   if (board.loaded) return
   if (loadP) return loadP
   board.loading = true
@@ -457,7 +451,7 @@ linkPendingNote 对话页真实发出消息后调用：把该会话挂到对应�
 */
 export async function linkPendingNote(sessionId: string, title = '', createdAt = 0): Promise<void> {
   if (!sessionId) return
-  await ensurePinboard()
+  await loadPinboard()
   if (!board.loaded) return
   let changed = false
   function link<T extends PinCard | PinRecord>(entry: T): T {

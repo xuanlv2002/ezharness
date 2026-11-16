@@ -304,10 +304,6 @@
   }
 
   /* 删除走自制居中确认框（原生 confirm 在 WebView 里贴顶，样式突兀）。 */
-  function removeServer(s: McpServerView) {
-    delTarget = s
-  }
-
   function doRemove() {
     const s = delTarget
     if (!s) return
@@ -481,7 +477,7 @@
       {#if selected.oauth && selected.authorized}
         <button class="op" onclick={() => logout(sel)}>注销</button>
       {/if}
-      <button class="op danger" onclick={() => removeServer(sel)}>删除</button>
+      <button class="op danger" onclick={() => (delTarget = sel)}>删除</button>
       <span class="op-label">
         启用
         <button class="toggle" class:on={selected.enabled} onclick={() => toggle(sel)} role="switch" aria-checked={selected.enabled} tabindex="0">
@@ -754,7 +750,7 @@
   </div>
 {/if}
 
-<!-- 删除 server 确认弹窗（居中，样式同 MemoryView 删除技能） -->
+<!-- 删除 server 确认弹窗（居中） -->
 {#if delTarget}
   <div class="drawer-mask" onclick={() => (delTarget = null)}></div>
   <div class="modal confirm">
@@ -1355,7 +1351,7 @@
     color: var(--muted);
   }
 
-  /* ── 删除确认弹窗（居中，同 MemoryView 删除技能） ── */
+  /* ── 删除确认弹窗 ── */
   .drawer-mask {
     position: fixed;
     inset: 0;

@@ -7,17 +7,8 @@
   import BrowserPane from './BrowserPane.svelte'
 
   /*
-  工区抽屉：推挤式右布局列（非悬浮 overlay）——打开时占布局宽度，
-  聊天主列被挤窄不遮挡。工具页（终端/资源查看器/共享浏览器）互斥显
-  隐，多 pane 常驻挂载保活（终端 WS/xterm、资源 tab 的 buffer/标注/
-  画布、浏览器标签条互不丢失）；入口是聊天输入条的 mini 钮
-  （store.toggleDrawerTool，开着且同页=收起）。收起：头部 » 钮 /
-  双击标题栏 / Esc，收起后整列出净、不占宽度。
-  宽度：中间线定主列宽（默认 42vw、保底 480px），抽屉吃掉剩余全部——
-  窗口缩放时抽屉跟着伸缩、主列不动；抽屉保底 PANE_MIN 640px（浏览器/
-  终端/资源都要放得下，不允许压成细条）。动画 = width 展开（内层
-  .inner 恒宽 var(--pane-w)：过渡期间内容不重排、xterm 不反复 fit；
-  窗口 resize 时宽度变化经 var 继承同步到 inner，ResizeObserver 自动 fit）。
+  工区抽屉：推挤式右布局列（非悬浮 overlay），终端/资源/浏览器互斥显隐且常驻挂载保活。
+  宽度定死主列、抽屉吃剩余全部；展开动画走 width，过渡期内层恒宽以免内容重排、xterm 反复 fit。
   */
   let { visible = true }: { visible?: boolean } = $props()
 

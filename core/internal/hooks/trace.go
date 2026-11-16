@@ -202,35 +202,6 @@ func (t *Trace) EndSpan(sp *Span, attrs map[string]any) {
 	t.closeLocked(sp, attrs)
 }
 
-/* CloseRoot 提前关闭一个 Run 的根 span（compact 换库前调用）。 */
-func (t *Trace) CloseRoot(state *types.LoopState, attrs map[string]any) {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	b := t.buckets[state]
-	if b == nil {
-		return
-	}
-	delete(t.buckets, state)
-	t.closeLocked(b.root, attrs)
-	t.closeLocked(b.model, nil)
-	for _, sp := range b.tools {
-		t.closeLocked(sp, nil)
-	}
-}
-
-/* OpenRoot 为已有 Run 重开根 span。 */
-func (t *Trace) OpenRoot(state *types.LoopState, attrs map[string]any) {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	if _, ok := t.buckets[state]; ok {
-		return
-	}
-	t.bucketLocked(state).root = t.openLocked(
-		map[bool]string{true: "fork." + state.ForkID, false: "turn"}[state.ForkID != ""],
-		map[bool]string{true: "fork", false: "turn"}[state.ForkID != ""],
-		"", state, attrs)
-}
-
 /* ── 内部（全持 t.mu）── */
 
 /* ensureBucketLocked 取或建分桶；fork 首次触达时惰性开根 span。 */

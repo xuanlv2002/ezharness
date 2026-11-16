@@ -1,9 +1,6 @@
 /*
-ezharness desktop：Electron 壳主进程。
-职责：拉起 core sidecar（ezharness-core.exe）→ 健康就绪后开主窗口加载
-core 伺服的页面；托盘常驻；关闭语义（托盘隐藏/确认退出）；外链与快应
-用子窗口；共享浏览器（WebContentsView，browser 模块）。
-core 是唯一业务后端——本进程只做壳与桌面资产，不做业务。
+ezharness desktop：Electron 壳主进程——拉起 core sidecar，健康就绪后开主窗口加载 core 伺服的页面。
+core 是唯一业务后端，本进程只做壳与桌面资产，不做业务。
 */
 const { app, BrowserWindow, Tray, Menu, ipcMain, shell, nativeImage, screen, dialog, session } = require('electron')
 const path = require('path')

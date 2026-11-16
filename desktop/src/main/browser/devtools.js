@@ -89,11 +89,6 @@ function enableDomains(d) {
   }).catch(() => {})
 }
 
-/* ensureDevtools 读取侧入口（console/network/upload）：幂等，保证采集已开。 */
-function ensureDevtools(tab) {
-  return attachTab(tab)
-}
-
 /* onDialog 原生对话框接管：一律**自动取消**（dismiss），页面永远不会被弹窗挂住，
    并把这件事记进控制台缓冲让模型知道。只覆盖 alert/confirm——prompt() 在 Electron
    下直接抛 "not supported"。 */
@@ -306,15 +301,13 @@ function onFailed(d, p) {
 
 /* ── 呈现 ── */
 
-const LABEL = { log: 'log', warn: 'warn', error: 'error', debug: 'debug', verbose: 'verbose', info: 'info' }
-
 /* formatConsole 控制台/异常/日志成多行文本（errorsOnly 只留 error）。 */
 function formatConsole(tab, errorsOnly) {
   const d = dt(tab)
   const rows = errorsOnly ? d.console.filter((e) => e.level === 'error') : d.console
   if (!rows.length) return errorsOnly ? '(无 error)' : '(控制台无输出)'
   const lines = rows.map((e) => {
-    let line = `[${LABEL[e.level] || e.level}] ${e.text}`
+    let line = `[${e.level}] ${e.text}`
     if (e.source) line += `  (${e.source})`
     if (e.stack.length) line += '\n    at ' + e.stack.join('\n    at ')
     return line
@@ -396,6 +389,6 @@ function shortURL(u) {
 }
 
 module.exports = {
-  attachTab, ensureDevtools, detachDevtools, clearDevtools,
-  formatConsole, formatNetworkList, formatNetworkDetail, dt,
+  attachTab, detachDevtools, clearDevtools,
+  formatConsole, formatNetworkList, formatNetworkDetail,
 }

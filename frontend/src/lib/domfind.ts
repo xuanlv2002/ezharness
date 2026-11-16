@@ -17,7 +17,7 @@ function docOf(root: ParentNode): Document | null {
   return root.nodeType === Node.DOCUMENT_NODE ? (root as Document) : (root as Node).ownerDocument
 }
 
-function ensureStyle(doc: Document): void {
+function addStyle(doc: Document): void {
   if (doc.getElementById(STYLE_ID)) return
   const el = doc.createElement('style')
   el.id = STYLE_ID
@@ -65,7 +65,7 @@ export function domFind(root: ParentNode | null | undefined, query: string, inde
   if (!root) return { count: 0, index: 0 }
   const doc = docOf(root)
   if (!doc) return { count: 0, index: 0 }
-  ensureStyle(doc)
+  addStyle(doc)
   clearDomFind(root)
   const q = query.trim().toLowerCase()
   if (!q) return { count: 0, index: 0 }

@@ -3,14 +3,8 @@
   import type { BoardData, BoardElement, BoardPoint } from '../../../lib/boardData'
 
   /*
-  魔法画板（图片查看器的画布引擎，对象模型）：元素存对象数组，静态层
-  缓存到离屏 buf，拖动/笔画期间只叠加活动元素（rAF 节流）。
-  工具：选择（拖动 / Del 删除 / 双击改字）、画笔、白笔、矩形、
-  椭圆、箭头、文本。贴入图片作底图垫底；导出走离屏合成。
-  常驻保活（keep-alive）：active 仅在本 tab 激活时为真，键盘监听与
-  尺寸测量都按此守卫（display:none 下 clientWidth=0）。
-  initial 是跨窗口带回的元素；getElements 供 ImageViewer 存进 tab；
-  exportFile 供外层取合成产物；onDone 是底部主按钮的回流。
+  魔法画板：图片查看器的画布引擎（对象模型）——元素存对象数组，静态层缓存到离屏 buf，
+  拖动/笔画期间只叠加活动元素；贴入图片作底图垫底，导出走离屏合成。
   */
   let {
     source = null,

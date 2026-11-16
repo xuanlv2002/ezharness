@@ -1,13 +1,6 @@
 <script lang="ts">
-  /*
-  多媒体工作台：左侧生成台（图片/语音/视频），右侧任务流。任务流轮询
-  /api/open/media/jobs——agent 工具与 OpenAPI 提交的任务同样落在
-  MediaService 的任务档案里，所以无论谁发起，都会汇入这里异步执行、
-  实时更新；产物落盘后可直接预览、进资源页或插入对话。
-
-  生成直接走 /api/open/*（openAuth 同时认会话令牌）；wait_seconds=0
-  表示只提交不等待，进度交给任务流展示。
-  */
+  /* 多媒体工作台：左侧生成台（图片/语音/视频），右侧任务流。agent 工具与
+     OpenAPI 提交的任务汇入同一份任务档案，这里统一展示进度与产物预览。 */
 
   import { onMount } from 'svelte'
   import { api, type GenQuotaMap, type MediaConfig, type MediaJob, type ModelEntry } from '../../lib/api'

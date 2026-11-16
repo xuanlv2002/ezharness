@@ -59,9 +59,9 @@ var pendingMu sync.Mutex
 func (p PendingMemoryOp) Describe() string {
 	switch p.Op {
 	case PendingOpAdd:
-		return "新增记忆 " + p.Target + "：" + pendingOneLine(p.Text)
+		return "新增记忆 " + p.Target + "：" + oneLine(p.Text, 80)
 	case PendingOpUpdate:
-		return "更新记忆 " + p.Target + " " + p.ItemID + "：" + pendingOneLine(p.Text)
+		return "更新记忆 " + p.Target + " " + p.ItemID + "：" + oneLine(p.Text, 80)
 	case PendingOpRemove:
 		return "删除记忆 " + p.Target + " " + p.ItemID
 	case PendingOpProjectSave:
@@ -82,15 +82,6 @@ func (p PendingMemoryOp) DescribeDetail() string {
 		return p.Describe()
 	}
 	return p.Describe() + "\n" + body
-}
-
-/* pendingOneLine 压平换行截摘要。 */
-func pendingOneLine(s string) string {
-	s = strings.ReplaceAll(s, "\n", " ")
-	if r := []rune(s); len(r) > 80 {
-		return string(r[:80]) + "…"
-	}
-	return s
 }
 
 /* LoadPendingOps 读全部待确认操作（缺失=空；时间序）。 */
@@ -178,7 +169,7 @@ func applyPendingOpLocked(ctx context.Context, fsys fs.FileSystem, op PendingMem
 		if err := SaveItems(ctx, fsys, path, append(items, item)); err != nil {
 			return "", err
 		}
-		return "已新增记忆 " + op.Target + " " + item.ID + "：" + pendingOneLine(item.Text), nil
+		return "已新增记忆 " + op.Target + " " + item.ID + "：" + oneLine(item.Text, 80), nil
 	case PendingOpUpdate:
 		path, _, err := pendingItemPath(op.Target)
 		if err != nil {

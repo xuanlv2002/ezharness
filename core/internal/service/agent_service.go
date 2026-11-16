@@ -102,7 +102,7 @@ func allModelEntries(m domain.ModelsConfig) []domain.ModelEntry {
 	return out
 }
 
-/* findModelEntry 按名在三槽里找条目（已关闭的视同不存在——task 分身只能选可用清单内的模型）。 */
+/* findModelEntry 按名在对话槽里找条目（已关闭的视同不存在——task 分身只能选可用清单内的模型）。 */
 func findModelEntry(m domain.ModelsConfig, name string) *domain.ModelEntry {
 	all := allModelEntries(m)
 	for i := range all {
@@ -114,7 +114,7 @@ func findModelEntry(m domain.ModelsConfig, name string) *domain.ModelEntry {
 }
 
 /*
-	modelFactoryOf 产出 task 分身的模型工厂：按名取条目（三槽任意）现造 provider，
+	modelFactoryOf 产出 task 分身的模型工厂：按名取条目现造 provider，
 
 未知名字返回 nil（task 把"unknown model"作为工具结果回传，模型自纠）。
 包级函数而非内联闭包：Assemble 里 provider 是局部变量，会遮蔽 provider 包名。
@@ -182,7 +182,7 @@ func memoryUpdatedHint(t time.Time) string {
 	return "（更新于 " + t.Format("2006-01-02") + "）"
 }
 
-/* Assemble 按配置装配 agent 并注入会话（主模型取 models 四槽 main 启用条目）。 */
+/* Assemble 按配置装配 agent 并注入会话（主模型取 models main 启用条目）。 */
 func (a *AgentService) Assemble(s *domain.Session, st domain.Settings) {
 	ctx := context.Background()
 	maxIters := 64 // 单轮最大模型迭代次数（设置页可配；0/负数回落默认 64，上限 128）
@@ -745,7 +745,7 @@ func mcpOffList(fsys osfs.OS) []string {
 	return out
 }
 
-/* modelOffNames 返回三槽中被关闭（disabled）的模型名（与 modelStatusList 互补）。 */
+/* modelOffNames 返回对话槽中被关闭（disabled）的模型名（与 modelStatusList 互补）。 */
 func modelOffNames(mc domain.ModelsConfig) []string {
 	seen := map[string]bool{}
 	var out []string
@@ -768,21 +768,16 @@ media 工具使用，清单在 <media> 段与 mediaStatusList。
 func modelStatusList(mc domain.ModelsConfig) []hooks.StatusMcp {
 	seen := map[string]bool{}
 	var out []hooks.StatusMcp
-	for _, slot := range []struct {
-		label   string
-		entries []domain.ModelEntry
-	}{{"对话", mc.Main}} {
-		for _, e := range slot.entries {
-			if e.Name == "" || seen[e.Name] || e.Disabled {
-				continue
-			}
-			seen[e.Name] = true
-			v := "不支持视觉"
-			if e.Vision {
-				v = "支持视觉"
-			}
-			out = append(out, hooks.StatusMcp{Name: e.Name, Desc: slot.label + "槽 · " + v})
+	for _, e := range mc.Main {
+		if e.Name == "" || seen[e.Name] || e.Disabled {
+			continue
 		}
+		seen[e.Name] = true
+		v := "不支持视觉"
+		if e.Vision {
+			v = "支持视觉"
+		}
+		out = append(out, hooks.StatusMcp{Name: e.Name, Desc: "对话槽 · " + v})
 	}
 	return out
 }
