@@ -221,20 +221,19 @@ export interface McpToolView {
   args_schema?: any
 }
 
-export interface McpFile {
-  servers: {
-    name: string
-    description?: string
-    type: string
-    url?: string
-    headers?: Record<string, string>
-    command?: string
-    args?: string[]
-    env?: Record<string, string>
-    allow?: string[]
-    enabled?: boolean
-    oauth?: McpOAuthConfig
-  }[]
+/* mcp.json 的单个 server 条目（保存按条提交，不做整表覆盖） */
+export interface McpServerFile {
+  name: string
+  description?: string
+  type: string
+  url?: string
+  headers?: Record<string, string>
+  command?: string
+  args?: string[]
+  env?: Record<string, string>
+  allow?: string[]
+  enabled?: boolean
+  oauth?: McpOAuthConfig
 }
 
 /* McpAuthError 表示 MCP 调用需要 OAuth 认证（后端 401 + needs_auth）。 */
@@ -801,7 +800,10 @@ export const api = {
 
   getMcp: () => fetch('/api/mcp').then(json<{ servers: McpServerView[] }>),
 
-  saveMcp: (f: McpFile) => post<{ ok: boolean }>('/api/mcp', f),
+  saveMcpServer: (s: McpServerFile) => post<{ ok: boolean }>('/api/mcp/server', s),
+
+  deleteMcpServer: (name: string) =>
+    fetch(`/api/mcp/server/${encodeURIComponent(name)}`, { method: 'DELETE' }).then(json<{ ok: boolean }>),
 
   /* connectMcp 建立连接拉工具；需要 OAuth 时后端回 401 + needs_auth → McpAuthError */
   connectMcp: async (name: string) => {

@@ -3,7 +3,7 @@
 对照 AGENTS.md 全库审计（frontend/lib、8 个大组件、中小组件、desktop、core 五路）。
 每条 `[x]` = 已改；`[ ]` = 保留未改（附原因）。
 
-**状态（2026-11-17）：确认 67 条已改 64 条（3 条兼容迁移类保留）；存疑 32 条已改 31 条（1 条有真实竞态保留）；并发问题已修。**
+**状态（2026-11-17）：确认 67 条已改 64 条（3 条兼容迁移类保留）；存疑 32 条全部已改；并发问题已修。**
 验证：core `go build + go vet + go test ./... + -race domain` 通过；frontend `tsc --noEmit + vite build` 通过；desktop/sdk `node --check` 通过。
 
 ## 总览
@@ -13,7 +13,7 @@
 | 注释问题 | 20 | 20 | 10 | 10 |
 | 死代码 | 20 | 20 | 1 | 1 |
 | 文件内碎拆 | 12 | 12 | 11 | 11 |
-| 过度设计 | 8 | 8 | 6 | 5 |
+| 过度设计 | 8 | 8 | 6 | 6 |
 | 兼容适配残留 | 4 | 1 | 2 | 2 |
 | 命名大词化 | 3 | 3 | 2 | 2 |
 
@@ -117,11 +117,11 @@
 - [x] `settings_service.go` — 单键 map 循环已展开
 - [x] `reschange.go` — 不可达 `len(p) < 1` 已删
 
-### 存疑 6 条（已改 5）
+### 存疑 6 条（全部已改）
 
 - [x] `api.ts` 9 处 `'…' | string` 联合失效写法已收窄
 - [x] `toolface.ts`/`linediff.ts` — LCS 收敛为 `linediff.lcsLines` 唯一实现
-- [ ] `McpView.svelte` `persistChain` 保留：**真实竞态**（全量保存 API 下"删后立刻加"会被旧载荷覆盖），前端串行是当前架构下的最小修复；根治需后端按 server 增量保存，单独立项
+- [x] `McpView.svelte` 保存串行已删：后端改为按条 `POST /api/mcp/server` + `DELETE /api/mcp/server/:name`，页面启停/添加/编辑/删除各提交单条，不再全量覆盖（原竞态根源消失）
 - [x] `MemoryView.svelte` `r.items || items` 判空已删
 - [x] `settings_controller.go` 错误文本匹配已改为 `errors.Is(ErrBusy)`（原字符串在代码库与依赖中无生产者，分支是死的）
 - [x] `media_controller.go` 手写数字解析改用 `strconv.Atoi`

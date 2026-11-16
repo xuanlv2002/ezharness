@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte'
-  import { api, McpAuthError, type McpServerView, type McpToolView } from '../lib/api'
+  import { api, McpAuthError, type McpServerFile, type McpServerView, type McpToolView } from '../lib/api'
   import { openExternal } from '../lib/desktop'
   import { store } from '../lib/store.svelte'
 
@@ -96,51 +96,59 @@
     loaded = true
   })
 
-  /* persist 自动保存（启停/添加/删除即时提交，下一轮热加载生效；后端会顺带
-  关闭已删除/禁用 server 的页面会话）。串行化：payload 在排队前取当下快照、
-  请求链式排队——删除后立刻添加时并发全量覆盖会把新 server 冲掉（后到旧
-  载荷胜出），排队后天然"最新快照最后落盘"。 */
-  let persistChain: Promise<void> = Promise.resolve()
-  function persist() {
+  /* toFile 把页面视图还原成 mcp.json 的单个 server 条目（白名单与 OAuth 配置必须带，否则保存会清掉） */
+  function toFile(s: McpServerView): McpServerFile {
+    return {
+      name: s.name,
+      ...(s.description ? { description: s.description } : {}),
+      type: s.transport,
+      ...(s.transport === 'stdio'
+        ? {
+            command: s.command,
+            args: s.args ?? [],
+            ...(Object.keys(s.env ?? {}).length ? { env: s.env } : {}),
+          }
+        : {
+            url: s.endpoint,
+            ...(Object.keys(s.headers ?? {}).length ? { headers: s.headers } : {}),
+          }),
+      ...(s.allow?.length ? { allow: s.allow } : {}),
+      ...(s.oauth_config?.enabled ? { oauth: s.oauth_config } : {}),
+      enabled: s.enabled,
+    }
+  }
+
+  /* 启停/添加/编辑按条保存，下一轮热加载生效 */
+  async function saveServer(s: McpServerView) {
     saving = true
     message = ''
-    const payload = {
-      servers: servers.map((s) => ({
-        name: s.name,
-        ...(s.description ? { description: s.description } : {}),
-        type: s.transport,
-        ...(s.transport === 'stdio'
-          ? {
-              command: s.command,
-              args: s.args ?? [],
-              ...(Object.keys(s.env ?? {}).length ? { env: s.env } : {}),
-            }
-          : {
-              url: s.endpoint,
-              ...(Object.keys(s.headers ?? {}).length ? { headers: s.headers } : {}),
-            }),
-        ...(s.allow?.length ? { allow: s.allow } : {}), // 透传白名单，防全量保存清掉
-        ...(s.oauth_config?.enabled ? { oauth: s.oauth_config } : {}), // 透传 OAuth 配置，防全量保存清掉
-        enabled: s.enabled,
-      })),
+    try {
+      await api.saveMcpServer(toFile(s))
+      message = '已保存，下一轮生效'
+    } catch (e) {
+      message = `保存失败：${(e as Error).message}`
+    } finally {
+      saving = false
     }
-    persistChain = persistChain
-      .then(() => api.saveMcp(payload))
-      .then(() => {
-        message = '已保存，下一轮生效'
-      })
-      .catch((e) => {
-        message = `保存失败：${(e as Error).message}`
-      })
-      .finally(() => {
-        saving = false
-      })
-    return persistChain
+  }
+
+  /* 删除按名字提交，后端顺带关闭该 server 的页面会话 */
+  async function deleteServer(s: McpServerView) {
+    saving = true
+    message = ''
+    try {
+      await api.deleteMcpServer(s.name)
+      message = '已保存，下一轮生效'
+    } catch (e) {
+      message = `保存失败：${(e as Error).message}`
+    } finally {
+      saving = false
+    }
   }
 
   function toggle(s: McpServerView) {
     s.enabled = !s.enabled
-    persist()
+    void saveServer(s)
   }
 
   /* 名字即 keyed each 的 key 与后端索引键，重名会炸掉整页渲染，必须唯一。 */
@@ -175,7 +183,7 @@
     servers = [...servers, entry]
     draft = emptyDraft()
     adding = false
-    await persist()
+    await saveServer(entry)
     if (!isStdio) void probeOAuth(entry.name)
   }
 
@@ -254,7 +262,7 @@
       s.headers = pairsToRecord(editDraft.pairs)
     }
     editing = false
-    persist()
+    void saveServer(s)
   }
 
   /* authorize 取授权 URL 用系统浏览器打开并轮询；已授权即刷新徽标。
@@ -310,7 +318,7 @@
     if (openTool.startsWith(s.name + '/')) openTool = ''
     if (selected === s) selected = null
     delTarget = null
-    persist()
+    void deleteServer(s)
   }
 
   /* connect 建立（或复用）页面会话，成功即展开工具清单。 */
