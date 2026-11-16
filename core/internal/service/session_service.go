@@ -198,7 +198,7 @@ func (s *SessionService) Snapshot(ctx context.Context) Status {
 		// 与 <skills> 段同一归置：内建优先，同名用户技能让位
 		for _, e := range entries {
 			if !slices.ContainsFunc(all, func(b skill.Skill) bool {
-				return hooks.SkillDirOf(b.Path) == hooks.SkillDirOf(e.Path)
+				return skill.DirOf(b.Path) == skill.DirOf(e.Path)
 			}) {
 				all = append(all, e)
 			}
@@ -206,7 +206,7 @@ func (s *SessionService) Snapshot(ctx context.Context) Status {
 	}
 	disabled := s.Hub.SettingsSnapshot().DisabledSkills
 	for _, e := range all {
-		if slices.Contains(disabled, hooks.SkillDirOf(e.Path)) {
+		if slices.Contains(disabled, skill.DirOf(e.Path)) {
 			continue
 		}
 		skills = append(skills, e.Name)

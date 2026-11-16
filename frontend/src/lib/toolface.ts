@@ -3,6 +3,9 @@
 write_file→代码块(行号),edit_file→行级 diff,terminal/term_action send→命令高亮;
 其余工具返回 null,组件退回 JSON 美化。
 */
+import type { LcsOp } from './linediff'
+import { lcsLines } from './linediff'
+
 export type ToolFace =
   | { kind: 'code'; path: string; content: string }
   | { kind: 'diff'; path: string; old: string; new: string }
@@ -98,42 +101,16 @@ export function memoryChange(name: string, rawArgs: string, rawResult: string): 
   }
 }
 
-export type DiffLine = { t: '-' | '+' | ' '; s: string }
+export type DiffLine = LcsOp
 
-/* 行级 diff(LCS 公共子序列);规模超限退化为整块 -/+ 并列 */
+/* 行级 diff；规模超限退化为整块 -/+ 并列 */
 export function diffLines(oldS: string, newS: string): DiffLine[] {
   const a = oldS.split('\n')
   const b = newS.split('\n')
-  if (a.length * b.length > 160000) {
-    return [...a.map((s): DiffLine => ({ t: '-', s })), ...b.map((s): DiffLine => ({ t: '+', s }))]
-  }
-  const n = a.length
-  const m = b.length
-  const dp: number[][] = Array.from({ length: n + 1 }, () => new Array<number>(m + 1).fill(0))
-  for (let i = n - 1; i >= 0; i--) {
-    for (let j = m - 1; j >= 0; j--) {
-      dp[i][j] = a[i] === b[j] ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1])
-    }
-  }
-  const out: DiffLine[] = []
-  let i = 0
-  let j = 0
-  while (i < n && j < m) {
-    if (a[i] === b[j]) {
-      out.push({ t: ' ', s: a[i] })
-      i++
-      j++
-    } else if (dp[i + 1][j] >= dp[i][j + 1]) {
-      out.push({ t: '-', s: a[i] })
-      i++
-    } else {
-      out.push({ t: '+', s: b[j] })
-      j++
-    }
-  }
-  while (i < n) out.push({ t: '-', s: a[i++] })
-  while (j < m) out.push({ t: '+', s: b[j++] })
-  return out
+  return lcsLines(a, b, 160000) ?? [
+    ...a.map((s): DiffLine => ({ t: '-', s })),
+    ...b.map((s): DiffLine => ({ t: '+', s })),
+  ]
 }
 
 /* shell 命令高亮:命令词/选项/字符串/变量/连接符分色,输出 HTML(文本已转义) */

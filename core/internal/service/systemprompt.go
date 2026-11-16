@@ -138,7 +138,7 @@ func skillsSection(ctx context.Context, fsys osfs.OS, st domain.Settings, dataDi
 	if user, err := skill.LoadDir(ctx, fsys, hooks.SkillsDir); err == nil {
 		// 与内建同名的用户技能让位（内建优先），清单与记忆页同一归置
 		for _, sk := range user {
-			if !slices.ContainsFunc(skills, func(b skill.Skill) bool { return hooks.SkillDirOf(b.Path) == hooks.SkillDirOf(sk.Path) }) {
+			if !slices.ContainsFunc(skills, func(b skill.Skill) bool { return skill.DirOf(b.Path) == skill.DirOf(sk.Path) }) {
 				skills = append(skills, sk)
 			}
 		}
@@ -153,7 +153,7 @@ func skillsSection(ctx context.Context, fsys osfs.OS, st domain.Settings, dataDi
 		"轮内变更（新增/移除/启用/停用）见 <resource_change>。标注〔内建〕的技能随应用分发，正文同样可 load_skill 查看）")
 	var offNames []string
 	for _, sk := range skills {
-		if slices.Contains(st.DisabledSkills, hooks.SkillDirOf(sk.Path)) {
+		if slices.Contains(st.DisabledSkills, skill.DirOf(sk.Path)) {
 			offNames = append(offNames, sk.Name)
 			continue
 		}
@@ -162,7 +162,7 @@ func skillsSection(ctx context.Context, fsys osfs.OS, st domain.Settings, dataDi
 			desc = "（无描述）"
 		}
 		mark := ""
-		if builtinskill.IsBuiltin(hooks.SkillDirOf(sk.Path)) {
+		if builtinskill.IsBuiltin(skill.DirOf(sk.Path)) {
 			mark = "〔内建〕"
 		}
 		fmt.Fprintf(&b, "\n- %s%s: %s", sk.Name, mark, desc)

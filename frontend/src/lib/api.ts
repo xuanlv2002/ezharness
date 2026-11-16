@@ -1,4 +1,4 @@
-/* API 封装：REST + SSE。v0.2：bootstrap 模式（会话对用户隐藏）。 */
+/* API 封装：REST + SSE。 */
 import { fetchEventSource } from '@microsoft/fetch-event-source'
 import { getToken } from './auth'
 
@@ -135,7 +135,7 @@ export interface CallbackScriptTarget {
 /* 一次触发记录（后端 callback.Run，新的在前） */
 export interface CallbackRun {
   at: number
-  status: 'ok' | 'error' | 'skipped' | 'missed' | 'running' | string
+  status: 'ok' | 'error' | 'skipped' | 'missed' | 'running'
   manual?: boolean
   target: string
   targetId?: string
@@ -160,7 +160,7 @@ export interface CallbackTask {
   finishedAt?: number // 一次性任务终态时间：使命结束，不可编辑，仅可查看/手动触发/删除
   nextRunAt?: number
   lastRunAt?: number
-  lastStatus?: 'ok' | 'error' | 'skipped' | 'missed' | 'running' | string
+  lastStatus?: 'ok' | 'error' | 'skipped' | 'missed' | 'running'
   lastResult?: string
   runCount?: number
   runs?: CallbackRun[]
@@ -200,7 +200,7 @@ export interface McpOAuthConfig {
 export interface McpServerView {
   name: string
   description: string
-  transport: 'http' | 'sse' | 'stdio' | string
+  transport: 'http' | 'sse' | 'stdio'
   endpoint: string
   command: string
   args?: string[]
@@ -373,7 +373,7 @@ export interface TopicEntry {
   createdAt: number
   updatedAt?: number
   msgs: number
-  kind?: 'new' | 'fork' | string
+  kind?: 'new' | 'fork'
   origin?: ForkOrigin
 }
 
@@ -474,7 +474,7 @@ export interface MemoryProjectDetail extends MemoryProjectEntry {
 export interface SessionNode {
   id: string
   title: string
-  seedKind?: 'new' | 'fork' | 'compress' | string
+  seedKind?: 'new' | 'fork' | 'compress'
   archived: boolean
   msgs: number
   createdAt: number
@@ -500,7 +500,7 @@ export interface TraceSpan {
   spanId: string
   parentId?: string
   name: string
-  kind: 'turn' | 'model' | 'tool' | 'fork' | 'compact' | string
+  kind: 'turn' | 'model' | 'tool' | 'fork' | 'compact'
   start: number
   end?: number
   durMs?: number
@@ -533,8 +533,8 @@ export interface GenQuota {
 /* 多媒体异步任务（提交即返回；未完成持 id 轮询） */
 export interface MediaJob {
   id: string
-  kind: 'image' | 'audio' | 'video' | string
-  status: 'queued' | 'running' | 'done' | 'failed' | string
+  kind: 'image' | 'audio' | 'video'
+  status: 'queued' | 'running' | 'done' | 'failed'
   model: string
   brief: string
   createdAt: number
@@ -648,7 +648,7 @@ export const api = {
         messages: HistoryMessage[]
         start?: number
         targetId?: string
-        seedKind?: 'new' | 'fork' | 'compress' | string
+        seedKind?: 'new' | 'fork' | 'compress'
         canPrev?: boolean
         forkedFrom?: ForkOrigin
         decisions?: DecisionRecord[]

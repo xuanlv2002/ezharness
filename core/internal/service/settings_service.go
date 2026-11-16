@@ -346,7 +346,7 @@ func (m *MemoryService) Config(ctx context.Context) MemoryConfigView {
 
 	disabled := m.Hub.SettingsSnapshot().DisabledSkills
 	for _, s := range builtinskill.Skills() {
-		id := hooks.SkillDirOf(s.Path)
+		id := skill.DirOf(s.Path)
 		v.Skills.Items = append(v.Skills.Items, SkillEntryView{
 			ID: id, Name: s.Name, Desc: s.Description,
 			Enabled: !slices.Contains(disabled, id), Builtin: true,
@@ -354,7 +354,7 @@ func (m *MemoryService) Config(ctx context.Context) MemoryConfigView {
 	}
 	if entries, err := skill.LoadDir(ctx, m.Hub.Fsys, hooks.SkillsDir); err == nil {
 		for _, s := range entries {
-			id := hooks.SkillDirOf(s.Path)
+			id := skill.DirOf(s.Path)
 			// 与内建技能同名的用户技能让位（内建优先）：id 是前端 keyed each 的 key，撞名崩整页
 			if slices.ContainsFunc(v.Skills.Items, func(it SkillEntryView) bool { return it.ID == id }) {
 				continue
@@ -389,10 +389,10 @@ func (m *MemoryService) SkillContent(ctx context.Context, id string) (SkillConte
 	view := func(s skill.Skill, builtin bool) SkillContentView {
 		return SkillContentView{
 			SkillEntryView: SkillEntryView{
-				ID:      hooks.SkillDirOf(s.Path),
+				ID:      skill.DirOf(s.Path),
 				Name:    s.Name,
 				Desc:    s.Description,
-				Enabled: !slices.Contains(disabled, hooks.SkillDirOf(s.Path)),
+				Enabled: !slices.Contains(disabled, skill.DirOf(s.Path)),
 				Builtin: builtin,
 			},
 			Content: s.Instructions,
@@ -400,13 +400,13 @@ func (m *MemoryService) SkillContent(ctx context.Context, id string) (SkillConte
 		}
 	}
 	for _, s := range builtinskill.Skills() {
-		if hooks.SkillDirOf(s.Path) == id {
+		if skill.DirOf(s.Path) == id {
 			return view(s, true), nil
 		}
 	}
 	if entries, err := skill.LoadDir(ctx, m.Hub.Fsys, hooks.SkillsDir); err == nil {
 		for _, s := range entries {
-			if hooks.SkillDirOf(s.Path) == id {
+			if skill.DirOf(s.Path) == id {
 				return view(s, false), nil
 			}
 		}

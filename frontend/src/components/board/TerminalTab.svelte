@@ -25,7 +25,7 @@
   holder action 挂载时 flush */
   const pendingSnaps = new Map<string, Uint8Array>()
   const offs: Array<() => void> = []
-  let inited = false
+  let started = false
   let ro: ResizeObserver | undefined
 
   const enc = new TextEncoder()
@@ -278,9 +278,9 @@
     termManager.resize(current, t.term.cols, t.term.rows)
   }
 
-  function init() {
-    if (inited) return
-    inited = true
+  function connect() {
+    if (started) return
+    started = true
     termManager.connect()
     offs.push(termManager.onSessions(syncSessions))
     offs.push(
@@ -308,13 +308,13 @@
     void fetch('/api/terminal/list')
       .then((r) => (r.ok ? r.json() : []))
       .then((ss: TermInfo[]) => {
-        if (inited) syncSessions(ss)
+        if (started) syncSessions(ss)
       })
       .catch(() => {})
   }
 
   onMount(() => {
-    if (active) init()
+    if (active) connect()
     /* 后端条目头像：启动拉一次；快应用页钉选/新建/卸载后广播，跟着刷新 */
     void loadAppMeta()
     const onApps = () => void loadAppMeta()
@@ -323,7 +323,7 @@
   })
 
   $effect(() => {
-    if (active && !inited) init()
+    if (active && !started) connect()
     if (active) requestAnimationFrame(fitCurrent)
   })
 

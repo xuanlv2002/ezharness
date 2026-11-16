@@ -46,13 +46,7 @@
     return m ? `${m[2]}-${m[3]} ${m[4]}:${m[5]}` : at
   }
 
-  /* <$supper_url> 特殊渲染语法（占位）：闭合标签解析为可点击 chip——
-     http(s) 经系统浏览器打开（复用外链拦截）；term://<终端id> 拉开
-     共享终端抽屉并定位；app://<快应用名> 打开快应用子窗；
-     file://<绝对路径> 拉开抽屉文件页编辑（文本白名单门禁）。其他内容
-     仅展示。流式未闭合时按原文转义显示。file:// 按类型分流：图片带
-     缩略图、音视频带播放形图标、目录带文件夹图标（meta 异步识别）、
-     其余文档形图标（inline SVG，消毒保留）。 */
+  /* <$supper_url> 占位语法：http(s)/term://app://browser://file:// 按类型渲染成 chip（file:// 附件卡 + 文件夹卡 meta 异步识别）；流式未闭合按原文转义 */
   const escHtml = (s: string) =>
     s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
 

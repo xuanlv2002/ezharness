@@ -86,7 +86,7 @@ func (t *Trace) OnStart(_ context.Context, state *types.LoopState) error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	// 只建桶不开根：根由下一行赋值，用 bucketLocked 会先兜底开一个空根再被覆盖成孤儿
-	b := t.ensureBucketLocked(state)
+	b := t.getBucket(state)
 	b.root = t.openLocked("turn", "turn", "", state, map[string]any{"input": state.Input})
 	return nil
 }
@@ -204,8 +204,8 @@ func (t *Trace) EndSpan(sp *Span, attrs map[string]any) {
 
 /* ── 内部（全持 t.mu）── */
 
-/* ensureBucketLocked 取或建分桶；fork 首次触达时惰性开根 span。 */
-func (t *Trace) ensureBucketLocked(state *types.LoopState) *bucket {
+/* getBucket 取或建分桶；fork 首次触达时惰性开根 span。 */
+func (t *Trace) getBucket(state *types.LoopState) *bucket {
 	b, ok := t.buckets[state]
 	if !ok {
 		b = &bucket{tools: map[string]*Span{}}
@@ -220,7 +220,7 @@ func (t *Trace) ensureBucketLocked(state *types.LoopState) *bucket {
 
 /* bucketLocked 取分桶并保证根 span 就绪（OnStart 之外的早到回调兜底开根）。 */
 func (t *Trace) bucketLocked(state *types.LoopState) *bucket {
-	b := t.ensureBucketLocked(state)
+	b := t.getBucket(state)
 	if b.root == nil {
 		b.root = t.openLocked("turn", "turn", "", state, nil)
 	}

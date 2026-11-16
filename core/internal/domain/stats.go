@@ -74,8 +74,8 @@ func NewStats(fsys osfs.OS) *Stats {
 	return s
 }
 
-/* EnsureStatsFile 缺失时写入初始 stats.json；已存在不动（返回是否新建）。 */
-func EnsureStatsFile(fsys osfs.OS) (bool, error) {
+/* CreateStatsFile 缺失时写入初始 stats.json；已存在不动（返回是否新建）。 */
+func CreateStatsFile(fsys osfs.OS) (bool, error) {
 	if data, err := fsys.Read(context.Background(), statsFile); err == nil && len(data) > 0 {
 		return false, nil
 	}

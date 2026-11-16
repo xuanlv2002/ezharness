@@ -4,9 +4,7 @@
   import { openExternal } from '../lib/desktop'
   import { store } from '../lib/store.svelte'
 
-  /* MCP = 外部工具服务器（mcp.json 热加载）。页面侧可手动建立 MCP 会话
-  （与 agent 的连接相互独立）：点连接查看工具清单、填参试调用。
-  传输三档：http（Streamable HTTP）/ sse（旧协议 SSE）/ stdio（子进程）。 */
+  /* MCP = 外部工具服务器（mcp.json 热加载）：页面可手动连接试调，与 agent 的连接相互独立 */
   let servers = $state<McpServerView[]>([])
   let loaded = $state(false)
   let saving = $state(false)

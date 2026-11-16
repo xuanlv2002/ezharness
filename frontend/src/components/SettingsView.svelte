@@ -71,9 +71,8 @@
 
   /* 会话令牌（前端↔core；展示 + 复制）与 OpenAPI 令牌（脚本/快应用用；展示 + 复制 + 重置） */
   let apiToken = $state('')
-  let tokenCopied = $state(false)
   let oaToken = $state('')
-  let oaCopied = $state(false)
+  let copied = $state<'' | 'api' | 'oa'>('')
   let oaResetting = $state(false)
 
   /* 单轮最大迭代次数（模型工具循环上限；0 = 默认 64，上限 128，随 Reassemble 生效） */
@@ -153,23 +152,13 @@
   })
 
   /* 复制令牌：clipboard 失败（非安全上下文等）时选中文本让用户 Ctrl+C。 */
-  async function copyToken(input: HTMLInputElement) {
-    if (!apiToken) return
+  async function copyToken(input: HTMLInputElement, kind: 'api' | 'oa') {
+    const val = kind === 'api' ? apiToken : oaToken
+    if (!val) return
     try {
-      await navigator.clipboard.writeText(apiToken)
-      tokenCopied = true
-      setTimeout(() => (tokenCopied = false), 1500)
-    } catch {
-      input.select()
-    }
-  }
-
-  async function copyOaToken(input: HTMLInputElement) {
-    if (!oaToken) return
-    try {
-      await navigator.clipboard.writeText(oaToken)
-      oaCopied = true
-      setTimeout(() => (oaCopied = false), 1500)
+      await navigator.clipboard.writeText(val)
+      copied = kind
+      setTimeout(() => (copied = ''), 1500)
     } catch {
       input.select()
     }
@@ -407,8 +396,8 @@
       <span>会话令牌（本次启动内有效；REST/SSE 用 X-EZ-Token 头，浏览器自动发起的导航、图片、PDF 请求用 ez_token cookie）</span>
       <span class="tokenRow">
         <input type="text" bind:value={apiToken} readonly placeholder="加载中…" />
-        <button onclick={(e) => copyToken((e.currentTarget as HTMLButtonElement).previousElementSibling as HTMLInputElement)}>
-          {tokenCopied ? '已复制' : '复制'}
+        <button onclick={(e) => copyToken((e.currentTarget as HTMLButtonElement).previousElementSibling as HTMLInputElement, 'api')}>
+          {copied === 'api' ? '已复制' : '复制'}
         </button>
       </span>
     </label>
@@ -416,8 +405,8 @@
       <span>OpenAPI 令牌（脚本/快应用/外部程序调 /api/open/* 用；持久有效，重置后旧令牌立即作废）</span>
       <span class="tokenRow">
         <input type="text" bind:value={oaToken} readonly placeholder="加载中…" />
-        <button onclick={(e) => copyOaToken((e.currentTarget as HTMLButtonElement).previousElementSibling as HTMLInputElement)}>
-          {oaCopied ? '已复制' : '复制'}
+        <button onclick={(e) => copyToken((e.currentTarget as HTMLButtonElement).previousElementSibling as HTMLInputElement, 'oa')}>
+          {copied === 'oa' ? '已复制' : '复制'}
         </button>
         <button onclick={resetOaToken} disabled={oaResetting || !oaToken}>{oaResetting ? '重置中…' : '重置'}</button>
       </span>

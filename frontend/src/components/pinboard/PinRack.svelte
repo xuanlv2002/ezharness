@@ -35,9 +35,9 @@
   const cardHtml = $derived.by(() =>
     card ? renderPinMarkdown(card.text || (card.images?.length ? '' : '（空便签）')) : '',
   )
-  const latest = $derived(card ? latestSession(card) : undefined)
+  const latest = $derived(card?.sessions?.length ? card.sessions[card.sessions.length - 1] : undefined)
   const latestTime = $derived(latest ? sessionTime(latest) : '')
-  const extra = $derived(card ? extraSessions(card) : 0)
+  const extra = $derived(Math.max(0, (card?.sessions?.length ?? 0) - 1))
 
   let creatingFor = $state('')
   let deleteAsk = $state(false)
@@ -162,14 +162,6 @@
     const c = items.find((x) => x.id === d.id)
     return c ? { c, d } : null
   })
-
-  function latestSession(c: PinCard): PinSessionRef | undefined {
-    return c.sessions?.length ? c.sessions[c.sessions.length - 1] : undefined
-  }
-
-  function extraSessions(c: PinCard): number {
-    return Math.max(0, (c.sessions?.length ?? 0) - 1)
-  }
 
   function sessionTitle(s: PinSessionRef): string {
     return store.branches.find((b) => b.id === s.id)?.title || s.title || '会话'

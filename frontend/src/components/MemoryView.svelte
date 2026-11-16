@@ -187,7 +187,7 @@
     memBusy = true
     try {
       const r = await api.saveLongtermItems(target, items)
-      if (longterm) longterm[target] = r.items || items
+      if (longterm) longterm[target] = r.items
     } catch (e) {
       message = `记忆保存失败：${(e as Error).message}`
     } finally {
@@ -1034,7 +1034,6 @@
               {#if n.isLeaf && n.lineRoot && !(n.isActiveLine)}
                 <button class="op" onclick={() => switchLine(n)} title="切到该分支的当前叶继续">切到分支</button>
               {/if}
-              <button class="op" disabled title="手动归档：后续版本开放">归档</button>
             </div>
           </div>
         {/if}

@@ -791,30 +791,24 @@ class AppStore {
   /* ── 魔法看板（图片查看器的画布引擎，草稿入口） ── */
 
   /* openImageDraft 打开画板（输入框画笔钮 / 续编 chip / 消息内 base64 图片）：
-     底图只放内存（dataURL），不落盘——点开画板不产生文件；保存（写回/
-     添加到对话）时才 stash 成 tmp 真身并回填路径。dataURL 可序列化，
-     草稿跨窗口（拖出为独立窗口/弹回抽屉）照常搬运。source 无 = 空白画板。 */
+     底图只放内存（dataURL），不落盘——点开画板不产生文件；保存时才 stash 成
+     tmp 真身并回填路径。dataURL 可序列化，草稿跨窗口照常搬运。source 无 = 空白画板。 */
   async openImageDraft(source: File | null = null) {
     try {
-      const file = source ?? (await blankBoardPng())
-      this.openImageDraftData(await fileToDataUrl(file))
+      const dataUrl = await fileToDataUrl(source ?? (await blankBoardPng()))
+      if (!dataUrl) return
+      /* 已弹出则转发信号，否则拉开抽屉文件页；ResourcePane 消费 fileDraftSrc 建草稿 tab */
+      if (this.popoutTools.includes('file')) {
+        ;(window as any).ez?.popout?.signal('file', 'draft', dataUrl)
+        this.yieldDrawer('file')
+        return
+      }
+      this.fileDraftSrc = dataUrl
+      this.drawerTool = 'file'
+      this.termDrawerOpen = true
     } catch (e) {
       this.lastStatus = `画板打开失败：${(e as Error).message}`
     }
-  }
-
-  /* openImageDraftData 把内存草稿（dataURL）送进资源页：已弹出则转发信号，
-     否则拉开抽屉文件页。ResourcePane 消费 fileDraftSrc 建草稿 tab。 */
-  openImageDraftData(dataUrl: string) {
-    if (!dataUrl) return
-    if (this.popoutTools.includes('file')) {
-      ;(window as any).ez?.popout?.signal('file', 'draft', dataUrl)
-      this.yieldDrawer('file')
-      return
-    }
-    this.fileDraftSrc = dataUrl
-    this.drawerTool = 'file'
-    this.termDrawerOpen = true
   }
 
   /* bumpImg 图片写回后按路径递增缩略图版本（同 URL 的 img 立即换 src，

@@ -16,6 +16,7 @@ package controller
 import (
 	"errors"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -138,18 +139,8 @@ func (c *MediaController) JobGET(g *gin.Context) {
 /* JobsGET GET /api/open/media/jobs?limit=：最近任务（新→旧，默认 20）。 */
 func (c *MediaController) JobsGET(g *gin.Context) {
 	limit := 20
-	if v := g.Query("limit"); v != "" {
-		n := 0
-		for _, ch := range v {
-			if ch < '0' || ch > '9' {
-				n = -1
-				break
-			}
-			n = n*10 + int(ch-'0')
-		}
-		if n > 0 {
-			limit = n
-		}
+	if n, err := strconv.Atoi(g.Query("limit")); err == nil && n > 0 {
+		limit = n
 	}
 	jobs := c.Svc.Jobs(limit)
 	/* 清单是轮询接口：剥掉图片/音频的内嵌 base64（可达数 MB/条），

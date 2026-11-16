@@ -254,11 +254,6 @@
     inputMode = false
   }
 
-  /* removeRecent 把快捷目录从「最近」清单移除（工作目录常驻，不在清单里） */
-  function removeRecent(path: string) {
-    recent = recent.filter((p) => p !== path)
-    localStorage.setItem('ez-explorer-recent', JSON.stringify(recent))
-  }
 
   /* ── 展开状态记忆（按根目录分别保存）：重开面板/切走再切回都还原 ── */
 
@@ -516,7 +511,11 @@
               role="button"
               tabindex="-1"
               title="从列表移除"
-              onclick={(e) => { e.stopPropagation(); removeRecent(it.path) }}
+              onclick={(e) => {
+                e.stopPropagation()
+                recent = recent.filter((p) => p !== it.path)
+                localStorage.setItem('ez-explorer-recent', JSON.stringify(recent))
+              }}
             >
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round">
                 <path d="M6 6l12 12M18 6L6 18" />

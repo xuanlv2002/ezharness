@@ -391,26 +391,13 @@ async function coreSettings() {
     return {}
   }
 }
-async function saveCloseToTray(value) {
+/* saveSetting 写 core 的单个用户设置（core 不可达时保持现状） */
+async function saveSetting(patch) {
   try {
-    await coreFetch('/api/settings', { method: 'POST', body: JSON.stringify({ closeToTray: value }) })
+    await coreFetch('/api/settings', { method: 'POST', body: JSON.stringify(patch) })
   } catch {
     /* core 不可达时保持现状 */
   }
-}
-async function savePetEnabled(value) {
-  try {
-    await coreFetch('/api/settings', { method: 'POST', body: JSON.stringify({ petEnabled: value }) })
-  } catch {
-    /* core 不可达时保持现状 */
-  }
-}
-
-/* 关闭悬浮球：hide 不销毁（保留用户拖放的位置，重开即原位）；持久化 false，
-   重启后不再建窗 */
-function hidePetBall() {
-  if (petWindow && !petWindow.isDestroyed()) petWindow.hide()
-  void savePetEnabled(false)
 }
 
 /* createPetWindow 桌面宠物：透明置顶 288 固定小窗，头像中心落在鼠标
@@ -442,7 +429,7 @@ function createPetWindow() {
   guardWebContents(win.webContents)
   /* 右键只弹「关闭悬浮球」（头像层放行 contextmenu，见 AssistantPet） */
   win.webContents.on('context-menu', () => {
-    Menu.buildFromTemplate([{ label: '关闭悬浮球', click: () => hidePetBall() }]).popup()
+    Menu.buildFromTemplate([{ label: '关闭悬浮球', click: () => { if (petWindow && !petWindow.isDestroyed()) petWindow.hide(); void saveSetting({ petEnabled: false }) } }]).popup()
   })
   win.once('ready-to-show', () => win.show())
   win.on('closed', () => {
@@ -612,7 +599,7 @@ function registerIpc() {
     overlayPreview(false)
     if (tray) {
       hideMainToTray()
-      if (remember) void saveCloseToTray(true)
+      if (remember) void saveSetting({ closeToTray: true })
     } else {
       quitApp()
     }

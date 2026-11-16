@@ -83,10 +83,6 @@
     return { list: out, total: left + EDGE }
   })
 
-  function clearPeek() {
-    peekId = ''
-  }
-
   /*
   悬停抽出（扑克式）：卡片只上移、不变高，压在左侧（z 更高）的卡下面，
   露出一截即可；完整内容点开当天查看。
@@ -283,7 +279,7 @@
   role="group"
   aria-label="完成时间线"
   onpointermove={onPeekMove}
-  onpointerleave={clearPeek}
+  onpointerleave={() => (peekId = '')}
   onpointerdown={onDown}
   onwheel={onWheel}
 >

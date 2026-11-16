@@ -22,7 +22,7 @@ import (
 )
 
 type loadAppArgs struct {
-	Name string `json:"name" desc:"应用目录名（list_apps 可查）"`
+	Name string `json:"name" desc:"应用目录名（<apps> 清单可查）"`
 }
 
 /* LoadApp 读取应用元数据、调用文档与版本历史。 */
@@ -35,7 +35,7 @@ func LoadApp(fsys osfs.OS) types.Tool {
 			name := strings.TrimSpace(in.Name)
 			info, err := quickapp.Load(ctx, fsys, name)
 			if errors.Is(err, quickapp.ErrNotFound) {
-				return "", fmt.Errorf("无快应用 %q（用 list_apps 查清单）", name)
+				return "", fmt.Errorf("无快应用 %q（见 <apps> 清单）", name)
 			}
 			if err != nil {
 				return "", err

@@ -1,9 +1,4 @@
-/*
-共享终端连接管理:单条 WebSocket 多路复用全部终端(帧带 id 路由)。
-hello/terminals 帧同步会话清单(含 AI 新建的),data 帧分发输出字节
-(xterm.write 直收 Uint8Array,多字节序列由其内部缓冲解析),断线指数
-退避重连,重连后 hello 快照恢复屏幕。模块单例,看板 keep-alive 常驻。
-*/
+/* 共享终端连接管理：单条 WebSocket 多路复用全部终端，断线重连后 hello 快照恢复屏幕 */
 
 import { wsProtocols } from './auth'
 

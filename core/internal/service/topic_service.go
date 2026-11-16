@@ -288,11 +288,11 @@ func (t *TopicService) Switch(ctx context.Context, rootID string) error {
 }
 
 /*
-EnsureSession 返回指定叶 session 的已装配会话（按 session ID 精确定位，
+GetSession 返回指定叶 session 的已装配会话（按 session ID 精确定位，
 不切换活动分支）。会话已归档、正在归档、已被 compact 换代或还没落盘
 时返回对应错误——定时回调绑定的是创建任务时的那个会话，不跟随新叶。
 */
-func (t *TopicService) EnsureSession(ctx context.Context, sessionID string) (*domain.Session, error) {
+func (t *TopicService) GetSession(ctx context.Context, sessionID string) (*domain.Session, error) {
 	sessionID = strings.TrimSpace(sessionID)
 	if sessionID == "" {
 		return nil, ErrSessionNotFound

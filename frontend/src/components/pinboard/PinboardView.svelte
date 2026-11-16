@@ -846,7 +846,6 @@
   .dbtn.save:hover {
     opacity: 0.9;
   }
-  /* 正文行块渲染（与编辑器同款排版） */
   /* 正文行块样式在 PinRichEditor：与编辑器同款行高/间距 */
   .dtext {
     font-size: var(--font-size-section);

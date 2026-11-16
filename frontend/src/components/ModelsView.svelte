@@ -140,8 +140,6 @@
     return v || fallback
   }
 
-  const HTML_ESCAPES: Record<string, string> = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }
-  const escapeHtml = (s: string) => s.replace(/[&<>"']/g, (c) => HTML_ESCAPES[c] ?? c)
 
   function buildOption(t: NonNullable<typeof trend>) {
     void theme.current // 读一下主题：切换时下面 cssVar 取到的已是新色，effect 依赖它整图重绘
@@ -195,7 +193,7 @@
             .map(
               (p) => `<div style="display:flex;align-items:center;gap:6px;padding:3px 10px">
                 <span style="flex:none;width:6px;height:6px;border-radius:50%;background:${p.color ?? muted}"></span>
-                <span style="flex:1;color:${muted}">${escapeHtml(p.seriesName ?? '')}</span>
+                <span style="flex:1;color:${muted}">${(p.seriesName ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!)}</span>
                 <b style="color:${fg};font-weight:600">${fmtTokens(p.value?.[1] ?? 0)}</b>
               </div>`,
             )

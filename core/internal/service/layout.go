@@ -1,5 +1,5 @@
 /*
-EnsureLayout 在服务开始监听前把数据目录的全部配置文件与运行目录一次建好
+CreateLayout 在服务开始监听前把数据目录的全部配置文件与运行目录一次建好
 （只补缺失，不覆盖已有内容）：首次运行后不再依赖运行期懒创建。任何一项建
 不出来都立即返回错误并带出路径——只读安装目录之类的问题在启动时就暴露，
 而不是等用户发消息时才发现写不进去。
@@ -26,10 +26,10 @@ type layoutFile struct {
 }
 
 /*
-EnsureLayout 补齐数据目录布局（进程 cwd 即数据目录），返回本次新建的相对
+CreateLayout 补齐数据目录布局（进程 cwd 即数据目录），返回本次新建的相对
 路径。每次启动都跑一遍：首次创建，之后只做缺失修复。
 */
-func EnsureLayout() ([]string, error) {
+func CreateLayout() ([]string, error) {
 	ctx := context.Background()
 	fsys := osfs.OS{}
 
@@ -61,7 +61,7 @@ func EnsureLayout() ([]string, error) {
 			return SaveToolRules(ctx, fsys, domain.DefaultToolRules())
 		}},
 		{"stats.json", func(_ context.Context, fsys osfs.OS) error {
-			_, err := domain.EnsureStatsFile(fsys)
+			_, err := domain.CreateStatsFile(fsys)
 			return err
 		}},
 		{hooks.TopicsJson, func(ctx context.Context, fsys osfs.OS) error {

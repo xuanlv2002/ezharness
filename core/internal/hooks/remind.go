@@ -1,21 +1,7 @@
 /*
-remind 是系统提醒 hook：统一负责"系统→模型"的全部单向旁路消息，
-内部分三段（逻辑自闭，各段独立成模块防大杂烩）：
-
-  - 快照段（每轮 OnStart）：<agent_status> 水位/时间快照 + status.snapshot
-    SSE 事件（前端右上角水位条）——system 每 session 固定，水位与时间
-    是轮内唯一需要同步的运行时状态；
-  - 变更段（每轮 OnStart，reschange.go）：skill/mcp/模型/快应用基线 diff，
-    有变化才插一条 <resource_change> 消息（附变更后完整清单）+
-    resource.change 事件（按需、零噪音）；基线持久化随 session
-    （重启不重复报）；
-  - 收尾段（每轮 OnEnd）：<end_reason> 轮次/时长/结束原因 + 记录
-    LastOutputAt（下轮"距上次输出"用）。须排在 sessionstore 落盘前
-    ——快照与内存同源。
-
-变更检测留在此处（而非 skilltool/mcp hook）的分界判据：检测依赖
-session 域状态（Store 里的资源基线），而 skilltool/mcp 是可下沉
-ezloop 的纯工具组件，不得耦合宿主 session 概念（见 docs/hooks.md）。
+remind 是系统提醒 hook：负责"系统→模型"的单向旁路消息——快照（水位/时间）、
+变更（reschange 基线 diff）、收尾（end_reason）三段。
+变更检测依赖 session 域基线，故留在此处而非可下沉的纯工具 hook。
 */
 package hooks
 

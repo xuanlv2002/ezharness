@@ -325,7 +325,7 @@
     font-family: var(--font-mono);
     font-size: var(--font-size-small);
     color: var(--faint);
-    white-space: nowrap; // 日期断行比溢出更难看
+    white-space: nowrap; /* 日期断行比溢出更难看 */
   }
   .footbtns {
     display: inline-flex;
@@ -376,7 +376,7 @@
     padding: 5px 12px;
     font-size: var(--font-size-ui);
     font-weight: 500;
-    white-space: nowrap; // 底行拥挤时「启动」不许竖排
+    white-space: nowrap; /* 底行拥挤时「启动」不许竖排 */
     flex-shrink: 0;
   }
   .run svg {

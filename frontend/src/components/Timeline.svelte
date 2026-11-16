@@ -16,11 +16,7 @@
   const shown = $derived(foldBlocks(store.blocks))
   const rows = $derived(buildRows(shown))
 
-  /* 大会话只挂最近一段行：打开/切页时不必为整段历史建 DOM、跑 markdown。
-     窗口同时受行数与正文字数约束——上下文塞满的会话行数可能不多，但每条
-     消息很长，只按行数切仍会把一次打开的一半开销留在首屏。起点在会话
-     首次载入时锚定，流式追加只长尾部；点「显示更早」或轮次导航跳到窗口外
-     时才向前扩。 */
+  /* 大会话只挂最近一段行（行数 + 字数双限：长消息的会话只按行切仍会拖慢首屏），起点载入时锚定，向前按需扩 */
   const INITIAL_ROWS = 40
   const INITIAL_MIN_ROWS = 6
   const BUDGET_CHARS = 128 * 1024
@@ -156,12 +152,8 @@
     box.scrollTop = Math.max(0, cur.offsetTop - box.clientHeight / 2 + cur.offsetHeight / 2)
   })
 
-  /* ── 吸底（stick）机制 ──
-  selfScroll：程序设 scrollTop 引发的 scroll 事件不算用户滚动（否则
-  吸底回弹会被误判成"用户滚回底部"又把 stick 置真）。
-  lastUserScrollAt：用户滚动（滚动条拖动/触摸/wheel）后 300ms 内暂停
-  跟随——流式 tick 不再把刚滚上去的视口拽回底部，脱离吸附不再费劲。
-  滞回：<30px 恢复跟随，>120px 脱离，中间保持，杜绝边界抖动。 */
+  /* 吸底机制：程序滚动（selfScroll）不算用户滚动；用户滚动后 300ms 内流式 tick 不拽回底部；
+     滞回 <30px 恢复跟随、>120px 脱离，杜绝边界抖动 */
   let selfScroll = false
   let lastUserScrollAt = 0
   /* 快速跳转：向上滚给"回顶"，向下滚给"回底"；已在某端则改为去另一端 */

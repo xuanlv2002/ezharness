@@ -54,7 +54,7 @@ func (h *Remind) buildChanges(ctx context.Context) (items []string, skills, mcps
 	if h.disabled != nil {
 		off = h.disabled()
 	}
-	isOff := func(path string) bool { return slices.Contains(off, SkillDirOf(path)) }
+	isOff := func(path string) bool { return slices.Contains(off, skill.DirOf(path)) }
 
 	// 全量收集（内建优先，与 <skills> 段同一归置），启停只标注不过滤
 	type skillState struct {

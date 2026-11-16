@@ -532,14 +532,14 @@
     onDone?.(await exportFile())
   }
 
-  async function init() {
+  async function load() {
     if (source) {
       const url = URL.createObjectURL(source)
       try {
         const img = new Image()
         img.src = url
         /* 解码失败也要落回（onerror→false 早退）：只挂 onload 的 Promise
-           永不 resolve，init 挂起画板白屏 */
+           永不 resolve，load 挂起画板白屏 */
         const ok = await new Promise<boolean>((r) => {
           img.onload = () => r(true)
           img.onerror = () => r(false)
@@ -571,11 +571,11 @@
 
   /* 首次可见即初始化一次（tab 可能 display:none 挂载，clientWidth=0，
   用 ResizeObserver 等到有尺寸再测）。不可用 $effect：refresh 读
-  elements/selected，会把交互写入反哺成重新 init，画布被反复清空。 */
+  elements/selected，会把交互写入反哺成重新 load，画布被反复清空。 */
   onMount(() => {
     const wrap = canvas?.parentElement
     if (!wrap || !canvas) {
-      void init()
+      void load()
       return
     }
     let measured = false
@@ -588,7 +588,7 @@
       ro.disconnect()
       if (!source) {
         /* 空白创作按容器 × dpr 定画布尺寸（cap 2048）；编辑场景由
-        init() 按图片原始尺寸定，容器测量不覆盖 */
+        load() 按图片原始尺寸定，容器测量不覆盖 */
         const dpr = Math.min(window.devicePixelRatio || 1, 2)
         W = Math.min(Math.round(w * dpr), 2048) || W
         H = Math.min(Math.round(h * dpr), 2048) || H
@@ -597,7 +597,7 @@
         buf.width = W
         buf.height = H
       }
-      void init()
+      void load()
     }
     const ro = new ResizeObserver(measure)
     ro.observe(wrap)

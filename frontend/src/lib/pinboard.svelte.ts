@@ -207,8 +207,7 @@ function snapshot(): PinboardData {
   return {
     v: board.v,
     z: board.z,
-    cards: board.cards.map((c) => ({ ...c })),
-    done: board.done.map((r) => ({ ...r })),
+    ...boardSnap(),
   }
 }
 

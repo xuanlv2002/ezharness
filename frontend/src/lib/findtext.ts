@@ -1,9 +1,4 @@
-/*
-文件内文本查找的纯函数：把一段纯文本里的命中切出来，再拼成
-「原文 + <mark>」的 HTML 叠层（textarea 本身不能给局部文字上色，
-资源查看器靠同字体的透明垫层显示命中底色）。大小写不敏感、不重叠，
-与页面查找（FindBar）同一检索语义。
-*/
+/* 文件内文本查找纯函数：命中拼成「原文 + <mark>」HTML 叠层（textarea 不能给局部文字上色） */
 
 export interface MatchRange {
   start: number
