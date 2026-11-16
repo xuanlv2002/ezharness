@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { tick } from 'svelte'
+  import { onMount, tick } from 'svelte'
   import { store, type Block } from '../lib/store.svelte'
   import { buildRows, foldBlocks } from '../lib/rows'
   import Logo from './Logo.svelte'
@@ -208,9 +208,27 @@
 
   function jump(direction: 'top' | 'bottom') {
     if (!el) return
-    if (direction === 'bottom') stick = true
-    el.scrollTo({ top: direction === 'top' ? 0 : el.scrollHeight, behavior: 'smooth' })
+    if (direction === 'bottom') {
+      /* 平滑滚动的目标高度是点击瞬间的 scrollHeight，滚到底前离屏正文
+         换真身会把底部继续推高，动画停在半路要再点。直接贴底，并清掉
+         刚滚动的冷却，让后续懒渲染的增长事件继续补到底 */
+      stick = true
+      lastUserScrollAt = 0
+      follow()
+      return
+    }
+    el.scrollTo({ top: 0, behavior: 'smooth' })
   }
+
+  /* 对话页切走时只是 display:none（常驻挂载），隐藏期从记忆/回调页打开
+     会话量不到高度，follow 落空；重新显示或容器尺寸变化时补一次贴底 */
+  onMount(() => {
+    const ro = new ResizeObserver(() => {
+      if (stick && !pull && Date.now() - lastUserScrollAt > 300) follow()
+    })
+    ro.observe(el)
+    return () => ro.disconnect()
+  })
 
   async function jumpTo(uid: number) {
     if (!el) return
@@ -413,21 +431,19 @@
 
   function onScroll() {
     if (!el) return
-    if (selfScroll) {
-      /* 程序滚动（吸底回弹）：不动 stick，也别记成用户滚动 */
-      selfScroll = false
-      lastTop = el.scrollTop
-      scheduleActive()
-      return
-    }
-    lastUserScrollAt = Date.now()
     const top = el.scrollTop
     const dist = el.scrollHeight - top - el.clientHeight
     const goingUp = top < lastTop
     lastTop = top
-    if (dist < 30) stick = true
-    else if (dist > 120) stick = false
-    /* 不足一屏时没有可跳的距离 */
+    if (selfScroll) {
+      /* 程序滚动（吸底回弹）：不动 stick，也别记成用户滚动 */
+      selfScroll = false
+    } else {
+      lastUserScrollAt = Date.now()
+      if (dist < 30) stick = true
+      else if (dist > 120) stick = false
+    }
+    /* 跳转钮方向按实际位置更新，程序贴底后也要从「回底」切成「回顶」 */
     if (el.scrollHeight <= el.clientHeight + 24) jumpDir = ''
     else if (top <= 24) jumpDir = 'bottom'
     else if (dist <= 24) jumpDir = 'top'
