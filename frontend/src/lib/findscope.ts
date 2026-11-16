@@ -10,8 +10,6 @@ Ctrl+F 的键盘归属（资源查看器 ↔ 页面查找）。
     没有），由 ResourcePane 的响应式状态持续刷新。
 
 FindBar 看到 file && enabled 就让位；ResourcePane 看到同一条件就接管。
-HTML 预览的 iframe 有独立文档，父页收不到它的指针/键盘事件，由
-HtmlViewer 在 frame 文档里补转发（置位 + Ctrl+F 回调）。
 */
 
 export const findScope = {

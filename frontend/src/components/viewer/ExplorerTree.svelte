@@ -19,6 +19,7 @@
   import { fileBaseName } from '../../lib/textfile'
   import { termManager } from '../../lib/term'
   import { store } from '../../lib/store.svelte'
+  import { toFileUrl } from '../../lib/respaths'
   import KindIcon from './KindIcon.svelte'
   import { kindOf } from './registry'
 
@@ -400,18 +401,11 @@
     }
   }
 
-  /* file:// URL（集成浏览器直接读盘，不走带鉴权的文件 API）：POSIX
-     绝对路径 → file:///a/b；Windows 盘符 → file:///C:/a/b */
-  function fileUrl(p: string, dir: boolean): string {
-    const s = p.replace(/\\/g, '/') + (dir && !p.endsWith('/') ? '/' : '')
-    return encodeURI('file://' + (s.startsWith('/') ? '' : '/') + s)
-  }
-
   function openBrowserCtx() {
     const p = ctx?.path
     const isDir = ctx?.dir
     ctx = null
-    if (p) store.openBrowserUrl(fileUrl(p, isDir))
+    if (p) void store.openBrowserUrl(toFileUrl(p, isDir))
   }
 
   /* ── 新建文件/文件夹（行内命名，不弹窗）：输入行挂目标目录的子层首行，

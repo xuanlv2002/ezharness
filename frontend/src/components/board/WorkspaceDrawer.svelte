@@ -267,7 +267,7 @@
         <TerminalTab active={open && tool === 'term'} />
       </div>
       <div class="pane" class:hidden={tool !== 'file'}>
-        <ResourcePane active={open && tool === 'file'} hosted />
+        <ResourcePane active={open && tool === 'file'} {animating} hosted />
       </div>
       <div class="pane" class:hidden={tool !== 'browser'}>
         <BrowserPane active={open && tool === 'browser'} {animating} />

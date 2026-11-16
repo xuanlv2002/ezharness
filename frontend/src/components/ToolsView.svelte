@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onDestroy, onMount } from 'svelte'
+  import { onMount } from 'svelte'
   import { api, type AppEntry } from '../lib/api'
   import { store } from '../lib/store.svelte'
   import { openAppWindow } from '../lib/apps'
@@ -19,16 +19,13 @@
     if (broadcast) window.dispatchEvent(new Event('ez:apps-changed'))
   }
 
-  onMount(async () => {
-    try {
-      await loadAll()
-    } catch {
-      /* 后端不可达时空列表 */
-    }
-    loaded = true
+  onMount(() => {
+    void loadAll()
+      .catch(() => {})
+      .finally(() => (loaded = true))
     /* 后端运行态是活的（会崩会退）：页面开着就低频跟盘（静默，不广播侧栏） */
     const timer = setInterval(() => void loadAll(false).catch(() => {}), 15000)
-    onDestroy(() => clearInterval(timer))
+    return () => clearInterval(timer)
   })
 
   /* 启动：独立窗口打开（带后端的应用后端可能起不来，失败要出声）。启动后

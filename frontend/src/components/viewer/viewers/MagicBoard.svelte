@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte'
+  import type { BoardData, BoardElement, BoardPoint } from '../../../lib/boardData'
 
   /*
   魔法画板（图片查看器的画布引擎，对象模型）：元素存对象数组，静态层
@@ -8,17 +9,19 @@
   椭圆、箭头、文本。贴入图片作底图垫底；导出走离屏合成。
   常驻保活（keep-alive）：active 仅在本 tab 激活时为真，键盘监听与
   尺寸测量都按此守卫（display:none 下 clientWidth=0）。
-  exportFile 供外层（ImageViewer 保存写回）取合成产物；onDone 是
-  底部主按钮（「添加到对话」）的回流。
+  initial 是跨窗口带回的元素；getElements 供 ImageViewer 存进 tab；
+  exportFile 供外层取合成产物；onDone 是底部主按钮的回流。
   */
   let {
     source = null,
+    initial = [],
     active = false,
     doneLabel = '添加到聊天',
     onDone,
     onChange,
   }: {
     source?: File | null
+    initial?: BoardData
     active?: boolean
     doneLabel?: string
     onDone?: (f: File) => void
@@ -34,13 +37,10 @@
   const sizes = [2, 4, 9]
   const SEL_COLOR = '#2563eb'
 
-  type Pt = { x: number; y: number }
+  type Pt = BoardPoint
   type Tool = 'select' | 'pen' | 'eraser' | 'rect' | 'ellipse' | 'arrow' | 'text'
   type ShapeKind = 'rect' | 'ellipse' | 'arrow'
-  type El =
-    | { id: number; kind: 'pen' | 'eraser'; color: string; size: number; pts: Pt[] }
-    | { id: number; kind: ShapeKind; color: string; size: number; a: Pt; b: Pt }
-    | { id: number; kind: 'text'; color: string; size: number; x: number; y: number; text: string }
+  type El = BoardElement
 
   const tools: { key: Tool; label: string; icon: string }[] = [
     { key: 'select', label: '选择（拖动 / Del 删除 / 双击改字）', icon: '<path d="M4 3l7 17 2.5-7 7-2.5z"/>' },
@@ -469,6 +469,7 @@
     elements = structuredClone(snap) // snapshot 不可变，克隆出可写副本
     selected = null
     refresh()
+    onChange?.()
   }
 
   function clearAll() {
@@ -490,6 +491,33 @@
   }
 
   /* ── 导出与生命周期 ── */
+
+  /* getElements 导出元素快照：ImageViewer 存进 tab，跨窗口搬运 */
+  export function getElements(): BoardData {
+    return $state.snapshot(elements) as BoardData
+  }
+
+  /* resetBase 保存成功后用合成图换底图并清空元素，避免下次导出重复叠加 */
+  export async function resetBase(file: File): Promise<void> {
+    const url = URL.createObjectURL(file)
+    try {
+      const img = new Image()
+      img.src = url
+      await new Promise<void>((resolve, reject) => {
+        img.onload = () => resolve()
+        img.onerror = () => reject(new Error('图片解码失败'))
+      })
+      baseImg = img
+      elements = []
+      selected = null
+      snapshots = []
+      canUndo = false
+      rebuildBuf()
+      doPaint()
+    } finally {
+      URL.revokeObjectURL(url)
+    }
+  }
 
   /* exportFile 合成当前画布（底图+元素）为 PNG File——保存写回与
   「添加到对话」共用的导出通道 */
@@ -538,7 +566,8 @@
     }
     buf.width = W
     buf.height = H
-    elements = []
+    elements = initial.length ? (structuredClone($state.snapshot(initial)) as BoardData) : []
+    nextId = elements.reduce((max, el) => Math.max(max, el.id), 0) + 1
     selected = null
     snapshots = []
     canUndo = false

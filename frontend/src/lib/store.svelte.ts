@@ -25,6 +25,25 @@ import { linkPendingNote } from './pinboard.svelte'
 import { openExternal } from './desktop'
 import pkg from '../../package.json'
 
+/* 浏览器标签匹配：URL 解码后比较，忽略锚点与编码差异 */
+function getUrlKey(url: string): string {
+  try {
+    const u = new URL(url)
+    u.hash = ''
+    return decodeURI(u.href)
+  } catch {
+    return url
+  }
+}
+
+async function getBrowserTabs(api: any): Promise<{ id: string; url: string }[]> {
+  try {
+    return JSON.parse(await api.list())
+  } catch {
+    return []
+  }
+}
+
 /* newerVersion：a 是否比 b 新（v 前缀可有可无，按点分段数值比较，缺段补 0）。
    本地版本 = pkg.version（与页脚同源）；设置页版本检查共用。 */
 export function newerVersion(a: string, b: string): boolean {
@@ -900,16 +919,18 @@ class AppStore {
     }
   }
 
-  /* openBrowserUrl 用共享浏览器打开一个地址（资源页右键「在集成浏览器
-     打开」）：新建标签并切到浏览器页；浏览器已弹出则聚焦弹出窗。 */
-  openBrowserUrl(url: string) {
+  /* openBrowserUrl 用共享浏览器打开地址（资源页右键）：
+     已有同地址标签就切过去，否则新建；浏览器已弹出则聚焦弹出窗。 */
+  async openBrowserUrl(url: string) {
     const ez = (window as any).ez
     if (!ez?.browser) {
       this.lastStatus = '浏览器仅桌面端可用'
       return
     }
+    const open = (await getBrowserTabs(ez.browser)).find((t) => getUrlKey(t.url) === getUrlKey(url))
+    if (open) ez.browser.focusTab(open.id)
+    else ez.browser.create(url)
     this.ensureWorkspaceView()
-    ez.browser.create(url)
     if (this.popoutTools.includes('browser')) {
       ez.popout?.open('browser')
       this.yieldDrawer('browser')
@@ -917,6 +938,14 @@ class AppStore {
       this.drawerTool = 'browser'
       this.termDrawerOpen = true
     }
+  }
+
+  /* reloadBrowserUrl 刷新已打开同地址的标签（HTML 保存后自动调用） */
+  async reloadBrowserUrl(url: string) {
+    const api = (window as any).ez?.browser
+    if (!api) return
+    const open = (await getBrowserTabs(api)).find((t) => getUrlKey(t.url) === getUrlKey(url))
+    if (open) api.reload(open.id)
   }
 
   closeTermDrawer() {

@@ -12,6 +12,7 @@ const http = require('http')
 const crypto = require('crypto')
 const { spawn } = require('child_process')
 const { startBrowserModule, overlayBrowser } = require('./browser')
+const { startPreviewModule, overlayPreview } = require('./preview')
 const { attachInspectMenu } = require('./inspect')
 
 /* 应用名先行确定：mac/Linux 的用户数据目录由 app.getPath('userData') 推导，
@@ -540,6 +541,7 @@ async function handleCloseRequest() {
      藏起，否则浏览器内容会盖住确认框 */
   if (mainWindow && !mainWindow.isDestroyed()) showMain()
   overlayBrowser(true)
+  overlayPreview(true)
   mainWindow.webContents.send('ez:close-prompt')
   return { prompt: true }
 }
@@ -610,6 +612,7 @@ function registerIpc() {
   ipcMain.handle('ez:close-request', () => handleCloseRequest())
   ipcMain.on('ez:close-decision', (_e, tray, remember) => {
     overlayBrowser(false) /* 恢复被确认框临时藏起的浏览器视图 */
+    overlayPreview(false)
     if (tray) {
       hideMainToTray()
       if (remember) void saveCloseToTray(true)
@@ -618,7 +621,10 @@ function registerIpc() {
     }
   })
   /* 取消关闭：同样恢复浏览器视图（关闭确认框把它临时藏起了） */
-  ipcMain.on('ez:close-cancel', () => overlayBrowser(false))
+  ipcMain.on('ez:close-cancel', () => {
+    overlayBrowser(false)
+    overlayPreview(false)
+  })
   ipcMain.on('ez:open-url', (_e, url) => {
     if (typeof url === 'string' && /^https?:\/\//.test(url)) shell.openExternal(url)
   })
@@ -852,6 +858,7 @@ app.whenReady().then(async () => {
   migrateLegacyRoot()
   await startCore()
   await setCoreCookie()
+  startPreviewModule()
   createMainWindow()
   createTray()
   registerIpc()
