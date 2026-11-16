@@ -865,11 +865,7 @@ func (s *Session) restoreFrom(snap *hooks.SessionSnap) {
 	s.setHistory(snap.Messages)
 	s.Sess.SetTitle(snap.Title)
 	s.Sess.SetResSnap(snap.Snapshot)
-	// 偏好优先读独立 prefs.json；旧会话没有该文件时回落快照字段
-	prefs := hooks.Prefs{ReasoningEffort: snap.ReasoningEffort, ApproveMode: snap.ApproveMode, ActiveModel: snap.ActiveModel}
-	if p, ok := hooks.LoadPrefs(context.Background(), s.Fsys, snap.ID); ok {
-		prefs = p
-	}
+	prefs, _ := hooks.LoadPrefs(context.Background(), s.Fsys, snap.ID)
 	s.Sess.SetPrefs(prefs)
 	s.Sess.SetLastOutputAt(snap.LastOutputAt)
 	s.Sess.SeedUsage(snap.Usage)

@@ -11,7 +11,7 @@ import (
 
 /*
 会话偏好（思考/审批/主模型）随会话走：SetPrefs 立即落 prefs.json、状态快照
-返回本会话值、新线继承当前会话、恢复分支从快照字段还原；模型被关闭时
+返回本会话值、新线继承当前会话、恢复分支从 prefs.json 还原；模型被关闭时
 解析回落全局默认。覆盖「不再全局一套」的核心契约。
 */
 func TestSessionPrefsPerSession(t *testing.T) {
@@ -59,23 +59,14 @@ func TestSessionPrefsPerSession(t *testing.T) {
 		t.Fatalf("new branch status = %+v", st)
 	}
 
-	// 恢复分支：没有 prefs.json 时回落 session.json 快照字段
-	snap := &hooks.SessionSnap{
-		ID: "fk1", LineRoot: "fk1", SeedKind: "fork",
-		ReasoningEffort: "low", ApproveMode: "off", ActiveModel: "m2",
-	}
-	restored := hub.LoadBranch("fk1", snap)
-	if restored.Sess.Prefs().ReasoningEffort != "low" || restored.Sess.Prefs().ApproveMode != "off" || restored.Sess.Prefs().ActiveModel != "m2" {
-		t.Fatalf("restored prefs = %+v", restored.Sess.Prefs())
-	}
-
-	// prefs.json 优先于快照字段（轮内切换后立即生效，不必等下一轮落盘）
-	if err := hooks.SavePrefs(ctx, osfs.OS{}, "fk1", hooks.Prefs{ReasoningEffort: "max", ApproveMode: "", ActiveModel: "m1"}); err != nil {
+	// 恢复分支：偏好从 prefs.json 还原
+	snap := &hooks.SessionSnap{ID: "fk1", LineRoot: "fk1", SeedKind: "fork"}
+	if err := hooks.SavePrefs(ctx, osfs.OS{}, "fk1", hooks.Prefs{ReasoningEffort: "low", ApproveMode: "off", ActiveModel: "m2"}); err != nil {
 		t.Fatal(err)
 	}
-	again := hub.LoadBranch("fk1", snap)
-	if p := again.Sess.Prefs(); p.ReasoningEffort != "max" || p.ApproveMode != "" || p.ActiveModel != "m1" {
-		t.Fatalf("prefs.json must win over snapshot: %+v", p)
+	restored := hub.LoadBranch("fk1", snap)
+	if restored.Sess.Prefs() != (hooks.Prefs{ReasoningEffort: "low", ApproveMode: "off", ActiveModel: "m2"}) {
+		t.Fatalf("restored prefs = %+v", restored.Sess.Prefs())
 	}
 
 	// 模型被关闭：解析回落全局默认 m1（会话偏好保留，重新开启后恢复）

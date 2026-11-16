@@ -3,7 +3,7 @@
 对照 AGENTS.md 全库审计（frontend/lib、8 个大组件、中小组件、desktop、core 五路）。
 每条 `[x]` = 已改；`[ ]` = 保留未改（附原因）。
 
-**状态（2026-11-16）：确认 67 条已改 64 条（3 条兼容迁移类保留）；存疑 32 条已改 30 条（2 条有真实竞态/迁移依赖保留）；并发问题已修。**
+**状态（2026-11-17）：确认 67 条已改 64 条（3 条兼容迁移类保留）；存疑 32 条已改 31 条（1 条有真实竞态保留）；并发问题已修。**
 验证：core `go build + go vet + go test ./... + -race domain` 通过；frontend `tsc --noEmit + vite build` 通过；desktop/sdk `node --check` 通过。
 
 ## 总览
@@ -14,7 +14,7 @@
 | 死代码 | 20 | 20 | 1 | 1 |
 | 文件内碎拆 | 12 | 12 | 11 | 11 |
 | 过度设计 | 8 | 8 | 6 | 5 |
-| 兼容适配残留 | 4 | 1 | 2 | 1 |
+| 兼容适配残留 | 4 | 1 | 2 | 2 |
 | 命名大词化 | 3 | 3 | 2 | 2 |
 
 ---
@@ -137,10 +137,10 @@
 - [ ] `sessionstore.go` `RepairForkSnap` 保留：删除需先写启动迁移把存量空壳 fork 修完（含标记文件与首启扫描），涉及用户数据，单独立项
 - [ ] `sessionstore.go` 旧分身快照补读分支保留：随 `RepairForkSnap` 一起处理
 
-### 存疑 2 条（已改 1）
+### 存疑 2 条（全部已改）
 
 - [x] `api.ts` 文件头「v0.2」版本注记已删
-- [ ] `sessionstore.go` prefs.json / session.json 双源偏好保留：兼容读取旧会话偏好，需迁移完成后才能删
+- [x] `sessionstore.go` prefs.json / session.json 双源偏好已合并：prefs.json 成唯一来源，OnEnd 补写；SessionSnap 三字段与回落读取删除（老会话偏好按约定丢弃）
 
 ---
 

@@ -205,12 +205,8 @@ func (t *TopicService) Fork(ctx context.Context, sourceID string, anchor int) (*
 	if srcTitle == "" {
 		srcTitle = hooks.FirstUserTitle(src.Messages)
 	}
-	// 偏好以独立 prefs.json 为准（可能比 session.json 新），没有时回落快照字段；
 	// 源没有显式模型时钉住当时生效的默认模型，分叉后与全局默认解耦
-	prefs := hooks.Prefs{ReasoningEffort: src.ReasoningEffort, ApproveMode: src.ApproveMode, ActiveModel: src.ActiveModel}
-	if p, ok := hooks.LoadPrefs(ctx, t.Hub.Fsys, src.ID); ok {
-		prefs = p
-	}
+	prefs, _ := hooks.LoadPrefs(ctx, t.Hub.Fsys, src.ID)
 	if prefs.ActiveModel == "" {
 		if m := t.Hub.ModelsSnapshot().ActiveMain(); m != nil {
 			prefs.ActiveModel = m.Name
@@ -234,10 +230,6 @@ func (t *TopicService) Fork(ctx context.Context, sourceID string, anchor int) (*
 		ForkedFrom:   &hooks.ForkOrigin{SourceID: src.ID, Title: srcTitle, Anchor: anchor},
 		CtxTokens:    src.CtxTokens,
 		CtxWindow:    src.CtxWindow,
-		// 分支继承源会话的模型/思考/审批偏好（与“新会话从跳转来的会话取值”同规）
-		ReasoningEffort: prefs.ReasoningEffort,
-		ApproveMode:     prefs.ApproveMode,
-		ActiveModel:     prefs.ActiveModel,
 	}
 	if err := hooks.SaveSnap(ctx, t.Hub.Fsys, snap); err != nil {
 		return nil, err
