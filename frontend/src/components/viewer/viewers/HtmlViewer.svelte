@@ -35,6 +35,10 @@
     textViewer?.clearFind()
   }
 
+  export function gotoLine(from: number, to?: number): void {
+    textViewer?.gotoLine(from, to)
+  }
+
   export function scrollTop(): number {
     return textViewer?.scrollTop() ?? 0
   }

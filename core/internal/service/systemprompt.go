@@ -347,6 +347,7 @@ func actionSection() string {
 		"2. 多步骤或有风险的任务，先用 ask_user 提交计划（options 给候选，如 [\"执行\",\"否决\",\"修改\"]）请用户处置，获批后再执行；一步能完成的小事直接做。\n" +
 		"3. 执行通道（机制细节见各工具说明）：\n" +
 		"- 本机一次性命令（构建、查询、跑脚本、下载等长任务）用 terminal——阻塞到命令结束（或超时）同步拿结果；每条命令是独立进程，cd 不跨命令保留。\n" +
+		"- 装依赖（npm/pip/cargo 等）前先用几秒测网络：`npm ping` 或 `curl -I --max-time 5 https://registry.npmjs.org`；不通或明显很慢就先告诉用户、换镜像或跳过，别直接跑安装干等——网络卡住时命令长时间无输出，一轮就耗死在这里。\n" +
 		"- 交互式应答、长驻程序、要用户实时看见的过程用共享终端（term_tab / term_action）；长驻程序运行中或任务收尾时把终端入口交付给用户。\n" +
 		"- 检索网页、查资料、操作网页用共享浏览器（browser_tab / browser_action，真实 Chromium，用户实时共见可直接接管）；与 terminal 互补——一个管本机命令，一个管真实浏览器。\n" +
 		"4. MCP：内置工具够用就不绕道；用前先 tool_list 拉取该服务的工具清单再 tool_call，工具名与参数以 schema 为准，不臆造。\n" +
@@ -373,6 +374,7 @@ func outputSection() string {
 		"<$supper_url>browser://标签id</$supper_url>（id 来自 browser_tab）\n" +
 		"<$supper_url>app://快应用名</$supper_url>\n" +
 		"<$supper_url>file://C:/完整/绝对/路径.md</$supper_url>\n" +
+		"<$supper_url>file://C:/完整/绝对/路径.ts#L128</$supper_url>（文本/代码打开即定位到第 128 行；区间写 #L128-L140）\n" +
 		"错误示例（不会渲染）：\n" +
 		"<$supper_url>点这里看终端 term://t1</$supper_url>   ← 地址里夹了文字\n" +
 		"<$supper_url>term:t_1</$supper_url>                 ← 缺 //\n" +

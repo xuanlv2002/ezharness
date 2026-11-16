@@ -39,6 +39,7 @@ write_file/edit_file 有路径白名单；其余工具两档（审批/免审）�
 func DefaultToolRules() []ToolRule {
 	return []ToolRule{
 		{Key: "read_file", Level: LevelAuto},
+		{Key: "grep", Level: LevelAuto}, // 只读内容搜索
 		{Key: "write_file", Level: LevelAsk},
 		{Key: "edit_file", Level: LevelAsk},
 		{Key: "terminal", Level: LevelWhite, List: defaultCommandWhite},

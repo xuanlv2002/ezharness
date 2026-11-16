@@ -199,7 +199,7 @@ func TestBuildServersEnabledFilter(t *testing.T) {
 }
 
 /*
-卸载摘要头随阈值分档但封顶：默认 4096 → 512，大阈值最多 1KB，极小
+卸载头、尾摘要各随阈值分档但封顶：默认 4096 → 每侧 512，大阈值最多 1KB，极小
 阈值不超过一半。不能与阈值等长，否则多个大结果很快又把上下文灌满。
 */
 func TestOffloadHeadFollowsThreshold(t *testing.T) {
@@ -219,7 +219,7 @@ func TestOffloadHeadFollowsThreshold(t *testing.T) {
 	}
 }
 
-// 集成校验：卸载后消息里保留的摘要头长度按分档规则生效。
+// 集成校验：卸载后消息里保留的头尾长度按分档规则生效。
 func TestOffloadHeadApplied(t *testing.T) {
 	const threshold = 1000
 	hook := offload.New(fs.NewLocal(t.TempDir()), offload.WithThreshold(threshold),
@@ -228,8 +228,11 @@ func TestOffloadHeadApplied(t *testing.T) {
 	if err := hook.OnToolEnd(context.Background(), &types.LoopState{}, res); err != nil {
 		t.Fatal(err)
 	}
-	want := strings.Repeat("x", 256) + "\n\n[输出共 5000 字节"
+	want := strings.Repeat("x", 256) + "\n\n…（中间省略）…"
 	if !strings.HasPrefix(res.Content, want) {
 		t.Fatalf("offload head = %q..., want prefix %q", res.Content[:min(len(res.Content), 140)], want)
+	}
+	if !strings.Contains(res.Content, "[输出共 5000 字节") {
+		t.Fatalf("offload footer missing: %q", res.Content)
 	}
 }

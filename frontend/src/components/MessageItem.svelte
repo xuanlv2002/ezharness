@@ -4,7 +4,7 @@
   import DOMPurify from 'dompurify'
   import { api, type ImagePayload } from '../lib/api'
   import { cachedMarkdown } from '../lib/markdown'
-  import { fileBaseName, isImagePath, isTextFilePath } from '../lib/textfile'
+  import { fileBaseName, isImagePath, isTextFilePath, splitLineAnchor } from '../lib/textfile'
   import { fileMeta, fmtBytes, fmtDuration } from '../lib/filemeta'
   import { openAppWindow } from '../lib/apps'
   import type { CallbackMessageMeta } from '../lib/callbackMessage'
@@ -77,11 +77,12 @@
   /* file:// 附件卡（按类型特殊渲染）：图片大缩略图、音/视频内嵌播放器、
      办公文档类型块（页数/大小由后端 meta 异步补齐）。整卡点击开资源页；
      播放器自己的点击不触发（onBodyClick 跳过 audio/video）。 */
-  function fileChip(p: string): string {
+  function fileChip(raw: string): string {
+    const { path: p, line, endLine } = splitLineAnchor(raw)
     const name = escHtml(fileBaseName(p))
     const url = `/api/workspace/file?path=${encodeURIComponent(p)}`
     const attrs = (extra = '') =>
-      `class="supper-url act fcard${extra}" data-supper-kind="file" data-supper-id="${escHtml(p)}" role="button" tabindex="0" title="${escHtml(p)}"`
+      `class="supper-url act fcard${extra}" data-supper-kind="file" data-supper-id="${escHtml(raw)}" role="button" tabindex="0" title="${escHtml(raw)}"`
     if (isImagePath(p)) {
       return `<span ${attrs(' image')} data-ftype="image"><img class="fimg" src="${url}" alt="" loading="lazy"><span class="frow"><span class="fname">${name}</span><span class="fmeta">图片</span></span></span>`
     }
@@ -96,7 +97,8 @@
       return `<span ${attrs(' media')} data-ftype="video">${frow(ICON_VIDEO, '视频')}<video controls preload="metadata" src="${url}"></video></span>`
     }
     const ext = extOf(p)
-    const label = DOC_LABELS[ext] ?? (isTextFilePath(p) ? '文本' : '文件')
+    const anchor = line ? (endLine && endLine !== line ? `第 ${line}-${endLine} 行` : `第 ${line} 行`) : ''
+    const label = anchor || DOC_LABELS[ext] || (isTextFilePath(p) ? '文本' : '文件')
     const tile = escHtml((ext || 'FILE').toUpperCase().slice(0, 4))
     return `<span ${attrs(' doc')} data-need-meta="1"><span class="ftile">${tile}</span><span class="fcol"><span class="fname">${name}</span><span class="fmeta">${label}</span></span></span>`
   }
@@ -290,7 +292,7 @@
     root.querySelectorAll<HTMLElement>('span.fcard[data-need-meta]').forEach((card) => {
       if (card.dataset.metaDone) return
       card.dataset.metaDone = '1'
-      const p = card.dataset.supperId || ''
+      const p = splitLineAnchor(card.dataset.supperId || '').path
       const meta = card.querySelector<HTMLElement>('.fmeta')
       if (!p || !meta) return
       const label = meta.textContent || '文件'

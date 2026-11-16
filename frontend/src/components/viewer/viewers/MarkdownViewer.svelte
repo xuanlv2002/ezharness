@@ -86,7 +86,9 @@
     const abs = resolveLocalRef(base, data.attrValue)
     if (!abs) return
     if (isLinkHref) {
-      node.setAttribute('data-file-link', abs)
+      /* 保留行锚点：markdown 里写明 path.ts#L128 也能跳到目标行 */
+      const hash = data.attrValue.match(/#L\d+(?:-L?\d+)?$/)
+      node.setAttribute('data-file-link', abs + (hash ? hash[0] : ''))
       data.attrValue = '#'
     } else {
       data.attrValue = fileResUrl(abs)

@@ -1,7 +1,7 @@
 <script lang="ts">
   /*
-  文本编辑器的查找垫层：textarea 不能给局部文字上底色，在其上叠一层排版一致的透明 <pre>，
-  只画命中 <mark> 的背景，正文/语法高亮照常可见。TextViewer 与 markdown/html 的原文编辑器共用。
+  文本编辑器的查找垫层：在排版一致的透明 <pre> 上只画命中底色；
+  TextViewer 与 markdown/html 的原文编辑器共用。
   */
 
   import { tick } from 'svelte'
@@ -12,11 +12,13 @@
     query,
     current = 0,
     scrollEl,
+    wrap = true,
   }: {
     text: string
     query: string
     current?: number
     scrollEl?: HTMLTextAreaElement
+    wrap?: boolean
   } = $props()
 
   let layerEl = $state<HTMLPreElement>()
@@ -52,11 +54,15 @@
       const top = mr.top - lr.top + el.scrollTop
       target.scrollTop = Math.max(0, top - target.clientHeight / 3)
       el.scrollTop = target.scrollTop
+      /* 不折行的编辑器里命中可能在可视区右侧 */
+      const left = mr.left - lr.left + el.scrollLeft
+      target.scrollLeft = Math.max(0, left - target.clientWidth / 3)
+      el.scrollLeft = target.scrollLeft
     })
   })
 </script>
 
-<pre class="findlayer" bind:this={layerEl} aria-hidden="true">{@html html}</pre>
+<pre class="findlayer" class:nowrap={!wrap} bind:this={layerEl} aria-hidden="true">{@html html}</pre>
 
 <style>
   .findlayer {
@@ -65,6 +71,7 @@
     z-index: 2;
     margin: 0;
     padding: var(--ed-pady, 14px) var(--ed-padx, 16px);
+    padding-left: var(--ed-pl, var(--ed-padx, 16px));
     box-sizing: border-box;
     font-family: var(--font-mono);
     font-size: 14px;
@@ -77,6 +84,10 @@
     pointer-events: none;
     color: transparent;
     background: transparent;
+  }
+  .findlayer.nowrap {
+    white-space: pre;
+    overflow-wrap: normal;
   }
   .findlayer :global(mark) {
     background: color-mix(in srgb, var(--accent, #2563eb) 22%, transparent);

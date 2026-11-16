@@ -8,7 +8,7 @@ import { lcsLines } from './linediff'
 
 export type ToolFace =
   | { kind: 'code'; path: string; content: string }
-  | { kind: 'diff'; path: string; old: string; new: string }
+  | { kind: 'diff'; path: string; edits: { old: string; new: string }[] }
   | { kind: 'cmd'; command: string }
   | { kind: 'plan'; goal: string; context: string; design: string; progress: { title: string; status: string }[]; verify: string }
 
@@ -22,8 +22,14 @@ export function toolFace(name: string, raw: string): ToolFace | null {
   switch (name) {
     case 'write_file':
       return typeof a.content === 'string' ? { kind: 'code', path: a.path ?? '', content: a.content } : null
-    case 'edit_file':
-      return typeof a.old_text === 'string' ? { kind: 'diff', path: a.path ?? '', old: a.old_text, new: a.new_text ?? '' } : null
+    case 'edit_file': {
+      const edits = Array.isArray(a.edits)
+        ? a.edits
+            .filter((e: any) => e && typeof e.old_text === 'string')
+            .map((e: any) => ({ old: e.old_text, new: typeof e.new_text === 'string' ? e.new_text : '' }))
+        : []
+      return edits.length ? { kind: 'diff', path: a.path ?? '', edits } : null
+    }
     case 'terminal':
       return typeof a.command === 'string' ? { kind: 'cmd', command: a.command } : null
     case 'term_action':

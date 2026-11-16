@@ -38,6 +38,7 @@
   /* 说明文案（按完整 key） */
   const descs: Record<string, string> = {
     read_file: '读取任意文件',
+    grep: '递归搜索文件内容（只读）',
     write_file: '写入 / 创建文件',
     edit_file: '精确替换文件内容',
     terminal: '执行命令（独立进程一次性，阻塞到结束/超时）',
@@ -56,7 +57,7 @@
     'plan:new': '提交任务方案（需用户批准后落盘）',
     'plan:update': '同步任务进度',
     'plan:clear': '清除当前计划',
-    save_app: '保存快应用 html',
+    save_app: '保存快应用清单与前端',
     load_app: '读取快应用调用文档（只读）',
     'media:image': '文生图（贵价：默认每次审批 + 每日配额；异步任务）',
     'media:audio': '文本转语音（贵价：默认每次审批 + 每日配额；异步任务）',
@@ -104,7 +105,7 @@
   }
 
   /* 稳定排序：先按工具、再按 action，避免后端返回顺序抖动导致行乱跳 */
-  const BASE_ORDER = ['read_file', 'write_file', 'edit_file', 'terminal', 'term_tab', 'term_action', 'browser_tab', 'browser_action', 'media', 'task', 'plan', 'save_app', 'load_app', 'callback', 'sleep', 'ask_user', 'trim_context', 'load_skill', 'mcp.*']
+  const BASE_ORDER = ['read_file', 'grep', 'write_file', 'edit_file', 'terminal', 'term_tab', 'term_action', 'browser_tab', 'browser_action', 'media', 'task', 'plan', 'save_app', 'load_app', 'callback', 'sleep', 'ask_user', 'trim_context', 'load_skill', 'mcp.*']
   const ACTION_ORDER: Record<string, string[]> = {
     term_action: ['send', 'read'],
     browser_action: ['navigate', 'read', 'eval', 'console', 'network', 'screenshot', 'upload'],

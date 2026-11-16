@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onDestroy, onMount, tick, untrack } from 'svelte'
   import { api } from '../../lib/api'
-  import { fileBaseName, normFileKey } from '../../lib/textfile'
+  import { fileBaseName, normFileKey, splitLineAnchor } from '../../lib/textfile'
   import { store } from '../../lib/store.svelte'
   import { filePane } from '../../lib/filePaneState'
   import { paneTabs } from '../../lib/paneTabs.svelte'
@@ -233,12 +233,23 @@
     if (push) push(serializeTabs())
   })
 
-  /* 外部定位请求（supper_url file:// 点击 / 资源入口）：文件按需即开 */
+  /* 外部定位请求（supper_url file:// 点击 / 资源入口）：文件按需即开；
+     带 #L 锚点时等正文与查看器就绪后定位选中 */
   $effect(() => {
     const want = store.fileFocus
     if (!want) return
     store.fileFocus = ''
-    void openTab(want)
+    const { path, line, endLine } = splitLineAnchor(want)
+    void openTab(path).then(async () => {
+      if (!line) return
+      const t = tabs.find((x) => x.key === normFileKey(path))
+      if (!t) return
+      if (t.kind === 'html') t.htmlPreview = false // 行锚点只能落在源码视图
+      await tick()
+      if (current !== t.key) return // 等正文期间用户已切走，不跳到别的 tab
+      if (t.kind === 'html') htmlViewer?.gotoLine(line, endLine)
+      else if (t.kind === 'text') textViewer?.gotoLine(line, endLine)
+    })
   })
 
   /* 内存画板草稿（画笔钮/消息 base64 入口）：不落盘直接开 tab，保存时

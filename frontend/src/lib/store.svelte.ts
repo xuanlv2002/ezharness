@@ -23,6 +23,7 @@ import { parseCallbackMessage, type CallbackMessageMeta } from './callbackMessag
 import { filePane } from './filePaneState'
 import { linkPendingNote } from './pinboard.svelte'
 import { openExternal } from './desktop'
+import { splitLineAnchor } from './textfile'
 import pkg from '../../package.json'
 
 /* 浏览器标签匹配：URL 解码后比较，忽略锚点与编码差异 */
@@ -346,7 +347,7 @@ class AppStore {
   currentIter = $state(0)
 
   status = $state<Status | null>(null)
-  /* 最新 agent_status 快照（status.snapshot 事件实时更新，右上角水位条数据源） */
+  /* 最新 agent_status 快照（status.snapshot 与每次 model_end 更新，右上角水位条数据源） */
   live = $state<StatusPayload | null>(null)
   /* 本轮资源变更条目（resource.change 事件更新，右上角 StatusCard 数据源；
      loop_start 清空——事件按需推送，不清会滞留上一轮的旧变更） */
@@ -872,18 +873,18 @@ class AppStore {
     this.termDrawerOpen = true
   }
 
-  /* openFileAt 拉开抽屉文件页并打开指定文件（supper_url file:// 点击）。
+  /* openFileAt 拉开抽屉文件页并打开指定文件（supper_url file:// 点击，可带 #L128 行锚点）。
      文件夹交给系统资源管理器直接打开;资源页已弹出则打开请求转发到窗口。 */
-  async openFileAt(path: string) {
-    if (!path) return
-    if (await (window as any).ez?.window?.openDir?.(path)) return
+  async openFileAt(raw: string) {
+    if (!raw) return
+    if (await (window as any).ez?.window?.openDir?.(splitLineAnchor(raw).path)) return
     this.toChatView()
     if (this.popoutTools.includes('file')) {
-      ;(window as any).ez?.popout?.signal('file', 'file', path)
+      ;(window as any).ez?.popout?.signal('file', 'file', raw)
       this.yieldDrawer('file')
       return
     }
-    this.fileFocus = path
+    this.fileFocus = raw
     this.drawerTool = 'file'
     this.termDrawerOpen = true
   }
@@ -1887,9 +1888,12 @@ class AppStore {
           })
         }
         if (!ev.forkId) {
-          const u = ev.data?.usage
-          if (u && this.status) {
-            this.status.contextTokens = u.PromptTokens || 0
+          const tokens = ev.data?.usage?.PromptTokens || 0
+          // 部分兼容接口不回 usage，0 时保留上次水位
+          if (tokens > 0) {
+            if (this.status) this.status.contextTokens = tokens
+            // live 原先只在下轮 OnStart 快照时刷新，整轮会停在旧水位；每次模型调用结束即更新
+            if (this.live) this.live.ctxTokens = tokens
           }
         }
         break
