@@ -292,7 +292,7 @@
     el.scrollTo({ top: 0, behavior: 'smooth' })
   }
 
-  /* 输入框开始输入：等本轮 DOM 落定后回到底部 */
+  /* 发送消息：等本轮 DOM 落定后回到底部 */
   $effect(() => {
     if (!store.bottomSeq) return
     void tick().then(toBottom)

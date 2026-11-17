@@ -180,7 +180,6 @@
     const t = e.currentTarget as HTMLTextAreaElement
     t.style.height = 'auto'
     t.style.height = Math.min(t.scrollHeight, 200) + 'px'
-    store.bottomSeq++ // 开始输入即回到底部
   }
 
   /* ── 输入框工具条：模型切换（下一次输入生效）+ 审批三档，均为下拉 ── */

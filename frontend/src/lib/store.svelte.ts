@@ -330,7 +330,7 @@ class AppStore {
   /* 通知跳转主时间线锚点（ChatView effect 消费滚动后清空；tick 依赖供
   跨分支切换后块加载完成重试） */
   jumpMain = $state('')
-  /* 输入框开始输入时递增：时间线据此回到底部（打开新标签的回底在时间线内处理） */
+  /* 发送消息时递增：时间线据此回到底部（打开新标签的回底在时间线内处理） */
   bottomSeq = $state(0)
   /* 待回流附件（查看器「添加到对话」/拖入暂存）：ChatView 消费进输入框
      附件（同路径替换去重，否则追加） */
@@ -1197,6 +1197,7 @@ class AppStore {
         return
       }
     }
+    this.bottomSeq++ // 真正发出消息时回到底部
     const final: FilePayload[] = attachments.map((a) => ({ name: a.name, path: a.path! }))
     /* 引用与用户输入各成一块（与消息历史同构：reference_file 记录是独立
     user 消息）；pendingUserUid 记第一块 uid——replay.sync 截断时两块一起切 */
