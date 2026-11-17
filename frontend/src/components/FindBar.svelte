@@ -2,14 +2,8 @@
   import { tick } from 'svelte'
   import { findScope } from '../lib/findscope'
 
-  /*
-  Ctrl+F 页面内查找——纯 DOM 自绘高亮（浏览器 Ctrl+F 的自实现）：
-  遍历页面文本节点，匹配的字拆分包裹高亮 span，当前项深色并居中滚动。
-  不用 Electron findInPage（它会抢文档焦点、有会话竞态，维护出过
-  连串事故）；纯 DOM 无任何焦点把戏，desktop/web 同一路径。
-  已知边界：xterm/共享浏览器是 canvas/独立视图不在本页 DOM，搜不到
-  （浏览器对 canvas 同样搜不到）；折叠工具组内的文字不在 DOM。
-  */
+  /* Ctrl+F 页面内查找——纯 DOM 自绘高亮，不用 Electron findInPage（它会
+     抢文档焦点、有会话竞态）；xterm/共享浏览器是 canvas，搜不到。 */
   let open = $state(false)
   let query = $state('')
   let ordinal = $state(0) // 当前匹配序号（1 基）

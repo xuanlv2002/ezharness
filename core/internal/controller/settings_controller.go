@@ -3,6 +3,7 @@ package controller
 
 import (
 	"encoding/base64"
+	"errors"
 	"net/http"
 	"os"
 
@@ -32,11 +33,12 @@ func (c *SettingsController) UpdateSettings(g *gin.Context) {
 		return
 	}
 	if err := c.Settings.Update(g.Request.Context(), st); err != nil {
-		if err.Error() == "model and baseUrl required" {
-			g.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		/* 运行中拒绝改配置是 409，其余（取值校验等）按无效输入 400 */
+		if errors.Is(err, domain.ErrBusy) {
+			g.JSON(http.StatusConflict, gin.H{"error": err.Error()})
 			return
 		}
-		g.JSON(http.StatusConflict, gin.H{"error": err.Error()})
+		g.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 	g.JSON(http.StatusOK, gin.H{"ok": true})

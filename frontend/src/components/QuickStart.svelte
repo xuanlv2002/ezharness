@@ -1,8 +1,5 @@
 <script lang="ts">
-  /*
-  快速开始示例：点击把示例指令填进输入框（不直接发送，可改后再发）。
-  无打开标签时先开一条新会话，再由输入框消费 pendingPrompt。
-  */
+  /* 快速开始示例：点击把示例指令填进输入框（不直接发送，可改后再发）。 */
   import { store } from '../lib/store.svelte'
 
   const examples = [

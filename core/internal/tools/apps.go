@@ -22,20 +22,20 @@ import (
 )
 
 type loadAppArgs struct {
-	Name string `json:"name" desc:"应用目录名（list_apps 可查）"`
+	Name string `json:"name" desc:"应用目录名（<apps> 清单可查）"`
 }
 
-/* LoadApp 读取应用元数据、调用文档与版本历史。 */
+/* LoadApp 读取应用元数据与调用文档。 */
 func LoadApp(fsys osfs.OS) types.Tool {
 	return types.NewTool("load_app",
-		"读取快应用的元数据、调用文档与版本历史（CHANGELOG.md）。"+
+		"读取快应用的元数据与调用文档。"+
 			"使用某个应用前先调用它：文档含「Agent 调用」一节才可按文档调用（前端 JS 用 browser_action eval，HTTP/CLI 用 terminal 或文档指定方式）；"+
 			"没有该节表示应用只面向用户，不要臆造调用方式",
 		func(ctx context.Context, in *loadAppArgs) (string, error) {
 			name := strings.TrimSpace(in.Name)
 			info, err := quickapp.Load(ctx, fsys, name)
 			if errors.Is(err, quickapp.ErrNotFound) {
-				return "", fmt.Errorf("无快应用 %q（用 list_apps 查清单）", name)
+				return "", fmt.Errorf("无快应用 %q（见 <apps> 清单）", name)
 			}
 			if err != nil {
 				return "", err
@@ -86,12 +86,6 @@ func renderAppDocument(ctx context.Context, fsys osfs.OS, info quickapp.Info) st
 		}
 		if data, err := fsys.Read(ctx, quickapp.AppsDir+"/"+info.Name+"/"+info.Document); err == nil {
 			b.WriteString("\n\n" + strings.TrimSpace(string(data)))
-		}
-	}
-	changelog := quickapp.AppsDir + "/" + info.Name + "/CHANGELOG.md"
-	if data, err := fsys.Read(ctx, changelog); err == nil {
-		if text := strings.TrimSpace(string(data)); text != "" {
-			b.WriteString("\n\n# 版本历史（CHANGELOG.md）\n" + text)
 		}
 	}
 	return b.String()

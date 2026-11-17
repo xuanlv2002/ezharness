@@ -92,4 +92,14 @@ contextBridge.exposeInMainWorld('ez', {
     /* browser:// chip 定位标签（前端同时展开抽屉页） */
     focusTab: (tabId) => ipcRenderer.send('ez-browser:focus-tab', tabId),
   },
+  /* 资源页 HTML 内嵌预览（独立 WebContentsView，按窗口上报矩形） */
+  preview: {
+    load: (url) => ipcRenderer.send('ez-preview:load', url),
+    show: (rect) => ipcRenderer.send('ez-preview:show', rect),
+    hide: () => ipcRenderer.send('ez-preview:hide'),
+    reload: (url) => ipcRenderer.send('ez-preview:reload', url),
+    /* 预览页里按 Ctrl+S → 通知宿主页面保存当前 HTML tab */
+    onSave: (cb) => ipcRenderer.on('ez-preview:save', () => cb()),
+    offSave: () => ipcRenderer.removeAllListeners('ez-preview:save'),
+  },
 })

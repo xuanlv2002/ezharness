@@ -102,7 +102,7 @@ func allModelEntries(m domain.ModelsConfig) []domain.ModelEntry {
 	return out
 }
 
-/* findModelEntry 按名在三槽里找条目（已关闭的视同不存在——task 分身只能选可用清单内的模型）。 */
+/* findModelEntry 按名在对话槽里找条目（已关闭的视同不存在——task 分身只能选可用清单内的模型）。 */
 func findModelEntry(m domain.ModelsConfig, name string) *domain.ModelEntry {
 	all := allModelEntries(m)
 	for i := range all {
@@ -114,7 +114,7 @@ func findModelEntry(m domain.ModelsConfig, name string) *domain.ModelEntry {
 }
 
 /*
-	modelFactoryOf 产出 task 分身的模型工厂：按名取条目（三槽任意）现造 provider，
+	modelFactoryOf 产出 task 分身的模型工厂：按名取条目现造 provider，
 
 未知名字返回 nil（task 把"unknown model"作为工具结果回传，模型自纠）。
 包级函数而非内联闭包：Assemble 里 provider 是局部变量，会遮蔽 provider 包名。
@@ -182,7 +182,7 @@ func memoryUpdatedHint(t time.Time) string {
 	return "（更新于 " + t.Format("2006-01-02") + "）"
 }
 
-/* Assemble 按配置装配 agent 并注入会话（主模型取 models 四槽 main 启用条目）。 */
+/* Assemble 按配置装配 agent 并注入会话（主模型取 models main 启用条目）。 */
 func (a *AgentService) Assemble(s *domain.Session, st domain.Settings) {
 	ctx := context.Background()
 	maxIters := 64 // 单轮最大模型迭代次数（设置页可配；0/负数回落默认 64，上限 128）
@@ -361,7 +361,7 @@ func (a *AgentService) Assemble(s *domain.Session, st domain.Settings) {
 		a.Browser.SetVisionProbe(mainVision) // 截图返回形态随主模型视觉能力实时裁决
 	}
 	toolNames := []string{
-		"read_file", "write_file", "edit_file", "terminal", "save_app", "sleep",
+		"read_file", "grep", "write_file", "edit_file", "terminal", "save_app", "sleep",
 		askuser.ToolName, task.ToolName,
 		"mcp_router", hooks.TrimTool, skilltool.ToolName,
 		"model_call", "memory", "plan", "load_app", "term_tab", "term_action",
@@ -406,8 +406,8 @@ func (a *AgentService) Assemble(s *domain.Session, st domain.Settings) {
 				})),
 			mcpHook,
 			offload.New(s.Fsys, offload.WithThreshold(st.OffloadThreshold),
-				/* 摘要头随阈值分档但封顶（默认 512，最大 1KB），避免
-				   阈值调大后卸载结果仍占满上下文。 */
+				/* 头、尾摘要各随阈值分档但封顶（默认 512，最大 1KB），
+				   避免阈值调大后卸载结果仍占满上下文。 */
 				func(o *offload.Options) { o.Head = offloadHead(st.OffloadThreshold) },
 				offload.WithSkip(askuser.ToolName, task.ToolName, skilltool.ToolName), offload.WithReplayTool("read_file"),
 				offload.WithAbs(func(p string) string { // 提示给绝对路径：模型不知道 FS 挂载基准，按工作目录拼相对路径必错
@@ -455,9 +455,9 @@ func (a *AgentService) Reassemble(st domain.Settings) error {
 	return nil
 }
 
-// offloadHead 返回卸载后保留在上下文里的摘要头部字节数：随阈值分档
-// 但封顶。默认阈值 4096 → 512 字节；阈值 >= 8192 时最多 1024 字节；
-// 极小阈值下不超过阈值一半。卸载的目的是缩小上下文，摘要头若与阈值
+// offloadHead 返回卸载后头、尾各保留的字节数：随阈值分档但封顶。
+// 默认阈值 4096 → 每侧 512 字节；阈值 >= 8192 时每侧最多 1024；
+// 极小阈值下每侧不超过阈值一半。卸载的目的是缩小上下文，摘要若与阈值
 // 等长，多个大结果很快又把上下文灌满，模型仍要 read_file 补细节，
 // 等于两头都输。
 func offloadHead(threshold int) int {
@@ -745,7 +745,7 @@ func mcpOffList(fsys osfs.OS) []string {
 	return out
 }
 
-/* modelOffNames 返回三槽中被关闭（disabled）的模型名（与 modelStatusList 互补）。 */
+/* modelOffNames 返回对话槽中被关闭（disabled）的模型名（与 modelStatusList 互补）。 */
 func modelOffNames(mc domain.ModelsConfig) []string {
 	seen := map[string]bool{}
 	var out []string
@@ -768,21 +768,16 @@ media 工具使用，清单在 <media> 段与 mediaStatusList。
 func modelStatusList(mc domain.ModelsConfig) []hooks.StatusMcp {
 	seen := map[string]bool{}
 	var out []hooks.StatusMcp
-	for _, slot := range []struct {
-		label   string
-		entries []domain.ModelEntry
-	}{{"对话", mc.Main}} {
-		for _, e := range slot.entries {
-			if e.Name == "" || seen[e.Name] || e.Disabled {
-				continue
-			}
-			seen[e.Name] = true
-			v := "不支持视觉"
-			if e.Vision {
-				v = "支持视觉"
-			}
-			out = append(out, hooks.StatusMcp{Name: e.Name, Desc: slot.label + "槽 · " + v})
+	for _, e := range mc.Main {
+		if e.Name == "" || seen[e.Name] || e.Disabled {
+			continue
 		}
+		seen[e.Name] = true
+		v := "不支持视觉"
+		if e.Vision {
+			v = "支持视觉"
+		}
+		out = append(out, hooks.StatusMcp{Name: e.Name, Desc: "对话槽 · " + v})
 	}
 	return out
 }

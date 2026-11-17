@@ -60,8 +60,9 @@ func TestWorkspaceMeta(t *testing.T) {
 		t.Fatalf("txt meta = %+v err=%v", m, err)
 	}
 
-	if _, err := svc.Meta(dir); err == nil {
-		t.Fatal("目录应报错")
+	m, err = svc.Meta(dir)
+	if err != nil || !m.Dir {
+		t.Fatalf("dir meta = %+v err=%v", m, err)
 	}
 	if _, err := svc.Meta(filepath.Join(dir, "nope")); err == nil {
 		t.Fatal("不存在的文件应报错")

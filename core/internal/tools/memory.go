@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -250,14 +251,7 @@ func (t memoryTool) projectRead(ctx context.Context, id string) (string, error) 
 	if err != nil {
 		return "", err
 	}
-	if i := func() int {
-		for i, p := range projects {
-			if p.ID == id {
-				return i
-			}
-		}
-		return -1
-	}(); i < 0 {
+	if !slices.ContainsFunc(projects, func(p hooks.ProjectEntry) bool { return p.ID == id }) {
 		return "", fmt.Errorf("无项目 %s（id 见 system <memory> 段项目索引）", id)
 	}
 	data, err := t.fsys.Read(ctx, hooks.ProjectContentPath(id))

@@ -1,8 +1,6 @@
 <script lang="ts">
   /* 资源变更卡：remind 变更段按需插入的 <resource_change> 消息 /
-     resource.change 事件渲染（单一来源，实时与历史重建同款；块内
-     available_ 清单行是给模型的，卡片不展示）。着色：新增/用户操作绿，
-     移除/退出/关闭红，其余中性。 */
+     resource.change 事件渲染，实时与历史重建同款。 */
   let { items }: { items: string[] } = $props()
 
   const cls = (s: string) => {

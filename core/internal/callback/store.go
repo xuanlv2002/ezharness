@@ -177,13 +177,6 @@ func (s *Store) SetRuntime(ctx context.Context, id string, fn func(*Task)) error
 	return ErrNotFound
 }
 
-/* Save 覆盖写当前任务集。 */
-func (s *Store) Save(ctx context.Context) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.saveLocked(ctx)
-}
-
 func (s *Store) saveLocked(ctx context.Context) error {
 	if s.tasks == nil {
 		s.tasks = []Task{}

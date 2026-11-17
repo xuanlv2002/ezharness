@@ -1,24 +1,21 @@
 <script lang="ts">
   import { onMount } from 'svelte'
+  import type { BoardData, BoardElement, BoardPoint } from '../../../lib/boardData'
 
   /*
-  魔法画板（图片查看器的画布引擎，对象模型）：元素存对象数组，静态层
-  缓存到离屏 buf，拖动/笔画期间只叠加活动元素（rAF 节流）。
-  工具：选择（拖动 / Del 删除 / 双击改字）、画笔、白笔、矩形、
-  椭圆、箭头、文本。贴入图片作底图垫底；导出走离屏合成。
-  常驻保活（keep-alive）：active 仅在本 tab 激活时为真，键盘监听与
-  尺寸测量都按此守卫（display:none 下 clientWidth=0）。
-  exportFile 供外层（ImageViewer 保存写回）取合成产物；onDone 是
-  底部主按钮（「添加到对话」）的回流。
+  魔法画板：图片查看器的画布引擎（对象模型）——元素存对象数组，静态层缓存到离屏 buf，
+  拖动/笔画期间只叠加活动元素；贴入图片作底图垫底，导出走离屏合成。
   */
   let {
     source = null,
+    initial = [],
     active = false,
     doneLabel = '添加到聊天',
     onDone,
     onChange,
   }: {
     source?: File | null
+    initial?: BoardData
     active?: boolean
     doneLabel?: string
     onDone?: (f: File) => void
@@ -34,13 +31,10 @@
   const sizes = [2, 4, 9]
   const SEL_COLOR = '#2563eb'
 
-  type Pt = { x: number; y: number }
+  type Pt = BoardPoint
   type Tool = 'select' | 'pen' | 'eraser' | 'rect' | 'ellipse' | 'arrow' | 'text'
   type ShapeKind = 'rect' | 'ellipse' | 'arrow'
-  type El =
-    | { id: number; kind: 'pen' | 'eraser'; color: string; size: number; pts: Pt[] }
-    | { id: number; kind: ShapeKind; color: string; size: number; a: Pt; b: Pt }
-    | { id: number; kind: 'text'; color: string; size: number; x: number; y: number; text: string }
+  type El = BoardElement
 
   const tools: { key: Tool; label: string; icon: string }[] = [
     { key: 'select', label: '选择（拖动 / Del 删除 / 双击改字）', icon: '<path d="M4 3l7 17 2.5-7 7-2.5z"/>' },
@@ -469,6 +463,7 @@
     elements = structuredClone(snap) // snapshot 不可变，克隆出可写副本
     selected = null
     refresh()
+    onChange?.()
   }
 
   function clearAll() {
@@ -491,6 +486,33 @@
 
   /* ── 导出与生命周期 ── */
 
+  /* getElements 导出元素快照：ImageViewer 存进 tab，跨窗口搬运 */
+  export function getElements(): BoardData {
+    return $state.snapshot(elements) as BoardData
+  }
+
+  /* resetBase 保存成功后用合成图换底图并清空元素，避免下次导出重复叠加 */
+  export async function resetBase(file: File): Promise<void> {
+    const url = URL.createObjectURL(file)
+    try {
+      const img = new Image()
+      img.src = url
+      await new Promise<void>((resolve, reject) => {
+        img.onload = () => resolve()
+        img.onerror = () => reject(new Error('图片解码失败'))
+      })
+      baseImg = img
+      elements = []
+      selected = null
+      snapshots = []
+      canUndo = false
+      rebuildBuf()
+      doPaint()
+    } finally {
+      URL.revokeObjectURL(url)
+    }
+  }
+
   /* exportFile 合成当前画布（底图+元素）为 PNG File——保存写回与
   「添加到对话」共用的导出通道 */
   export async function exportFile(): Promise<File> {
@@ -510,14 +532,14 @@
     onDone?.(await exportFile())
   }
 
-  async function init() {
+  async function load() {
     if (source) {
       const url = URL.createObjectURL(source)
       try {
         const img = new Image()
         img.src = url
         /* 解码失败也要落回（onerror→false 早退）：只挂 onload 的 Promise
-           永不 resolve，init 挂起画板白屏 */
+           永不 resolve，load 挂起画板白屏 */
         const ok = await new Promise<boolean>((r) => {
           img.onload = () => r(true)
           img.onerror = () => r(false)
@@ -538,7 +560,8 @@
     }
     buf.width = W
     buf.height = H
-    elements = []
+    elements = initial.length ? (structuredClone($state.snapshot(initial)) as BoardData) : []
+    nextId = elements.reduce((max, el) => Math.max(max, el.id), 0) + 1
     selected = null
     snapshots = []
     canUndo = false
@@ -548,11 +571,11 @@
 
   /* 首次可见即初始化一次（tab 可能 display:none 挂载，clientWidth=0，
   用 ResizeObserver 等到有尺寸再测）。不可用 $effect：refresh 读
-  elements/selected，会把交互写入反哺成重新 init，画布被反复清空。 */
+  elements/selected，会把交互写入反哺成重新 load，画布被反复清空。 */
   onMount(() => {
     const wrap = canvas?.parentElement
     if (!wrap || !canvas) {
-      void init()
+      void load()
       return
     }
     let measured = false
@@ -565,7 +588,7 @@
       ro.disconnect()
       if (!source) {
         /* 空白创作按容器 × dpr 定画布尺寸（cap 2048）；编辑场景由
-        init() 按图片原始尺寸定，容器测量不覆盖 */
+        load() 按图片原始尺寸定，容器测量不覆盖 */
         const dpr = Math.min(window.devicePixelRatio || 1, 2)
         W = Math.min(Math.round(w * dpr), 2048) || W
         H = Math.min(Math.round(h * dpr), 2048) || H
@@ -574,7 +597,7 @@
         buf.width = W
         buf.height = H
       }
-      void init()
+      void load()
     }
     const ro = new ResizeObserver(measure)
     ro.observe(wrap)

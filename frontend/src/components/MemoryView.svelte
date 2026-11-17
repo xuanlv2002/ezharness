@@ -14,13 +14,7 @@
   } from '../lib/api'
   import { store } from '../lib/store.svelte'
 
-  /*
-  记忆 = 长期记忆/能力记忆两个文件夹（GET /api/memory/config）+ 会话树
-  （GET /api/memory/tree）：话题记忆展示完整会话树——每条分支（线）从根
-  到当前叶，compact 旧世代标"已归档"，fork 分叉可见。树按层懒加载：
-  根层分页，子代展开时再拉，列表查询只读元数据。操作：回顾（只读展开）、
-  切到分支（跳对话页）、手动归档、删整条线。
-  */
+  /* 记忆页：长期/能力记忆两个文件夹 + 会话树（按层懒加载，分支可回顾/切换/归档/删除） */
   let { onNavigate }: { onNavigate?: (v: string) => void } = $props()
 
   let cfg = $state<MemoryConfig | null>(null)
@@ -193,7 +187,7 @@
     memBusy = true
     try {
       const r = await api.saveLongtermItems(target, items)
-      if (longterm) longterm[target] = r.items || items
+      if (longterm) longterm[target] = r.items
     } catch (e) {
       message = `记忆保存失败：${(e as Error).message}`
     } finally {
@@ -1040,7 +1034,6 @@
               {#if n.isLeaf && n.lineRoot && !(n.isActiveLine)}
                 <button class="op" onclick={() => switchLine(n)} title="切到该分支的当前叶继续">切到分支</button>
               {/if}
-              <button class="op" disabled title="手动归档：后续版本开放">归档</button>
             </div>
           </div>
         {/if}
@@ -1300,7 +1293,6 @@
   </div>
 {/if}
 
-<!-- 新建技能弹窗：选 zip 直接上传（技能名由后端从压缩包推导） -->
 <!-- 技能详情抽屉：SKILL.md 正文（含内建技能） -->
 {#if skillDetail}
   <div class="drawer-mask" onclick={closeSkillDetail}></div>

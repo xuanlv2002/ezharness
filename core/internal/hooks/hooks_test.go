@@ -112,21 +112,6 @@ func TestRemindEndNoteErrorDetail(t *testing.T) {
 	}
 }
 
-func TestTopicsMatch(t *testing.T) {
-	tp := NewTopics(memFS{})
-	_ = tp.Add(TopicEntry{ID: "a1", Title: "Go 并发", Summary: "goroutine"})
-	_ = tp.Add(TopicEntry{ID: "b2", Title: "数据库", Summary: "postgres"})
-	if got := len(tp.Match("")); got != 2 {
-		t.Fatalf("match all = %d", got)
-	}
-	if got := len(tp.Match("a1")); got != 1 {
-		t.Fatalf("match id prefix = %d", got)
-	}
-	if got := len(tp.Match("数据库")); got != 1 {
-		t.Fatalf("match title = %d", got)
-	}
-}
-
 func TestSysPromptSingleSystem(t *testing.T) {
 	sys := NewSysPrompt("base", "summary")
 	state := newTestState([]types.Message{{Role: types.RoleUser, Content: "hi"}})

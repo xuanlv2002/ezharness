@@ -23,7 +23,27 @@ import { parseCallbackMessage, type CallbackMessageMeta } from './callbackMessag
 import { filePane } from './filePaneState'
 import { linkPendingNote } from './pinboard.svelte'
 import { openExternal } from './desktop'
+import { splitLineAnchor } from './textfile'
 import pkg from '../../package.json'
+
+/* 浏览器标签匹配：URL 解码后比较，忽略锚点与编码差异 */
+function getUrlKey(url: string): string {
+  try {
+    const u = new URL(url)
+    u.hash = ''
+    return decodeURI(u.href)
+  } catch {
+    return url
+  }
+}
+
+async function getBrowserTabs(api: any): Promise<{ id: string; url: string }[]> {
+  try {
+    return JSON.parse(await api.list())
+  } catch {
+    return []
+  }
+}
 
 /* newerVersion：a 是否比 b 新（v 前缀可有可无，按点分段数值比较，缺段补 0）。
    本地版本 = pkg.version（与页脚同源）；设置页版本检查共用。 */
@@ -249,11 +269,6 @@ function trimBrief(full: string): string {
   return `上下文已整理：此前的对话折叠为摘要。${brief}`
 }
 
-/* 历史重建：marker → 一行文案 */
-function trimText(content: string): string {
-  return trimBrief(trimFull(content))
-}
-
 class AppStore {
   /* activeId = 分支根 ID（稳定：compact 换代不变，SSE 订阅/路由键）；
      leafId = 当前叶 session ID（分身存档 owner、上翻游标起点） */
@@ -332,7 +347,7 @@ class AppStore {
   currentIter = $state(0)
 
   status = $state<Status | null>(null)
-  /* 最新 agent_status 快照（status.snapshot 事件实时更新，右上角水位条数据源） */
+  /* 最新 agent_status 快照（status.snapshot 与每次 model_end 更新，右上角水位条数据源） */
   live = $state<StatusPayload | null>(null)
   /* 本轮资源变更条目（resource.change 事件更新，右上角 StatusCard 数据源；
      loop_start 清空——事件按需推送，不清会滞留上一轮的旧变更） */
@@ -644,7 +659,7 @@ class AppStore {
           const detail = endReasonText(m.content)
           if (detail) out.push({ kind: 'endtick', uid: this.nuid(), icon: endIcon(detail), title: detail })
         } else if (m.content.includes('<context_trim')) {
-          out.push({ kind: 'trim', uid: this.nuid(), text: trimText(m.content), full: trimFull(m.content), folded: true })
+          out.push({ kind: 'trim', uid: this.nuid(), text: trimBrief(trimFull(m.content)), full: trimFull(m.content), folded: true })
         } else if (m.content.includes('<loop_guard>')) {
           // 循环护栏提醒：小字条呈现（标签体是人话文本）
           const inner = m.content.replace(/^[\s\S]*?<loop_guard>|<\/loop_guard>[\s\S]*$/g, '').trim()
@@ -745,8 +760,8 @@ class AppStore {
 
   /* ── 分身抽屉 ── */
 
-  /* ensureFork 取分身状态，不存在则建骨架（SSE 重放/异常时序兜底）。 */
-  private ensureFork(fid: string): ForkState {
+  /* getFork 取分身状态，不存在则建骨架（SSE 重放/异常时序兜底）。 */
+  private getFork(fid: string): ForkState {
     if (!this.forks[fid]) {
       this.forks[fid] = {
         id: fid,
@@ -777,30 +792,24 @@ class AppStore {
   /* ── 魔法看板（图片查看器的画布引擎，草稿入口） ── */
 
   /* openImageDraft 打开画板（输入框画笔钮 / 续编 chip / 消息内 base64 图片）：
-     底图只放内存（dataURL），不落盘——点开画板不产生文件；保存（写回/
-     添加到对话）时才 stash 成 tmp 真身并回填路径。dataURL 可序列化，
-     草稿跨窗口（拖出为独立窗口/弹回抽屉）照常搬运。source 无 = 空白画板。 */
+     底图只放内存（dataURL），不落盘——点开画板不产生文件；保存时才 stash 成
+     tmp 真身并回填路径。dataURL 可序列化，草稿跨窗口照常搬运。source 无 = 空白画板。 */
   async openImageDraft(source: File | null = null) {
     try {
-      const file = source ?? (await blankBoardPng())
-      this.openImageDraftData(await fileToDataUrl(file))
+      const dataUrl = await fileToDataUrl(source ?? (await blankBoardPng()))
+      if (!dataUrl) return
+      /* 已弹出则转发信号，否则拉开抽屉文件页；ResourcePane 消费 fileDraftSrc 建草稿 tab */
+      if (this.popoutTools.includes('file')) {
+        ;(window as any).ez?.popout?.signal('file', 'draft', dataUrl)
+        this.yieldDrawer('file')
+        return
+      }
+      this.fileDraftSrc = dataUrl
+      this.drawerTool = 'file'
+      this.termDrawerOpen = true
     } catch (e) {
       this.lastStatus = `画板打开失败：${(e as Error).message}`
     }
-  }
-
-  /* openImageDraftData 把内存草稿（dataURL）送进资源页：已弹出则转发信号，
-     否则拉开抽屉文件页。ResourcePane 消费 fileDraftSrc 建草稿 tab。 */
-  openImageDraftData(dataUrl: string) {
-    if (!dataUrl) return
-    if (this.popoutTools.includes('file')) {
-      ;(window as any).ez?.popout?.signal('file', 'draft', dataUrl)
-      this.yieldDrawer('file')
-      return
-    }
-    this.fileDraftSrc = dataUrl
-    this.drawerTool = 'file'
-    this.termDrawerOpen = true
   }
 
   /* bumpImg 图片写回后按路径递增缩略图版本（同 URL 的 img 立即换 src，
@@ -842,10 +851,10 @@ class AppStore {
     this.termDrawerOpen = true
   }
 
-  /* ensureWorkspaceView 明确的「打开」动作发生在管理页（快应用/回调/设置
+  /* toChatView 明确的「打开」动作发生在管理页（快应用/回调/设置
      …）时先切回工作区——抽屉只在对话与内嵌快应用页上屏，不切回去拉开了
      也看不见（此前快应用卡片「查看终端」无效即此因）。 */
-  private ensureWorkspaceView() {
+  private toChatView() {
     if (this.view !== 'chat' && this.view !== 'app') this.jumpView = 'chat'
   }
 
@@ -853,7 +862,7 @@ class AppStore {
      首次打开时 WS hello 到达后由 TerminalTab 消费定位）。终端已弹出则
      定位请求转发到窗口。 */
   openTermAt(id: string) {
-    this.ensureWorkspaceView()
+    this.toChatView()
     if (this.popoutTools.includes('term')) {
       ;(window as any).ez?.popout?.signal('term', 'term', id)
       this.yieldDrawer('term')
@@ -864,18 +873,18 @@ class AppStore {
     this.termDrawerOpen = true
   }
 
-  /* openFileAt 拉开抽屉文件页并打开指定文件（supper_url file:// 点击）。
+  /* openFileAt 拉开抽屉文件页并打开指定文件（supper_url file:// 点击，可带 #L128 行锚点）。
      文件夹交给系统资源管理器直接打开;资源页已弹出则打开请求转发到窗口。 */
-  async openFileAt(path: string) {
-    if (!path) return
-    if (await (window as any).ez?.window?.openDir?.(path)) return
-    this.ensureWorkspaceView()
+  async openFileAt(raw: string) {
+    if (!raw) return
+    if (await (window as any).ez?.window?.openDir?.(splitLineAnchor(raw).path)) return
+    this.toChatView()
     if (this.popoutTools.includes('file')) {
-      ;(window as any).ez?.popout?.signal('file', 'file', path)
+      ;(window as any).ez?.popout?.signal('file', 'file', raw)
       this.yieldDrawer('file')
       return
     }
-    this.fileFocus = path
+    this.fileFocus = raw
     this.drawerTool = 'file'
     this.termDrawerOpen = true
   }
@@ -889,7 +898,7 @@ class AppStore {
       this.lastStatus = '浏览器仅桌面端可用'
       return
     }
-    this.ensureWorkspaceView()
+    this.toChatView()
     ez.browser.focusTab(id)
     if (this.popoutTools.includes('browser')) {
       ez.popout.open('browser')
@@ -900,16 +909,18 @@ class AppStore {
     }
   }
 
-  /* openBrowserUrl 用共享浏览器打开一个地址（资源页右键「在集成浏览器
-     打开」）：新建标签并切到浏览器页；浏览器已弹出则聚焦弹出窗。 */
-  openBrowserUrl(url: string) {
+  /* openBrowserUrl 用共享浏览器打开地址（资源页右键）：
+     已有同地址标签就切过去，否则新建；浏览器已弹出则聚焦弹出窗。 */
+  async openBrowserUrl(url: string) {
     const ez = (window as any).ez
     if (!ez?.browser) {
       this.lastStatus = '浏览器仅桌面端可用'
       return
     }
-    this.ensureWorkspaceView()
-    ez.browser.create(url)
+    const open = (await getBrowserTabs(ez.browser)).find((t) => getUrlKey(t.url) === getUrlKey(url))
+    if (open) ez.browser.focusTab(open.id)
+    else ez.browser.create(url)
+    this.toChatView()
     if (this.popoutTools.includes('browser')) {
       ez.popout?.open('browser')
       this.yieldDrawer('browser')
@@ -917,6 +928,14 @@ class AppStore {
       this.drawerTool = 'browser'
       this.termDrawerOpen = true
     }
+  }
+
+  /* reloadBrowserUrl 刷新已打开同地址的标签（HTML 保存后自动调用） */
+  async reloadBrowserUrl(url: string) {
+    const api = (window as any).ez?.browser
+    if (!api) return
+    const open = (await getBrowserTabs(api)).find((t) => getUrlKey(t.url) === getUrlKey(url))
+    if (open) api.reload(open.id)
   }
 
   closeTermDrawer() {
@@ -1026,7 +1045,7 @@ class AppStore {
   }
 
   /* main 槽模型清单（切换器首次打开时拉取） */
-  async ensureModels() {
+  async loadModels() {
     if (this.modelsFetched) return
     try {
       const m = await api.getModels()
@@ -1087,12 +1106,11 @@ class AppStore {
     const final: FilePayload[] = attachments.map((a) => ({ name: a.name, path: a.path! }))
     /* 引用与用户输入各成一块（与消息历史同构：reference_file 记录是独立
     user 消息）；pendingUserUid 记第一块 uid——replay.sync 截断时两块一起切 */
-    const turnFiles = final.map((a) => ({ name: a.name, path: a.path }))
     const turnFileRefs = fileRefs.map((r) => ({ path: r.path, count: r.items.length }))
     let firstUid = 0
-    if (turnFiles.length || turnFileRefs.length) {
+    if (final.length || turnFileRefs.length) {
       firstUid = this.nuid()
-      this.blocks.push({ kind: 'user', uid: firstUid, text: '', files: turnFiles, fileRefs: turnFileRefs })
+      this.blocks.push({ kind: 'user', uid: firstUid, text: '', files: final, fileRefs: turnFileRefs })
     }
     if (text) {
       const uid = this.nuid()
@@ -1623,11 +1641,6 @@ class AppStore {
     this.jumpMain = ref.target
   }
 
-  /* jumpToNotice 通知栏内跳转：委托裸标识版本。 */
-  async jumpToNotice(n: NoticeData) {
-    await this.jumpToNoticeRef(n)
-  }
-
   dismissNotice(id: string) {
     const n = this.notices.find((x) => x.id === id)
     this.notices = this.notices.filter((x) => x.id !== id)
@@ -1698,7 +1711,7 @@ class AppStore {
         if (!ev.forkId) this.liveChanges = []
         if (ev.forkId) {
           // 分身输入进分身聊天框（含任务包装前缀，即分身收到的原文）
-          const f = this.ensureFork(ev.forkId)
+          const f = this.getFork(ev.forkId)
           const last = f.blocks[f.blocks.length - 1]
           if (text && !(last && last.kind === 'user' && last.text === text)) {
             f.blocks.push({ kind: 'user', uid: this.nuid(), text })
@@ -1755,7 +1768,7 @@ class AppStore {
       case 'model_start': {
         // 新一次调用开始，旧重试信息作废（分身的只清分身自己的）
         this.modelActive = true
-        if (ev.forkId) this.ensureFork(ev.forkId).retry = null
+        if (ev.forkId) this.getFork(ev.forkId).retry = null
         else this.retryInfo = null
         break
       }
@@ -1773,7 +1786,7 @@ class AppStore {
             delayMs: d.delayMs ?? 0,
             err: d.err ?? '',
           }
-          if (ev.forkId) this.ensureFork(ev.forkId).retry = info
+          if (ev.forkId) this.getFork(ev.forkId).retry = info
           else this.retryInfo = info
         }
         break
@@ -1782,7 +1795,7 @@ class AppStore {
         // 流式工具调用增量：按 index 分桶累积成 building 态工具块
         const d = ev.data || {}
         const key = `b-${ev.forkId || 'm'}-${d.index ?? 0}`
-        const bs = ev.forkId ? this.ensureFork(ev.forkId).blocks : this.blocks
+        const bs = ev.forkId ? this.getFork(ev.forkId).blocks : this.blocks
         const t = bs.find((b) => b.kind === 'tool' && b.id === key && b.state === 'building')
         if (t && t.kind === 'tool') {
           if (d.nameDelta) t.name += d.nameDelta
@@ -1805,7 +1818,7 @@ class AppStore {
       case 'reasoning_chunk': {
         const delta: string = typeof ev.data === 'string' ? ev.data : ''
         if (!delta) break
-        const bs = ev.forkId ? this.ensureFork(ev.forkId).blocks : this.blocks
+        const bs = ev.forkId ? this.getFork(ev.forkId).blocks : this.blocks
         this.appendDelta(bs, delta, ev.type === 'model_chunk')
         break
       }
@@ -1814,7 +1827,7 @@ class AppStore {
         正文/思考替换当前流式块（重连纠偏，之后的增量继续追加），构造期
         工具块按快照重建 building 态（tool_start 到达时按名认领） */
         const d = ev.data || {}
-        const bs = ev.forkId ? this.ensureFork(ev.forkId).blocks : this.blocks
+        const bs = ev.forkId ? this.getFork(ev.forkId).blocks : this.blocks
         if (d.content || d.reasoning) {
           const last = bs[bs.length - 1]
           if (last && last.kind === 'assistant' && last.streaming) {
@@ -1853,11 +1866,11 @@ class AppStore {
       }
       case 'model_end': {
         this.modelActive = false
-        if (ev.forkId) this.ensureFork(ev.forkId).retry = null
+        if (ev.forkId) this.getFork(ev.forkId).retry = null
         else this.retryInfo = null
         // 关闭本次调用所属块流的流式态（fork 关自己的）：否则下一轮正文
         // 会追加进工具调用前的旧流式块（思考直调工具时正文顺序错乱）
-        const bs = ev.forkId ? this.ensureFork(ev.forkId).blocks : this.blocks
+        const bs = ev.forkId ? this.getFork(ev.forkId).blocks : this.blocks
         const last = this.lastStreaming(bs)
         if (last) {
           last.streaming = false
@@ -1875,9 +1888,12 @@ class AppStore {
           })
         }
         if (!ev.forkId) {
-          const u = ev.data?.usage
-          if (u && this.status) {
-            this.status.contextTokens = u.PromptTokens || 0
+          const tokens = ev.data?.usage?.PromptTokens || 0
+          // 部分兼容接口不回 usage，0 时保留上次水位
+          if (tokens > 0) {
+            if (this.status) this.status.contextTokens = tokens
+            // live 原先只在下轮 OnStart 快照时刷新，整轮会停在旧水位；每次模型调用结束即更新
+            if (this.live) this.live.ctxTokens = tokens
           }
         }
         break
@@ -1886,7 +1902,7 @@ class AppStore {
         const d = ev.data || {}
         const args = typeof d.args === 'string' ? d.args : JSON.stringify(d.args ?? '')
         // 认领流式构造期（building）的同名块：换真实 callID、完整 args、转执行态
-        const bs = ev.forkId ? this.ensureFork(ev.forkId).blocks : this.blocks
+        const bs = ev.forkId ? this.getFork(ev.forkId).blocks : this.blocks
         // 去重：决策路径已补插过同 id 工具卡时只补名参（防重复块乱序）
         const dup = bs.find((b) => b.kind === 'tool' && b.id === d.id && b.state !== 'building')
         if (dup && dup.kind === 'tool') {
@@ -1928,7 +1944,7 @@ class AppStore {
            运行中的工具块，只留末尾 20000 字符（实时窗口只显示尾部） */
         const d = ev.data || {}
         if (!d.callId || !d.text) break
-        const bs = ev.forkId ? this.ensureFork(ev.forkId).blocks : this.blocks
+        const bs = ev.forkId ? this.getFork(ev.forkId).blocks : this.blocks
         const t = bs.find((b) => b.kind === 'tool' && b.id === d.callId && b.state === 'running')
         if (t && t.kind === 'tool') {
           t.live = ((t.live || '') + d.text).slice(-20000)
@@ -1937,7 +1953,7 @@ class AppStore {
       }
       case 'tool_end': {
         const d = ev.data || {}
-        const bs = ev.forkId ? this.ensureFork(ev.forkId).blocks : this.blocks
+        const bs = ev.forkId ? this.getFork(ev.forkId).blocks : this.blocks
         const findTool = (fn: (b: Extract<Block, { kind: 'tool' }>) => boolean) =>
           bs.find((b): b is Extract<Block, { kind: 'tool' }> => b.kind === 'tool' && fn(b))
         let t = findTool((b) => b.id === d.callId)
@@ -1976,7 +1992,7 @@ class AppStore {
       case 'task.start': {
         const d = ev.data || {}
         const fid = d.id || ev.forkId || ''
-        const f = this.ensureFork(fid)
+        const f = this.getFork(fid)
         f.task = d.task || ''
         f.status = 'running'
         // 入口卡紧跟对应的 task 工具卡（callId 精确匹配，回退最后一张未让位的 task 卡）；
@@ -2011,7 +2027,7 @@ class AppStore {
         if (!id || !server) break
         this.mcpAuthMeta[id] = d.metadata_url || ''
         // 与 approve.request 同构：工具卡补插 + 决策卡紧随其后，成时间线里一条记录
-        const bs = ev.forkId ? this.ensureFork(ev.forkId).blocks : this.blocks
+        const bs = ev.forkId ? this.getFork(ev.forkId).blocks : this.blocks
         if (bs.some((b) => b.kind === 'decision' && b.id === id)) break // 重连重放去重
         if (!bs.some((b) => b.kind === 'tool' && b.id === id)) {
           bs.push({ kind: 'tool', uid: this.nuid(), id, name: 'mcp_router', args: '', result: '', err: '', state: 'running' })
@@ -2054,7 +2070,7 @@ class AppStore {
           this.toolApprovals.set(id, this.drawerFor(d.name || '', args) ?? 'term')
         }
         // 分身请求路由进分身聊天框（不进主时间线）；bs=目标块数组
-        const bs = ev.forkId ? this.ensureFork(ev.forkId).blocks : this.blocks
+        const bs = ev.forkId ? this.getFork(ev.forkId).blocks : this.blocks
         // 去重：SSE 断线重连会重放 pending 帧
         if (!id || bs.some((b) => b.kind === 'decision' && b.id === id)) break
         // 工具卡补插：刷新/重放时本轮快照未含此调用（turn 未落盘），
@@ -2103,7 +2119,7 @@ class AppStore {
           id,
           dtype,
           name: d.name || '',
-          args: typeof args === 'string' ? args : '',
+          args,
           question,
           options,
           goal,
@@ -2125,7 +2141,7 @@ class AppStore {
       }
       case 'error': {
         const msg = typeof ev.data === 'string' ? ev.data : JSON.stringify(ev.data ?? '')
-        const bs = ev.forkId ? this.ensureFork(ev.forkId).blocks : this.blocks
+        const bs = ev.forkId ? this.getFork(ev.forkId).blocks : this.blocks
         bs.push({ kind: 'assistant', uid: this.nuid(), text: msg, reasoning: '', streaming: false })
         break
       }
@@ -2188,7 +2204,7 @@ class AppStore {
       case 'session.trimming': {
         // 水位自动整理开始：时间线提示整理进行中（分身的进分身聊天框）
         const msg = typeof ev.data === 'string' ? ev.data : '上下文正在整理…'
-        const bsTrim = ev.forkId ? this.ensureFork(ev.forkId).blocks : this.blocks
+        const bsTrim = ev.forkId ? this.getFork(ev.forkId).blocks : this.blocks
         bsTrim.push({ kind: 'note', uid: this.nuid(), text: `⇳ ${msg}` })
         break
       }
@@ -2196,7 +2212,7 @@ class AppStore {
         // 整理完成：上下文已就地折叠——整理标记（trim 块）挂起，其前内容
         // 随之收进折叠区（foldBlocks 渲染层裁掉，滚到顶上拉自动载入）；
         // 分身的进分身框
-        const bsFold = ev.forkId ? this.ensureFork(ev.forkId).blocks : this.blocks
+        const bsFold = ev.forkId ? this.getFork(ev.forkId).blocks : this.blocks
         const summary = typeof ev.data?.summary === 'string' ? ev.data.summary.trim() : ''
         bsFold.push({
           kind: 'trim',

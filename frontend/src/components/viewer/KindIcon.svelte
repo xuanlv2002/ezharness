@@ -1,7 +1,6 @@
 <script lang="ts">
   /*
-  资源 kind → 线性 SVG 图标（与项目 stroke 图标风格一致，不依赖系统
-  emoji 字体——Windows 下 🖼 等会回退成单色轮廓渲染异常）。
+  资源 kind → 线性 SVG 图标（与项目 stroke 图标风格一致，不依赖系统 emoji 字体——Windows 下渲染异常）。
   */
   import type { ResourceKind } from './registry'
 

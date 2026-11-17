@@ -206,7 +206,8 @@ func NewRouter(c Controllers, dist fs.FS, tokens *TokenStore) *gin.Engine {
 		api.POST("/topics/compact", c.Topics.Compact)       // 归档换代：活动会话总结归档开新篇
 
 		api.GET("/mcp", c.Mcp.List)
-		api.POST("/mcp", c.Mcp.Update)
+		api.POST("/mcp/server", c.Mcp.SaveServer)
+		api.DELETE("/mcp/server/:name", c.Mcp.DeleteServer)
 		api.POST("/mcp/connect", c.Mcp.Connect)
 		api.POST("/mcp/disconnect", c.Mcp.Disconnect)
 		api.POST("/mcp/oauth/probe", c.Mcp.OAuthProbe)

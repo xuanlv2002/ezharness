@@ -1,11 +1,5 @@
 <script lang="ts">
-  /*
-  顶栏便签小点：板上每张待办对应一颗便签色小点，排在便签图标左侧；
-  点一颗点 → 从顶部挂下完整便签（正文/图片/记于/截止/关联会话/新会话），
-  再点同一颗点收起。点左右拖动即排序（ord 落盘）。点正文就地编辑
-  （与板上卡片同款编辑器；拖动划选文字仍归复制，不进编辑）。图片
-  双击看大图、悬停可复制/删除（与板上一致，但不可拖拽摆位）。
-  */
+  /* 顶栏便签小点：一颗待办一颗点，点击挂下完整便签，拖动排序（ord 落盘） */
   import { onDestroy } from 'svelte'
   import { fly } from 'svelte/transition'
   import { api, type PinCard, type PinSessionRef } from '../../lib/api'
@@ -41,9 +35,9 @@
   const cardHtml = $derived.by(() =>
     card ? renderPinMarkdown(card.text || (card.images?.length ? '' : '（空便签）')) : '',
   )
-  const latest = $derived(card ? latestSession(card) : undefined)
+  const latest = $derived(card?.sessions?.length ? card.sessions[card.sessions.length - 1] : undefined)
   const latestTime = $derived(latest ? sessionTime(latest) : '')
-  const extra = $derived(card ? extraSessions(card) : 0)
+  const extra = $derived(Math.max(0, (card?.sessions?.length ?? 0) - 1))
 
   let creatingFor = $state('')
   let deleteAsk = $state(false)
@@ -169,14 +163,6 @@
     return c ? { c, d } : null
   })
 
-  function latestSession(c: PinCard): PinSessionRef | undefined {
-    return c.sessions?.length ? c.sessions[c.sessions.length - 1] : undefined
-  }
-
-  function extraSessions(c: PinCard): number {
-    return Math.max(0, (c.sessions?.length ?? 0) - 1)
-  }
-
   function sessionTitle(s: PinSessionRef): string {
     return store.branches.find((b) => b.id === s.id)?.title || s.title || '会话'
   }
@@ -296,14 +282,14 @@
       mids: null,
     }
     window.addEventListener('pointermove', onDragMove)
-    window.addEventListener('pointerup', onDragUp)
+    window.addEventListener('pointerup', finishDrag)
     window.addEventListener('pointercancel', onDragCancel)
     window.addEventListener('blur', onDragCancel)
   }
 
   function stopDragListeners(): void {
     window.removeEventListener('pointermove', onDragMove)
-    window.removeEventListener('pointerup', onDragUp)
+    window.removeEventListener('pointerup', finishDrag)
     window.removeEventListener('pointercancel', onDragCancel)
     window.removeEventListener('blur', onDragCancel)
   }
@@ -344,10 +330,6 @@
     drag.dx = e.clientX
     drag.dy = e.clientY
     insertAt = insertIndex(e.clientX)
-  }
-
-  function onDragUp(e: PointerEvent): void {
-    finishDrag(e)
   }
 
   function onDragCancel(): void {

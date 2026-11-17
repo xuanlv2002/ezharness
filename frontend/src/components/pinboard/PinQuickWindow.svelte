@@ -1,17 +1,14 @@
 <script lang="ts">
   /*
-  便签小窗（?pins=1 窗口，宠物便签球打开）：不拉主客户端的 bootstrap/SSE，
-  只轮询 /api/pinboard 展示板上待办；没手工排过时按截止从紧到松，拖过之后
-  按 ord 排（手动顺序持久化进 pinboard.json）。点条目 → 主进程亮主窗并定
-  位到那张卡，点右侧「完成」直接归档到时间线，点右上「打开便签板」只切到
-  便签页。没有待办/加载失败都有占位。拖动排序由 PinSortableList 承载。
+  便签小窗（?pins=1 独立窗口）：不拉主客户端的 bootstrap/SSE，只轮询 /api/pinboard 展示板上待办。
+  点条目亮主窗并定位到那张卡，右侧「完成」直接归档到时间线。
   */
   import { onMount } from 'svelte'
   import type { PinCard } from '../../lib/api'
   import {
     board,
     completeCard,
-    ensurePinboard,
+    loadPinboard,
     orderedCards,
     pinboardBusy,
     reloadPinboard,
@@ -27,7 +24,7 @@
   let sortDragging = $state(false)
 
   onMount(() => {
-    void ensurePinboard()
+    void loadPinboard()
     const t = setInterval(() => {
       /* 拖动中/本地有未落盘改动时不重拉：避免列表在手下换序 */
       if (!sortDragging && !pinboardBusy()) void reloadPinboard()

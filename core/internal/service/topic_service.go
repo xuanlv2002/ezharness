@@ -205,12 +205,8 @@ func (t *TopicService) Fork(ctx context.Context, sourceID string, anchor int) (*
 	if srcTitle == "" {
 		srcTitle = hooks.FirstUserTitle(src.Messages)
 	}
-	// 偏好以独立 prefs.json 为准（可能比 session.json 新），没有时回落快照字段；
 	// 源没有显式模型时钉住当时生效的默认模型，分叉后与全局默认解耦
-	prefs := hooks.Prefs{ReasoningEffort: src.ReasoningEffort, ApproveMode: src.ApproveMode, ActiveModel: src.ActiveModel}
-	if p, ok := hooks.LoadPrefs(ctx, t.Hub.Fsys, src.ID); ok {
-		prefs = p
-	}
+	prefs, _ := hooks.LoadPrefs(ctx, t.Hub.Fsys, src.ID)
 	if prefs.ActiveModel == "" {
 		if m := t.Hub.ModelsSnapshot().ActiveMain(); m != nil {
 			prefs.ActiveModel = m.Name
@@ -234,10 +230,6 @@ func (t *TopicService) Fork(ctx context.Context, sourceID string, anchor int) (*
 		ForkedFrom:   &hooks.ForkOrigin{SourceID: src.ID, Title: srcTitle, Anchor: anchor},
 		CtxTokens:    src.CtxTokens,
 		CtxWindow:    src.CtxWindow,
-		// 分支继承源会话的模型/思考/审批偏好（与“新会话从跳转来的会话取值”同规）
-		ReasoningEffort: prefs.ReasoningEffort,
-		ApproveMode:     prefs.ApproveMode,
-		ActiveModel:     prefs.ActiveModel,
 	}
 	if err := hooks.SaveSnap(ctx, t.Hub.Fsys, snap); err != nil {
 		return nil, err
@@ -288,11 +280,11 @@ func (t *TopicService) Switch(ctx context.Context, rootID string) error {
 }
 
 /*
-EnsureSession 返回指定叶 session 的已装配会话（按 session ID 精确定位，
+GetSession 返回指定叶 session 的已装配会话（按 session ID 精确定位，
 不切换活动分支）。会话已归档、正在归档、已被 compact 换代或还没落盘
 时返回对应错误——定时回调绑定的是创建任务时的那个会话，不跟随新叶。
 */
-func (t *TopicService) EnsureSession(ctx context.Context, sessionID string) (*domain.Session, error) {
+func (t *TopicService) GetSession(ctx context.Context, sessionID string) (*domain.Session, error) {
 	sessionID = strings.TrimSpace(sessionID)
 	if sessionID == "" {
 		return nil, ErrSessionNotFound

@@ -313,7 +313,7 @@ func (s *CallbackService) runSession(ctx context.Context, task callback.Task, st
 
 	out.Target = "会话 " + target.SessionID
 	out.TargetID = target.SessionID
-	sess, err := s.Topics.EnsureSession(ctx, target.SessionID)
+	sess, err := s.Topics.GetSession(ctx, target.SessionID)
 	if err != nil {
 		return out, sessionTargetError(target.SessionID, err)
 	}
@@ -799,7 +799,7 @@ func (s *CallbackService) prepare(ctx context.Context, t *callback.Task, now tim
 		return fmt.Errorf("%w: %v", ErrCallbackInvalid, err)
 	}
 	if t.Kind == callback.KindSession && t.Session.Mode == callback.ModeSession {
-		if _, err := s.Topics.EnsureSession(ctx, t.Session.SessionID); err != nil {
+		if _, err := s.Topics.GetSession(ctx, t.Session.SessionID); err != nil {
 			return fmt.Errorf("%w: %v", ErrCallbackInvalid, sessionTargetError(t.Session.SessionID, err))
 		}
 	}

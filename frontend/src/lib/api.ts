@@ -1,4 +1,4 @@
-/* API 封装：REST + SSE。v0.2：bootstrap 模式（会话对用户隐藏）。 */
+/* API 封装：REST + SSE。 */
 import { fetchEventSource } from '@microsoft/fetch-event-source'
 import { getToken } from './auth'
 
@@ -116,14 +116,8 @@ export interface CallbackSchedule {
   cron?: string // cron：分 时 日 月 周
 }
 
+/* 会话目标：sessionId 指定叶会话（归档/compact 换代后失败），缺省由后端绑定当前会话 */
 export interface CallbackSessionTarget {
-  sessionId?: string // session 模式：创建任务时的叶 session ID（归档/compact 换代后失败）
-  mode: 'session' | 'new'
-  message: string
-}
-
-/* 创建/更新的会话目标：sessionId 指定叶会话，缺省由后端绑定当前会话 */
-export interface CallbackSessionInput {
   sessionId?: string
   mode: 'session' | 'new'
   message: string
@@ -141,7 +135,7 @@ export interface CallbackScriptTarget {
 /* 一次触发记录（后端 callback.Run，新的在前） */
 export interface CallbackRun {
   at: number
-  status: 'ok' | 'error' | 'skipped' | 'missed' | 'running' | string
+  status: 'ok' | 'error' | 'skipped' | 'missed' | 'running'
   manual?: boolean
   target: string
   targetId?: string
@@ -166,7 +160,7 @@ export interface CallbackTask {
   finishedAt?: number // 一次性任务终态时间：使命结束，不可编辑，仅可查看/手动触发/删除
   nextRunAt?: number
   lastRunAt?: number
-  lastStatus?: 'ok' | 'error' | 'skipped' | 'missed' | 'running' | string
+  lastStatus?: 'ok' | 'error' | 'skipped' | 'missed' | 'running'
   lastResult?: string
   runCount?: number
   runs?: CallbackRun[]
@@ -179,7 +173,7 @@ export interface CallbackSpec {
   kind: 'session' | 'app' | 'script'
   enabled?: boolean
   schedule: CallbackSchedule
-  session?: CallbackSessionInput
+  session?: CallbackSessionTarget
   app?: CallbackAppTarget
   script?: CallbackScriptTarget
 }
@@ -206,7 +200,7 @@ export interface McpOAuthConfig {
 export interface McpServerView {
   name: string
   description: string
-  transport: 'http' | 'sse' | 'stdio' | string
+  transport: 'http' | 'sse' | 'stdio'
   endpoint: string
   command: string
   args?: string[]
@@ -227,20 +221,19 @@ export interface McpToolView {
   args_schema?: any
 }
 
-export interface McpFile {
-  servers: {
-    name: string
-    description?: string
-    type: string
-    url?: string
-    headers?: Record<string, string>
-    command?: string
-    args?: string[]
-    env?: Record<string, string>
-    allow?: string[]
-    enabled?: boolean
-    oauth?: McpOAuthConfig
-  }[]
+/* mcp.json 的单个 server 条目（保存按条提交，不做整表覆盖） */
+export interface McpServerFile {
+  name: string
+  description?: string
+  type: string
+  url?: string
+  headers?: Record<string, string>
+  command?: string
+  args?: string[]
+  env?: Record<string, string>
+  allow?: string[]
+  enabled?: boolean
+  oauth?: McpOAuthConfig
 }
 
 /* McpAuthError 表示 MCP 调用需要 OAuth 认证（后端 401 + needs_auth）。 */
@@ -379,7 +372,7 @@ export interface TopicEntry {
   createdAt: number
   updatedAt?: number
   msgs: number
-  kind?: 'new' | 'fork' | string
+  kind?: 'new' | 'fork'
   origin?: ForkOrigin
 }
 
@@ -480,7 +473,7 @@ export interface MemoryProjectDetail extends MemoryProjectEntry {
 export interface SessionNode {
   id: string
   title: string
-  seedKind?: 'new' | 'fork' | 'compress' | string
+  seedKind?: 'new' | 'fork' | 'compress'
   archived: boolean
   msgs: number
   createdAt: number
@@ -506,7 +499,7 @@ export interface TraceSpan {
   spanId: string
   parentId?: string
   name: string
-  kind: 'turn' | 'model' | 'tool' | 'fork' | 'compact' | string
+  kind: 'turn' | 'model' | 'tool' | 'fork' | 'compact'
   start: number
   end?: number
   durMs?: number
@@ -539,8 +532,8 @@ export interface GenQuota {
 /* 多媒体异步任务（提交即返回；未完成持 id 轮询） */
 export interface MediaJob {
   id: string
-  kind: 'image' | 'audio' | 'video' | string
-  status: 'queued' | 'running' | 'done' | 'failed' | string
+  kind: 'image' | 'audio' | 'video'
+  status: 'queued' | 'running' | 'done' | 'failed'
   model: string
   brief: string
   createdAt: number
@@ -654,7 +647,7 @@ export const api = {
         messages: HistoryMessage[]
         start?: number
         targetId?: string
-        seedKind?: 'new' | 'fork' | 'compress' | string
+        seedKind?: 'new' | 'fork' | 'compress'
         canPrev?: boolean
         forkedFrom?: ForkOrigin
         decisions?: DecisionRecord[]
@@ -807,7 +800,10 @@ export const api = {
 
   getMcp: () => fetch('/api/mcp').then(json<{ servers: McpServerView[] }>),
 
-  saveMcp: (f: McpFile) => post<{ ok: boolean }>('/api/mcp', f),
+  saveMcpServer: (s: McpServerFile) => post<{ ok: boolean }>('/api/mcp/server', s),
+
+  deleteMcpServer: (name: string) =>
+    fetch(`/api/mcp/server/${encodeURIComponent(name)}`, { method: 'DELETE' }).then(json<{ ok: boolean }>),
 
   /* connectMcp 建立连接拉工具；需要 OAuth 时后端回 401 + needs_auth → McpAuthError */
   connectMcp: async (name: string) => {
@@ -866,10 +862,6 @@ export const api = {
   setSessionPrefs: (rootId: string, patch: SessionPrefsPatch) =>
     post<SessionPrefs>(`/api/sessions/${encodeURIComponent(rootId)}/prefs`, patch),
 
-  /* 直调大模型（OpenAPI 面，与 mcp/call 同级） */
-  callModel: (prompt: string, model = '', images: string[] = []) =>
-    post<{ result: string }>('/api/open/model/call', { model, prompt, images }),
-
   /* 多媒体生成模型配置（多媒体页「模型与限额」） */
   getMedia: () => fetch('/api/media').then(json<MediaConfig>),
   saveMedia: (m: MediaConfig) => post<{ ok: boolean }>('/api/media', m),
@@ -888,7 +880,6 @@ export const api = {
   genVideo: (prompt: string, opts: { model?: string; duration?: number; resolution?: string; first_frame?: string; last_frame?: string; wait_seconds?: number } = {}) =>
     post<GenResult>('/api/open/video/call', { prompt, ...opts }),
 
-  mediaJob: (id: string) => fetch(`/api/open/media/jobs/${encodeURIComponent(id)}`).then(json<{ job: MediaJob }>),
   mediaJobs: (limit = 20) => fetch(`/api/open/media/jobs?limit=${limit}`).then(json<{ jobs: MediaJob[] }>),
 
   getMemoryConfig: () => fetch('/api/memory/config').then(json<MemoryConfig>),
@@ -914,13 +905,6 @@ export const api = {
     const qs = q.toString()
     return fetch(`/api/memory/tree${qs ? `?${qs}` : ''}`).then(json<SessionTreePage>)
   },
-
-  /* 手动归档开关（活动/运行中的当前叶会被后端拒绝） */
-  archiveSession: (id: string, archived: boolean) =>
-    post<{ ok: boolean; archived: boolean }>(`/api/sessions/${id}/archive`, { archived }),
-
-  deleteTopic: (id: string) =>
-    fetch(`/api/topics/${id}`, { method: 'DELETE' }).then(json<{ ok: boolean }>),
 
   saveSecurity: (rules: ToolRule[]) => post<{ ok: boolean }>('/api/security', { rules }),
 

@@ -1,6 +1,6 @@
 ---
 name: quick-app
-description: 构建/更新快应用——app.quick 协议、save_app 覆盖语义、后端约定与交付清单（需要本机命令能力、MCP 覆盖不了时加后端）
+description: 构建/更新快应用——app.quick 协议、save_app 增量语义、后端约定与交付清单（需要本机命令能力、MCP 覆盖不了时加后端）
 ---
 
 # 快应用构建
@@ -31,12 +31,11 @@ description: 构建/更新快应用——app.quick 协议、save_app 覆盖语�
 | `callbacks` | 定时调用端点声明（数组；见下），供回调中心按 `name` 引用 |
 | 未识别字段 | 一律忽略（向前兼容） |
 
-**save_app 是整页重写，不是增量更新**（最易翻车）：
+**save_app 是增量更新**：只传要改的字段，未传的保持原值；传空串/空数组清除该字段。
 
-- 每次调用都用 `html` 参数**覆盖** `index.html`——先 write_file 写了完整页面再 save_app 传占位 html，页面就没了
-- 每次调用都**全量重建** `app.quick`——`document`/`description`/`version`/`backend`/`icon`/`callbacks` 省略哪个哪个就消失；**document 首次就传**
-
-正确顺序：**先** `save_app`（html 传完整内容，大页面用 `<@toolArg>` 引草稿）→ **再** `write_file` 补后端脚本、icon 等其余文件 → 后续增量更新用 `write_file`/`edit_file`，**整页重建才再调 save_app**（清单字段全带上）。
+- 新建应用必须给 `html`；更新时不给 `html` 就**不动**入口文件——先 write_file 写了完整页面，再 save_app 更新清单字段也不会把页面冲掉
+- 清单字段（`document`/`description`/`version`/`backend`/`icon`/`callbacks`）各自独立，不会再互相清空
+- 正确顺序：**先** `save_app`（新建时 html 传完整内容，大页面用 `<@toolArg>` 引草稿）→ **再** `write_file` 补后端脚本、icon 等其余文件 → 后续字段变更直接再调 `save_app`（只传要改的），页面内容用 `write_file`/`edit_file` 改
 
 **头像**：建应用顺手给 `icon.svg`——128×128 视图框、透明底、主题色大色块 + 1-2 个字符/几何图形，16px 仍可辨识；不要插画照片密集文字。没给回落默认图标。
 
@@ -131,5 +130,5 @@ async function waitReady() {
 | 同名再点启动没反应 | 后端已在跑时只开窗聚焦；重启=先停旧进程再点 |
 | 换代后后端没了 | 换代连带回收终端与后端，重新点启动 |
 | 定时端点调用失败 | 看任务 lastResult：连接失败先确认后端能启动、URL 端口与 `backend` 一致；404 检查 `app.quick` 的 `callbacks[].url` 与服务端路由 |
-| save_app 后又丢 callbacks | save_app 整页重建，更新时把 `callbacks` 数组原样带上 |
-| 页面改了没生效 | 增量更新走 write_file/edit_file；整页重建才 save_app（字段全带） |
+| save_app 后又丢 callbacks | 已按增量语义保存；若字段被清空，检查是否显式传了 `callbacks: []` |
+| 页面改了没生效 | 页面内容用 write_file/edit_file 改；save_app 不传 html 时不会触碰入口文件 |

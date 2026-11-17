@@ -1,9 +1,6 @@
 <script lang="ts">
-  /*
-  内嵌快应用页：主窗口内 iframe 承载 apps/<名>/<entry>（与 core 同源，
-  页面 cookie 鉴权照旧）。应用自带页面与导航，壳上不再叠标题/动作条：
-  返回用左侧导航，重新进入即刷新，后端日志在终端页「快应用后端」分组。
-  */
+  /* 内嵌快应用页：主窗口内 iframe 承载 apps/<名>/<entry>（与 core 同源，
+     cookie 鉴权照旧）；应用自带页面与导航，壳上不再叠标题/动作条。 */
   import { quickApp } from '../lib/quickApp.svelte'
   import { store } from '../lib/store.svelte'
 

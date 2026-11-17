@@ -7,9 +7,10 @@
 
 | 工具 | 参数 | 返回 / 边界 | 默认 |
 | --- | --- | --- | --- |
-| `read_file` | `path`、`offset?`、`limit?`、`note?` | 文本或图片标记；2000 行、20 万字符、图片 8MB | 免审 |
+| `read_file` | `path`、`offset?`、`limit?`、`line_numbers?`、`note?` | 文本或图片标记；2000 行、20 万字符、图片 8MB；`line_numbers` 时每行前缀「行号+Tab」（仅引用，勿抄进编辑原文） | 免审 |
+| `grep` | `pattern`、`path?`、`include?`、`ignore_case?`、`fixed_string?`、`context_lines?`、`max_results?` | `路径:行号: 内容`；跳过 .git/node_modules/dist/build/.next、二进制、非 UTF-8 与超 2MB 文件（摘要报跳过数） | 免审 |
 | `write_file` | `path`、`content` | 写入字节数 | 审批；路径白名单内免审 |
-| `edit_file` | `path`、`old_text`、`new_text` | 替换次数；全部命中才原子写入 | 审批；路径白名单内免审 |
+| `edit_file` | `path`、`edits[]`（每项 `old_text`、`new_text`、`replace_all?`） | 每处替换次数与行号；整批原子；`old_text` 须与原文精确一致（缩进/空行，CRLF/LF 自动归一），不命中报错；默认要求唯一，`replace_all` 才替换全部命中 | 审批；路径白名单内免审 |
 | `terminal` | `command`、`timeout_s?` | stdout + stderr + exit code；默认 600 秒，上限 3600 秒 | 命令白名单内免审，否则审批 |
 
 `read_file` 读到图片时返回图片标记，由引擎在下一轮转成图片消息；`note`（看图目的）会随图片一起写入该消息。无视觉模型会被拒绝。
@@ -66,8 +67,8 @@ __ezAll('.item .title').map((el) => el.textContent.trim())
 | `load_skill` | `name` | 技能全文 + 目录树 | 免审 |
 | `mcp_router` | `action`（mcp_list / tool_list / tool_call）、`server?`、`tool?`、`args?` | 服务器 / 工具 / 调用结果 | 发现免审，调用审批 |
 | `trim_context` | 无 | 就地折叠上下文，产出四节摘要 | 免审 |
-| `save_app` | `name`、`html`、`title?`、`version?`、`backend?` 等 | 应用路径 | 审批 |
-| `load_app` | `name` | 元数据 + 文档 + CHANGELOG | 免审 |
+| `save_app` | `name`、`html?`（新建必填）、`title?`、`description?`、`version?`、`document?`、`backend?`、`icon?`、`callbacks?` | 应用路径；未传字段保持原值，空串/空数组清除 | 审批 |
+| `load_app` | `name` | 元数据 + 调用文档 | 免审 |
 
 ## 六、审批规则
 
@@ -97,7 +98,7 @@ __ezAll('.item .title').map((el) => el.textContent.trim())
 
 ## 七、结果多大才会被卸载
 
-超过阈值（默认 4096 字节）的工具结果会被卸载到文件，上下文只保留摘要头（默认 512 字节，随阈值放宽但封顶 1KB）与绝对路径。豁免：`ask_user`、`task`、`load_skill`、`read_file`（回放工具）。阈值可在设置页调整，上限 1MB。
+超过阈值（默认 4096 字节）的工具结果会被卸载到文件，上下文只保留摘要头、尾（各默认 512 字节，随阈值放宽但封顶 1KB）与绝对路径。豁免：`ask_user`、`task`、`load_skill`、`read_file`（回放工具）。阈值可在设置页调整，上限 1MB。
 
 详见[上下文管理](上下文设计.md)。
 

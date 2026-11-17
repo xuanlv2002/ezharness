@@ -2,15 +2,7 @@
   import { onMount } from 'svelte'
   import { api, type ApproveLevel } from '../lib/api'
 
-  /*
-  安全：对 agent 的操作管控（区别于应用设置——这里全是 agent 域）。
-  一行一条策略，键是工具名，或"工具名:action"（term_action / browser_action
-  逐 action 配档）。名单概念只有三类：终端命令（terminal、term_action:send）、
-  文件路径（write_file/edit_file 白名单）、mcp（server.tool）；其中命令与 mcp
-  四档（审批/黑名单/白名单/免审），路径只有 审批/白名单/免审，其余工具纯按
-  工具名两档（每次审批 / 全部免审）。策略数据由后端下发（toolRules.json），
-  保存即时生效（无需重建 agent）。
-  */
+  /* 安全：agent 操作管控（一行一策略，键=工具名或"工具名:action"；三类名单 + 档位），保存即时生效 */
   type Level = ApproveLevel
   type ListKind = 'command' | 'path' | 'mcpTool'
 
@@ -46,6 +38,7 @@
   /* 说明文案（按完整 key） */
   const descs: Record<string, string> = {
     read_file: '读取任意文件',
+    grep: '递归搜索文件内容（只读）',
     write_file: '写入 / 创建文件',
     edit_file: '精确替换文件内容',
     terminal: '执行命令（独立进程一次性，阻塞到结束/超时）',
@@ -64,7 +57,7 @@
     'plan:new': '提交任务方案（需用户批准后落盘）',
     'plan:update': '同步任务进度',
     'plan:clear': '清除当前计划',
-    save_app: '保存快应用 html',
+    save_app: '保存快应用清单与前端',
     load_app: '读取快应用调用文档（只读）',
     'media:image': '文生图（贵价：默认每次审批 + 每日配额；异步任务）',
     'media:audio': '文本转语音（贵价：默认每次审批 + 每日配额；异步任务）',
@@ -112,7 +105,7 @@
   }
 
   /* 稳定排序：先按工具、再按 action，避免后端返回顺序抖动导致行乱跳 */
-  const BASE_ORDER = ['read_file', 'write_file', 'edit_file', 'terminal', 'term_tab', 'term_action', 'browser_tab', 'browser_action', 'media', 'task', 'plan', 'save_app', 'load_app', 'callback', 'sleep', 'ask_user', 'trim_context', 'load_skill', 'mcp.*']
+  const BASE_ORDER = ['read_file', 'grep', 'write_file', 'edit_file', 'terminal', 'term_tab', 'term_action', 'browser_tab', 'browser_action', 'media', 'task', 'plan', 'save_app', 'load_app', 'callback', 'sleep', 'ask_user', 'trim_context', 'load_skill', 'mcp.*']
   const ACTION_ORDER: Record<string, string[]> = {
     term_action: ['send', 'read'],
     browser_action: ['navigate', 'read', 'eval', 'console', 'network', 'screenshot', 'upload'],
@@ -147,8 +140,8 @@
     loaded = true
   })
 
-  /* persist 自动保存（档位/名单变更即时提交）。 */
-  async function persist() {
+  /* save 自动保存（档位/名单变更即时提交）。 */
+  async function save() {
     if (!rules.length) return
     saving = true
     message = ''
@@ -164,7 +157,7 @@
 
   function setRule(r: RuleRow, lv: Level) {
     r.level = lv
-    void persist()
+    void save()
   }
 
   /* 合并式工具（term_action / browser_action）的逐 action 行折叠在工具行里 */
@@ -176,7 +169,7 @@
   /* 工具级一键：把该工具所有 action 设成同一档（只改允许该档的项） */
   function setAll(rows: RuleRow[], lv: Level) {
     for (const r of rows) if (levelsOf(r.key).includes(lv)) r.level = lv
-    void persist()
+    void save()
   }
   /* 全部 action 同档时返回该档，否则空（工具行两个按钮都不点亮） */
   function sharedLevel(rows: RuleRow[]): Level | '' {
@@ -210,12 +203,12 @@
     const v = (newList[r.key] || '').trim()
     if (v && !r.list.includes(v)) r.list = [...r.list, v]
     newList[r.key] = ''
-    void persist()
+    void save()
   }
 
   function removeEntry(r: RuleRow, entry: string) {
     r.list = r.list.filter((x) => x !== entry)
-    void persist()
+    void save()
   }
 </script>
 

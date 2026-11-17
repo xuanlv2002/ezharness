@@ -1,14 +1,12 @@
 <script lang="ts">
-  import { onDestroy, onMount } from 'svelte'
+  import { onMount } from 'svelte'
   import { api, type AppEntry } from '../lib/api'
   import { store } from '../lib/store.svelte'
   import { openAppWindow } from '../lib/apps'
   import AppLogo from './AppLogo.svelte'
 
-  /* 快应用 = apps/<名>/ 目录应用（app.quick 声明）。本页「启动」= 独立窗口
-  （与对话 app:// chip、桌面宠物一致）；只有左侧钉住菜单才在主窗口内嵌打开
-  （QuickAppView）。声明了后端的应用由后端把终端拉进侧边栏（卡片实时显示
-  后端运行态，在跑可一键跳终端）。 */
+  /* 快应用页：列出 apps/ 下的目录应用，「启动」= 独立窗口打开（只有左侧
+     钉住菜单才内嵌）；声明了后端的应用卡片实时显示后端运行态。 */
   let apps = $state<AppEntry[]>([])
   let loaded = $state(false)
 
@@ -19,16 +17,13 @@
     if (broadcast) window.dispatchEvent(new Event('ez:apps-changed'))
   }
 
-  onMount(async () => {
-    try {
-      await loadAll()
-    } catch {
-      /* 后端不可达时空列表 */
-    }
-    loaded = true
+  onMount(() => {
+    void loadAll()
+      .catch(() => {})
+      .finally(() => (loaded = true))
     /* 后端运行态是活的（会崩会退）：页面开着就低频跟盘（静默，不广播侧栏） */
     const timer = setInterval(() => void loadAll(false).catch(() => {}), 15000)
-    onDestroy(() => clearInterval(timer))
+    return () => clearInterval(timer)
   })
 
   /* 启动：独立窗口打开（带后端的应用后端可能起不来，失败要出声）。启动后
@@ -330,7 +325,7 @@
     font-family: var(--font-mono);
     font-size: var(--font-size-small);
     color: var(--faint);
-    white-space: nowrap; // 日期断行比溢出更难看
+    white-space: nowrap; /* 日期断行比溢出更难看 */
   }
   .footbtns {
     display: inline-flex;
@@ -381,7 +376,7 @@
     padding: 5px 12px;
     font-size: var(--font-size-ui);
     font-weight: 500;
-    white-space: nowrap; // 底行拥挤时「启动」不许竖排
+    white-space: nowrap; /* 底行拥挤时「启动」不许竖排 */
     flex-shrink: 0;
   }
   .run svg {

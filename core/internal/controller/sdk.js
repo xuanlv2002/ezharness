@@ -201,7 +201,7 @@ OAuth 时自动弹出授权框，用户在浏览器完成授权后自动重试�
     '.cancel{color:#9aa2ac;border-color:rgba(255,255,255,.16)}' +
     '.cancel:hover{background:rgba(255,255,255,.06)}}'
 
-  function ensureHost() {
+  function addHost() {
     if (host) return
     host = document.createElement('div')
     host.setAttribute('data-ez-oauth', '')
@@ -236,7 +236,7 @@ OAuth 时自动弹出授权框，用户在浏览器完成授权后自动重试�
   }
 
   function open(server, metadataUrl) {
-    ensureHost()
+    addHost()
     cur = { server: server, metadataUrl: metadataUrl, poller: 0, timer: 0 }
     els.msg.innerHTML = '服务 <b></b> 需要 OAuth 认证才能调用工具。点「去授权」在浏览器中完成授权，完成后会自动重试本次调用。'
     els.msg.querySelector('b').textContent = server
@@ -330,7 +330,7 @@ OAuth 时自动弹出授权框，用户在浏览器完成授权后自动重试�
 
   var inflight = {} // server → Promise（同一 server 的并发授权复用）
 
-  function ensureAuthorized(server, authUrl, metadataUrl) {
+  function authorize(server, authUrl, metadataUrl) {
     if (inflight[server]) return inflight[server]
     var p = new Promise(function (resolve, reject) {
       if (cur) {
@@ -338,7 +338,7 @@ OAuth 时自动弹出授权框，用户在浏览器完成授权后自动重试�
         var wait = setInterval(function () {
           if (!cur) {
             clearInterval(wait)
-            ensureAuthorized(server, authUrl, metadataUrl).then(resolve, reject)
+            authorize(server, authUrl, metadataUrl).then(resolve, reject)
           }
         }, 200)
         return
@@ -376,7 +376,7 @@ OAuth 时自动弹出授权框，用户在浏览器完成授权后自动重试�
             })
             .then(function (b) {
               if (!b.needs_auth) throw new Error(b.error || '未授权')
-              return ensureAuthorized(b.server || server, b.auth_url || '', b.metadata_url || '').then(function () {
+              return authorize(b.server || server, b.auth_url || '', b.metadata_url || '').then(function () {
                 if (_retried) throw new Error('授权后仍无法调用')
                 return mcpCall(server, tool, args, true)
               })
@@ -390,7 +390,7 @@ OAuth 时自动弹出授权框，用户在浏览器完成授权后自动重试�
 
   /* mcp.authorize(server) → Promise<void>：仅发起授权（不调用工具），供预授权用。 */
   function mcpAuthorize(server) {
-    return ensureAuthorized(server, '', '')
+    return authorize(server, '', '')
   }
 
   window.ez = {

@@ -1,11 +1,8 @@
 <script lang="ts">
   import type { NoticeData } from '../lib/store.svelte'
 
-  /*
-  通知栏：agent 的人机交互请求（审批/询问/规划）在此集中呈现。
-  可内联完成，也可「查看」跳转到时间线对应卡片（如 fork 内的审批块）。
-  数据由 store.notices 驱动（SSE 决策请求帧 + 全局轮询）。
-  */
+  /* 通知栏：agent 的人机交互请求（审批/询问/规划）集中呈现，可内联完成或
+     「查看」跳转到时间线对应卡片；数据由 store.notices 驱动（SSE + 轮询）。 */
   let {
     notices = [],
     onResolve,

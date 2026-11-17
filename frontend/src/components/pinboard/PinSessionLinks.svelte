@@ -1,10 +1,7 @@
 <script lang="ts">
   /*
-  便签卡 / 归档卡右下角的会话链接（纯文本 + 小图标，不是按钮）：
-    · showNew 时第一条是「新会话」：点击跳对话页，发出消息后才关联
-    · 只直接列最近 MAX_VISIBLE 个关联会话，其余收进「更多会话」浮层——
-      卡片高度不随关联数增长（配合 showNew 最多三行）
-  点击只做跳转；阻止 pointerdown 冒泡，避免触发卡片的拖动/排序。
+  便签卡右下角的关联会话链接（纯文本 + 小图标，不是按钮）：只直接列最近 MAX_VISIBLE 个，
+  其余收进「更多会话」浮层，卡片高度不随关联数增长。点击只跳转，并阻止冒泡以免触发卡片拖动。
   */
   import type { PinSessionRef } from '../../lib/api'
   import { store } from '../../lib/store.svelte'

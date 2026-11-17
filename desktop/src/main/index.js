@@ -1,9 +1,6 @@
 /*
-ezharness desktop：Electron 壳主进程。
-职责：拉起 core sidecar（ezharness-core.exe）→ 健康就绪后开主窗口加载
-core 伺服的页面；托盘常驻；关闭语义（托盘隐藏/确认退出）；外链与快应
-用子窗口；共享浏览器（WebContentsView，browser 模块）。
-core 是唯一业务后端——本进程只做壳与桌面资产，不做业务。
+ezharness desktop：Electron 壳主进程——拉起 core sidecar，健康就绪后开主窗口加载 core 伺服的页面。
+core 是唯一业务后端，本进程只做壳与桌面资产，不做业务。
 */
 const { app, BrowserWindow, Tray, Menu, ipcMain, shell, nativeImage, screen, dialog, session } = require('electron')
 const path = require('path')
@@ -12,6 +9,7 @@ const http = require('http')
 const crypto = require('crypto')
 const { spawn } = require('child_process')
 const { startBrowserModule, overlayBrowser } = require('./browser')
+const { startPreviewModule, overlayPreview } = require('./preview')
 const { attachInspectMenu } = require('./inspect')
 
 /* 应用名先行确定：mac/Linux 的用户数据目录由 app.getPath('userData') 推导，
@@ -393,26 +391,13 @@ async function coreSettings() {
     return {}
   }
 }
-async function saveCloseToTray(value) {
+/* saveSetting 写 core 的单个用户设置（core 不可达时保持现状） */
+async function saveSetting(patch) {
   try {
-    await coreFetch('/api/settings', { method: 'POST', body: JSON.stringify({ closeToTray: value }) })
+    await coreFetch('/api/settings', { method: 'POST', body: JSON.stringify(patch) })
   } catch {
     /* core 不可达时保持现状 */
   }
-}
-async function savePetEnabled(value) {
-  try {
-    await coreFetch('/api/settings', { method: 'POST', body: JSON.stringify({ petEnabled: value }) })
-  } catch {
-    /* core 不可达时保持现状 */
-  }
-}
-
-/* 关闭悬浮球：hide 不销毁（保留用户拖放的位置，重开即原位）；持久化 false，
-   重启后不再建窗 */
-function hidePetBall() {
-  if (petWindow && !petWindow.isDestroyed()) petWindow.hide()
-  void savePetEnabled(false)
 }
 
 /* createPetWindow 桌面宠物：透明置顶 288 固定小窗，头像中心落在鼠标
@@ -444,7 +429,7 @@ function createPetWindow() {
   guardWebContents(win.webContents)
   /* 右键只弹「关闭悬浮球」（头像层放行 contextmenu，见 AssistantPet） */
   win.webContents.on('context-menu', () => {
-    Menu.buildFromTemplate([{ label: '关闭悬浮球', click: () => hidePetBall() }]).popup()
+    Menu.buildFromTemplate([{ label: '关闭悬浮球', click: () => { if (petWindow && !petWindow.isDestroyed()) petWindow.hide(); void saveSetting({ petEnabled: false }) } }]).popup()
   })
   win.once('ready-to-show', () => win.show())
   win.on('closed', () => {
@@ -540,6 +525,7 @@ async function handleCloseRequest() {
      藏起，否则浏览器内容会盖住确认框 */
   if (mainWindow && !mainWindow.isDestroyed()) showMain()
   overlayBrowser(true)
+  overlayPreview(true)
   mainWindow.webContents.send('ez:close-prompt')
   return { prompt: true }
 }
@@ -610,15 +596,19 @@ function registerIpc() {
   ipcMain.handle('ez:close-request', () => handleCloseRequest())
   ipcMain.on('ez:close-decision', (_e, tray, remember) => {
     overlayBrowser(false) /* 恢复被确认框临时藏起的浏览器视图 */
+    overlayPreview(false)
     if (tray) {
       hideMainToTray()
-      if (remember) void saveCloseToTray(true)
+      if (remember) void saveSetting({ closeToTray: true })
     } else {
       quitApp()
     }
   })
   /* 取消关闭：同样恢复浏览器视图（关闭确认框把它临时藏起了） */
-  ipcMain.on('ez:close-cancel', () => overlayBrowser(false))
+  ipcMain.on('ez:close-cancel', () => {
+    overlayBrowser(false)
+    overlayPreview(false)
+  })
   ipcMain.on('ez:open-url', (_e, url) => {
     if (typeof url === 'string' && /^https?:\/\//.test(url)) shell.openExternal(url)
   })
@@ -852,6 +842,7 @@ app.whenReady().then(async () => {
   migrateLegacyRoot()
   await startCore()
   await setCoreCookie()
+  startPreviewModule()
   createMainWindow()
   createTray()
   registerIpc()

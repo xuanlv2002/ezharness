@@ -1,8 +1,7 @@
 <script lang="ts">
   /*
-  资源查看器·文件内查找条（Ctrl+F）：受控输入（query 由 ResourcePane
-  持有），计数与前后跳由父层协调到当前 viewer。样式与页面查找条同族，
-  但只服务右侧当前文件，不再去搜聊天列。
+  资源查看器·文件内查找条（Ctrl+F）：受控输入（query 由 ResourcePane 持有），
+  计数与前后跳由父层协调到当前 viewer，只服务右侧当前文件。
   */
 
   let {

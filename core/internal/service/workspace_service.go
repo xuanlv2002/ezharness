@@ -38,10 +38,11 @@ func (w *WorkspaceService) OpenFile(abs string) (*os.File, os.FileInfo, error) {
 	return f, info, nil
 }
 
-/* FileMeta 是附件卡的轻量元数据（聊天里 file:// 文档卡展示页数/大小）。 */
+/* FileMeta 是附件卡的轻量元数据（聊天里 file:// 卡片展示类型/页数/大小）。 */
 type FileMeta struct {
 	Size  int64 `json:"size"`
 	Pages int   `json:"pages,omitempty"` // pptx 幻灯片数（其余格式不回）
+	Dir   bool  `json:"dir,omitempty"`   // 目录卡：前端画文件夹样式
 }
 
 /* pptxSlideRe 只匹配幻灯片正文（排除 _rels 与 slideLayouts）。 */
@@ -57,7 +58,7 @@ func (w *WorkspaceService) Meta(abs string) (FileMeta, error) {
 		return FileMeta{}, err
 	}
 	if info.IsDir() {
-		return FileMeta{}, os.ErrInvalid
+		return FileMeta{Dir: true}, nil
 	}
 	m := FileMeta{Size: info.Size()}
 	if strings.EqualFold(filepath.Ext(abs), ".pptx") {

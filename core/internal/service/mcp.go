@@ -67,7 +67,7 @@ func (e *McpAuthRequiredError) Error() string {
 /*
 McpServerView 是 MCP 页卡片数据。
 
-Allow 必须回传：前端全量保存，丢字段会清掉 mcp.json 里的白名单。
+Allow 必须回传：前端按视图回存单个条目，丢字段会清掉 mcp.json 里的白名单。
 */
 type McpServerView struct {
 	Name        string            `json:"name"`
@@ -82,8 +82,8 @@ type McpServerView struct {
 	Connected   bool              `json:"connected"` // 页面手动会话已建立
 	Tools       int               `json:"tools"`     // 页面拉取过的工具数；-1 = 会话在但未拉取（agent 共用连接池时常见），0 = 确实无工具
 	Allow       []string          `json:"allow,omitempty"`
-	OAuth       bool              `json:"oauth"`                // 该 server 配置了 OAuth
-	Authorized  bool              `json:"authorized"`           // OAuth 令牌有效（非 OAuth server 恒 false）
+	OAuth       bool              `json:"oauth"`                  // 该 server 配置了 OAuth
+	Authorized  bool              `json:"authorized"`             // OAuth 令牌有效（非 OAuth server 恒 false）
 	OAuthConfig *McpOAuthFile     `json:"oauth_config,omitempty"` // 原始 OAuth 配置（编辑/回存透传）
 }
 
@@ -229,34 +229,64 @@ func (s *McpService) ProbeOAuth(ctx context.Context, name string) bool {
 }
 
 /*
-	Update 保存 mcp.json（Reload 钩子下一轮生效），并关闭已删除/禁用
-
-server 的页面会话。
+SaveServer 保存单个 server（同名覆盖，不存在则追加）。按条目落盘而不是
+整表覆盖：页面上连续操作不同 server 时互不冲掉。
 */
-func (s *McpService) Update(ctx context.Context, f McpFile) error {
-	seen := map[string]bool{}
-	for _, srv := range f.Servers {
-		if srv.Name == "" {
-			return errMcp("server name required")
+func (s *McpService) SaveServer(ctx context.Context, srv McpServerFile) error {
+	if srv.Name == "" {
+		return errMcp("server name required")
+	}
+	switch srv.Type {
+	case "http", "sse":
+		if srv.URL == "" {
+			return errMcp(srv.Type + " server requires url")
 		}
-		// 名字是前端 keyed each 的 key 与路由索引键，重名崩页面且 agent 侧无法寻址
-		if seen[srv.Name] {
-			return errMcp("duplicate server name: " + srv.Name)
+	case "stdio":
+		if srv.Command == "" {
+			return errMcp("stdio server requires command")
 		}
-		seen[srv.Name] = true
-		switch srv.Type {
-		case "http", "sse":
-			if srv.URL == "" {
-				return errMcp(srv.Type + " server requires url")
-			}
-		case "stdio":
-			if srv.Command == "" {
-				return errMcp("stdio server requires command")
-			}
-		default:
-			return errMcp("type must be http, sse or stdio")
+	default:
+		return errMcp("type must be http, sse or stdio")
+	}
+	f := loadMcpFileOrNil(ctx, s.Fsys)
+	if f == nil {
+		f = &McpFile{}
+	}
+	replaced := false
+	for i := range f.Servers {
+		if f.Servers[i].Name == srv.Name {
+			f.Servers[i] = srv
+			replaced = true
+			break
 		}
 	}
+	if !replaced {
+		f.Servers = append(f.Servers, srv)
+	}
+	return s.saveFile(ctx, f)
+}
+
+/* DeleteServer 删除单个 server；不存在视为已删。 */
+func (s *McpService) DeleteServer(ctx context.Context, name string) error {
+	if name == "" {
+		return errMcp("server name required")
+	}
+	f := loadMcpFileOrNil(ctx, s.Fsys)
+	if f == nil {
+		return nil
+	}
+	out := f.Servers[:0]
+	for _, srv := range f.Servers {
+		if srv.Name != name {
+			out = append(out, srv)
+		}
+	}
+	f.Servers = out
+	return s.saveFile(ctx, f)
+}
+
+/* saveFile 落盘并热替换连接，清掉已删除/禁用 server 的工具缓存。 */
+func (s *McpService) saveFile(ctx context.Context, f *McpFile) error {
 	data, err := json.MarshalIndent(f, "", "  ")
 	if err != nil {
 		return err

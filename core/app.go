@@ -63,7 +63,7 @@ func newApp(c config.Config, token string) (*app, error) {
 	if err := os.Chdir(c.DataDir); err != nil {
 		return nil, fmt.Errorf("切换到数据目录 %s 失败: %w", c.DataDir, err)
 	}
-	created, err := service.EnsureLayout()
+	created, err := service.CreateLayout()
 	if err != nil {
 		return nil, err
 	}
@@ -135,7 +135,7 @@ func (a *app) format(port int, listen string) {
 	if err := wipeDataDir(); err != nil {
 		log.Printf("格式化清理未完全成功: %v", err)
 	}
-	if _, err := service.EnsureLayout(); err != nil {
+	if _, err := service.CreateLayout(); err != nil {
 		log.Printf("格式化后重建数据目录失败: %v", err)
 	}
 	/* 跨代常驻服务持有旧目录状态（MCP OAuth 探测缓存、浏览器截图目录）：

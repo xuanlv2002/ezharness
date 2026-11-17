@@ -4,7 +4,7 @@
   let { name, raw }: { name: string; raw: string } = $props()
 
   const face = $derived(toolFace(name, raw))
-  const dlines = $derived(face?.kind === 'diff' ? diffLines(face.old, face.new) : [])
+  const dhunks = $derived(face?.kind === 'diff' ? face.edits.map((e) => diffLines(e.old, e.new)) : [])
   const cmdHtml = $derived(face?.kind === 'cmd' ? highlightCommand(face.command) : '')
   const codeLines = $derived(face?.kind === 'code' ? face.content.split('\n') : null)
   const numbered = $derived(!!codeLines && codeLines.length <= 800)
@@ -30,7 +30,9 @@
 {:else if face?.kind === 'diff'}
   <div class="tf">
     {#if face.path}<div class="tf-path">{face.path}</div>{/if}
-    <pre class="tf-diff">{#each dlines as l, i}{#if l.t === '-'}<span class="del">{l.s || ' '}</span>{:else if l.t === '+'}<span class="add">{l.s || ' '}</span>{:else}<span class="ctx">{l.s || ' '}</span>{/if}{i < dlines.length - 1 ? '\n' : ''}{/each}</pre>
+    {#each dhunks as dlines, k (k)}
+      <pre class="tf-diff">{#each dlines as l, i}{#if l.t === '-'}<span class="del">{l.s || ' '}</span>{:else if l.t === '+'}<span class="add">{l.s || ' '}</span>{:else}<span class="ctx">{l.s || ' '}</span>{/if}{i < dlines.length - 1 ? '\n' : ''}{/each}</pre>
+    {/each}
   </div>
 {:else if face?.kind === 'cmd'}
   <div class="tf">

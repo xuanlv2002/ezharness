@@ -1,12 +1,14 @@
 <script lang="ts">
   import { onDestroy, onMount, tick, untrack } from 'svelte'
   import { api } from '../../lib/api'
-  import { fileBaseName, normFileKey } from '../../lib/textfile'
+  import { fileBaseName, normFileKey, splitLineAnchor } from '../../lib/textfile'
   import { store } from '../../lib/store.svelte'
   import { filePane } from '../../lib/filePaneState'
   import { paneTabs } from '../../lib/paneTabs.svelte'
   import { explorer, explorerUI, repoOf, setExplorerOpen } from '../../lib/explorerState.svelte'
   import { findScope } from '../../lib/findscope'
+  import { getFileStamp, getStamp } from '../../lib/fileStamp'
+  import { toFileUrl } from '../../lib/respaths'
   import { kindOf, VIEWERS, MAX_BYTES, type ResTab } from './registry'
   import KindIcon from './KindIcon.svelte'
   import ExplorerTree from './ExplorerTree.svelte'
@@ -17,25 +19,18 @@
   import DiffViewer from './viewers/DiffViewer.svelte'
   import FileFindBar from './FileFindBar.svelte'
 
-  /*
-  工作区抽屉·资源查看器（file:// 的消费端，通用框架）：多 tab 按扩展名
-  路由到各资源专属 viewer（registry 单一来源，新资源=新组件+此处挂载）。
-  左侧目录树（可收起）浏览文件系统，默认工作目录；git 仓库内的文本文件
-  可切「变更对比」（HEAD ↔ 当前，DiffViewer 只读观测）。
-  磁盘是唯一真身——一切皆资源（画笔钮草稿也是 tmp 下的一张图片）：
-  文本系（text/md/html 原文）单编辑器+tab 状态数据化（单实例重绑）；
-  图片 tab per-tab 实例保活（画布状态不可数据化，改动防抖自动写回）。
-  状态条统一：保存/Ctrl+S、添加到对话（纯文件引用 chip，经
-  <reference_file> 告知模型）。磁盘是唯一真身（VS Code 式）：激活时
-  每 2s HEAD 轮询全部文本 tab 的 Last-Modified——没有未保存修改的
-  tab 直接跟随磁盘重载（AI 改完即显示新内容，无需刷新钮）；有未保存
-  修改的 tab 保留本地内容并记 diskChanged，保存时弹窗确认是否覆盖。
-  */
+  /* 工作区资源查看器：按扩展名路由各 viewer；文本/图片均内存编辑、Ctrl+S 写盘。
+     文本 tab 激活期间跟随磁盘（HEAD 轮询），有未保存修改时保存前确认覆盖。 */
 
   /* push 仅弹出窗口传入：状态变化即上报主进程（关窗回流取最新快照）。
      hosted = 挂在抽屉里（标题栏 Hosting 目录开关）：面板内不重复出钮，
      工具条无 tab 时整行收掉；弹出独立窗没有标题栏，钮留在面板内 */
-  let { active = false, push, hosted = false }: { active?: boolean; push?: (json: string) => void; hosted?: boolean } = $props()
+  let {
+    active = false,
+    push,
+    hosted = false,
+    animating = false,
+  }: { active?: boolean; push?: (json: string) => void; hosted?: boolean; animating?: boolean } = $props()
 
   let tabs = $state<ResTab[]>([])
   let current = $state('')
@@ -45,9 +40,10 @@
   let mdViewer = $state<MarkdownViewer>()
   let htmlViewer = $state<HtmlViewer>()
   let findBar = $state<FileFindBar>()
+  let imageViewers: Record<string, ImageViewer | undefined> = {}
 
   const tab = $derived(tabs.find((t) => t.key === current))
-  const dirty = $derived(!!tab && tab.kind !== 'image' && tab.content !== tab.saved)
+  const dirty = $derived(!!tab && isTabDirty(tab))
   const textish = $derived(!!tab && isTextishKind(tab.kind))
   /* 目录栏展开时内容满铺（grid 右列）：查看器内部不再叠一层圆角卡片 */
   const filePaneFlush = $derived(explorerUI.open)
@@ -57,8 +53,8 @@
 
   /* ── 当前文件内查找（Ctrl+F）──
      焦点在资源页里时由本组件接管：全局页面查找（FindBar）只管聊天列/
-     页面 DOM，搜不到 textarea 正文与预览 iframe。这里按当前 viewer 的
-     语义去找——text/md/html 原文搜源码，md/html 预览搜渲染后 DOM。 */
+     页面 DOM，搜不到 textarea 正文。这里按当前 viewer 的语义去找——
+     text/html 搜源码，markdown 原文搜源码、预览搜渲染后的 DOM。 */
   let findOpen = $state(false)
   let findQuery = $state('')
   let findIdx = $state(0)
@@ -68,12 +64,12 @@
   /* 当前 tab 对应的查找实现；差异对比/图片/二进制没有文件内查找 */
   const fileFinder = $derived.by(() => {
     if (!tab || !textish || tab.diff) return null
-    if (tab.kind === 'text') return textViewer
     if (tab.kind === 'markdown') return mdViewer
     if (tab.kind === 'html') return htmlViewer
-    return null
+    return textViewer
   })
-  const canFind = $derived(!!active && !!fileFinder)
+  /* HTML 预览是原生浏览器视图，源码查找只在原文态可用 */
+  const canFind = $derived(!!active && !!fileFinder && !(tab?.kind === 'html' && tab.htmlPreview === true))
 
   function runFind(q: string, i = 0): void {
     findQuery = q
@@ -197,6 +193,11 @@
     return kind === 'text' || kind === 'markdown' || kind === 'html'
   }
 
+  /* 未保存判定：文本比内容，图片看画板标记 */
+  function isTabDirty(t: ResTab): boolean {
+    return t.kind === 'image' ? !!t.imageDirty : t.content !== t.saved
+  }
+
   /* 跨窗口快照：tab 状态（含当前选中）整体搬运——草稿也是一张 tmp 图片，
      与普通资源走同一条路 */
   function serializeTabs(): string {
@@ -232,12 +233,23 @@
     if (push) push(serializeTabs())
   })
 
-  /* 外部定位请求（supper_url file:// 点击 / 资源入口）：文件按需即开 */
+  /* 外部定位请求（supper_url file:// 点击 / 资源入口）：文件按需即开；
+     带 #L 锚点时等正文与查看器就绪后定位选中 */
   $effect(() => {
     const want = store.fileFocus
     if (!want) return
     store.fileFocus = ''
-    void openTab(want)
+    const { path, line, endLine } = splitLineAnchor(want)
+    void openTab(path).then(async () => {
+      if (!line) return
+      const t = tabs.find((x) => x.key === normFileKey(path))
+      if (!t) return
+      if (t.kind === 'html') t.htmlPreview = false // 行锚点只能落在源码视图
+      await tick()
+      if (current !== t.key) return // 等正文期间用户已切走，不跳到别的 tab
+      if (t.kind === 'html') htmlViewer?.gotoLine(line, endLine)
+      else if (t.kind === 'text') textViewer?.gotoLine(line, endLine)
+    })
   })
 
   /* 内存画板草稿（画笔钮/消息 base64 入口）：不落盘直接开 tab，保存时
@@ -295,7 +307,7 @@
         }
         cur.content = text
         cur.saved = text
-        cur.diskStamp = diskStampOf(r)
+        cur.diskStamp = getStamp(r)
       } catch (e) {
         cur.err = `文件读取失败：${(e as Error).message}`
       } finally {
@@ -325,25 +337,6 @@
     if (tab && textish) tab.diff = !tab.diff
   }
 
-  /* 磁盘指纹：优先 ETag（后端按纳秒 mtime+size 生成，同一秒内连续
-     写入也分辨得出），老服务回退 Last-Modified */
-  function diskStampOf(r: Response): string {
-    return r.headers.get('etag') || r.headers.get('last-modified') || ''
-  }
-
-  /* HEAD 取磁盘指纹（本地文件服务；失败返回 null，本轮跳过） */
-  async function headStamp(path: string): Promise<string | null> {
-    try {
-      const h = await fetch('/api/workspace/file?path=' + encodeURIComponent(path), {
-        method: 'HEAD',
-        cache: 'no-store',
-      })
-      return h.ok ? diskStampOf(h) : null
-    } catch {
-      return null
-    }
-  }
-
   /* 磁盘变更轮询（全部文本 tab，不只当前——切回来即新内容）：
      干净 tab 自动重载；有未保存修改的 tab 只记 diskChanged 保留本地
      内容，保存时再弹窗确认覆盖。轮询本身不并发。 */
@@ -360,7 +353,7 @@
           t.diskChanged = false
           t.diskStamp = ''
         }
-        const stamp = await headStamp(t.path)
+        const stamp = await getFileStamp(t.path)
         if (stamp === null || !stamp || stamp === t.diskStamp) continue
         t.diskStamp = stamp
         if (t.content !== t.saved) {
@@ -378,7 +371,8 @@
      读期间用户开始输入（内容不再等于已保存）则放弃本次覆盖。 */
   async function reloadContent(t: ResTab, keepScroll: boolean) {
     if (!t.path) return
-    const st = textViewer?.scrollTop() ?? 0
+    const viewer = t.kind === 'markdown' ? mdViewer : t.kind === 'html' ? htmlViewer : textViewer
+    const st = viewer?.scrollTop() ?? 0
     const baseline = t.saved
     try {
       const r = await fetch('/api/workspace/file?path=' + encodeURIComponent(t.path), { cache: 'no-store' })
@@ -399,11 +393,12 @@
       }
       t.content = text
       t.saved = text
-      t.diskStamp = diskStampOf(r)
+      t.diskStamp = getStamp(r)
       t.savedAt = ''
       t.diskChanged = false
       t.warn = text.includes('\uFFFD') ? '文件疑似非 UTF-8 编码：显示可能乱码，保存后会转为 UTF-8' : ''
-      if (keepScroll) requestAnimationFrame(() => textViewer?.restoreScroll(st))
+      if (t.kind === 'html') reloadHtmlViews(t.path)
+      if (keepScroll) requestAnimationFrame(() => viewer?.restoreScroll(st))
     } catch (e) {
       t.err = `文件读取失败：${(e as Error).message}`
     }
@@ -411,12 +406,12 @@
 
   /* 覆盖确认（磁盘被外部修改 + 本地有未保存修改）：保存前弹窗，
      与 VS Code「文件已在磁盘上更改」同语义——覆盖 / 取消 */
-  let overwrite = $state<{ tab: ResTab; resolve: (ok: boolean) => void } | null>(null)
+  let overwrite = $state<{ name: string; resolve: (ok: boolean) => void } | null>(null)
 
-  function askOverwrite(t: ResTab): Promise<boolean> {
+  function askOverwrite(name: string): Promise<boolean> {
     return new Promise((resolve) => {
       overwrite?.resolve(false)
-      overwrite = { tab: t, resolve }
+      overwrite = { name, resolve }
     })
   }
 
@@ -429,7 +424,7 @@
   function closeTab(key: string) {
     const t = tabs.find((x) => x.key === key)
     if (!t) return
-    if (t.kind !== 'image' && t.content !== t.saved) {
+    if (isTabDirty(t)) {
       pendingClose = key
       return
     }
@@ -459,15 +454,9 @@
     if (key !== undefined) fn(key)
   }
 
-  /* dirty 判定与 closeTab 一致（文本系未保存；图片草稿未落盘视作干净——
-     草稿本就丢弃无痕） */
-  function isDirty(t: ResTab): boolean {
-    return t.kind !== 'image' && t.content !== t.saved
-  }
-
   function closeBatch(targets: ResTab[]) {
     for (const t of targets) {
-      if (!isDirty(t)) removeTab(t.key)
+      if (!isTabDirty(t)) removeTab(t.key)
     }
   }
 
@@ -496,6 +485,13 @@
     if (current === key) current = tabs[Math.min(i, tabs.length - 1)]?.key ?? ''
   }
 
+  /* HTML 保存/磁盘更新后刷新内嵌预览与共享浏览器里的同文件标签 */
+  function reloadHtmlViews(path: string): void {
+    const url = toFileUrl(path)
+    void store.reloadBrowserUrl(url)
+    ;(window as any).ez?.preview?.reload(url)
+  }
+
   /* 保存写回。写前先比一次磁盘指纹（轮询有间隔，外部修改可能落在
      两者之间）：与本地基准不同 = 别处改过，弹窗确认后才覆盖。force
      供确认后直写。写成功立即以新指纹为基准，下一轮轮询不会把自己的
@@ -504,10 +500,10 @@
     if (!t.path || t.loading || t.content === t.saved) return true
     if (!force) {
       if (t.diskStamp) {
-        const stamp = await headStamp(t.path)
+        const stamp = await getFileStamp(t.path)
         if (stamp && stamp !== t.diskStamp) t.diskChanged = true
       }
-      if (t.diskChanged && !(await askOverwrite(t))) return false
+      if (t.diskChanged && !(await askOverwrite(t.name))) return false
     }
     if (!tabs.some((x) => x.key === t.key)) return false // 确认期间 tab 被关掉
     try {
@@ -516,7 +512,8 @@
       t.savedAt = new Date().toTimeString().slice(0, 5)
       t.err = ''
       t.diskChanged = false
-      t.diskStamp = (await headStamp(t.path)) ?? ''
+      t.diskStamp = (await getFileStamp(t.path)) ?? ''
+      if (t.kind === 'html') reloadHtmlViews(t.path)
       return true
     } catch (e) {
       t.err = `保存失败：${(e as Error).message}`
@@ -528,8 +525,8 @@
   async function saveAndClose(key: string) {
     const t = tabs.find((x) => x.key === key)
     if (!t) return
-    if (!(await saveTab(t))) return
-    removeTab(key)
+    const ok = t.kind === 'image' ? ((await imageViewers[t.key]?.save()) ?? false) : await saveTab(t)
+    if (ok) removeTab(key)
   }
 
   /* 添加到对话（文本系）：纯文件引用 chip 塞进输入框（发送时经
@@ -590,11 +587,11 @@
         ondblclick={() => setExplorerOpen(true)}
         onauxclick={(e) => e.button === 1 && closeTab(t.key)}
         oncontextmenu={(e) => openMenu(e, t.key)}
-        title={(t.path || '画板草稿（未保存）') + '（双击打开目录面板）'}
+        title={(t.path || '画板草稿') + '（双击打开目录面板）'}
       >
         <span class="kind"><KindIcon kind={t.kind} /></span>
         <span class="name">{t.name}</span>
-        {#if (t.kind !== 'image' && t.content !== t.saved) || (t.kind === 'image' && !t.path)}<i class="dirty"></i>{/if}
+        {#if isTabDirty(t)}<i class="dirty"></i>{/if}
         <span class="x" onclick={(e) => { e.stopPropagation(); closeTab(t.key) }} role="button" tabindex="-1" title="关闭">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round">
             <path d="M6 6l12 12M18 6L6 18" />
@@ -619,18 +616,18 @@
       <DiffViewer {tab} />
     {:else if tab && tab.kind === 'text'}
       <TextViewer bind:this={textViewer} {tab} {active} onSave={() => void saveTab(tab)} />
-    {:else if tab && tab.kind === 'markdown'}
-      <MarkdownViewer bind:this={mdViewer} {tab} {active} flush={filePaneFlush} onSave={() => void saveTab(tab)} />
     {:else if tab && tab.kind === 'html'}
       <HtmlViewer
         bind:this={htmlViewer}
         {tab}
         {active}
+        {animating}
         flush={filePaneFlush}
+        blocked={!!overwrite}
         onSave={() => void saveTab(tab)}
-        onfind={() => void openFind()}
-        onfindclose={closeFind}
       />
+    {:else if tab && tab.kind === 'markdown'}
+      <MarkdownViewer bind:this={mdViewer} {tab} {active} flush={filePaneFlush} onSave={() => void saveTab(tab)} />
     {:else if tab && binViewer}
       {@const Viewer = binViewer}
       <Viewer {tab} {active} />
@@ -640,17 +637,15 @@
         <p class="hint">左上角目录钮打开目录面板选文件 · 对话中的 <code>文件名</code> 入口也可点击</p>
       </div>
     {/if}
-    <!-- 图片 tab：per-tab 实例保活（画板画布状态不可数据化）；
-         rev 变化 = 跨窗口回流，重挂按盘重读 -->
+    <!-- 图片 tab：per-tab 实例保活；rev 变化 = 跨窗口回流，重挂按盘重读 -->
     {#each imageTabs as t (t.key)}
       <div class="img-slot" class:hidden={current !== t.key}>
         {#key t.rev ?? 0}
-          <ImageViewer tab={t} active={active && current === t.key} />
+          <ImageViewer bind:this={imageViewers[t.key]} tab={t} active={active && current === t.key} {askOverwrite} />
         {/key}
       </div>
     {/each}
-    <!-- 文件内查找条：浮在内容右上；md/html 有「预览/原文」工具条，
-        往下让一行，不压在分段控件/提示上 -->
+    <!-- 文件内查找条：浮在内容右上；md/html 有模式工具条，往下让一行 -->
     {#if findOpen && canFind}
       <div class="findslot" class:belowbar={tab?.kind === 'markdown' || tab?.kind === 'html'}>
         <FileFindBar
@@ -704,7 +699,7 @@
         {/if}
       </span>
       <span class="tip">
-        {tab.kind === 'text' ? '编辑后 Ctrl+S 保存写回' : '可切换预览/原文'}
+        {tab.kind === 'markdown' || tab.kind === 'html' ? '可切换预览/原文' : '编辑后 Ctrl+S 保存写回'}
       </span>
     </div>
   {/if}
@@ -713,7 +708,7 @@
   {#if overwrite}
     <div class="mask" role="presentation" onclick={() => answerOverwrite(false)}></div>
     <div class="overmodal" role="alertdialog" aria-modal="true" aria-label="确认覆盖磁盘文件">
-      <p class="otext">「{overwrite.tab.name}」已在磁盘上被修改，保存会覆盖这些新内容。</p>
+      <p class="otext">「{overwrite.name}」已在磁盘上被修改，保存会覆盖这些新内容。</p>
       <div class="oacts">
         <button class="ghost" onclick={() => answerOverwrite(false)}>取消</button>
         <button class="over" onclick={() => answerOverwrite(true)}>覆盖保存</button>

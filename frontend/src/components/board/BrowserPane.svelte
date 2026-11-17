@@ -2,15 +2,8 @@
   import { onDestroy, onMount } from 'svelte'
   import { paneTabs } from '../../lib/paneTabs.svelte'
 
-  /*
-  共享浏览器抽屉页（desktop 专用）：标签条 + 地址栏 + 内容区占位。
-  真实页面由 desktop 主进程的 WebContentsView 渲染并贴靠内容区；
-  本页只是 UI 框架——标签清单经 IPC 订阅主进程，新建/切换/关闭/
-  导航全部转发主进程。web 端直接访问时无 desktop 能力，显示降级提示。
-  active = 抽屉开着且当前是浏览器页：false 时上报零矩形让主进程藏
-  视图；true 时除 ResizeObserver 外再逐帧上报 ~350ms——抽屉宽度
-  过渡期间内容区恒宽、RO 不触发，但内容区 x 在动，需逐帧重贴。
-  */
+  /* 共享浏览器抽屉页（desktop 专用）：本页只是 UI 框架，真实页面由主进程
+     WebContentsView 渲染贴靠——标签与导航操作全部经 IPC 转发主进程。 */
 
   let { active = false, animating = false }: { active?: boolean; animating?: boolean } = $props()
 

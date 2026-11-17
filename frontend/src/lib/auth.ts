@@ -1,9 +1,4 @@
-/* 鉴权令牌注入：
-   - REST/SSE 走 X-EZ-Token 请求头（全局 fetch 补丁 + fetch-event-source）；
-   - 浏览器 WebSocket 走 Sec-WebSocket-Protocol（不能设自定义头）；
-   - 页面导航、<img>/<video>/PDF、快应用等浏览器自动发起的请求走 HttpOnly
-     cookie（ez_token）——这些请求加不了请求头。
-   入口 URL 的 ?token= 只用于一次性换 cookie，随后立即从地址栏摘掉。 */
+/* 鉴权令牌注入：REST/SSE 走请求头，WebSocket 走子协议，浏览器自动请求走 HttpOnly cookie（?token= 仅一次性换 cookie） */
 
 let token = ''
 

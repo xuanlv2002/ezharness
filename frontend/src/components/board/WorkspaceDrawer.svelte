@@ -7,17 +7,8 @@
   import BrowserPane from './BrowserPane.svelte'
 
   /*
-  工区抽屉：推挤式右布局列（非悬浮 overlay）——打开时占布局宽度，
-  聊天主列被挤窄不遮挡。工具页（终端/资源查看器/共享浏览器）互斥显
-  隐，多 pane 常驻挂载保活（终端 WS/xterm、资源 tab 的 buffer/标注/
-  画布、浏览器标签条互不丢失）；入口是聊天输入条的 mini 钮
-  （store.toggleDrawerTool，开着且同页=收起）。收起：头部 » 钮 /
-  双击标题栏 / Esc，收起后整列出净、不占宽度。
-  宽度：中间线定主列宽（默认 42vw、保底 480px），抽屉吃掉剩余全部——
-  窗口缩放时抽屉跟着伸缩、主列不动；抽屉保底 PANE_MIN 640px（浏览器/
-  终端/资源都要放得下，不允许压成细条）。动画 = width 展开（内层
-  .inner 恒宽 var(--pane-w)：过渡期间内容不重排、xterm 不反复 fit；
-  窗口 resize 时宽度变化经 var 继承同步到 inner，ResizeObserver 自动 fit）。
+  工区抽屉：推挤式右布局列（非悬浮 overlay），终端/资源/浏览器互斥显隐且常驻挂载保活。
+  宽度定死主列、抽屉吃剩余全部；展开动画走 width，过渡期内层恒宽以免内容重排、xterm 反复 fit。
   */
   let { visible = true }: { visible?: boolean } = $props()
 
@@ -44,13 +35,7 @@
     store.closeTermDrawer()
   }
 
-  /* 拖拽脱离：按住头部把手拖出抽屉 → 拖拽期间只画一个跟随光标的幽灵卡片，
-     松手在抽屉外就在落点**新建一个普通窗口**（抽屉收起），松手回抽屉内取消。
-     窗口全程只有默认状态——不再做"预览态（透明/不可聚焦/置顶）→ 落定态"
-     的切换：那些临时窗口态在 Windows 上会让窗口合成面进入异常态，表现就是
-     内容区白屏（抽屉从不需要它们，所以抽屉从来没这个问题）。
-     指针移出窗口时靠 Chromium 在按键期对源窗口的隐式鼠标捕获
-     （setPointerCapture 强化）继续收 pointermove/pointerup 与屏幕坐标。 */
+  /* 拖拽脱离：拖出抽屉松手即在落点新建普通窗口（Windows 上临时窗口态会白屏，全程只用默认状态） */
   const ENTER = 8 // 越出抽屉边缘多少像素算进入脱离
   const EXIT = 16 // 拖回抽屉内多少像素算撤销（滞回，防边缘抖动）
   const SLOP = 6 // 小于此位移不判定（防误触）
@@ -267,7 +252,7 @@
         <TerminalTab active={open && tool === 'term'} />
       </div>
       <div class="pane" class:hidden={tool !== 'file'}>
-        <ResourcePane active={open && tool === 'file'} hosted />
+        <ResourcePane active={open && tool === 'file'} {animating} hosted />
       </div>
       <div class="pane" class:hidden={tool !== 'browser'}>
         <BrowserPane active={open && tool === 'browser'} {animating} />

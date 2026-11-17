@@ -117,7 +117,7 @@ type Settings struct {
 	MaxIterations    int      `json:"maxIterations"`        // 单轮对话的最大模型迭代次数（0 = 默认 64，上限 128；随 Reassemble 生效）
 	DebugMode        bool     `json:"debugMode"`            // 调试模式：把每次模型请求的全量输入写进日志（modeldump 实时读取，即改即生效）
 	PinnedApps       []string `json:"pinnedApps,omitempty"` // 钉到桌面小助手的快应用名（快应用页/宠物窗轮询读取，即改即生效）
-	OffloadThreshold int      `json:"offloadThreshold"`     // 工具结果卸载阈值（字节；超过即卸载到文件只留摘要头，0=默认 4096；摘要头随阈值分档封顶 1KB；随 Reassemble 生效）
+	OffloadThreshold int      `json:"offloadThreshold"`     // 工具结果卸载阈值（字节；超过即卸载到文件只留头尾摘要，0=默认 4096；头尾各随阈值分档封顶 1KB；随 Reassemble 生效）
 	/* 生成类模型（image/audio/video）每日调用配额（agent 工具与 OpenAPI 同一计数；
 	0 = 用默认。这三类按次计费且单价高，配额是审批之外的第二道闸 */
 	GenQuotaImage int `json:"genQuotaImage,omitempty"`

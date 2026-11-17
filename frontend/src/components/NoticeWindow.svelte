@@ -3,12 +3,8 @@
   import NoticePanel from './NoticePanel.svelte'
   import { store, type NoticeData } from '../lib/store.svelte'
 
-  /*
-  独立通知窗（?notice=1 窗口）：直接复用客户端的 NoticePanel 与 store，
-  只跑 refreshBranches/refreshNotices 轮询（不 bootstrap/SSE），因此内容与
-  操作和客户端完全一致。点条目跳转不操作本窗 store——发 IPC 让主进程
-  亮起主客户端并把跳转载荷转给主窗渲染层。
-  */
+  /* 独立通知窗（?notice=1 窗口）：直接复用客户端的通知栏与 store，只跑
+     轮询（不 bootstrap/SSE）；点条目跳转发 IPC 让主客户端亮起并转载荷。 */
   const ez = (window as any).ez
 
   onMount(() => {

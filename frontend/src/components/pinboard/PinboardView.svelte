@@ -1,18 +1,7 @@
 <script lang="ts">
   /*
-  便签页：自由摆放的待办板 + 按天归档的完成时间线，两者共用一套卡片
-  数据，靠「划线完成」把卡片从板上转到时间线。
-
-  · 板上：双击空白/「记一笔」新建（Enter 提交、Shift+Enter 换行、Esc
-    放弃、空内容丢弃），卡片可拖动/缩放/点击编辑，✓ 划线入库。
-  · 时间线：左新右旧按天铺开，卡片挂在轴下，点某天就地展开当天详情
-    （在板下半部展开，不覆盖时间线），拖卡片跨天改归属、拖回板上变回
-    待办。
-  · 当天详情：行块渲染、图片、拖动排序；点击卡片就地编辑正文。
-
-  保存落盘后仍可整体回退：内容级改动（编辑/贴图删图/勾选/完成/删除/
-  新建）进撤销栈，Ctrl+Z 逐步撤销、Ctrl+Shift+Z 或 Ctrl+Y 重做（App
-  层全局接管，编辑中的原生撤销优先）；拖动/缩放/排序不占撤销步。
+  便签页：自由摆放的待办板 + 按天归档的完成时间线，共用一套卡片数据，靠「划线完成」把卡片从板上转到时间线。
+  内容级改动（编辑/贴图/勾选/完成/删除/新建）进撤销栈，Ctrl+Z 可整体回退（App 层全局接管）。
   */
   import { onDestroy, onMount, tick, untrack } from 'svelte'
   import type { PinRecord } from '../../lib/api'
@@ -28,7 +17,7 @@
     byDayOrder,
     completeCard,
     dayOf,
-    ensurePinboard,
+    loadPinboard,
     fitCards,
     patchRecord,
     pinboardBusy,
@@ -126,7 +115,7 @@
   })
 
   onMount(() => {
-    void ensurePinboard()
+    void loadPinboard()
     /* 小窗可能刚完成/排序过：重进便签页拉一次最新板（有定位卡片时由
        下面的定位流程拉，避免两次刷新抢着覆盖提层） */
     if (board.loaded && !store.pinFocus && !pinboardBusy()) void reloadPinboard()
@@ -857,7 +846,6 @@
   .dbtn.save:hover {
     opacity: 0.9;
   }
-  /* 正文行块渲染（与编辑器同款排版） */
   /* 正文行块样式在 PinRichEditor：与编辑器同款行高/间距 */
   .dtext {
     font-size: var(--font-size-section);

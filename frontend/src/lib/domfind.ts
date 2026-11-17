@@ -1,12 +1,8 @@
 /*
-预览态（markdown 渲染结果 / HTML 沙箱 iframe）的文件内查找：在指定
-根节点的文本节点里自绘命中高亮，不用 Electron findInPage（理由见
-FindBar）。资源查看器把「当前文件」圈给本模块——markdown 是 .md-body，
-HTML 是 iframe 的 contentDocument（sandbox 放行同源后父页可直接读写）。
+Markdown 预览（.md-body）的文件内查找：在指定根节点的文本节点里自绘
+命中高亮，不用 Electron findInPage（理由见 FindBar）。
 
 每次查找先清掉上一次的 mark，再按全文顺序重新包，当前项 scrollIntoView。
-样式注入目标 document：iframe 有独立文档，拿不到主页面 CSS 变量，用
-固定的查找黄（浏览器查找栏同色系）。
 */
 
 const STYLE_ID = 'ez-find-style'
@@ -21,7 +17,7 @@ function docOf(root: ParentNode): Document | null {
   return root.nodeType === Node.DOCUMENT_NODE ? (root as Document) : (root as Node).ownerDocument
 }
 
-function ensureStyle(doc: Document): void {
+function addStyle(doc: Document): void {
   if (doc.getElementById(STYLE_ID)) return
   const el = doc.createElement('style')
   el.id = STYLE_ID
@@ -63,13 +59,13 @@ export interface DomFindResult {
 /*
 domFind 在 root 的可见文本里查找 query，index 为期望命中的序号
 （越界自动取模），返回总命中数与实际定位序号；命中项居中滚动。
-root 为 null（预览还没挂载/iframe 未载入）时返回 0。
+root 为 null（预览还没挂载）时返回 0。
 */
 export function domFind(root: ParentNode | null | undefined, query: string, index: number): DomFindResult {
   if (!root) return { count: 0, index: 0 }
   const doc = docOf(root)
   if (!doc) return { count: 0, index: 0 }
-  ensureStyle(doc)
+  addStyle(doc)
   clearDomFind(root)
   const q = query.trim().toLowerCase()
   if (!q) return { count: 0, index: 0 }

@@ -1,8 +1,7 @@
 <script lang="ts">
   /*
-  Word 查看器：mammoth 把 docx 转语义 HTML（标题/列表/表格/图片内联），
-  DOMPurify 消毒后只读渲染。旧版 .doc 二进制格式 mammoth 不支持,
-  给出转存提示。
+  Word 查看器：mammoth 把 docx 转语义 HTML，DOMPurify 消毒后只读渲染；
+  旧版 .doc 二进制格式 mammoth 不支持，给出转存提示。
   */
 
   import { onMount } from 'svelte'

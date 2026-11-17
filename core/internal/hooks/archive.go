@@ -92,22 +92,19 @@ func ArchiveSession(ctx context.Context, p provider.ModelProvider, fsys fs.FileS
 	root := sess.LineRoot()
 	now := time.Now()
 	initSnap := SessionSnap{
-		ID:              newID,
-		CreatedAt:       now.UnixMilli(),
-		Messages:        nil,
-		SystemPrompt:    sys.Prompt(),
-		SystemBase:      base,
-		SummaryBlock:    summaryBlock,
-		TargetID:        oldID,
-		SeedKind:        "compress",
-		LineRoot:        root,
-		CompactSummary:  summaryText,
-		CtxWindow:       old.CtxWindow,
-		ReasoningEffort: prefs.ReasoningEffort,
-		ApproveMode:     prefs.ApproveMode,
-		ActiveModel:     prefs.ActiveModel,
-		StartedAt:       now,
-		EndedAt:         now,
+		ID:             newID,
+		CreatedAt:      now.UnixMilli(),
+		Messages:       nil,
+		SystemPrompt:   sys.Prompt(),
+		SystemBase:     base,
+		SummaryBlock:   summaryBlock,
+		TargetID:       oldID,
+		SeedKind:       "compress",
+		LineRoot:       root,
+		CompactSummary: summaryText,
+		CtxWindow:      old.CtxWindow,
+		StartedAt:      now,
+		EndedAt:        now,
 	}
 	if err := SaveSnap(ctx, fsys, &initSnap); err != nil {
 		return CompactInfo{}, err

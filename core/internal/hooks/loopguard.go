@@ -1,11 +1,11 @@
 /*
 loopguard 是循环护栏 hook：防止"20 轮能完成的任务被拖到 100+ 轮"的双轨收敛机制。
-  1) 同签名重复：第 4 次在下一次模型调用前插 <loop_guard> 提醒（模型自省），
-     第 6 次起 Skip 拦截该次调用——同一手段重复必然无效，强制换路或收尾；
-  2) 轮数压力线：按总轮次上限的 20% / 50% / 70% / 90% 各注入一次——20% 要求
-     自检交付条件，50% 二次提醒，70% 提醒剩余轮次并收紧范围，90% 停止展开
-     新工作、强制收尾总结（留下次提问可直接接续的说明）。针对视觉任务
-     "截图-修-截图-修"签名各不相同、重复检测抓不住、却始终不收敛的典型形态。
+ 1. 同签名重复：第 4 次在下一次模型调用前插 <loop_guard> 提醒（模型自省），
+    第 6 次起 Skip 拦截该次调用——同一手段重复必然无效，强制换路或收尾；
+ 2. 轮数压力线：按总轮次上限的 20% / 50% / 70% / 90% 各注入一次——20% 要求
+    自检交付条件，50% 二次提醒，70% 提醒剩余轮次并收紧范围，90% 停止展开
+    新工作、强制收尾总结（留下次提问可直接接续的说明）。针对视觉任务
+    "截图-修-截图-修"签名各不相同、重复检测抓不住、却始终不收敛的典型形态。
 
 插入时机必须是 OnModelStart（消息序列稳定：tool_result 已全部 append）：
 OnToolStart 时 append 会把消息夹在 assistant 的 tool_use 与 tool_result
@@ -108,7 +108,10 @@ func (h *LoopGuard) OnModelStart(_ context.Context, state *types.LoopState) erro
 	if stage < len(lines) && it >= lines[stage] {
 		h.markStage(state, stage+1)
 		note := pressureNote(stage+1, it, h.maxIters)
-		state.Messages = append(state.Messages, guardMsg(note))
+		state.Messages = append(state.Messages, types.Message{
+			Role:    types.RoleUser,
+			Content: "<" + LoopGuardTag + ">\n（系统护栏）" + note + "\n</" + LoopGuardTag + ">",
+		})
 		state.EmitEvent(EventLoopGuard, LoopGuardData{Note: note})
 	}
 	return nil
@@ -131,10 +134,6 @@ func pressureNote(stage, it, maxIters int) string {
 		return fmt.Sprintf("已进行 %d 轮（约 90%%），本轮即将结束（上限 %d）。无论是否快完成，立即停止展开新工作：总结已完成与未完成项、关键文件位置与验证方式，留下可供下次提问直接接续的收尾说明。", it, maxIters)
 	}
 	return ""
-}
-
-func guardMsg(note string) types.Message {
-	return types.Message{Role: types.RoleUser, Content: "<" + LoopGuardTag + ">\n（系统护栏）" + note + "\n</" + LoopGuardTag + ">"}
 }
 
 func (h *LoopGuard) markStage(state *types.LoopState, s int) {

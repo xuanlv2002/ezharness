@@ -5,13 +5,8 @@
   import SelectMenu from './SelectMenu.svelte'
   import Pager from './Pager.svelte'
 
-  /*
-  回调中心：全局定时任务、触发记录与新建/编辑弹窗。任务三类——向指定
-  会话发消息（可每次新建会话）、触发快应用（自动启动后端并调用
-  app.quick 声明的端点），或在工作目录执行 shell 脚本。会话目标存所选
-  叶 session，归档/compact 换代后任务失败，不继承到新会话。任务列表按
-  页展示；点任务标题看详情与该任务的完整触发记录。
-  */
+  /* 回调中心：定时任务三类（发会话消息/触发快应用/执行脚本），列表分页 + 详情触发记录 */
+  /* 会话目标存叶 session，归档/compact 换代后任务失败，不继承到新会话 */
 
   type KindFilter = 'all' | 'session' | 'app' | 'script'
   type StatusFilter = 'all' | 'active' | 'paused' | 'done' | 'error'
@@ -41,6 +36,9 @@
     taskId: string
     taskTitle: string
     kind: 'session' | 'app' | 'script'
+    appName?: string // app 运行的快应用名（targetId 是它，标题要现解析）
+    appCallback?: string // app 运行的回调名
+    sessionNew?: boolean // session 运行：每次新建会话的任务
   }
 
   let tasks = $state<CallbackTask[]>([])
@@ -145,7 +143,7 @@
     for (const t of tasks) {
       if (!ids.has(t.id)) continue
       for (const r of t.runs ?? []) {
-        out.push({ ...r, taskId: t.id, taskTitle: t.title, kind: t.kind })
+        out.push(asRunRow(t, r))
       }
     }
     out.sort((a, b) => b.at - a.at)
@@ -570,13 +568,10 @@
 
   function runTarget(r: RunRow): string {
     if (r.kind === 'app') {
-      const cb = (r.target ?? '').split(' · ').slice(1).join(' · ')
-      return `${appTitle(r.targetId)}${cb ? ` · ${cb}` : ''}`
+      return `${appTitle(r.appName)}${r.appCallback ? ` · ${r.appCallback}` : ''}`
     }
     if (r.kind === 'script') return r.content || '脚本'
-    if ((r.target ?? '').startsWith('新建会话')) {
-      return r.target + (r.targetId ? ` · ${shortId(r.targetId)}` : '')
-    }
+    if (r.sessionNew) return `新建会话${r.targetId ? ` · ${shortId(r.targetId)}` : ''}`
     if (r.targetId) return `${sessionLabel(r.targetId)} · ${shortId(r.targetId)}`
     return r.target || '会话'
   }
@@ -592,8 +587,17 @@
     return r.kind === 'session' && !!r.targetId && !!sessionRoot(r.targetId)
   }
 
+  /* 运行记录行：从任务补结构化目标字段（展示不走后端拼好的 target 文案） */
   function asRunRow(t: CallbackTask, r: CallbackRun): RunRow {
-    return { ...r, taskId: t.id, taskTitle: t.title, kind: t.kind }
+    return {
+      ...r,
+      taskId: t.id,
+      taskTitle: t.title,
+      kind: t.kind,
+      appName: t.app?.name,
+      appCallback: t.app?.callback,
+      sessionNew: t.session?.mode === 'new',
+    }
   }
 
   async function jumpSession(targetId?: string) {

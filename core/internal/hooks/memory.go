@@ -16,7 +16,6 @@ import (
 	"time"
 
 	"github.com/xuanlv2002/ezloop/ext/fs"
-	"github.com/xuanlv2002/ezloop/ext/hook/skill"
 )
 
 /* 记忆体系目录布局（工作目录相对）。 */
@@ -28,11 +27,6 @@ const (
 	SoulJson     = LongtermDir + "/soul.json"     // agent soul（用户对 agent 的期望，条目式）
 	ProjectsJson = LongtermDir + "/projects.json" // 项目索引（条目式）
 )
-
-/* SkillDirOf 从 SKILL.md 路径提取技能目录名（技能的稳定身份）。 */
-func SkillDirOf(path string) string {
-	return skill.DirOf(path)
-}
 
 /* MemoryItem 是 user/soul 的一条记忆（唯一键 ID，前缀 u/s 区分目标）。 */
 type MemoryItem struct {

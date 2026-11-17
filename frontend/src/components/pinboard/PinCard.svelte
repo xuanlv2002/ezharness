@@ -1,27 +1,6 @@
 <script lang="ts">
-  /*
-  板上的一张便签卡：拖动（3px 阈值）、右下角缩放、悬停工具条（✓ 完成 /
-  ✕ 删除就地确认）、点击就地编辑（没拖起来就算点击，光标落在点击处）。
-  正文按行块渲染，待办勾选框可直接
-  点，超出卡片高度时在正文区域内滚动。图片是贴在卡面上的贴纸：可直接拖入
-  图片文件或在编辑器里粘贴，编辑时拖动图片移动、右下角手柄缩放，位置与
-  大小随卡片一起存盘；选中后可复制到系统剪贴板，点图片看大图。
-
-  底栏固定显示记于、已持续与截止（按剩余时长分档着色：3/6/12/24 小时内
-  与 24 小时以上各一色，超期为危险色）。宽卡时会话列挪到右侧、与「记于」
-  首行对齐：新会话 / 最近 1 个会话 / 更多会话，最多 3 行；窄卡仍上下排。
-  底栏常显：卡片最小高度 = 底栏 + 一行正文（见 minCardHeight），正文超出
-  时在内部滚动。
-
-  编辑不弹面板：正文换成卡内块编辑器（`# ` 标题、`[] ` 待办、`- ` 列表
-  自动转格式），底部一行改截止时间 + 取消/保存。点卡片外、保存按钮或
-  Ctrl/⌘+Enter 提交，Esc 取消；空内容不提交（有图片时可只存图片）。
-
-  拖动/缩放期间只改本地 transform 与宽高（不写共享状态），松手才提交
-  x/y/w/h——连续 pointermove 直接写 DOM transform，不经响应式更新，
-  提层（bump）也延到松手一并落，拖起那一帧不触发整板重排。now 由父级
-  定时推进（30s），持续时间与超期状态跟着刷新。
-  */
+  /* 板上的一张便签卡：拖动/缩放/就地编辑、贴纸图片、底栏时间与会话列 */
+  /* 拖动/缩放只改本地 transform，松手才提交共享状态（拖起那帧不触发整板重排） */
   import { onDestroy } from 'svelte'
   import { api, type PinCard as PinCardT } from '../../lib/api'
   import {
@@ -647,11 +626,6 @@
     clearTimeout(dropErrTimer)
     clearTimeout(imgMsgTimer)
   })
-
-  function removeNow() {
-    confirmDel = false
-    removeCard(card.id)
-  }
 </script>
 
 <article
@@ -802,7 +776,7 @@
       <p>删掉这张？</p>
       <div class="cbtns">
         <button onclick={(e) => { e.stopPropagation(); confirmDel = false }}>取消</button>
-        <button class="danger" onclick={(e) => { e.stopPropagation(); removeNow() }}>删除</button>
+        <button class="danger" onclick={(e) => { e.stopPropagation(); confirmDel = false; removeCard(card.id) }}>删除</button>
       </div>
     </div>
   {/if}

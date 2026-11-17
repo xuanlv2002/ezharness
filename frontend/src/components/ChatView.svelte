@@ -11,12 +11,8 @@
   import { normFileKey } from '../lib/textfile'
   import { store, type Attachment, type FileRef } from '../lib/store.svelte'
 
-  /* 附件（一切皆资源）：拖拽热区挂 window——抽屉/侧栏是 .chat 的兄弟
-  节点，绑容器内时松手在抽屉上 drop 事件进不来（提示出现但无效）；
-  dragenter/leave 计数防子元素抖动。拖入/粘贴先占位 chip（name 已知），
-  path 由 /api/workspace/stash 落盘回填——chip 立即可点开（图片进
-  画板、文本进资源页）。画板草稿是内存 file（发送时才 stash），真身
-  图编辑写回原路径不换 chip。 */
+  /* 附件（一切皆资源）：拖拽热区挂 window——抽屉/侧栏是 .chat 的兄弟节点，
+     绑容器内时 drop 事件进不来。拖入/粘贴先占位 chip，path 由 stash 落盘回填。 */
   let attachments = $state<Attachment[]>([])
   let dragging = $state(false)
   let depth = 0

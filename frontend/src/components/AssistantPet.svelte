@@ -5,27 +5,8 @@
   import { openAppWindow as openApp } from '../lib/apps'
   import { DUE_COLOR, DUE_ORDER, dueLevel, type DueLevel } from '../lib/pinDue'
 
-  /*
-  桌面宠物（pet=1 窗口）：悬浮球 + 环形菜单。
-  窗口固定 288×288（不动态扩缩——展开后大矩形成热区会自锁在展开态），
-  默认整窗鼠标穿透（透明区点击归下层应用）。主进程 60ms 推光标窗口内
-  坐标（ez:pet-move），渲染层用 elementFromPoint 判定光标是否压在实体
-  小部件上：压上 → 关穿透 + 展开环形菜单；透明处 → 保持穿透漏点。
-
-  环形菜单：以头像（窗口中心 144,144）为圆心、右上 30°（弹出箭头）起
-  顺时针、每颗固定 36°（满 7 颗 216°）——箭头（开主客户端）+ 铃铛
-  （通知）+ 便签（角标显示板上待办数，数字颜色取最紧的截止档，点击打开
-  便签小窗）+ 钉选快应用（≤3，点击启动，实心图钉角标点击取消）+「…」球
-  （快应用 ⚡️ logo，与侧边栏「快应用」入口同图标，点击展开全部应用
-  栏）。子球位置由 JS 算成绝对
-  left/top（不靠 transform 位移——定位与动画解耦，transform 只做 scale
-  弹出）。全部应用栏贴左缘竖列、滚轮纵向滚，条目本体点击启动、右上
-  图钉角标（实心橙=已钉/空心灰=未钉）点击切换，钉满 3 个由 core 顶掉
-  最早。执行中头像转圈。3s 轮询 core 只读端点。
-  */
-
+  /* 桌面宠物小窗（pet=1）：悬浮球 + 环形菜单，穿透与展开由主进程推的光标坐标驱动 */
   const ez = (window as any).ez
-
   const C = 144 // 窗口中心（stage 288×288）
   const RING_R = 74
   const RING_START = -30 // 起点：弹出箭头，右上 30°
@@ -214,7 +195,7 @@
 
     {#each ring as s (s.kind === 'app' && s.a ? 'a' + s.a.name : s.kind)}
       {#if s.kind === 'main'}
-        <button class="orb main" class:on={hovered} style={`left:${s.left}px;top:${s.top}px;transition-delay:${hovered ? 0 : 0}ms`}
+        <button class="orb main" class:on={hovered} style={`left:${s.left}px;top:${s.top}px;transition-delay:0ms`}
           onclick={() => ez?.pet?.openMain()} title="打开主客户端">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <path d="M7 17L17 7" />

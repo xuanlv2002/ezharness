@@ -1,22 +1,5 @@
-/*
-共享浏览器（desktop 资产）：每标签一个 WebContentsView，呈现页有两处
-——主窗口工作区抽屉的浏览器页、可弹出的独立浏览器窗口（ez:popout）。
-UI（标签条/地址栏）由呈现页的 BrowserPane 渲染，内容区 rect 由其
-ResizeObserver/显隐联动上报、主进程 setBounds——视图宿主跟随最近
-上报非零 rect 的窗口（同一时间只挂一处）；WebContentsView 不在 DOM
-流内，显隐与位置全由这里管理。
-
-AI 链路：桥客户端连 core 的 /api/browser/bridge，browser_* 工具调用
-（start/navigate/read/eval/console/network/screenshot/upload/list/close）
-在本模块直接操作对应标签的 webContents（executeJavaScript / capturePage /
-CDP 截图与上传）后回执。页面里的点击/填值/滚动不设独立动作——模型用 eval
-自己写（见 AGENTS 5.6）。console/network 的开发数据由 devtools.js 经 CDP
-采集（建标签即 attach，用户开 devtools 即让出槽位）。
-
-共见语义：AI start 或 browser:// chip 触发时由前端展开浏览器抽屉页，
-视图贴抽屉内容区；抽屉收起/切走时前端上报零矩形，视图随之下线
-（webContents 存活，AI 可继续操作）。应用退出时全部销毁。
-*/
+/* 共享浏览器（desktop 资产）：每标签一个 WebContentsView，UI 在 BrowserPane，视图宿主与显隐全由本模块管理 */
+/* browser_* 工具经 /api/browser/bridge 桥直接操作标签 webContents；开发数据采集在 devtools.js */
 const path = require('path')
 const { BrowserWindow, WebContentsView, ipcMain, session } = require('electron')
 /* 主进程用 ws 客户端：可设请求头，令牌不再拼进 bridge URL */
@@ -349,12 +332,10 @@ loadLoad 再查 isLoading()，而 loadURL 尚未把 loading 置位——竞态�
 截图就撞在首帧未合成上。超时/失败都照常返回（不 throw）：标签状态里
 url/title/loading 自明，调用方语义是"尽力等到稳定"。 */
 async function loadSettled(wc, url, timeoutMs) {
-  try {
-    await Promise.race([
-      wc.loadURL(url).catch(() => {}), /* 加载失败（DNS/拒绝）不算调用失败 */
-      delay(timeoutMs || 20000),
-    ])
-  } catch { /* 不会到这，兜底 */ }
+  await Promise.race([
+    wc.loadURL(url).catch(() => {}), /* 加载失败（DNS/拒绝）不算调用失败 */
+    delay(timeoutMs || 20000),
+  ])
   return wc.getTitle()
 }
 
@@ -690,7 +671,7 @@ const executors = {
     if (!selector) throw new Error('upload 需要 selector')
     const list = String(files || '').split(',').map((s) => s.trim()).filter(Boolean)
     if (!list.length) throw new Error('upload 需要 files（本机绝对路径，逗号分隔）')
-    const d = devtools.ensureDevtools(tab)
+    const d = devtools.attachTab(tab)
     if (!d.attached) throw new Error(`上传需要 CDP（${d.error || '未挂上'}）`)
     const wc = tab.view.webContents
     const info = await runDeep(wc, `
@@ -863,7 +844,7 @@ const executors = {
 
   async console({ tabId, mode, errorsOnly }) {
     const tab = tabOf(tabId)
-    const d = devtools.ensureDevtools(tab)
+    const d = devtools.attachTab(tab)
     if (d.error) return { result: JSON.stringify({ ...tabState(tab.id), output: `(控制台采集不可用：${d.error})` }) }
     if (mode === 'clear') {
       devtools.clearDevtools(tab)
@@ -874,7 +855,7 @@ const executors = {
 
   async network({ tabId, index, filter, errorsOnly }) {
     const tab = tabOf(tabId)
-    const d = devtools.ensureDevtools(tab)
+    const d = devtools.attachTab(tab)
     if (d.error) return { result: JSON.stringify({ ...tabState(tab.id), output: `(网络采集不可用：${d.error})` }) }
     const out = index > 0
       ? await devtools.formatNetworkDetail(tab, index)
@@ -989,7 +970,6 @@ function registerIpc() {
     hostWindow = sender
     syncHost()
   })
-  /* BrowserPane 挂载时的清单拉取：同时登记"这个窗口有浏览器页"（广播对象） */
   /* BrowserPane 挂载时的清单拉取：同时登记"这个窗口有浏览器页"（广播对象） */
   ipcMain.handle('ez-browser:list', (e) => {
     notePane(BrowserWindow.fromWebContents(e.sender))

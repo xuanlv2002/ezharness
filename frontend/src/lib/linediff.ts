@@ -135,6 +135,41 @@ interface Seg {
   lines: string[]
 }
 
+/* LcsOp 一行的对齐结果：相同/删旧/增新 */
+export type LcsOp = { t: ' ' | '-' | '+'; s: string }
+
+/* lcsLines 行级 LCS 对齐（全库唯一实现）；a×b 超过 cap 返回 null，调用方自行退化 */
+export function lcsLines(a: string[], b: string[], cap: number): LcsOp[] | null {
+  if (a.length * b.length > cap) return null
+  const m = a.length
+  const n = b.length
+  /* 动态规划表：f[i][j] = a[i..] 与 b[j..] 的公共子序列长度 */
+  const f: Uint32Array[] = []
+  for (let i = 0; i <= m; i++) f.push(new Uint32Array(n + 1))
+  for (let i = m - 1; i >= 0; i--) {
+    for (let j = n - 1; j >= 0; j--) {
+      f[i][j] = a[i] === b[j] ? f[i + 1][j + 1] + 1 : Math.max(f[i + 1][j], f[i][j + 1])
+    }
+  }
+  const out: LcsOp[] = []
+  let i = 0
+  let j = 0
+  while (i < m && j < n) {
+    if (a[i] === b[j]) {
+      out.push({ t: ' ', s: a[i] })
+      i++
+      j++
+    } else if (f[i + 1][j] >= f[i][j + 1]) {
+      out.push({ t: '-', s: a[i++] })
+    } else {
+      out.push({ t: '+', s: b[j++] })
+    }
+  }
+  while (i < m) out.push({ t: '-', s: a[i++] })
+  while (j < n) out.push({ t: '+', s: b[j++] })
+  return out
+}
+
 /*
 middleSegments 计算中段：规模允许走 LCS 保持相同行的对齐，超限退化
 为整段 del+add（仍逐行配对可看，只是相同行不再对齐）。
@@ -143,21 +178,12 @@ function middleSegments(a: string[], b: string[]): Seg[] {
   if (a.length === 0 && b.length === 0) return []
   if (a.length === 0) return [{ t: 'add', lines: b }]
   if (b.length === 0) return [{ t: 'del', lines: a }]
-  if (a.length > LCS_SIDE_CAP || b.length > LCS_SIDE_CAP || a.length * b.length > 4_000_000) {
+  const ops = a.length > LCS_SIDE_CAP || b.length > LCS_SIDE_CAP ? null : lcsLines(a, b, 4_000_000)
+  if (!ops) {
     return [
       { t: 'del', lines: a },
       { t: 'add', lines: b },
     ]
-  }
-  /* LCS 动态规划表：f[i][j] = a[i..] 与 b[j..] 的公共子序列长度 */
-  const m = a.length
-  const n = b.length
-  const f: Uint32Array[] = []
-  for (let i = 0; i <= m; i++) f.push(new Uint32Array(n + 1))
-  for (let i = m - 1; i >= 0; i--) {
-    for (let j = n - 1; j >= 0; j--) {
-      f[i][j] = a[i] === b[j] ? f[i + 1][j + 1] + 1 : Math.max(f[i + 1][j], f[i][j + 1])
-    }
   }
   const segs: Seg[] = []
   const push = (t: Seg['t'], text: string) => {
@@ -165,20 +191,6 @@ function middleSegments(a: string[], b: string[]): Seg[] {
     if (last && last.t === t) last.lines.push(text)
     else segs.push({ t, lines: [text] })
   }
-  let i = 0
-  let j = 0
-  while (i < m && j < n) {
-    if (a[i] === b[j]) {
-      push('same', a[i])
-      i++
-      j++
-    } else if (f[i + 1][j] >= f[i][j + 1]) {
-      push('del', a[i++])
-    } else {
-      push('add', b[j++])
-    }
-  }
-  while (i < m) push('del', a[i++])
-  while (j < n) push('add', b[j++])
+  for (const op of ops) push(op.t === ' ' ? 'same' : op.t === '-' ? 'del' : 'add', op.s)
   return segs
 }

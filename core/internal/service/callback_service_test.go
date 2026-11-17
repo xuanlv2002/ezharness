@@ -125,10 +125,10 @@ func TestCallbackBindsExplicitSession(t *testing.T) {
 }
 
 /*
-EnsureSession 按 session ID 精确定位：当前叶可用；旧叶归档报 archived，
+GetSession 按 session ID 精确定位：当前叶可用；旧叶归档报 archived，
 未归档但已不是当前叶报 superseded，不跟随 compact 新叶。
 */
-func TestEnsureSessionUsesExactSession(t *testing.T) {
+func TestGetSessionUsesExactSession(t *testing.T) {
 	chdirTemp(t)
 	ctx := context.Background()
 	hub := newTestHub()
@@ -145,7 +145,7 @@ func TestEnsureSessionUsesExactSession(t *testing.T) {
 		t.Fatal(err)
 	}
 	topics := &TopicService{Hub: hub, Agents: &AgentService{Hub: hub}}
-	sess, err := topics.EnsureSession(ctx, "gen2")
+	sess, err := topics.GetSession(ctx, "gen2")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -156,9 +156,9 @@ func TestEnsureSessionUsesExactSession(t *testing.T) {
 		t.Fatal("line not registered")
 	}
 	if got := hub.ActiveSession(); got != nil && got.RootID == "r1" {
-		t.Fatal("EnsureSession must not activate the line")
+		t.Fatal("GetSession must not activate the line")
 	}
-	if _, err := topics.EnsureSession(ctx, "gen1"); !errors.Is(err, ErrSessionArchived) {
+	if _, err := topics.GetSession(ctx, "gen1"); !errors.Is(err, ErrSessionArchived) {
 		t.Fatalf("archived session = %v", err)
 	}
 }

@@ -209,38 +209,12 @@
   const reasonShort = $derived(!reasonEffort ? '思考·默认' : reasonEffort === 'none' ? '思考·无' : `思考·${reasonEffort}`)
   const approveShort = $derived(approveMode === 'strict' ? '审批·严格' : approveMode === 'off' ? '审批·无' : '审批·跟随')
 
-  function toggleModelMenu() {
-    approveOpen = false
-    reasonOpen = false
-    modelOpen = !modelOpen
-    if (modelOpen) void store.ensureModels()
-  }
-
-  function pickModel(name: string) {
-    modelOpen = false
-    void store.activateModel(name)
-  }
-
-  function toggleReasonMenu() {
-    modelOpen = false
-    approveOpen = false
-    reasonOpen = !reasonOpen
-  }
-
-  function pickReason(v: ReasoningEffort) {
-    reasonOpen = false
-    void store.setReasoningEffort(v)
-  }
-
-  function toggleApproveMenu() {
-    modelOpen = false
-    reasonOpen = false
-    approveOpen = !approveOpen
-  }
-
-  function pickApprove(mode: '' | 'off' | 'strict') {
-    approveOpen = false
-    void store.setApproveMode(mode)
+  /* 三个互斥菜单（模型/思考/审批）的开关与选择：开一个收其余 */
+  function toggleMenu(menu: 'model' | 'reason' | 'approve') {
+    modelOpen = menu === 'model' && !modelOpen
+    reasonOpen = menu === 'reason' && !reasonOpen
+    approveOpen = menu === 'approve' && !approveOpen
+    if (modelOpen) void store.loadModels()
   }
 
   /* 点击外部收起两个菜单 */
@@ -285,7 +259,7 @@
         <div class="att" class:pending={!t.ready}>
           {#if t.isImage}
             <button class="thumb" disabled={!t.ready} onclick={() => onEditImage?.(i)}
-              title={t.ready ? '打开画板编辑（保存写回原文件）' : '暂存中…'}>
+              title={t.ready ? '打开画板编辑（Ctrl+S 保存）' : '暂存中…'}>
               {#if t.url}<img src={t.url} alt={t.name} />{:else}<span class="draft-ico"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.85 2.85 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z" /></svg></span>{/if}
               <span class="edit-mark">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -401,7 +375,7 @@
       </button>
     </div>
     <div class="reason-pick">
-      <button class="model-btn" onclick={toggleReasonMenu} disabled={!store.activeId}
+      <button class="model-btn" onclick={() => toggleMenu('reason')} disabled={!store.activeId}
         title="思考强度（本会话，即改即生效）">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
           <path d="M9 18h6M10 22h4" />
@@ -413,7 +387,7 @@
       {#if reasonOpen}
         <div class="model-menu">
           {#each REASON_MODES as m (m.v || 'default')}
-            <button class="model-item" class:on={reasonEffort === m.v} onclick={() => pickReason(m.v)} title={m.title}>
+            <button class="model-item" class:on={reasonEffort === m.v} onclick={() => { reasonOpen = false; void store.setReasoningEffort(m.v) }} title={m.title}>
               <span class="model-name">{m.label}</span>
             </button>
           {/each}
@@ -421,7 +395,7 @@
       {/if}
     </div>
     <div class="approve-pick">
-      <button class="model-btn" onclick={toggleApproveMenu} disabled={!store.activeId}
+      <button class="model-btn" onclick={() => toggleMenu('approve')} disabled={!store.activeId}
         title="本会话的工具审批档位（实时生效）">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
           <path d="M12 3l7 3v5c0 4.5-3 8-7 10-4-2-7-5.5-7-10V6z" />
@@ -432,7 +406,7 @@
       {#if approveOpen}
         <div class="model-menu">
           {#each APPROVE_MODES as m (m.v || 'follow')}
-            <button class="model-item" class:on={approveMode === m.v} onclick={() => pickApprove(m.v)} title={m.title}>
+            <button class="model-item" class:on={approveMode === m.v} onclick={() => { approveOpen = false; void store.setApproveMode(m.v) }} title={m.title}>
               <span class="model-name">{m.label}</span>
             </button>
           {/each}
@@ -440,7 +414,7 @@
       {/if}
     </div>
     <div class="model-pick">
-      <button class="model-btn" onclick={toggleModelMenu} disabled={!store.activeId}
+      <button class="model-btn" onclick={() => toggleMenu('model')} disabled={!store.activeId}
         title="切换本会话主模型（下一次输入生效）">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
           <rect x="7" y="7" width="10" height="10" rx="2" />
@@ -455,7 +429,7 @@
             <p class="model-empty">main 槽暂无模型（设置 · 模型添加）</p>
           {:else}
             {#each store.mainModels as m (m.name)}
-              <button class="model-item" class:on={m.name === store.status?.model} onclick={() => pickModel(m.name)}>
+              <button class="model-item" class:on={m.name === store.status?.model} onclick={() => { modelOpen = false; void store.activateModel(m.name) }}>
                 <span class="model-name">{m.name}</span>
                 {#if m.vision}<i class="vis" title="支持视觉输入"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z" /><circle cx="12" cy="12" r="3" /></svg></i>{:else}<i class="vis off" title="不支持视觉输入"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z" /><circle cx="12" cy="12" r="3" /></svg></i>{/if}
               </button>

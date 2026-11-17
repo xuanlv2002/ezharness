@@ -1,11 +1,6 @@
 /*
-rows 是时间线的行组装（主时间线与分身抽屉共用）：user 块独立成行，
-其余块并入其后的回复组；组内连续 tool 段 ≥ TOOL_GROUP_MIN 折成摘要。
-组 key 用前置 user 块 uid——组内中段增删不换 key，流式与展开态不抖。
-foldBlocks 是上下文整理（trim）的渲染折叠：折叠态 trim 块把「上一个
-trim 之后 → 自己」的区块裁掉（数据保留）。折叠不是展开/关闭开关：
-主时间线在滚到顶后继续上拉时自动载入（一次性置 folded=false），
-之后按普通历史走行窗口的懒加载。
+时间线的行组装（主时间线与分身抽屉共用）：user 块独立成行，其余并入其后的回复组，组 key 用前置 user 块 uid（组内增删不换 key，流式不抖）。
+foldBlocks 是 trim 的渲染折叠：折叠态只裁掉区块、数据保留，滚到顶后上拉时置 folded=false 自动载入。
 */
 
 import type { Block } from './store.svelte'

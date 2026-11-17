@@ -1,7 +1,6 @@
 /*
-文本文件判定与路径工具：supper_url file:// chip 点击门禁与文件面板
-tab 去重共用（白名单单一来源）。后端 /api/workspace/* 不校验后缀，
-文本门禁只在此处。
+文本文件判定与路径工具：supper_url file:// chip 点击门禁与文件面板 tab 去重共用；
+后端 /api/workspace/* 不校验后缀，文本门禁只在此处。
 */
 
 const TEXT_EXTS = new Set([
@@ -37,4 +36,11 @@ export function isImagePath(p: string): boolean {
 /* 去重键：分隔符与尾斜杠归一（C:\a.py 与 C:/a.py 同一 tab） */
 export function normFileKey(p: string): string {
   return p.trim().replace(/\\/g, '/').replace(/\/+$/, '')
+}
+
+/* 拆出行锚点：path#L128 / path#L128-L140；没有锚点原样返回路径 */
+export function splitLineAnchor(p: string): { path: string; line?: number; endLine?: number } {
+  const m = p.match(/^(.*?)#L(\d+)(?:-L?(\d+))?$/)
+  if (!m) return { path: p }
+  return { path: m[1], line: Number(m[2]), endLine: m[3] ? Number(m[3]) : undefined }
 }

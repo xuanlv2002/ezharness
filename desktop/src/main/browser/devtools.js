@@ -1,14 +1,4 @@
-/*
-浏览器开发者数据采集（CDP）：控制台/异常/浏览器日志 + 网络请求。
-走 Chrome DevTools Protocol —— 和 F12 同一套信息源。
-
-建标签即 attach 并 enable 全部采集域（Page + Runtime/Log/Network）：首次加载的
-请求与控制台就在缓冲里，wait networkIdle 也从一开始判得准（曾懒加载到首次读，
-结果模型永远看不到首次加载的网络）。代价是每条标签常驻一份网络缓冲（CDP 侧
-上限 16MB）。不碰 Debugger 域——拖慢 V8 的是它。用户一旦打开该标签的开发者工具
-（index.js 监听 devtools-opened）立即 detach，把槽位让给人工调试，绝不阻塞；
-标签关闭同样 detach。缓冲按标签常驻（主框架导航时清空），不做空闲释放。
-*/
+/* 浏览器开发数据采集（CDP）：建标签即 attach（首次加载不漏），用户开 devtools 即让出槽位 */
 const CDP_VERSION = '1.3'
 const CONSOLE_MAX = 300
 const NET_MAX = 300
@@ -25,8 +15,8 @@ function dt(tab) {
   return tab.dt
 }
 
-/* ensureAttached 只做 attach + 事件接线（幂等）。 */
-function ensureAttached(tab) {
+/* attachOnce 只做 attach + 事件接线（幂等）。 */
+function attachOnce(tab) {
   const d = dt(tab)
   if (d.attached) return d
   const wc = tab.view.webContents
@@ -64,7 +54,7 @@ javascriptDialogOpening 不回应 = 渲染暂停），所以这一档不能懒�
 在这里开，页面首次加载的网络/控制台才不会漏掉。
 */
 function attachTab(tab) {
-  const d = ensureAttached(tab)
+  const d = attachOnce(tab)
   if (!d.attached) return d
   if (!d.pageOn) {
     d.pageOn = true
@@ -87,11 +77,6 @@ function enableDomains(d) {
     maxResourceBufferSize: 2 << 20,
     maxPostDataSize: 64 << 10,
   }).catch(() => {})
-}
-
-/* ensureDevtools 读取侧入口（console/network/upload）：幂等，保证采集已开。 */
-function ensureDevtools(tab) {
-  return attachTab(tab)
 }
 
 /* onDialog 原生对话框接管：一律**自动取消**（dismiss），页面永远不会被弹窗挂住，
@@ -306,15 +291,13 @@ function onFailed(d, p) {
 
 /* ── 呈现 ── */
 
-const LABEL = { log: 'log', warn: 'warn', error: 'error', debug: 'debug', verbose: 'verbose', info: 'info' }
-
 /* formatConsole 控制台/异常/日志成多行文本（errorsOnly 只留 error）。 */
 function formatConsole(tab, errorsOnly) {
   const d = dt(tab)
   const rows = errorsOnly ? d.console.filter((e) => e.level === 'error') : d.console
   if (!rows.length) return errorsOnly ? '(无 error)' : '(控制台无输出)'
   const lines = rows.map((e) => {
-    let line = `[${LABEL[e.level] || e.level}] ${e.text}`
+    let line = `[${e.level}] ${e.text}`
     if (e.source) line += `  (${e.source})`
     if (e.stack.length) line += '\n    at ' + e.stack.join('\n    at ')
     return line
@@ -396,6 +379,6 @@ function shortURL(u) {
 }
 
 module.exports = {
-  attachTab, ensureDevtools, detachDevtools, clearDevtools,
-  formatConsole, formatNetworkList, formatNetworkDetail, dt,
+  attachTab, detachDevtools, clearDevtools,
+  formatConsole, formatNetworkList, formatNetworkDetail,
 }

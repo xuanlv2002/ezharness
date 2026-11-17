@@ -112,7 +112,7 @@ func (t mediaTool) Invoke(ctx context.Context, raw json.RawMessage) (string, err
 			return "", err
 		}
 		final, _ := t.m.WaitJob(job.ID, toolWait)
-		return jobResult(final, true, kindName(domain.GenImage), "图片一般 10-60 秒完成，"), nil
+		return jobResult(final, kindName(domain.GenImage), "图片一般 10-60 秒完成，"), nil
 	case domain.GenAudio:
 		if !t.m.HasCapability(domain.GenAudio) {
 			return noCapability(domain.GenAudio), nil
@@ -125,7 +125,7 @@ func (t mediaTool) Invoke(ctx context.Context, raw json.RawMessage) (string, err
 			return "", err
 		}
 		final, _ := t.m.WaitJob(job.ID, toolWait)
-		return jobResult(final, true, kindName(domain.GenAudio), "合成一般几秒完成，"), nil
+		return jobResult(final, kindName(domain.GenAudio), "合成一般几秒完成，"), nil
 	case domain.GenVideo:
 		if !t.m.HasCapability(domain.GenVideo) {
 			return noCapability(domain.GenVideo), nil
@@ -138,7 +138,7 @@ func (t mediaTool) Invoke(ctx context.Context, raw json.RawMessage) (string, err
 			return "", err
 		}
 		final, _ := t.m.WaitJob(job.ID, toolWait)
-		return jobResult(final, true, kindName(domain.GenVideo), "视频生成需数分钟，"), nil
+		return jobResult(final, kindName(domain.GenVideo), "视频生成需数分钟，"), nil
 	case "status":
 		return t.status(a.ID)
 	default:
@@ -175,15 +175,15 @@ func (t mediaTool) status(rawID string) (string, error) {
 	if !ok {
 		return "", fmt.Errorf("media: 任务 %s 不存在（可能已被清理；不带 id 可列最近任务）", id)
 	}
-	return jobResult(j, true, kindName(j.Kind), ""), nil
+	return jobResult(j, kindName(j.Kind), ""), nil
 }
 
 /* jobResult 统一的结果文案：完成给产物路径，未完成给任务 id 与查询方式。 */
-func jobResult(j *domain.MediaJob, done bool, kindLabel, etaNote string) string {
+func jobResult(j *domain.MediaJob, kindLabel, etaNote string) string {
 	switch {
 	case j == nil:
 		return "任务不存在（可能已被清理）"
-	case j.Status == domain.JobFailed || (done && j.Status == domain.JobFailed):
+	case j.Status == domain.JobFailed:
 		msg := j.Err
 		if msg == "" {
 			msg = "生成失败"

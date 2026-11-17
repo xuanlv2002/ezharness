@@ -39,14 +39,23 @@ func (c *McpController) OpenList(g *gin.Context) {
 	g.JSON(http.StatusOK, gin.H{"servers": out})
 }
 
-/* Update POST /api/mcp（下一轮迭代热加载生效）。 */
-func (c *McpController) Update(g *gin.Context) {
-	var f service.McpFile
-	if err := g.ShouldBindJSON(&f); err != nil {
+/* SaveServer POST /api/mcp/server：保存单个 server（新增或覆盖，下一轮热加载生效）。 */
+func (c *McpController) SaveServer(g *gin.Context) {
+	var srv service.McpServerFile
+	if err := g.ShouldBindJSON(&srv); err != nil {
 		g.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	if err := c.Svc.Update(g.Request.Context(), f); err != nil {
+	if err := c.Svc.SaveServer(g.Request.Context(), srv); err != nil {
+		g.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	g.JSON(http.StatusOK, gin.H{"ok": true})
+}
+
+/* DeleteServer DELETE /api/mcp/server/:name：删除单个 server。 */
+func (c *McpController) DeleteServer(g *gin.Context) {
+	if err := c.Svc.DeleteServer(g.Request.Context(), g.Param("name")); err != nil {
 		g.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
