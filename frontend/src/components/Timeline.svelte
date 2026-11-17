@@ -93,7 +93,12 @@
       rowSession = store.activeId
       rowStart = windowStart(start, LOAD_TURNS)
     } else if (store.hasPrev) {
+      const sid = store.activeId
       const markerUid = await store.loadPrev()
+      if (store.activeId !== sid) {
+        loadingEarlier = false
+        return
+      }
       /* 等接口期间用户可能继续滚动：补偿基准取当前视口 */
       prevHeight = el?.scrollHeight ?? 0
       prevTop = el?.scrollTop ?? 0
@@ -193,15 +198,45 @@
     })
   }
 
-  /* 会话切换/首次载入：窗口锚到尾部；同一会话内流式追加不重锚 */
+  function toBottom() {
+    stick = true
+    follow()
+    scheduleFollow()
+  }
+
+  function restoreScroll(pos: number) {
+    if (!el) return
+    selfScroll = true
+    el.scrollTop = pos
+    lastTop = el.scrollTop
+    requestAnimationFrame(() => (selfScroll = false))
+  }
+
+  /* 每个已打开标签的窗口与滚动位置：切回已打开标签时恢复原处，
+     只有新打开的标签（无记录）才回底。 */
+  type SavedView = { rowStart: number; scrollTop: number; atBottom: boolean }
+  const savedViews = new Map<string, SavedView>()
+  let pendingView: SavedView | null = null
+
   let lastSessionId = $state('')
   $effect(() => {
     const id = store.activeId
     if (lastSessionId === id) return
+    const prev = lastSessionId
+    if (prev && store.tabs.some((t) => t.rootId === prev)) {
+      savedViews.set(prev, { rowStart, scrollTop: lastTop, atBottom: stick })
+    }
     lastSessionId = id
+    pendingView = savedViews.get(id) ?? null
     stick = true
     lastTop = 0
+    jumpDir = ''
+    activeUid = 0
     clearPull()
+  })
+  $effect(() => {
+    const ids = new Set(store.tabs.map((t) => t.rootId))
+    for (const id of savedViews.keys()) if (!ids.has(id)) savedViews.delete(id)
   })
   $effect(() => {
     const id = store.activeId
@@ -213,9 +248,22 @@
     }
     if (rowSession === id) return
     rowSession = id
-    rowStart = windowStart(rows.length, INITIAL_TURNS)
-    stick = true
-    void tick().then(follow)
+    const saved = pendingView
+    pendingView = null
+    if (saved) {
+      rowStart = Math.min(saved.rowStart, Math.max(0, rows.length - 1))
+      if (saved.atBottom) {
+        stick = true
+        void tick().then(toBottom)
+      } else {
+        stick = false
+        void tick().then(() => restoreScroll(saved.scrollTop))
+      }
+    } else {
+      rowStart = windowStart(rows.length, INITIAL_TURNS)
+      stick = true
+      void tick().then(toBottom)
+    }
   })
 
   /* 实时整理完成：窗口收拢到新的 trim 边界（正在上翻看历史时不收，
@@ -236,14 +284,19 @@
   function jump(direction: '' | 'top' | 'bottom') {
     if (!el || !direction) return
     if (direction === 'bottom') {
-      stick = true
-      follow()
-      scheduleFollow()
+      toBottom()
       return
     }
     stick = false
+    clearPull() // 只回当前窗口顶部，不触发向上懒加载
     el.scrollTo({ top: 0, behavior: 'smooth' })
   }
+
+  /* 输入框开始输入：等本轮 DOM 落定后回到底部 */
+  $effect(() => {
+    if (!store.bottomSeq) return
+    void tick().then(toBottom)
+  })
 
   /* 对话页切走时只是 display:none（常驻挂载），隐藏期量不到高度；
      重新显示或内容变高时补一次贴底 */
@@ -334,6 +387,11 @@
       clearPull()
       return
     }
+    /* 内容不足一屏时滚不动：别把贴底状态误判成用户上翻 */
+    if (!el || el.scrollHeight <= el.clientHeight) {
+      clearPull()
+      return
+    }
     stick = false
     if (!atTop() || !canLoadMore || loadingEarlier) {
       clearPull()
@@ -416,8 +474,8 @@
       <ThreadRows
         rows={visibleRows}
         liveBusy={store.busy}
-        reveal={store.batchIds}
         avatarOutside
+        eager
         {openGroups}
         onToggleGroup={toggleGroup}
         boundaryKey={boundaryKey}

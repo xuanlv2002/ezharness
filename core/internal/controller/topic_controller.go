@@ -121,7 +121,15 @@ func (c *TopicController) Activate(g *gin.Context) {
 		g.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	g.JSON(http.StatusOK, gin.H{"id": c.Svc.Hub.ActiveSession().RootID})
+	active := c.Svc.Hub.ActiveSession()
+	entry, _ := c.Svc.Hub.Topics.Get(active.RootID)
+	g.JSON(http.StatusOK, gin.H{
+		"id":        active.RootID,
+		"leafId":    active.CurrentID(),
+		"updatedAt": entry.UpdatedAt,
+		"msgs":      entry.Msgs,
+		"busy":      active.Busy(),
+	})
 }
 
 /*

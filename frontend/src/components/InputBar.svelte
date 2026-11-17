@@ -143,7 +143,7 @@
     const sendAttachments = attachments.slice(0, MAX_FILES)
     const sendFileRefs = fileRefs.slice(0, MAX_FILES)
     text = ''
-    /* 内容清空后高度即时回落（autoResize 只挂 oninput，程序清值不触发） */
+    /* 内容清空后高度即时回落（onInput 只挂输入事件，程序清值不触发） */
     void tick().then(() => {
       if (el) {
         el.style.height = 'auto'
@@ -176,10 +176,11 @@
     onAddFiles?.(files as File[])
   }
 
-  function autoResize(e: Event) {
+  function onInput(e: Event) {
     const t = e.currentTarget as HTMLTextAreaElement
     t.style.height = 'auto'
     t.style.height = Math.min(t.scrollHeight, 200) + 'px'
+    store.bottomSeq++ // 开始输入即回到底部
   }
 
   /* ── 输入框工具条：模型切换（下一次输入生效）+ 审批三档，均为下拉 ── */
@@ -312,7 +313,7 @@
       onblur={() => (focused = false)}
       onkeydown={onKey}
       onpaste={onPaste}
-      oninput={autoResize}
+      oninput={onInput}
       disabled={!store.activeId}
     ></textarea>
     <button class="board-btn" onclick={() => void store.openImageDraft()} title="画板（画图/标注——内存草稿，保存后落盘 tmp，可添加到对话发送）">

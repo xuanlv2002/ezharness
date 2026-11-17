@@ -20,7 +20,7 @@
     avatarOutside = false,
     showAvatar = true,
     liveBusy = false,
-    reveal,
+    eager = false,
     openGroups,
     onToggleGroup,
     boundaryKey = '',
@@ -33,7 +33,7 @@
     avatarOutside?: boolean
     showAvatar?: boolean
     liveBusy?: boolean
-    reveal?: Set<number>
+    eager?: boolean
     openGroups: Set<number>
     onToggleGroup: (key: number) => void
     boundaryKey?: string
@@ -50,31 +50,29 @@
   {#each rows as row, i (row.key)}
     {#if row.kind === 'marker'}
       {@const mb = row.b}
-      <div class:reveal={reveal?.has(mb.uid)}>
-        {#if mb.kind === 'trim'}
-          <FoldMark
-            kind="trim"
-            brief={mb.text}
-            full={mb.full || ''}
-            loadable={row.key === boundaryKey}
-            loading={boundaryLoading}
-            onLoad={onLoadEarlier}
-          />
-        {:else}
-          <FoldMark
-            kind="archive"
-            title={mb.text}
-            brief={firstLine(mb.summary)}
-            full={mb.summary}
-            loadable={row.key === boundaryKey}
-            loading={boundaryLoading}
-            onLoad={onLoadEarlier}
-          />
-        {/if}
-      </div>
+      {#if mb.kind === 'trim'}
+        <FoldMark
+          kind="trim"
+          brief={mb.text}
+          full={mb.full || ''}
+          loadable={row.key === boundaryKey}
+          loading={boundaryLoading}
+          onLoad={onLoadEarlier}
+        />
+      {:else}
+        <FoldMark
+          kind="archive"
+          title={mb.text}
+          brief={firstLine(mb.summary)}
+          full={mb.summary}
+          loadable={row.key === boundaryKey}
+          loading={boundaryLoading}
+          onLoad={onLoadEarlier}
+        />
+      {/if}
     {:else if row.kind === 'user'}
       {@const ub = row.b}
-      <div class:reveal={reveal?.has(ub.uid)} data-uid={ub.uid}>
+      <div data-uid={ub.uid}>
         <MessageItem
           text={ub.text}
           images={ub.images}
@@ -101,47 +99,36 @@
                 <ToolGroup blocks={seg.blocks} open={openGroups.has(key)} onToggle={() => onToggleGroup(key)} />
               {:else}
                 {#each seg.blocks as b (b.uid)}
-                  <div class:reveal={reveal?.has(b.uid)}>
-                    <ToolBlock data={b} />
-                  </div>
+                  <ToolBlock data={b} />
                 {/each}
               {/if}
             {:else if seg.b.kind === 'tool'}
-              <div class:reveal={reveal?.has(seg.b.uid)}>
-                <ToolBlock data={seg.b} />
-              </div>
+              <ToolBlock data={seg.b} />
             {:else if seg.b.kind === 'assistant'}
               {@const ab = seg.b}
-              <div class:reveal={reveal?.has(ab.uid)}>
-                <MessageItem
-                  text={ab.text}
-                  reasoning={ab.reasoning}
-                  streaming={ab.streaming}
-                  role="assistant"
-                  bare
-                  onFork={ab.owner && ab.msgIdx !== undefined && !ab.streaming
-                    ? () => void store.forkFrom(ab.owner!, ab.msgIdx!)
-                    : undefined}
-                />
-              </div>
+              <MessageItem
+                text={ab.text}
+                reasoning={ab.reasoning}
+                streaming={ab.streaming}
+                role="assistant"
+                bare
+                {eager}
+                onFork={ab.owner && ab.msgIdx !== undefined && !ab.streaming
+                  ? () => void store.forkFrom(ab.owner!, ab.msgIdx!)
+                  : undefined}
+              />
             {:else if seg.b.kind === 'fork'}
-              <div class:reveal={reveal?.has(seg.b.uid)}>
-                <ForkCard fork={store.forks[seg.b.forkId]} />
-              </div>
+              <div><ForkCard fork={store.forks[seg.b.forkId]} /></div>
             {:else if seg.b.kind === 'decision'}
-              <div id={`decision-${seg.b.id}`} class:reveal={reveal?.has(seg.b.uid)}>
+              <div id={`decision-${seg.b.id}`}>
                 <DecisionCard data={seg.b} />
               </div>
             {:else if seg.b.kind === 'status'}
-              <div class:reveal={reveal?.has(seg.b.uid)}>
-                <StatusTagCard data={seg.b.data} raw={seg.b.text} />
-              </div>
+              <StatusTagCard data={seg.b.data} raw={seg.b.text} />
             {:else if seg.b.kind === 'resourcechange'}
-              <div class:reveal={reveal?.has(seg.b.uid)}>
-                <ResChangeCard items={seg.b.items} />
-              </div>
+              <ResChangeCard items={seg.b.items} />
             {:else if seg.b.kind === 'note'}
-              <div class="note" class:reveal={reveal?.has(seg.b.uid)}>
+              <div class="note">
                 <span class="line"></span>
                 {seg.b.text}
                 <span class="line"></span>
@@ -150,7 +137,6 @@
               {@const ib = seg.b}
               <div
                 class="imgload"
-                class:reveal={reveal?.has(ib.uid)}
                 title={ib.paths.map((p, j) => (ib.notes?.[j] ? `${p}（${ib.notes[j]}）` : p)).join('\n')}
               >
                 {#each ib.paths as p, j (p)}
@@ -169,7 +155,7 @@
                 <span class="label">{ib.notes?.filter((n) => n).join(' · ') || '已加载上下文'}</span>
               </div>
             {:else if seg.b.kind === 'endtick'}
-              <div class="endtick" class:reveal={reveal?.has(seg.b.uid)} title={seg.b.title}>
+              <div class="endtick" title={seg.b.title}>
                 <span class="dot" class:warn={seg.b.icon === '⚠'}>{seg.b.icon}</span>
                 <span class="rtext">{seg.b.title}</span>
               </div>
@@ -186,20 +172,6 @@
     display: flex;
     flex-direction: column;
     gap: 20px;
-  }
-  /* 拉出的上一会话内容：自上而下展开 */
-  .reveal {
-    animation: reveal-down 0.36s var(--ease-out) both;
-  }
-  @keyframes reveal-down {
-    from {
-      opacity: 0;
-      transform: translateY(-10px);
-    }
-    to {
-      opacity: 1;
-      transform: translateY(0);
-    }
   }
   .note {
     display: flex;

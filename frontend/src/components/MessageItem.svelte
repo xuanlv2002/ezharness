@@ -18,6 +18,7 @@
     streaming = false,
     role,
     bare = false,
+    eager = false,
     callback,
     onFork,
   }: {
@@ -29,6 +30,7 @@
     streaming?: boolean
     role: 'user' | 'assistant'
     bare?: boolean /* 无头像形态：回复组内由组头提供唯一头像 */
+    eager?: boolean /* 主时间线窗口有限，正文全部渲染：避免首次上滚时占位换真身的高度闪动 */
     callback?: CallbackMessageMeta /* 定时回调投递的用户消息：特殊卡头 */
     onFork?: () => void
   } = $props()
@@ -348,11 +350,10 @@
     meta.textContent = `${el.tagName === 'AUDIO' ? '音频' : '视频'} · ${fmtDuration(el.duration)}`
   }
 
-  /* 历史正文懒渲染：离屏消息不跑 markdown——大会话/单轮超长时，一次性给
-     所有消息建 DOM 是打开会话与切页卡顿的主因。滚到附近（rootMargin
-     800px）再解析替换占位块；流式消息始终渲染。 */
+  /* 分身抽屉是完整执行记录，离屏正文先占位、滚到附近再建 DOM；主时间线
+     窗口有限（10/5 轮），走 eager 全量渲染，避免首次上滚时占位换真身闪动。 */
   let nearView = $state(streaming)
-  const renderBody = $derived(streaming || nearView)
+  const renderBody = $derived(streaming || eager || nearView)
   /* 占位高度按字数粗估（只影响离屏区域的滚动条长度，进入视区即换真身） */
   const placeholderH = $derived(Math.min(560, Math.max(48, Math.round(text.length / 40) * 18)))
   $effect(() => {
@@ -512,6 +513,7 @@
         <div
           class="md"
           class:live={streaming}
+          class:eager
           bind:this={bodyEl}
           onclick={onBodyClick}
           onerrorcapture={onThumbError}
@@ -889,9 +891,9 @@
     border-radius: 6px;
     background: transparent;
   }
-  /* 屏外消息跳过布局与绘制：历史重建时成百条长消息不再同帧全量渲染。
-     流式中的消息除外（高度连续变化,虚拟化会让吸底/滚动跳动） */
-  .md:not(.live) {
+  /* 分身抽屉的屏外消息跳过布局与绘制；主时间线 eager 不参与，
+     否则首次进入视区才实算高度，上滚会跳。流式消息高度连续变化，同样排除。 */
+  .md:not(.live):not(.eager) {
     content-visibility: auto;
     contain-intrinsic-size: auto 120px;
   }

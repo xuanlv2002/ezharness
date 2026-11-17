@@ -178,6 +178,30 @@ export interface TotalUsage {
   cached: number
 }
 
+/* TabView 是切走时的分支现场：切回已打开标签直接恢复，不重拉历史。
+   leafId/updatedAt/msgs 用于判断离开期间分支是否又跑过（跑了就重载，避免展示旧内容）。 */
+interface TabView {
+  blocks: Block[]
+  forks: Record<string, ForkState>
+  plan: SessionPlan | null
+  leafId: string
+  prevCursor: string
+  hasPrev: boolean
+  prevTitle: string
+  busy: boolean
+  pendingUserUid: number
+  pendingUserText: string
+  modelActive: boolean
+  retryInfo: RetryState | null
+  wrapPhase: boolean
+  currentIter: number
+  lastTool: string
+  live: StatusPayload | null
+  liveChanges: string[]
+  updatedAt: number
+  msgs: number
+}
+
 /* 工作区抽屉的工具页（互斥单选）：终端 / 资源查看 / 共享浏览器 */
 export type DrawerTool = 'term' | 'file' | 'browser'
 
@@ -306,6 +330,8 @@ class AppStore {
   /* 通知跳转主时间线锚点（ChatView effect 消费滚动后清空；tick 依赖供
   跨分支切换后块加载完成重试） */
   jumpMain = $state('')
+  /* 输入框开始输入时递增：时间线据此回到底部（打开新标签的回底在时间线内处理） */
+  bottomSeq = $state(0)
   /* 待回流附件（查看器「添加到对话」/拖入暂存）：ChatView 消费进输入框
      附件（同路径替换去重，否则追加） */
   pendingAttachments = $state<Attachment[] | null>(null)
@@ -371,9 +397,11 @@ class AppStore {
   prevTitle = $state('') // 上一会话标题（加载前的时间线边界显示）
   /* 实时整理完成：时间线据此把窗口收拢到新的 trim 边界 */
   foldAt = $state(0)
-  /* 最近一次上翻拉出的块 uid 集合（展开动画用，渲染层命中加 class） */
-  batchIds = $state<Set<number>>(new Set())
   private prevCursor = '' // 已翻到的会话 ID（沿 prevSession 链继续上翻）
+  /* 已打开标签切走时的现场（rootId → 时间线与上翻状态）；关闭标签时删除 */
+  private views = new Map<string, TabView>()
+  /* 正在重拉历史的标签：期间不保存现场，避免把 resetView 后的空时间线写进缓存 */
+  private loadingHistory = new Set<string>()
 
   private unsub: (() => void) | null = null
   private uidSeq = 0
@@ -481,6 +509,56 @@ class AppStore {
     this.unsub = subscribe(this.activeId, (ev) => this.apply(ev))
   }
 
+  /* saveView 记录切走标签的时间线与上翻现场；关闭中的标签不再保存。 */
+  private saveView() {
+    if (!this.activeId || this.loadingHistory.has(this.activeId)) return
+    if (!this.tabs.some((t) => t.rootId === this.activeId)) return
+    const b = this.branches.find((x) => x.id === this.activeId)
+    this.views.set(this.activeId, {
+      blocks: this.blocks,
+      forks: this.forks,
+      plan: this.plan,
+      leafId: this.leafId,
+      prevCursor: this.prevCursor,
+      hasPrev: this.hasPrev,
+      prevTitle: this.prevTitle,
+      busy: this.busy,
+      pendingUserUid: this.pendingUserUid,
+      pendingUserText: this.pendingUserText,
+      modelActive: this.modelActive,
+      retryInfo: this.retryInfo,
+      wrapPhase: this.wrapPhase,
+      currentIter: this.currentIter,
+      lastTool: this.lastTool,
+      live: this.live,
+      liveChanges: this.liveChanges,
+      updatedAt: b?.updatedAt ?? 0,
+      msgs: b?.msgs ?? 0,
+    })
+  }
+
+  /* restoreView 恢复切走前的现场；运行态标志随重订阅回放校准。 */
+  private restoreView(v: TabView) {
+    this.resetView()
+    this.blocks = v.blocks
+    this.forks = v.forks
+    this.plan = v.plan
+    this.leafId = v.leafId
+    this.prevCursor = v.prevCursor
+    this.hasPrev = v.hasPrev
+    this.prevTitle = v.prevTitle
+    this.busy = v.busy
+    this.pendingUserUid = v.pendingUserUid
+    this.pendingUserText = v.pendingUserText
+    this.modelActive = v.modelActive
+    this.retryInfo = v.retryInfo
+    this.wrapPhase = v.wrapPhase
+    this.currentIter = v.currentIter
+    this.lastTool = v.lastTool
+    this.live = v.live
+    this.liveChanges = v.liveChanges
+  }
+
   /* resetView 清空时间线与分支相关标志（切标签/关闭最后一个标签共用）。 */
   private resetView() {
     this.blocks = []
@@ -504,14 +582,16 @@ class AppStore {
     this.loadingPrev = false
     this.prevTitle = ''
     this.foldAt = 0
-    this.batchIds = new Set()
   }
 
   private async loadHistory() {
+    const sid = this.activeId
     this.resetView()
-    if (!this.activeId) return // 空状态：无会话可载
+    if (!sid) return // 空状态：无会话可载
+    this.loadingHistory.add(sid)
     try {
-      const s = await api.getHistory(this.activeId)
+      const s = await api.getHistory(sid)
+      if (this.activeId !== sid) return // 等待期间已切走：别把旧分支历史写进新标签
       this.leafId = s.id
       // 分身摘要重建（骨架，过程详情打开抽屉时懒加载）；存档挂在所属 session 目录下
       for (const f of s.forks ?? []) {
@@ -540,6 +620,8 @@ class AppStore {
       this.hasPrev = !!s.canPrev
     } catch {
       /* 网络异常时保底空时间线 */
+    } finally {
+      this.loadingHistory.delete(sid)
     }
   }
 
@@ -547,9 +629,11 @@ class AppStore {
      时间线据此把窗口锚到上一会话的最新一段 */
   async loadPrev(): Promise<number | null> {
     if (!this.prevCursor || this.loadingPrev) return null
+    const sid = this.activeId
     this.loadingPrev = true
     try {
       const res = await api.getPrev(this.prevCursor)
+      if (this.activeId !== sid) return null // 等待期间已切换标签：丢弃，别写进新时间线
       if (!res) {
         this.hasPrev = false
         return null
@@ -576,7 +660,6 @@ class AppStore {
         text: res.title || '',
         summary: res.summary || '',
       }
-      this.batchIds = new Set(prevBlocks.map((b) => b.uid))
       this.blocks = [...prevBlocks, marker, ...this.blocks]
       // 游标 = 已翻到的会话（下次取它的上一级）；可否继续由其上级是否存在决定
       this.prevCursor = res.id
@@ -584,10 +667,10 @@ class AppStore {
       this.prevTitle = ''
       return marker.uid
     } catch {
-      this.hasPrev = false
+      if (this.activeId === sid) this.hasPrev = false
       return null
     } finally {
-      this.loadingPrev = false
+      if (this.activeId === sid) this.loadingPrev = false
     }
   }
 
@@ -1176,14 +1259,29 @@ class AppStore {
 
   /* ── 分支三操作 ── */
 
-  /* 切换分支：状态/审批/水位随切换（SSE 重订阅时 ReplayFrames 重建
-     时间线与未决审批；后台分支的轮不因切换取消） */
+  /* 切换分支：已打开标签恢复切走时的现场，不重拉历史；新标签或离开期间
+     已有新轮落盘（leaf/updatedAt/msgs 变化）才重载。SSE 重订阅补齐运行中
+     的本轮与未决审批，后台分支的轮不因切换取消。 */
   async switchBranch(rootId: string) {
     if (rootId === this.activeId) return
     try {
       const r = await api.activateBranch(rootId)
+      this.saveView()
+      const cached = this.tabs.some((t) => t.rootId === rootId) ? this.views.get(rootId) : undefined
       this.activate(r.id)
-      await this.loadHistory()
+      if (
+        cached &&
+        cached.leafId === r.leafId &&
+        cached.updatedAt === r.updatedAt &&
+        cached.msgs === r.msgs
+      ) {
+        this.restoreView(cached)
+        this.busy = r.busy
+        this.modelActive = r.busy
+      } else {
+        await this.loadHistory()
+        if (this.activeId !== r.id) return
+      }
       this.resubscribe()
       await this.refreshStatus()
       await this.refreshBranches()
@@ -1196,8 +1294,10 @@ class AppStore {
   async newBranch() {
     try {
       const r = await api.newBranch()
+      this.saveView()
       this.activate(r.id)
       await this.loadHistory()
+      if (this.activeId !== r.id) return
       this.resubscribe()
       await this.refreshStatus()
       await this.refreshBranches()
@@ -1237,6 +1337,7 @@ class AppStore {
     if (i < 0) return
     this.tabs = this.tabs.filter((t) => t.rootId !== rootId)
     delete this.drafts[rootId]
+    this.views.delete(rootId)
     void api.cancel(rootId).catch(() => {})
     if (rootId !== this.activeId) return
     const neighbor = this.tabs[i]?.rootId || this.tabs[i - 1]?.rootId || ''
@@ -1257,6 +1358,7 @@ class AppStore {
     for (const t of this.tabs) {
       if (t.rootId === rootId) continue
       delete this.drafts[t.rootId]
+      this.views.delete(t.rootId)
       void api.cancel(t.rootId).catch(() => {})
     }
     this.tabs = this.tabs.filter((t) => t.rootId === rootId)
@@ -1272,6 +1374,7 @@ class AppStore {
     this.tabs = this.tabs.slice(0, i + 1)
     for (const t of removed) {
       delete this.drafts[t.rootId]
+      this.views.delete(t.rootId)
       void api.cancel(t.rootId).catch(() => {})
     }
     if (removed.some((t) => t.rootId === this.activeId)) await this.switchBranch(rootId)
@@ -1307,14 +1410,14 @@ class AppStore {
     if (active) this.lastStatus = '正在归档话题…'
     try {
       await api.compactTopic(rootId)
-      if (active) {
+      if (active && this.activeId === id) {
         await this.loadHistory()
         await this.refreshStatus()
       }
       await this.refreshBranches()
-      if (active) this.lastStatus = ''
+      if (active && this.activeId === id) this.lastStatus = ''
     } catch (e) {
-      if (active) this.lastStatus = `归档失败：${(e as Error).message}`
+      if (active && this.activeId === id) this.lastStatus = `归档失败：${(e as Error).message}`
     } finally {
       this.archivingRootId = ''
     }
@@ -1325,8 +1428,10 @@ class AppStore {
   async forkFrom(owner: string, msgIdx: number) {
     try {
       const r = await api.forkSession(owner, msgIdx + 1)
+      this.saveView()
       this.activate(r.id)
       await this.loadHistory()
+      if (this.activeId !== r.id) return
       this.resubscribe()
       await this.refreshStatus()
       await this.refreshBranches()
