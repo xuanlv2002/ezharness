@@ -64,21 +64,21 @@ func mkMsgs(n int) []types.Message {
 	return out
 }
 
-/* modelView：最后 marker 的 kept 回溯保留段 + marker + 之后；无 marker 全量。 */
+/* modelView：最后 marker 向上 kept+1 次完整交互 + marker + 之后；无 marker 全量。 */
 func TestModelViewFromLastMarker(t *testing.T) {
 	s := &Session{}
 	s.setHistory([]types.Message{
 		{Role: types.RoleUser, Content: "f1"},
-		{Role: types.RoleUser, Content: "f2"},
-		{Role: types.RoleUser, Content: "<context_trim kept=\"2\">\n摘要：早期\n</context_trim>"},
+		{Role: types.RoleUser, Content: "<context_trim kept=\"1\">\n摘要：早期\n</context_trim>"},
 		{Role: types.RoleUser, Content: "t1"},
+		{Role: types.RoleUser, Content: "t2"},
 		{Role: types.RoleUser, Content: "<context_trim kept=\"1\">\n摘要：近期\n</context_trim>"},
 		{Role: types.RoleUser, Content: "q3"},
 	})
 	view := s.ModelView()
-	// 最后 marker kept=1 → [t1, marker, q3]
-	if len(view) != 3 || view[0].Content != "t1" || !hooks.IsTrimMarker(view[1]) || view[2].Content != "q3" {
-		t.Fatalf("view = kept seg + marker + after: %+v", view)
+	// 最后 marker kept=1 → 两次交互 + marker + 之后 = [t1, t2, marker2, q3]
+	if len(view) != 4 || view[0].Content != "t1" || !hooks.IsTrimMarker(view[2]) || view[3].Content != "q3" {
+		t.Fatalf("view = kept exchanges + marker + after: %+v", view)
 	}
 	// 渲染视图仍全量
 	if len(s.History()) != 6 {
@@ -92,25 +92,30 @@ func TestModelViewFromLastMarker(t *testing.T) {
 	}
 }
 
-/* FinishRun：trim 轮的折叠段与 marker 前档案合并，跨轮不丢。 */
+/* FinishRun：trim 轮的折叠段与视图起点前档案合并，跨轮不丢。 */
 func TestFinishRunMergesTrimmedArchive(t *testing.T) {
 	s := &Session{}
+	// 上轮落定的全量：marker1 尾插在 q2 轮内（触发点，时间序）
 	s.setHistory([]types.Message{
 		{Role: types.RoleSystem, Content: "sys"},
 		{Role: types.RoleUser, Content: "q1"},
-		{Role: types.RoleUser, Content: "<context_trim>\n摘要\n</context_trim>"},
+		{Role: types.RoleAssistant, Content: "a1"},
 		{Role: types.RoleUser, Content: "q2"},
+		{Role: types.RoleUser, Content: "<context_trim kept=\"1\">\n摘要\n</context_trim>"},
 	})
-	// 本轮：视图从 marker 起，又 trim 折叠了 [marker,q2]，保留新 marker + q3
+	// 本轮从视图 [q1,a1,q2,marker1] 起（marker 回溯 kept=1 → 两次交互），
+	// 又 trim 折叠 [q1,a1]，保留 q2 交互 + marker1 + q3 + 新 marker2
 	state := &types.LoopState{Metadata: map[string]any{}}
 	state.Messages = []types.Message{
 		{Role: types.RoleSystem, Content: "sys"},
-		{Role: types.RoleUser, Content: "<context_trim>\n摘要2\n</context_trim>"},
+		{Role: types.RoleUser, Content: "q2"},
+		{Role: types.RoleUser, Content: "<context_trim kept=\"1\">\n摘要\n</context_trim>"},
 		{Role: types.RoleUser, Content: "q3"},
+		{Role: types.RoleUser, Content: "<context_trim kept=\"1\">\n摘要2\n</context_trim>"},
 	}
 	state.Metadata["trim_folded"] = []types.Message{
-		{Role: types.RoleUser, Content: "<context_trim>\n摘要\n</context_trim>"},
-		{Role: types.RoleUser, Content: "q2"},
+		{Role: types.RoleUser, Content: "q1"},
+		{Role: types.RoleAssistant, Content: "a1"},
 	}
 	s.FinishRun(state, nil)
 	var got []types.Message
@@ -119,9 +124,9 @@ func TestFinishRunMergesTrimmedArchive(t *testing.T) {
 			got = append(got, m)
 		}
 	}
-	// 追加式档案：q1（上轮档案）+ marker,q2（本轮折叠原文）+ 新 marker + q3
-	if len(got) != 5 || got[0].Content != "q1" || got[2].Content != "q2" ||
-		!hooks.IsTrimMarker(got[3]) || got[4].Content != "q3" {
+	// 追加式档案：q1,a1（本轮折叠原文）+ q2 + marker1 + q3 + 新 marker2
+	if len(got) != 6 || got[0].Content != "q1" || got[1].Content != "a1" || got[2].Content != "q2" ||
+		!hooks.IsTrimMarker(got[3]) || got[4].Content != "q3" || !hooks.IsTrimMarker(got[5]) {
 		var sb strings.Builder
 		for _, m := range got {
 			sb.WriteString(string(m.Role) + ":" + m.Content + " | ")

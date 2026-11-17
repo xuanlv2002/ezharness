@@ -2326,8 +2326,8 @@ class AppStore {
         break
       }
       case 'session.trim': {
-        // 整理完成：整理标记（trim 块）挂起，时间线把窗口收拢到这条边界；
-        // 其前内容滚到顶再按批载入。分身的进分身框
+        // 整理完成：整理标记（trim 块）追加在触发点（时间序自然），时间线
+        // 把窗口收拢到这条边界，其前内容滚到顶再按批载入。分身的进分身框
         const bsFold = ev.forkId ? this.getFork(ev.forkId).blocks : this.blocks
         const summary = typeof ev.data?.summary === 'string' ? ev.data.summary.trim() : ''
         const uid = this.nuid()
@@ -2337,7 +2337,7 @@ class AppStore {
           full: summary,
           text: summary
             ? trimBrief(summary)
-            : `上下文已整理：早期对话折叠为摘要（${ev.data?.folded ?? '?'} 条 → 保留最近 ${ev.data?.kept ?? '?'} 条）`,
+            : `上下文已整理：早期对话折叠为摘要（${ev.data?.folded ?? '?'} 条 → 保留最近 ${ev.data?.kept ?? '?'} 次输入）`,
         })
         if (!ev.forkId) this.foldAt = uid
         void this.refreshStatus()
