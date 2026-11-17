@@ -7,7 +7,8 @@ trim 是上下文整理 hook：水位超阈值（OnLoop，每次迭代回边）�
 消息序列纯追加：OnLoop 就地截断（立即生效），marker 暂存后在本轮
 OnEnd 落位——追加在 <end_reason> 之后，一次完整交互的最下方，历史
 不回插、不改写。保留按 user 输入定界：kept=N 保留最近 N+1 次输入的
-完整交互（触发整理的这次恒在内，N 是它之上再保留的次数）。下轮取
+完整交互（触发整理的这次恒在内，N 是它之上再保留的次数）；但至少
+折叠最早的 1 个交互，交互不足时少留直至整段折叠（kept=-1）。下轮取
 上下文时从最后一个 marker 向上回溯 kept+1 次完整交互作为视图起点
 （ViewStart）——边界落在 user 输入处，不会切出孤儿 tool 序列。
 
@@ -55,7 +56,7 @@ const EventTrimming = event.EventType("session.trimming")
 type TrimInfo struct {
 	Tokens  int    `json:"tokens"`            // 触发时的水位（自动路径；工具路径为 0）
 	Folded  int    `json:"folded"`            // 折叠的早期消息条数
-	Kept    int    `json:"kept"`              // 保留的 user 输入条数（含触发整理的一次）
+	Kept    int    `json:"kept"`              // 保留的完整交互数（0 = 整段折叠）
 	Fork    bool   `json:"fork"`              // 是否分身内的整理
 	Summary string `json:"summary,omitempty"` // 结构化摘要全文（前端整理条点开看的内容）
 }
@@ -166,9 +167,9 @@ func (t *Trim) OnLoop(ctx context.Context, state *types.LoopState) error {
 }
 
 /*
-OnEnd 落位暂存的整理 marker：追加在本轮 <end_reason> 之后（注册序在
-remind 之后、sessionstore 之前）——一次完整交互的最下方，时间序自然；
-随后发整理完成事件（前端卡片与重载后的位置一致）。
+OnEnd 插入摘要 marker：追加在本轮 <end_reason> 之后（注册序在 remind
+之后、sessionstore 之前）——一次完整交互的最下方，时间序自然；随后
+发整理完成事件（前端卡片与重载后的位置一致）。
 */
 func (t *Trim) OnEnd(_ context.Context, state *types.LoopState) error {
 	done, ok := t.stashed[state]
@@ -202,10 +203,12 @@ func (t *Trim) OnToolStart(_ context.Context, state *types.LoopState, call *type
 }
 
 /*
-doTrim 执行整理：摘要折叠段 → 截掉头部折叠区（立即生效，下一次模型
-调用即新上下文）；marker 暂存，OnEnd 时落位到本轮 <end_reason> 之后。
-失败不改变上下文（放弃本轮，模型继续原上下文作答）。折叠段挂
-state.Metadata（sessionstore 与 domain 共读）。
+doTrim 执行整理：OnLoop 就地截断——只保留当前段（本轮输入 + trim 调用）
+起、向前的 keep+1 个完整交互，更早的全部折进档案，下一次模型调用即新
+上下文；marker 暂存，OnEnd 时落到本轮 <end_reason> 之后。段数不足
+keep+1 时全部保留，摘要卡照插（折 0 条）。失败不改变上下文（放弃本轮，
+模型继续原上下文作答）。折叠段挂 state.Metadata（sessionstore 与
+domain 共读）。
 */
 func (t *Trim) doTrim(ctx context.Context, state *types.LoopState, tokens int) error {
 	msgs := state.Messages
@@ -221,24 +224,32 @@ func (t *Trim) doTrim(ctx context.Context, state *types.LoopState, tokens int) e
 		start = state.SeedLen // seed 归主库，只折叠 fork 增量
 	}
 	fold := msgs[start:]
-	keptFrom := groupStart(fold, len(fold), trimKeepUser)
-	if keptFrom <= 0 {
-		// 交互次数不足 kept+1，保留区之下无可折叠；标记本轮已整理，
-		// 否则水位路径每轮迭代都重复报错
-		if state.Metadata == nil {
-			state.Metadata = map[string]any{}
+	var inputs []int // 折叠区内真实 user 输入的位置
+	for i, m := range fold {
+		if isUserInput(m) {
+			inputs = append(inputs, i)
 		}
-		state.Metadata["trimmed"] = true
-		return errors.New("nothing to trim")
 	}
+	retained := trimKeepUser + 1
+	if retained > len(inputs) {
+		retained = len(inputs) // 段数不足：全部保留，仅插摘要卡
+	}
+	boundary := 0
+	if retained < len(inputs) {
+		boundary = inputs[len(inputs)-retained]
+		for boundary > 0 && isOpeningInject(fold[boundary-1]) {
+			boundary-- // 开场注入（status 等）随本轮输入一起保留
+		}
+	}
+	sumInput := fold[:boundary]
 
 	var sp *Span
 	if t.trace != nil {
 		sp = t.trace.StartSpan(state, "trim", "trim", map[string]any{
-			"fork": fork, "tokens": tokens, "fold": keptFrom,
+			"fork": fork, "tokens": tokens, "fold": boundary,
 		})
 	}
-	summaryText, err := summarizeMsgs(ctx, t.provider, trimSummaryPrompt, fold[:keptFrom])
+	summaryText, err := summarizeMsgs(ctx, t.provider, trimSummaryPrompt, sumInput)
 	if err != nil {
 		if t.trace != nil {
 			t.trace.EndSpan(sp, map[string]any{"err": err.Error()})
@@ -256,8 +267,12 @@ func (t *Trim) doTrim(ctx context.Context, state *types.LoopState, tokens int) e
 			archiveLoc = "原始记录仍完整保留在 " + p + "（可读取全文）"
 		}
 	}
+	kept := retained - 1
+	if kept < 0 {
+		kept = 0
+	}
 	marker := types.Message{Role: types.RoleUser, Content: "<" + TrimTag +
-		` kept="` + strconv.Itoa(trimKeepUser) + `">` +
+		` kept="` + strconv.Itoa(kept) + `">` +
 		"\n（系统自动整理，非用户发言，无需回应）" +
 		"\n此前的早期对话已折叠出模型上下文（" + archiveLoc + "）。\n当前任务衔接摘要：\n" +
 		summaryText + "\n</" + TrimTag + ">"}
@@ -265,16 +280,16 @@ func (t *Trim) doTrim(ctx context.Context, state *types.LoopState, tokens int) e
 	if state.Metadata == nil {
 		state.Metadata = map[string]any{}
 	}
-	state.Metadata[trimFoldedKey] = append(FoldedOf(state), fold[:keptFrom]...)
+	state.Metadata["trimmed"] = true
+	state.Metadata[trimFoldedKey] = append(FoldedOf(state), fold[:boundary]...)
 	// 头部不动（主循环 system / fork 完整 seed），保留段承前启后；
 	// marker 暂存待 OnEnd 落位
-	next := make([]types.Message, 0, start+len(fold)-keptFrom)
+	next := make([]types.Message, 0, start+len(fold)-boundary)
 	next = append(next, msgs[:start]...)
-	next = append(next, fold[keptFrom:]...)
+	next = append(next, fold[boundary:]...)
 	state.Messages = next
-	state.Metadata["trimmed"] = true
 	t.stashed[state] = trimDone{marker: marker, info: TrimInfo{
-		Tokens: tokens, Folded: keptFrom, Kept: trimKeepUser + 1, Fork: fork, Summary: summaryText}}
+		Tokens: tokens, Folded: boundary, Kept: retained, Fork: fork, Summary: summaryText}}
 	return nil
 }
 
@@ -298,14 +313,15 @@ ViewStart 返回模型视图在全量历史中的起点：从最后一个整理 
 */
 func ViewStart(history []types.Message) int {
 	for i := len(history) - 1; i >= 0; i-- {
-		if IsTrimMarker(history[i]) {
-			return groupStart(history, i, markerKept(history[i]))
+		if !IsTrimMarker(history[i]) {
+			continue
 		}
+		return groupStart(history, i, markerKept(history[i]))
 	}
 	return 0
 }
 
-/* markerKept 解析 marker 的 kept 属性（解析失败按 0：仅触发交互进视图）。 */
+/* markerKept 解析 marker 的 kept 属性（= 保留交互数 - 1；解析失败按 0）。 */
 func markerKept(m types.Message) int {
 	s := m.Content
 	i := strings.Index(s, `kept="`)

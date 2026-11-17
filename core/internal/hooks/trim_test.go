@@ -102,27 +102,49 @@ func TestTrimDisabledBelowThreshold(t *testing.T) {
 }
 
 /*
-两次输入恰好填满保留区（kept=1 保留两次）：保留区之下无可折叠，
-报错并标记本轮已整理（水位路径不逐迭代重试）。
+段数不足 keep+1 时有多少留多少（折 0 条），摘要卡照插——不报错、不做
+特殊折叠。kept 记实际额外保留的段数。
 */
-func TestTrimNothingToFold(t *testing.T) {
-	tr := newTrimForTest("s", 500)
-	state := newTestState([]types.Message{
-		{Role: types.RoleSystem, Content: "b"},
-		{Role: types.RoleUser, Content: "q1"},
-		{Role: types.RoleAssistant, Content: "a1"},
-		{Role: types.RoleUser, Content: "q2"},
-		{Role: types.RoleAssistant, Content: "a2"},
-	})
-	state.LastResponse = &types.ModelResponse{Usage: types.Usage{PromptTokens: 800}}
-	if err := tr.OnLoop(context.Background(), state); err != nil {
-		t.Fatal(err)
+func TestTrimKeepsAllWhenNotEnough(t *testing.T) {
+	cases := []struct {
+		name string
+		msgs []types.Message
+		kept string
+	}{
+		{"两个交互", []types.Message{
+			{Role: types.RoleSystem, Content: "b"},
+			{Role: types.RoleUser, Content: "q1"},
+			{Role: types.RoleAssistant, Content: "a1"},
+			{Role: types.RoleUser, Content: "q2"},
+			{Role: types.RoleAssistant, Content: "a2"},
+		}, `kept="1"`},
+		{"单个交互", []types.Message{
+			{Role: types.RoleSystem, Content: "b"},
+			{Role: types.RoleUser, Content: "<agent_status>\n快照\n</agent_status>"},
+			{Role: types.RoleUser, Content: "唯一一次输入"},
+			{Role: types.RoleAssistant, Content: "过程"},
+		}, `kept="0"`},
 	}
-	if len(state.Messages) != 5 || len(FoldedOf(state)) != 0 {
-		t.Fatalf("two exchanges = kept region, nothing folded: %+v", state.Messages)
-	}
-	if state.Metadata["trimmed"] != true {
-		t.Fatal("nothing-to-fold must still mark trimmed (no per-iteration retry)")
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			tr := newTrimForTest("摘要", 500)
+			state := newTestState(c.msgs)
+			state.LastResponse = &types.ModelResponse{Usage: types.Usage{PromptTokens: 800}}
+			if err := tr.OnLoop(context.Background(), state); err != nil {
+				t.Fatal(err)
+			}
+			if len(state.Messages) != len(c.msgs) || len(FoldedOf(state)) != 0 {
+				t.Fatalf("not enough exchanges = keep all: %+v", state.Messages)
+			}
+			state.AppendMessage(types.Message{Role: types.RoleUser, Content: "<end_reason>\n收尾\n</end_reason>"})
+			if err := tr.OnEnd(context.Background(), state); err != nil {
+				t.Fatal(err)
+			}
+			last := state.Messages[len(state.Messages)-1]
+			if !IsTrimMarker(last) || !strings.Contains(last.Content, c.kept) {
+				t.Fatalf("marker must land at turn end with %s: %+v", c.kept, state.Messages)
+			}
+		})
 	}
 }
 

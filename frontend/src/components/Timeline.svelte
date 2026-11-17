@@ -387,16 +387,14 @@
       clearPull()
       return
     }
-    /* 内容不足一屏时滚不动：别把贴底状态误判成用户上翻 */
-    if (!el || el.scrollHeight <= el.clientHeight) {
-      clearPull()
-      return
-    }
-    stick = false
+    /* 内容不足一屏时滚不动，向上滚不算脱离贴底；但窗口短于一屏时它也是
+       唯一的加载入口——真触发加载时再脱离 */
+    if (el && el.scrollHeight > el.clientHeight) stick = false
     if (!atTop() || !canLoadMore || loadingEarlier) {
       clearPull()
       return
     }
+    stick = false
     armPull()
   }
 

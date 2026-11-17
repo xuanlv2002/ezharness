@@ -286,11 +286,15 @@ function trimFull(content: string): string {
   return (s?.[0] ?? '').trim()
 }
 
-/* 整理条的一行文案 */
+/* 整理条的一行文案：取【关键事实】首条（信息密度最高），退化到首个要点 */
 function trimBrief(full: string): string {
-  const one = full.replace(/\s+/g, ' ').trim()
-  const brief = one.length > 160 ? one.slice(0, 160) + '…' : one
-  return `上下文已整理：此前的对话折叠为摘要。${brief}`
+  const fact = full.match(/【关键事实】\s*([\s\S]*?)(?=【|$)/)?.[1] ?? ''
+  const lines = (fact || full)
+    .split(/\r?\n/)
+    .map((s) => s.trim())
+    .filter((s) => s && !s.startsWith('【') && s !== '（无）' && s !== '无')
+  const one = (lines[0] ?? '').replace(/^[-•]\s*/, '')
+  return one.length > 80 ? one.slice(0, 80) + '…' : one
 }
 
 class AppStore {
@@ -422,6 +426,8 @@ class AppStore {
   截断本地本轮块，让整轮回放帧干净重建（防 user/回复块重复） */
   private pendingUserUid = 0
   private pendingUserText = ''
+  /* 轮内整理卡：session.trim 在 turn_end 前到达，暂存在 endtick 之后衔接 */
+  private pendingTrim: Block | null = null
   /* 上一轮通知轮询是否有未决项（待审批角标联动分支拉取的收尾依据） */
   private noticesHadPending = false
 
@@ -582,6 +588,7 @@ class AppStore {
     this.loadingPrev = false
     this.prevTitle = ''
     this.foldAt = 0
+    this.pendingTrim = null
   }
 
   private async loadHistory() {
@@ -2326,20 +2333,26 @@ class AppStore {
         break
       }
       case 'session.trim': {
-        // 整理完成：整理标记（trim 块）追加在触发点（时间序自然），时间线
-        // 把窗口收拢到这条边界，其前内容滚到顶再按批载入。分身的进分身框
-        const bsFold = ev.forkId ? this.getFork(ev.forkId).blocks : this.blocks
+        // 整理完成：marker 在历史里位于本轮 end_reason 之后；实时路径的
+        // endtick 要等 turn_end 才追加，故先暂存，turn_end 里衔接在
+        // endtick 之后（与重载后的顺序一致）。分身的进分身框
         const summary = typeof ev.data?.summary === 'string' ? ev.data.summary.trim() : ''
-        const uid = this.nuid()
-        bsFold.push({
+        const card: Block = {
           kind: 'trim',
-          uid,
+          uid: this.nuid(),
           full: summary,
           text: summary
             ? trimBrief(summary)
-            : `上下文已整理：早期对话折叠为摘要（${ev.data?.folded ?? '?'} 条 → 保留最近 ${ev.data?.kept ?? '?'} 次输入）`,
-        })
-        if (!ev.forkId) this.foldAt = uid
+            : `上下文已整理：早期对话折叠为摘要（${ev.data?.folded ?? '?'} 条 → 保留最近 ${ev.data?.kept ?? '?'} 次交互）`,
+        }
+        if (ev.forkId) {
+          this.getFork(ev.forkId).blocks.push(card)
+        } else if (this.busy) {
+          this.pendingTrim = card
+        } else {
+          this.blocks.push(card)
+          this.foldAt = card.uid
+        }
         void this.refreshStatus()
         break
       }
@@ -2449,6 +2462,13 @@ class AppStore {
             icon: endIcon(reason),
             title,
           })
+        }
+        // 轮内整理卡：衔接在 endtick 之后（历史顺序 end_reason → marker），
+        // 时间线窗口收拢到这条边界
+        if (this.pendingTrim) {
+          this.blocks.push(this.pendingTrim)
+          this.foldAt = this.pendingTrim.uid
+          this.pendingTrim = null
         }
         // 本轮已落盘：回填分叉锚点（实时轮的消息即刻可分叉，不必切页重建）
         if (!ev.forkId && this.activeId) void this.backfillForkAnchors(this.activeId)
