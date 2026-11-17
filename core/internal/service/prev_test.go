@@ -46,8 +46,8 @@ func TestPrevChainToRoot(t *testing.T) {
 	ctx := context.Background()
 	fsys := osfs.OS{}
 
-	seedSnap := func(id string, msgs []string, target, kind string) {
-		snap := &hooks.SessionSnap{ID: id, TargetID: target, SeedKind: kind, LineRoot: "gen1"}
+	seedSnap := func(id string, msgs []string, target, kind, summary string) {
+		snap := &hooks.SessionSnap{ID: id, TargetID: target, SeedKind: kind, LineRoot: "gen1", CompactSummary: summary}
 		for _, m := range msgs {
 			snap.Messages = append(snap.Messages, newMsg(m))
 		}
@@ -58,9 +58,9 @@ func TestPrevChainToRoot(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	seedSnap("gen1", []string{"gen1-early", "gen1-late"}, "", "new")
-	seedSnap("gen2", []string{"gen2-msg"}, "gen1", "compress")
-	seedSnap("gen3", []string{"gen3-msg"}, "gen2", "compress")
+	seedSnap("gen1", []string{"gen1-early", "gen1-late"}, "", "new", "")
+	seedSnap("gen2", []string{"gen2-msg"}, "gen1", "compress", "gen1-sum")
+	seedSnap("gen3", []string{"gen3-msg"}, "gen2", "compress", "gen2-sum")
 
 	// 第一次上翻：gen3 → gen2
 	d, ok, err := svc.Prev(ctx, "gen3")
@@ -73,6 +73,9 @@ func TestPrevChainToRoot(t *testing.T) {
 	if d.PrevSession != "gen1" {
 		t.Fatalf("cursor must point gen1, got %q", d.PrevSession)
 	}
+	if d.Summary != "gen2-sum" {
+		t.Fatalf("summary must describe gen2 (stored on child gen3), got %q", d.Summary)
+	}
 
 	// 第二次上翻：gen2 → gen1（断链复现点）
 	d2, ok2, err2 := svc.Prev(ctx, "gen2")
@@ -84,6 +87,9 @@ func TestPrevChainToRoot(t *testing.T) {
 	}
 	if d2.PrevSession != "" {
 		t.Fatalf("gen1 is root, no more prev, got %q", d2.PrevSession)
+	}
+	if d2.Summary != "gen1-sum" {
+		t.Fatalf("summary must describe gen1 (stored on child gen2), got %q", d2.Summary)
 	}
 
 	// 第三次：gen1 之上到底
@@ -129,11 +135,11 @@ func TestPrevForkContinues(t *testing.T) {
 	if _, ok2, err2 := svc.Prev(ctx, "fk2"); err2 != nil || ok2 {
 		t.Fatalf("fork of root must be terminal, ok=%v err=%v", ok2, err2)
 	}
-	if svc.canPrev(ctx, "fk2") {
-		t.Fatal("canPrev must be false for fork of root")
+	if ok, _ := svc.prevInfo(ctx, "fk2"); ok {
+		t.Fatal("prevInfo must be false for fork of root")
 	}
-	if !svc.canPrev(ctx, "fk1") {
-		t.Fatal("canPrev must be true for fork whose source has parent")
+	if ok, _ := svc.prevInfo(ctx, "fk1"); !ok {
+		t.Fatal("prevInfo must be true for fork whose source has parent")
 	}
 }
 

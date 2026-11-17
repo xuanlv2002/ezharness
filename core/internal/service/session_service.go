@@ -281,7 +281,7 @@ func (s *SessionService) History(ctx context.Context, rootID string, tail int) H
 	/* tail 模式只服务轮末锚点回填：决策/分身/计划/上翻判定都不参与，
 	   不读这些档案（否则每轮都要扫全部已结束分身的 trace）。 */
 	if tail <= 0 {
-		h.CanPrev = s.canPrev(ctx, sess.ID)
+		h.CanPrev, h.PrevTitle = s.prevInfo(ctx, sess.ID)
 		h.Decisions = hooks.LoadDecisions(ctx, sess.Fsys, h.ID)
 		h.Forks = hooks.ListForks(ctx, sess.Fsys, h.ID)
 		h.Plan, _ = hooks.LoadPlan(ctx, sess.Fsys, sess.RootID)
@@ -289,20 +289,28 @@ func (s *SessionService) History(ctx context.Context, rootID string, tail int) H
 	return h
 }
 
-/* canPrev 判定 id 上翻是否还有上一级（与 Prev 同规则：fork 换源后算）。 */
-func (s *SessionService) canPrev(ctx context.Context, id string) bool {
+/* prevInfo 判定 id 上翻是否还有上一级（与 Prev 同规则：fork 换源后算），
+   并带回上一级标题供时间线的会话边界显示。 */
+func (s *SessionService) prevInfo(ctx context.Context, id string) (bool, string) {
 	cur, err := hooks.LoadSnapMeta(ctx, s.Hub.Fsys, id)
 	if err != nil {
-		return false
+		return false, ""
 	}
 	if cur.SeedKind == "fork" && cur.TargetID != "" {
 		src, serr := hooks.LoadSnapMeta(ctx, s.Hub.Fsys, cur.TargetID)
 		if serr != nil {
-			return false
+			return false, ""
 		}
 		cur = src
 	}
-	return cur.TargetID != ""
+	if cur.TargetID == "" {
+		return false, ""
+	}
+	prev, err := hooks.LoadSnapMeta(ctx, s.Hub.Fsys, cur.TargetID)
+	if err != nil {
+		return true, ""
+	}
+	return true, prev.Title
 }
 
 /* ForkData 是 fork 分身详情响应（抽屉懒加载）。 */
@@ -361,7 +369,9 @@ func (s *SessionService) Prev(ctx context.Context, id string) (*PrevData, bool, 
 		return nil, false, err
 	}
 	title := hooks.FirstUserTitle(prev.Messages)
-	return &PrevData{ID: prev.ID, Title: title, Summary: prev.CompactSummary,
+	/* 上一会话的摘要存在当前（子）会话的快照里；prev 自己的 CompactSummary
+	   描述的是更上一代，不能拿来标这一代 */
+	return &PrevData{ID: prev.ID, Title: title, Summary: cur.CompactSummary,
 		Messages: prev.Messages, Forks: hooks.ListForks(ctx, s.Hub.Fsys, prev.ID),
 		PrevSession: prev.TargetID}, true, nil
 }

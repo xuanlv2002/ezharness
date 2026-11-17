@@ -1,106 +1,124 @@
 <script lang="ts">
   import { onMount, tick } from 'svelte'
-  import { store, type Block } from '../lib/store.svelte'
-  import { buildRows, foldBlocks } from '../lib/rows'
+  import { store } from '../lib/store.svelte'
+  import { buildRows, type Row } from '../lib/rows'
   import Logo from './Logo.svelte'
   import EzAvatar from './EzAvatar.svelte'
   import ThreadRows from './ThreadRows.svelte'
   import QuickStart from './QuickStart.svelte'
+  import FoldMark from './FoldMark.svelte'
 
   let el: HTMLDivElement
+  let innerEl: HTMLDivElement
   let stick = true
 
-  /* 行模型见 lib/rows（主时间线与分身抽屉共用同一组装）；渲染前先过
-     上下文整理折叠（折叠区不建行、不进轮次导航；滚到顶继续上拉自动
-     载入，不做展开/关闭开关） */
-  const shown = $derived(foldBlocks(store.blocks))
-  const rows = $derived(buildRows(shown))
-
-  /* 大会话只挂最近一段行（行数 + 字数双限：长消息的会话只按行切仍会拖慢首屏），起点载入时锚定，向前按需扩 */
-  const INITIAL_ROWS = 40
-  const INITIAL_MIN_ROWS = 6
-  const BUDGET_CHARS = 128 * 1024
-  const ROW_STEP = 40
+  /* 行窗口按用户轮次切：打开会话先载最近 10 轮，向上每次再载 5 轮。
+     初始 10 轮与后续 5 轮走同一个 windowStart：数满之前先遇到
+     trim / archive 边界就停在边界上，边界条本身即折叠标记。 */
+  const INITIAL_TURNS = 10
+  const LOAD_TURNS = 5
+  /* 向上滚动加载：箭头出现后持续滚动 0.5s 才载入；中途停下就收起箭头 */
+  const PULL_HOLD = 500
+  const PULL_IDLE = 80
+  const rows = $derived(buildRows(store.blocks))
   let rowStart = $state(0)
   let rowSession = $state('')
+  let loadingEarlier = $state(false)
+  let pullArrow = $state(false)
+  let pullLastAt = 0
+  let pullTimer: ReturnType<typeof setTimeout> | undefined
 
-  /* rowChars 估算一行挂载后的正文体量（工具卡折叠时只剩摘要，按小常量计） */
-  function rowChars(r: (typeof rows)[number]): number {
-    if (r.kind === 'user') return r.b.text.length
+  function isTurn(r: Row): boolean {
+    return r.kind === 'user' && (!!r.b.text.trim() || !!r.b.images?.length)
+  }
+
+  /* 从 from 向上数 count 个用户轮次；先碰到上下文边界就停在边界上 */
+  function windowStart(from: number, count: number): number {
     let n = 0
-    for (const seg of r.segs) {
-      if (seg.type === 'tools') {
-        n += 400
-        continue
+    for (let i = from; i > 0; i--) {
+      const r = rows[i - 1]
+      if (r.kind === 'marker') return i - 1
+      if (isTurn(r)) {
+        n++
+        if (n >= count) return i - 1
       }
-      const b = seg.b
-      if (b.kind === 'assistant') n += b.text.length + b.reasoning.length
-      else if (b.kind === 'user') n += b.text.length
-      else if (b.kind === 'tool') n += 200
-      else if (b.kind === 'note' || b.kind === 'trim') n += b.text.length
-      else n += 200
     }
-    return n
+    return 0
   }
 
-  function initialStart(): number {
-    let i = rows.length
-    let chars = 0
-    while (i > 0 && rows.length - i < INITIAL_ROWS) {
-      const n = rowChars(rows[i - 1])
-      if (rows.length - i >= INITIAL_MIN_ROWS && chars + n > BUDGET_CHARS) break
-      chars += n
-      i--
-    }
-    return i
-  }
-
-  /* earlierStart 从当前窗口继续向前展开一批（同样按行数与字数双限） */
-  function earlierStart(from: number): number {
-    let i = from
-    let chars = 0
-    while (i > 0 && from - i < ROW_STEP) {
-      const n = rowChars(rows[i - 1])
-      if (from - i >= 1 && chars + n > BUDGET_CHARS) break
-      chars += n
-      i--
-    }
-    return i
-  }
-
-  const autoStart = $derived(initialStart())
-  const start = $derived(rowSession === store.activeId ? Math.min(rowStart, rows.length) : autoStart)
+  const autoStart = $derived(windowStart(rows.length, INITIAL_TURNS))
+  const start = $derived(
+    rowSession === store.activeId ? Math.min(rowStart, Math.max(0, rows.length - 1)) : autoStart,
+  )
   const visibleRows = $derived(rows.slice(start))
-  const hiddenRows = $derived(start)
 
-  /* 当前唯一可见的折叠 trim（foldBlocks 保证同一时刻至多一条折叠分隔线
-     在 rows 里）：滚到顶继续上拉时先自动加载它的早期对话，再走上一话题 */
-  type TrimBlock = Extract<Block, { kind: 'trim' }>
-  const foldedTrim = $derived.by(() => {
-    for (const r of rows) {
-      if (r.kind === 'user') continue
-      for (const seg of r.segs) {
-        if (seg.type === 'one' && seg.b.kind === 'trim' && seg.b.folded) return seg.b as TrimBlock
+  const topRow = $derived(start > 0 ? rows[start] : null)
+  const boundaryKey = $derived(topRow?.kind === 'marker' ? topRow.key : '')
+  const showMore = $derived(start > 0 && !boundaryKey)
+  const showPrev = $derived(start === 0 && store.hasPrev)
+  const canLoadMore = $derived(start > 0 || store.hasPrev)
+
+  function clearPull() {
+    if (!pullArrow && !pullTimer) return
+    if (pullTimer) clearTimeout(pullTimer)
+    pullTimer = undefined
+    pullArrow = false
+  }
+
+  /* 只在持续向上滚动时加载：200ms 内没有新的向上滚动事件就取消 */
+  function armPull() {
+    pullLastAt = Date.now()
+    if (pullArrow) return
+    pullArrow = true
+    pullTimer = setTimeout(() => {
+      pullTimer = undefined
+      if (!pullArrow) return
+      if (Date.now() - pullLastAt > PULL_IDLE) {
+        pullArrow = false
+        return
+      }
+      pullArrow = false
+      void loadEarlier()
+    }, PULL_HOLD)
+  }
+
+  async function loadEarlier() {
+    if (loadingEarlier || !canLoadMore) return
+    clearPull()
+    stick = false
+    loadingEarlier = true
+    let prevHeight = el?.scrollHeight ?? 0
+    let prevTop = el?.scrollTop ?? 0
+    if (start > 0) {
+      rowSession = store.activeId
+      rowStart = windowStart(start, LOAD_TURNS)
+    } else if (store.hasPrev) {
+      const markerUid = await store.loadPrev()
+      /* 等接口期间用户可能继续滚动：补偿基准取当前视口 */
+      prevHeight = el?.scrollHeight ?? 0
+      prevTop = el?.scrollTop ?? 0
+      if (markerUid) {
+        const anchor = rows.findIndex((r) => r.kind === 'marker' && r.b.uid === markerUid)
+        rowSession = store.activeId
+        rowStart = anchor > 0 ? windowStart(anchor, LOAD_TURNS) : 0
       }
     }
-    return null
-  })
-
-  async function showEarlier() {
-    if (!el || start <= 0) return
-    rowSession = store.activeId
-    rowStart = earlierStart(start)
-    scheduleActive()
+    await tick()
+    loadingEarlier = false
+    if (el) {
+      selfScroll = true
+      el.scrollTop = prevTop + (el.scrollHeight - prevHeight)
+      lastTop = el.scrollTop
+      requestAnimationFrame(() => (selfScroll = false))
+    }
   }
 
   /* 右侧轮次导航：每轮用户输入一行，点击回溯、滚动跟随高亮（纯图片轮次也算）。
-     收起时只显示最近 5 个刻度；悬浮展开全部轮次，列高封顶后可滚动选择。
-     折叠区内的轮次不进导航（点了也滚不到，滚到顶上拉加载后才出现） */
+     收起时只显示最近 5 个刻度；悬浮展开全部轮次，列高封顶后可滚动选择。 */
   const turns = $derived(
-    shown.filter(
-      (b): b is Extract<Block, { kind: 'user' }> =>
-        b.kind === 'user' && (!!b.text.trim() || !!b.images?.length),
-    ),
+    rows
+      .filter((r): r is Extract<Row, { kind: 'user' }> => isTurn(r))
+      .map((r) => r.b),
   )
   let navHover = $state(false)
   const navTurns = $derived(navHover ? turns : turns.slice(-5))
@@ -152,11 +170,9 @@
     box.scrollTop = Math.max(0, cur.offsetTop - box.clientHeight / 2 + cur.offsetHeight / 2)
   })
 
-  /* 吸底机制：程序滚动（selfScroll）不算用户滚动；用户滚动后 300ms 内流式 tick 不拽回底部；
-     滞回 <30px 恢复跟随、>120px 脱离，杜绝边界抖动 */
+  /* 吸底：程序滚动不算用户滚动；向上滚动立即脱离跟随，向下滚到近底恢复。
+     正文懒渲染/图片加载会让内容继续变高，ResizeObserver 兜住这些增长。 */
   let selfScroll = false
-  let lastUserScrollAt = 0
-  /* 快速跳转：向上滚给"回顶"，向下滚给"回底"；已在某端则改为去另一端 */
   let lastTop = 0
   let jumpDir = $state<'' | 'top' | 'bottom'>('')
 
@@ -165,10 +181,19 @@
     selfScroll = true
     el.scrollTop = el.scrollHeight
     lastTop = el.scrollTop
+    requestAnimationFrame(() => (selfScroll = false))
   }
 
-  /* 会话切换/首次载入：窗口锚到尾部；同一会话内流式追加不重锚。
-     新会话默认回到底部（切会话前可能停在上一会话的中段）。 */
+  let followRaf = 0
+  function scheduleFollow() {
+    if (followRaf) return
+    followRaf = requestAnimationFrame(() => {
+      followRaf = 0
+      if (stick) follow()
+    })
+  }
+
+  /* 会话切换/首次载入：窗口锚到尾部；同一会话内流式追加不重锚 */
   let lastSessionId = $state('')
   $effect(() => {
     const id = store.activeId
@@ -176,60 +201,74 @@
     lastSessionId = id
     stick = true
     lastTop = 0
-    lastUserScrollAt = 0
+    clearPull()
   })
   $effect(() => {
     const id = store.activeId
-    if (rowSession === id || !rows.length) return
-    rowStart = initialStart()
-    rowSession = id
-    void tick().then(() => {
-      if (stick && !store.jumpMain && Date.now() - lastUserScrollAt > 300) follow()
-    })
-  })
-
-  /* 懒渲染正文换真身（MessageItem 发出）后内容变高：吸底时重新贴底，
-     否则用户会停在半空（不是用户主动展开，不与滚动意图冲突） */
-  $effect(() => {
-    const onGrow = () => {
-      if (stick && !pull && Date.now() - lastUserScrollAt > 300) follow()
-    }
-    window.addEventListener('ez:timeline-grow', onGrow)
-    return () => window.removeEventListener('ez:timeline-grow', onGrow)
-  })
-
-  function jump(direction: 'top' | 'bottom') {
-    if (!el) return
-    if (direction === 'bottom') {
-      /* 平滑滚动的目标高度是点击瞬间的 scrollHeight，滚到底前离屏正文
-         换真身会把底部继续推高，动画停在半路要再点。直接贴底，并清掉
-         刚滚动的冷却，让后续懒渲染的增长事件继续补到底 */
+    if (!rows.length) {
+      /* 历史重载会先清空再填入：清空时解除窗口归属，新内容到达后重算 */
+      if (rowSession) rowSession = ''
       stick = true
-      lastUserScrollAt = 0
-      follow()
       return
     }
+    if (rowSession === id) return
+    rowSession = id
+    rowStart = windowStart(rows.length, INITIAL_TURNS)
+    stick = true
+    void tick().then(follow)
+  })
+
+  /* 实时整理完成：窗口收拢到新的 trim 边界（正在上翻看历史时不收，
+     避免把用户正在读的内容抽走） */
+  $effect(() => {
+    const uid = store.foldAt
+    if (!uid) return
+    const idx = rows.findIndex((r) => r.kind === 'marker' && r.b.uid === uid)
+    if (idx < 0) return
+    store.foldAt = 0
+    if (!stick) return
+    rowSession = store.activeId
+    rowStart = idx
+    stick = true
+    void tick().then(follow)
+  })
+
+  function jump(direction: '' | 'top' | 'bottom') {
+    if (!el || !direction) return
+    if (direction === 'bottom') {
+      stick = true
+      follow()
+      scheduleFollow()
+      return
+    }
+    stick = false
     el.scrollTo({ top: 0, behavior: 'smooth' })
   }
 
-  /* 对话页切走时只是 display:none（常驻挂载），隐藏期从记忆/回调页打开
-     会话量不到高度，follow 落空；重新显示或容器尺寸变化时补一次贴底 */
+  /* 对话页切走时只是 display:none（常驻挂载），隐藏期量不到高度；
+     重新显示或内容变高时补一次贴底 */
   onMount(() => {
     const ro = new ResizeObserver(() => {
-      if (stick && !pull && Date.now() - lastUserScrollAt > 300) follow()
+      if (stick) scheduleFollow()
     })
     ro.observe(el)
-    return () => ro.disconnect()
+    if (innerEl) ro.observe(innerEl)
+    return () => {
+      ro.disconnect()
+      if (followRaf) cancelAnimationFrame(followRaf)
+      clearPull()
+    }
   })
 
   async function jumpTo(uid: number) {
     if (!el) return
     const idx = rows.findIndex((r) => r.kind === 'user' && r.b.uid === uid)
     if (idx < 0) return
+    stick = false
     /* 目标在渲染窗口外：先把窗口扩到包含它，再定位 */
     if (idx < start) {
       rowSession = store.activeId
-      rowStart = Math.max(0, idx - 2)
+      rowStart = idx
       await tick()
     }
     const node = el.querySelector<HTMLElement>(`[data-uid="${uid}"]`)
@@ -246,11 +285,13 @@
     const idx = rows.findIndex(
       (r) =>
         r.kind !== 'user' &&
+        r.kind !== 'marker' &&
         r.segs.some((seg) => seg.type === 'one' && seg.b.kind === 'decision' && `decision-${seg.b.id}` === target),
     )
     if (idx < 0 || idx >= start) return
+    stick = false
     rowSession = store.activeId
-    rowStart = Math.max(0, idx - 2)
+    rowStart = idx
     void (async () => {
       await tick()
       const node = document.getElementById(target)
@@ -260,9 +301,8 @@
     })()
   })
 
-  /* 空状态判定：note/status/resourcechange/endtick/imgload/trim 是系统自动记录
-     （压缩翻页后的新会话仅含一条 <end_reason> 收尾），不算对话内容——
-     只剩系统记录时仍展示欢迎页 */
+  /* 空状态判定：note/status/resourcechange/endtick/imgload/trim/archive
+     是系统自动记录，不算对话内容——只剩系统记录时仍展示欢迎页 */
   const empty = $derived(
     !store.blocks.some(
       (b) =>
@@ -271,7 +311,8 @@
         b.kind !== 'resourcechange' &&
         b.kind !== 'endtick' &&
         b.kind !== 'imgload' &&
-        b.kind !== 'trim',
+        b.kind !== 'trim' &&
+        b.kind !== 'archive',
     ),
   )
 
@@ -284,141 +325,39 @@
     openGroups = s
   }
 
-  /* ── 下拉加载（pull-to-load）：置顶后 wheel 向上/触屏下拉累积拉动量，
-     达阈值拉出上一会话；指示器随拉动量渐显，内容展开动画 ── */
-  let pull = $state(0)
-  let loading = $state(false)
-  let loadKind = $state<'trim' | 'earlier' | 'prev'>('prev')
-  let settle = $state(false) // 松手回弹：换用更慢的缓动，跟着手指的拉动用短过渡
-  let settleTimer: ReturnType<typeof setTimeout> | undefined
-  const THRESHOLD = 64
-  const MAX_PULL = 96
-
-  /* 上拉带能加载什么：先折叠的早期对话，再窗口外的更早消息，最后上一话题 */
-  const trimReady = $derived(!!foldedTrim && start === 0)
-  const pullKind = $derived<'trim' | 'earlier' | 'prev'>(trimReady ? 'trim' : start > 0 ? 'earlier' : 'prev')
-  const canPullLoad = $derived(trimReady || start > 0 || store.hasPrev)
-  const pullText = $derived(
-    pullKind === 'trim' ? '加载早期对话' : pullKind === 'earlier' ? '加载更早的消息' : '加载上一话题',
-  )
-  const armed = $derived(pull >= THRESHOLD)
-  /* 没有更早内容只在拉动过程中可见，松手即随 pull 归零一起消失 */
-  const showNoMore = $derived(!canPullLoad && pull > 0)
-  const showPull = $derived(pull > 0 || loading)
-
   function atTop(): boolean {
     return !!el && el.scrollTop <= 0
   }
 
-  /* 松手回弹：切到更慢的回弹缓动后归零；再次拉动时恢复跟手过渡 */
-  function cancelPull() {
-    if (pull <= 0) return
-    clearTimeout(settleTimer)
-    settle = true
-    pull = 0
-    settleTimer = setTimeout(() => (settle = false), 200)
-  }
-
-  function startPull() {
-    clearTimeout(settleTimer)
-    settle = false
-  }
-
-  let wheelTimer: ReturnType<typeof setTimeout> | undefined
-
-  /* wheel 无松手事件：按滚动量连续累积拉动（不再一格跳 14px），
-     停顿即"松手"——未达阈值立刻回弹；达阈值停顿后加载。没有上一级
-     时同样跟手拉出提示，停下即回弹，不再弹出一块固定高度的提示条 */
   function onWheel(e: WheelEvent) {
-    if (!el) return
-    if (e.deltaY < 0) stick = false /* 向上滚 = 明确脱离跟随：别等距离阈值，下一个流式 tick 就不该再被拉回底部 */
-    if (e.deltaY < 0 && atTop()) {
-      if (loading) return
-      clearTimeout(wheelTimer)
-      startPull()
-      // deltaMode 归一成像素：行/页模式的小数值不能直接当像素累积
-      const dy = e.deltaY * (e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? el.clientHeight || 1 : 1)
-      pull = Math.min(MAX_PULL, pull + Math.max(2, Math.min(28, -dy * 0.35)))
-      /* 松手等待与回弹同一节奏：到阈值直接触发加载（trigger 内部先把
-         位移归零），未到阈值回弹；两者都不在顶部滞留 */
-      wheelTimer = canPullLoad && pull >= THRESHOLD
-        ? setTimeout(() => void trigger(), 40)
-        : setTimeout(cancelPull, 40)
-    } else if (e.deltaY > 0) {
-      clearTimeout(wheelTimer)
-      cancelPull()
+    if (e.deltaY >= 0) {
+      clearPull()
+      return
     }
+    stick = false
+    if (!atTop() || !canLoadMore || loadingEarlier) {
+      clearPull()
+      return
+    }
+    armPull()
   }
 
   let touchY = 0
-  let touching = false
-
   function onTouchStart(e: TouchEvent) {
-    if (!atTop()) return
-    touching = true
     touchY = e.touches[0].clientY
-    startPull()
   }
-
   function onTouchMove(e: TouchEvent) {
-    if (!touching || loading) return
-    const d = e.touches[0].clientY - touchY
-    if (d <= 0) {
-      cancelPull()
+    const y = e.touches[0].clientY
+    const down = y - touchY
+    touchY = y
+    if (!atTop() || !canLoadMore || loadingEarlier) {
+      clearPull()
       return
     }
-    pull = Math.min(MAX_PULL, d * 0.4) // 阻尼；没有上一级也跟手拉出提示
-  }
-
-  function onTouchEnd() {
-    touching = false
-    if (canPullLoad && armed) void trigger()
-    else cancelPull()
-  }
-
-  async function trigger() {
-    if (loading) return
-    const kind = pullKind
-    if ((kind === 'prev' && !store.hasPrev) || (kind === 'trim' && !foldedTrim)) {
-      cancelPull()
-      return
-    }
-    clearTimeout(wheelTimer)
-    loadKind = kind
-    loading = true
-    /* 加载态由悬浮指示器自己显示，拉起的正文立即回弹，不再保持位移 */
-    settle = true
-    clearTimeout(settleTimer)
-    settleTimer = setTimeout(() => (settle = false), 200)
-    pull = 0
-    const prevHeight = el?.scrollHeight ?? 0
-    const prevTop = el?.scrollTop ?? 0
-    if (kind === 'trim') {
-      const tb = foldedTrim
-      if (tb) {
-        tb.folded = false
-        /* 展开会带回整段早期对话：仍按行窗口只挂最近一批（更早的走
-           「显示更早」），避免一次挂满 DOM */
-        const post = buildRows(foldBlocks(store.blocks))
-        const idx = post.findIndex(
-          (r) => r.kind !== 'user' && r.segs.some((s) => s.type === 'one' && s.b === tb),
-        )
-        rowSession = store.activeId
-        rowStart = idx > ROW_STEP ? idx - ROW_STEP : 0
-      }
-    } else if (kind === 'earlier') {
-      rowSession = store.activeId
-      rowStart = earlierStart(start)
-    } else {
-      await store.loadPrev()
-      /* 用户主动拉出的上一会话整段可见（不再受窗口限制） */
-      rowStart = 0
-      rowSession = store.activeId
-    }
-    await tick()
-    loading = false
-    // prepend 高度补偿：视口停在原有内容处，不跳顶
-    if (el) el.scrollTop = prevTop + (el.scrollHeight - prevHeight)
+    if (down > 0) {
+      stick = false
+      armPull()
+    } else if (down < 0) clearPull()
   }
 
   function onScroll() {
@@ -427,14 +366,10 @@
     const dist = el.scrollHeight - top - el.clientHeight
     const goingUp = top < lastTop
     lastTop = top
-    if (selfScroll) {
-      /* 程序滚动（吸底回弹）：不动 stick，也别记成用户滚动 */
-      selfScroll = false
-    } else {
-      lastUserScrollAt = Date.now()
-      if (dist < 30) stick = true
-      else if (dist > 120) stick = false
-    }
+    if (top > 0) clearPull()
+    if (selfScroll) selfScroll = false
+    else if (goingUp) stick = false
+    else if (dist < 40) stick = true
     /* 跳转钮方向按实际位置更新，程序贴底后也要从「回底」切成「回顶」 */
     if (el.scrollHeight <= el.clientHeight + 24) jumpDir = ''
     else if (top <= 24) jumpDir = 'bottom'
@@ -463,26 +398,21 @@
 
   $effect(() => {
     void store.tick
-    /* 用户刚滚动过就别抢滚动位置（300ms 冷却）；updateActive 只在
-    scroll 事件里跑——每 tick 遍历全部块节点量矩形会强制布局，
-    流式高频 tick 下整页卡死的主凶之一 */
-    if (el && stick && !pull && Date.now() - lastUserScrollAt > 300) follow()
+    if (stick) scheduleFollow()
   })
 </script>
 
 <div class="tlwrap">
   <div class="timeline" bind:this={el} onscroll={onScroll} onwheel={onWheel}
-    ontouchstart={onTouchStart} ontouchmove={onTouchMove} ontouchend={onTouchEnd}>
-  <div
-    class="inner"
-    class:settle
-    style="transform:translateY({pull}px)">
+    ontouchstart={onTouchStart} ontouchmove={onTouchMove}>
+  <div class="inner" bind:this={innerEl}>
+    {#if showMore}
+      <FoldMark kind="more" loadable loading={loadingEarlier} onLoad={() => void loadEarlier()} />
+    {:else if showPrev}
+      <FoldMark kind="archive" title={store.prevTitle} loadable loading={loadingEarlier}
+        onLoad={() => void loadEarlier()} />
+    {/if}
     {#if !empty}
-      {#if hiddenRows > 0}
-        <button class="earlier" onclick={() => void showEarlier()}>
-          ↑ 显示更早的消息（还有 {hiddenRows} 行未加载）
-        </button>
-      {/if}
       <ThreadRows
         rows={visibleRows}
         liveBusy={store.busy}
@@ -490,6 +420,9 @@
         avatarOutside
         {openGroups}
         onToggleGroup={toggleGroup}
+        boundaryKey={boundaryKey}
+        boundaryLoading={loadingEarlier}
+        onLoadEarlier={() => void loadEarlier()}
       />
     {/if}
     {#if store.retryInfo}
@@ -513,29 +446,16 @@
         <p class="lead">想让它做什么？</p>
         <p class="sub">办公，创作，学习 -- 一站式Agent应用</p>
         <QuickStart />
-        {#if canPullLoad}
-          <p class="hint">↑ 下拉可查看{trimReady ? '早期对话' : start > 0 ? '更早的消息' : '上一话题'}</p>
-        {/if}
       </div>
     {/if}
   </div>
   </div>
-  <!-- 上拉指示器：脱离滚动内容悬浮在顶部，不参与布局；内容本身用
-       transform 跟手，回弹只动合成层，不触发整条时间线重排 -->
-  <div
-    class="pullind"
-    class:armed={armed && canPullLoad}
-    class:show={showPull}
-    aria-hidden={!showPull}>
-    <span class="arrow" class:spin={loading}>{loading ? '⟳' : showNoMore ? '·' : '↓'}</span>
-    <span class="ptext">
-      {#if loading}{loadKind === 'trim'
-          ? '加载早期对话…'
-          : loadKind === 'earlier'
-            ? '加载更早的消息…'
-            : '加载上一话题…'}{:else if showNoMore}没有更早的内容了{:else if armed}松开{pullText}{:else}下拉{pullText}{/if}
-    </span>
-  </div>
+  {#if pullArrow || loadingEarlier}
+    <div class="pullhint" class:loading={loadingEarlier}>
+      <span class="parrow" class:spin={loadingEarlier}>{loadingEarlier ? '⟳' : '↑'}</span>
+      <span>{loadingEarlier ? '加载更早的消息…' : '继续向上滚动'}</span>
+    </div>
+  {/if}
   {#if turns.length >= 2}
     <div
       class="turnnav"
@@ -579,6 +499,47 @@
     min-width: 0;
     min-height: 0;
     display: flex;
+  }
+  /* 上滚加载指示：悬浮在滚动区顶部，不占布局；持续滚动 0.2s 后触发加载 */
+  .pullhint {
+    position: absolute;
+    top: 10px;
+    left: 0;
+    right: 0;
+    z-index: 5;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    pointer-events: none;
+    font-size: var(--font-size-ui);
+    color: var(--faint);
+    font-family: var(--font-mono);
+    animation: pull-in 0.12s var(--ease-out) both;
+  }
+  .pullhint.loading {
+    color: var(--accent);
+  }
+  .parrow {
+    display: inline-block;
+  }
+  .parrow.spin {
+    animation: spin 0.9s linear infinite;
+  }
+  @keyframes pull-in {
+    from {
+      opacity: 0;
+      transform: translateY(-6px);
+    }
+    to {
+      opacity: 0.9;
+      transform: none;
+    }
+  }
+  @keyframes spin {
+    to {
+      transform: rotate(360deg);
+    }
   }
   /* 快速跳转：向上滚显示回顶、向下滚显示回底，已在端上则指向另一端。
     右侧与轮次导航同列，贴内容列右缘（窄窗口退回窗口边） */
@@ -738,72 +699,6 @@
     gap: 20px;
     min-height: 100%; /* 空状态时也撑满可视区，使欢迎语垂直居中 */
     --av-size: 48px; /* 头像列宽：组头像与用户行占位共用 */
-    /* 跟手阶段不做过渡：transform 直接跟 wheel 事件走，避免任何迟滞 */
-  }
-  /* 松手回弹：只动 transform（合成层），不触发时间线重排 */
-  .inner.settle {
-    transition: transform 0.05s cubic-bezier(0.25, 0.8, 0.3, 1);
-  }
-  /* 大会话窗口的顶部分界：点一下或滚到顶继续上拉（pull-to-load）往前
-     多加载一批——按批限制，避免快速滚到顶时把整段历史一次性全挂上 */
-  .earlier {
-    align-self: center;
-    border: 1px dashed var(--line-strong);
-    border-radius: 999px;
-    padding: 5px 14px;
-    font-size: var(--font-size-ui);
-    color: var(--faint);
-    background: transparent;
-    transition: color var(--dur-fast) var(--ease-out), border-color var(--dur-fast) var(--ease-out);
-  }
-  .earlier:hover {
-    color: var(--fg);
-    border-color: var(--fg);
-  }
-  /* 提示悬浮在滚动区顶部，不占布局；内容由 .inner 的 transform 下拉 */
-  .pullind {
-    position: absolute;
-    top: 10px;
-    left: 0;
-    right: 0;
-    z-index: 5;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 8px;
-    pointer-events: none;
-    font-size: var(--font-size-ui);
-    color: var(--faint);
-    font-family: var(--font-mono);
-    opacity: 0;
-    transform: translateY(-4px);
-    transition: opacity 0.06s var(--ease-out), transform 0.06s var(--ease-out);
-  }
-  .pullind.show {
-    opacity: 0.85;
-    transform: translateY(0);
-  }
-  .pullind.armed {
-    color: var(--accent, #2563eb);
-    opacity: 1;
-  }
-  .arrow {
-    display: inline-block;
-    transition: transform 0.18s var(--ease-out);
-  }
-  .pullind.armed .arrow {
-    transform: rotate(180deg);
-  }
-  .arrow.spin {
-    animation: spin 0.9s linear infinite;
-  }
-  @keyframes spin {
-    to {
-      transform: rotate(360deg);
-    }
-  }
-  .ptext {
-    white-space: nowrap;
   }
   .thinking {
     display: flex;
@@ -870,10 +765,5 @@
   .sub {
     font-size: var(--font-size-ui);
     color: var(--muted);
-  }
-  .hint {
-    margin-top: 8px;
-    font-size: var(--font-size-ui);
-    color: var(--faint);
   }
 </style>

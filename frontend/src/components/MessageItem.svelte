@@ -1,5 +1,4 @@
 <script lang="ts">
-  import { tick } from 'svelte'
   import { marked } from 'marked'
   import DOMPurify from 'dompurify'
   import { api, type ImagePayload } from '../lib/api'
@@ -364,8 +363,6 @@
         if (!entries.some((e) => e.isIntersecting)) return
         nearView = true
         io.disconnect()
-        /* 占位换成真身后高度会变：吸底状态下让时间线重新贴底 */
-        void tick().then(() => window.dispatchEvent(new Event('ez:timeline-grow')))
       },
       { rootMargin: '800px 0px' },
     )
@@ -402,7 +399,6 @@
         delete (pre as HTMLElement).dataset.mmd
       }
     }
-    window.dispatchEvent(new Event('ez:timeline-grow'))
   }
 
   let copied = $state(false)

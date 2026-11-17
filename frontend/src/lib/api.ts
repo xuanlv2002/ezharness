@@ -649,6 +649,7 @@ export const api = {
         targetId?: string
         seedKind?: 'new' | 'fork' | 'compress'
         canPrev?: boolean
+        prevTitle?: string
         forkedFrom?: ForkOrigin
         decisions?: DecisionRecord[]
         forks?: ForkSummary[]

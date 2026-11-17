@@ -162,10 +162,10 @@ export type Block = { uid: number } & (
   | { kind: 'fork'; forkId: string }
   | { kind: 'decision' } & DecisionData
   | { kind: 'note'; text: string }
-  /* 上下文整理标记（<context_trim> marker / session.trim 事件）：其前
-     （上一个 trim 之后）的区块默认折叠（folded 控制），滚到顶继续上拉
-     自动载入——数据不删，纯渲染层收起（foldBlocks） */
-  | { kind: 'trim'; text: string; full?: string; folded: boolean }
+  /* 上下文边界标记：trim = <context_trim> 整理摘要；archive = 已压缩归档的
+     上一会话。两者都是时间线的懒加载边界（其前的区块滚到顶再按批载入） */
+  | { kind: 'trim'; text: string; full?: string }
+  | { kind: 'archive'; text: string; summary: string }
   | { kind: 'status'; text: string; data: StatusPayload | null }
   | { kind: 'resourcechange'; items: string[] }
   | { kind: 'endtick'; icon: string; title: string }
@@ -368,7 +368,10 @@ class AppStore {
   /* 懒加载：compact 链上是否还有旧会话可翻、是否正在加载 */
   hasPrev = $state(false)
   loadingPrev = $state(false)
-  /* 最近一次下拉拉出的块 uid 集合（展开动画用，渲染层命中加 class） */
+  prevTitle = $state('') // 上一会话标题（加载前的时间线边界显示）
+  /* 实时整理完成：时间线据此把窗口收拢到新的 trim 边界 */
+  foldAt = $state(0)
+  /* 最近一次上翻拉出的块 uid 集合（展开动画用，渲染层命中加 class） */
   batchIds = $state<Set<number>>(new Set())
   private prevCursor = '' // 已翻到的会话 ID（沿 prevSession 链继续上翻）
 
@@ -499,6 +502,8 @@ class AppStore {
     this.plan = null
     this.hasPrev = false
     this.loadingPrev = false
+    this.prevTitle = ''
+    this.foldAt = 0
     this.batchIds = new Set()
   }
 
@@ -528,6 +533,7 @@ class AppStore {
       // 点亮活动指示（否则"思考中"整段消失、像没在执行）；后续事件到达自然接管
       this.modelActive = s.busy
       this.prevCursor = s.id
+      this.prevTitle = s.prevTitle || ''
       // fork 就是 fork：对话内容不标注来源（体内副本自包含）；
       // 来源信息只在记忆页的会话树上展示
       // 上翻余量由后端判定（fork 换源后算：源无上级则不可翻）
@@ -537,44 +543,49 @@ class AppStore {
     }
   }
 
-  /* 下拉懒加载：沿 compact 链拉出上一会话，一次一个；底部带压缩归档标记 */
-  async loadPrev() {
-    if (!this.prevCursor || this.loadingPrev) return
+  /* 上翻懒加载：沿 compact 链拉出上一会话，一次一个；返回归档边界块 uid，
+     时间线据此把窗口锚到上一会话的最新一段 */
+  async loadPrev(): Promise<number | null> {
+    if (!this.prevCursor || this.loadingPrev) return null
     this.loadingPrev = true
     try {
       const res = await api.getPrev(this.prevCursor)
       if (!res) {
         this.hasPrev = false
-      } else {
-        // 历代库的分身摘要建骨架（懒加载按所属库 ID 取详情）
-        for (const fk of res.forks ?? []) {
-          if (!this.forks[fk.id]) {
-            this.forks[fk.id] = {
-              id: fk.id,
-              owner: res.id,
-              task: fk.task,
-              status: 'done',
-              blocks: [],
-              answer: fk.answer || '',
-              stopReason: fk.stopReason || '',
-              loaded: false,
-            }
+        return null
+      }
+      // 历代库的分身摘要建骨架（懒加载按所属库 ID 取详情）
+      for (const fk of res.forks ?? []) {
+        if (!this.forks[fk.id]) {
+          this.forks[fk.id] = {
+            id: fk.id,
+            owner: res.id,
+            task: fk.task,
+            status: 'done',
+            blocks: [],
+            answer: fk.answer || '',
+            stopReason: fk.stopReason || '',
+            loaded: false,
           }
         }
-        const prevBlocks = this.buildBlocks(res.messages, undefined, res.forks ?? [], res.id)
-        const sep: Block = {
-          kind: 'note',
-          uid: this.nuid(),
-          text: `⇪ 上下文已压缩归档：${res.title || ''}`,
-        }
-        this.batchIds = new Set(prevBlocks.map((b) => b.uid))
-        this.blocks = [...prevBlocks, sep, ...this.blocks]
-        // 游标 = 已翻到的会话（下次取它的上一级）；可否继续由其上级是否存在决定
-        this.prevCursor = res.id
-        this.hasPrev = !!res.prevSession
       }
+      const prevBlocks = this.buildBlocks(res.messages, undefined, res.forks ?? [], res.id)
+      const marker: Block = {
+        kind: 'archive',
+        uid: this.nuid(),
+        text: res.title || '',
+        summary: res.summary || '',
+      }
+      this.batchIds = new Set(prevBlocks.map((b) => b.uid))
+      this.blocks = [...prevBlocks, marker, ...this.blocks]
+      // 游标 = 已翻到的会话（下次取它的上一级）；可否继续由其上级是否存在决定
+      this.prevCursor = res.id
+      this.hasPrev = !!res.prevSession
+      this.prevTitle = ''
+      return marker.uid
     } catch {
       this.hasPrev = false
+      return null
     } finally {
       this.loadingPrev = false
     }
@@ -659,7 +670,7 @@ class AppStore {
           const detail = endReasonText(m.content)
           if (detail) out.push({ kind: 'endtick', uid: this.nuid(), icon: endIcon(detail), title: detail })
         } else if (m.content.includes('<context_trim')) {
-          out.push({ kind: 'trim', uid: this.nuid(), text: trimBrief(trimFull(m.content)), full: trimFull(m.content), folded: true })
+          out.push({ kind: 'trim', uid: this.nuid(), text: trimBrief(trimFull(m.content)), full: trimFull(m.content) })
         } else if (m.content.includes('<loop_guard>')) {
           // 循环护栏提醒：小字条呈现（标签体是人话文本）
           const inner = m.content.replace(/^[\s\S]*?<loop_guard>|<\/loop_guard>[\s\S]*$/g, '').trim()
@@ -2209,20 +2220,20 @@ class AppStore {
         break
       }
       case 'session.trim': {
-        // 整理完成：上下文已就地折叠——整理标记（trim 块）挂起，其前内容
-        // 随之收进折叠区（foldBlocks 渲染层裁掉，滚到顶上拉自动载入）；
-        // 分身的进分身框
+        // 整理完成：整理标记（trim 块）挂起，时间线把窗口收拢到这条边界；
+        // 其前内容滚到顶再按批载入。分身的进分身框
         const bsFold = ev.forkId ? this.getFork(ev.forkId).blocks : this.blocks
         const summary = typeof ev.data?.summary === 'string' ? ev.data.summary.trim() : ''
+        const uid = this.nuid()
         bsFold.push({
           kind: 'trim',
-          uid: this.nuid(),
-          folded: true,
+          uid,
           full: summary,
           text: summary
             ? trimBrief(summary)
             : `上下文已整理：早期对话折叠为摘要（${ev.data?.folded ?? '?'} 条 → 保留最近 ${ev.data?.kept ?? '?'} 条）`,
         })
+        if (!ev.forkId) this.foldAt = uid
         void this.refreshStatus()
         break
       }
@@ -2233,14 +2244,18 @@ class AppStore {
         this.liveChanges = []
         const d = ev.data || {}
         this.blocks.push({
-          kind: 'note',
+          kind: 'archive',
           uid: this.nuid(),
-          text: `⇪ 话题已归档：${d.title || ''}`,
+          text: d.title || '',
+          summary: typeof d.summary === 'string' ? d.summary : '',
         })
         if (d.newId) {
           this.leafId = d.newId
-          this.prevCursor = d.newId
-          this.hasPrev = !!d.prevPath // 新叶可继续向上翻旧世代
+          /* 旧会话内容已在时间线里：游标停在旧库，再上翻直接取其上级，
+             避免把旧会话重复拉一遍 */
+          this.prevCursor = d.oldId || d.newId
+          this.prevTitle = ''
+          this.hasPrev = true
         }
         void this.refreshStatus()
         void this.refreshBranches()
