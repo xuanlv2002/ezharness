@@ -617,13 +617,14 @@
     {:else if tab && tab.kind === 'text'}
       <TextViewer bind:this={textViewer} {tab} {active} onSave={() => void saveTab(tab)} />
     {:else if tab && tab.kind === 'html'}
+      <!-- 预览是原生视图、盖在 DOM 上：右键菜单同属 DOM 弹层，打开期间先藏预览 -->
       <HtmlViewer
         bind:this={htmlViewer}
         {tab}
         {active}
         {animating}
         flush={filePaneFlush}
-        blocked={!!overwrite}
+        blocked={!!overwrite || !!menu}
         onSave={() => void saveTab(tab)}
       />
     {:else if tab && tab.kind === 'markdown'}
