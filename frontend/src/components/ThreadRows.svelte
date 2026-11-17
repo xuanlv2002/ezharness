@@ -139,7 +139,7 @@
                 class="imgload"
                 title={ib.paths.map((p, j) => (ib.notes?.[j] ? `${p}（${ib.notes[j]}）` : p)).join('\n')}
               >
-                {#each ib.paths as p, j (p)}
+                {#each ib.paths as p, j (j)}
                   {@const snap = ib.images?.[j]}
                   <img
                     src={snap
