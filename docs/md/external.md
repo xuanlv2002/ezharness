@@ -7,7 +7,7 @@
 
 | 工具 | 参数 | 返回 / 边界 | 默认 |
 | --- | --- | --- | --- |
-| `read_file` | `path`、`offset?`、`limit?`、`line_numbers?`、`note?` | 文本或图片标记；2000 行、20 万字符、图片 8MB；`line_numbers` 时每行前缀「行号+Tab」（仅引用，勿抄进编辑原文） | 免审 |
+| `read_file` | `path`、`offset?`、`limit?`、`line_numbers?`、`note?` | 文本或图片标记；2000 行、20 万字符、图片 8MB；`line_numbers` 时每行前缀「行号+Tab」（仅引用，勿抄进编辑原文）；文本结果末尾附 `<read_file_meta>`（总行数/本次行区间/续读 offset；截断、越界等提醒收在 `warning` 属性里并以 `!` 开头；非文件内容） | 免审 |
 | `grep` | `pattern`、`path?`、`include?`、`ignore_case?`、`fixed_string?`、`context_lines?`、`max_results?` | `路径:行号: 内容`；跳过 .git/node_modules/dist/build/.next、二进制、非 UTF-8 与超 2MB 文件（摘要报跳过数） | 免审 |
 | `write_file` | `path`、`content` | 写入字节数 | 审批；路径白名单内免审 |
 | `edit_file` | `path`、`edits[]`（每项 `old_text`、`new_text`、`replace_all?`） | 每处替换次数与行号；整批原子；`old_text` 须与原文精确一致（缩进/空行，CRLF/LF 自动归一），不命中报错；默认要求唯一，`replace_all` 才替换全部命中 | 审批；路径白名单内免审 |
