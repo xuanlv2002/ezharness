@@ -649,6 +649,7 @@ export const api = {
         targetId?: string
         seedKind?: 'new' | 'fork' | 'compress'
         canPrev?: boolean
+        prevTitle?: string
         forkedFrom?: ForkOrigin
         decisions?: DecisionRecord[]
         forks?: ForkSummary[]
@@ -946,7 +947,10 @@ export const api = {
   forkSession: (sourceId: string, anchor: number) =>
     post<{ id: string }>(`/api/sessions/${sourceId}/fork`, { anchor }),
 
-  activateBranch: (id: string) => post<{ id: string }>(`/api/branches/${id}/activate`),
+  activateBranch: (id: string) =>
+    post<{ id: string; leafId: string; updatedAt: number; msgs: number; busy: boolean }>(
+      `/api/branches/${id}/activate`,
+    ),
 
   appConfig: () => fetch('/api/app/config').then(json<AppConfig>),
 

@@ -30,9 +30,13 @@
 {:else if face?.kind === 'diff'}
   <div class="tf">
     {#if face.path}<div class="tf-path">{face.path}</div>{/if}
-    {#each dhunks as dlines, k (k)}
-      <pre class="tf-diff">{#each dlines as l, i}{#if l.t === '-'}<span class="del">{l.s || ' '}</span>{:else if l.t === '+'}<span class="add">{l.s || ' '}</span>{:else}<span class="ctx">{l.s || ' '}</span>{/if}{i < dlines.length - 1 ? '\n' : ''}{/each}</pre>
-    {/each}
+    <!-- 整组 diff 共用一个限高滚动区：逐个 pre 各自限高时，多处编辑叠起来
+         会把 result 顶出展开卡片的可见范围 -->
+    <div class="tf-diffs">
+      {#each dhunks as dlines, k (k)}
+        <pre class="tf-diff">{#each dlines as l, i}{#if l.t === '-'}<span class="del">{l.s || ' '}</span>{:else if l.t === '+'}<span class="add">{l.s || ' '}</span>{:else}<span class="ctx">{l.s || ' '}</span>{/if}{i < dlines.length - 1 ? '\n' : ''}{/each}</pre>
+      {/each}
+    </div>
   </div>
 {:else if face?.kind === 'cmd'}
   <div class="tf">
@@ -73,6 +77,17 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+  .tf-diffs {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    max-height: 200px;
+    overflow-y: auto;
+  }
+  .tf-diffs pre {
+    max-height: none;
+    overflow-y: visible;
   }
   pre {
     font-family: var(--font-mono);

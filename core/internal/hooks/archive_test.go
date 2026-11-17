@@ -127,6 +127,9 @@ func TestTrimArchiveFullOnDisk(t *testing.T) {
 	if err := tr.OnLoop(ctx, state); err != nil {
 		t.Fatal(err)
 	}
+	if err := tr.OnEnd(ctx, state); err != nil { // 引擎 endHook 序：marker 落位后 sessionstore 才落盘
+		t.Fatal(err)
+	}
 	if err := store.OnEnd(ctx, state); err != nil {
 		t.Fatal(err)
 	}
@@ -146,6 +149,9 @@ func TestTrimArchiveFullOnDisk(t *testing.T) {
 		)...))
 	state2.LastResponse = &types.ModelResponse{Usage: types.Usage{PromptTokens: 999}}
 	if err := tr.OnLoop(ctx, state2); err != nil {
+		t.Fatal(err)
+	}
+	if err := tr.OnEnd(ctx, state2); err != nil { // 同上：trim 先落位 marker
 		t.Fatal(err)
 	}
 	if err := store.OnEnd(ctx, state2); err != nil {

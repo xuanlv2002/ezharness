@@ -332,7 +332,7 @@ func (h *Store) OnEnd(ctx context.Context, state *types.LoopState) error {
 	msgs := StripSystem(full)
 	if fork && state.SeedLen > 0 && state.SeedLen <= len(msgs) {
 		// SeedLen 含 system（fork.go 语义），stripSystem 后数组少 1：
-		// 起点 -1 才不会把 seed 后首条（任务 input / trim marker）剥掉
+		// 起点 -1 才不会把 seed 后首条（fork 任务 input）剥掉
 		msgs = msgs[state.SeedLen-1:]
 	}
 	if len(msgs) < len(prev) {
