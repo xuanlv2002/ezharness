@@ -31,23 +31,23 @@ import (
 */
 type AppService struct {
 	Cfg       func() config.Config
-	RestartFn func(port int, listen string, ln net.Listener)
-	FormatFn  func(port int, listen string)
+	RestartFn func(port int, ln net.Listener)
+	FormatFn  func(port int)
 	Boot      *atomic.Int64
 }
 
 /* AppStatus 是应用配置视图。 */
 type AppStatus struct {
 	Port    int    `json:"port"`
-	Listen  string `json:"listen"`
 	DataDir string `json:"dataDir"`
+	Version string `json:"version"`
 	Boot    int64  `json:"boot"`
 }
 
 /* Status 返回当前配置与代际。 */
 func (s *AppService) Status() AppStatus {
 	c := s.Cfg()
-	return AppStatus{Port: c.Port, Listen: c.Listen, DataDir: c.DataDir, Boot: s.Boot.Load()}
+	return AppStatus{Port: c.Port, DataDir: c.DataDir, Version: config.Version, Boot: s.Boot.Load()}
 }
 
 /* updateFeed 是版本检查数据源（GitHub 最新 release；pre-release/draft 不计入）。 */
@@ -103,10 +103,9 @@ type PathEntry struct {
 	Path  string `json:"path"`
 }
 
-/* AppConfigView 是设置页完整配置视图：端口、监听、数据目录、路径清单、记忆三路径。 */
+/* AppConfigView 是设置页完整配置视图：端口、数据目录、路径清单、记忆三路径。 */
 type AppConfigView struct {
 	Port    int             `json:"port"`
-	Listen  string          `json:"listen"`
 	DataDir string          `json:"dataDir"`
 	Boot    int64           `json:"boot"`
 	Paths   []PathEntry     `json:"paths"`
@@ -127,7 +126,6 @@ func (s *AppService) ConfigView() AppConfigView {
 	join := func(rel string) string { return filepath.Join(cwd, rel) }
 	return AppConfigView{
 		Port:    c.Port,
-		Listen:  c.Listen,
 		DataDir: c.DataDir,
 		Boot:    s.Boot.Load(),
 		Paths: []PathEntry{
@@ -151,8 +149,7 @@ func (s *AppService) ConfigView() AppConfigView {
 
 /* RestartRequest 是重启请求（字段为零值表示不改）。 */
 type RestartRequest struct {
-	Port   *int    `json:"port"`
-	Listen *string `json:"listen"`
+	Port *int `json:"port"`
 }
 
 /* RestartResult 是重启响应：前端轮询 health.boot === boot 后跳转 url。 */
@@ -162,7 +159,7 @@ type RestartResult struct {
 }
 
 /*
-Restart 校验并落盘新配置（监听/端口）、预占新端口，然后异步换代。
+Restart 校验并落盘新配置（端口）、预占新端口，然后异步换代。
 仅当请求值非法或新端口被占时返回错误（旧服务不受影响）。数据目录不在
 可改面内：挪盘手改 ezharness.json 的 dataDir 后整进程重启。
 */
@@ -175,19 +172,15 @@ func (s *AppService) Restart(req RestartRequest) (RestartResult, error) {
 		}
 		port = *req.Port
 	}
-	listen := cur.Listen
-	if req.Listen != nil {
-		listen = *req.Listen
-	}
 
 	var ln net.Listener
-	if port != cur.Port || listen != cur.Listen {
+	if port != cur.Port {
 		var err error
-		if ln, err = net.Listen("tcp", config.ListenAddr(listen, port)); err != nil {
-			return RestartResult{}, fmt.Errorf("%s:%d 监听失败: %w", listen, port, err)
+		if ln, err = net.Listen("tcp", config.ListenAddr(port)); err != nil {
+			return RestartResult{}, fmt.Errorf("127.0.0.1:%d 监听失败: %w", port, err)
 		}
 	}
-	if err := config.Save(config.Config{Port: port, Listen: listen, DataDir: cur.DataDir}); err != nil {
+	if err := config.Save(config.Config{Port: port, DataDir: cur.DataDir}); err != nil {
 		if ln != nil {
 			_ = ln.Close()
 		}
@@ -195,8 +188,7 @@ func (s *AppService) Restart(req RestartRequest) (RestartResult, error) {
 	}
 
 	next := s.Boot.Add(1)
-	go s.RestartFn(port, listen, ln)
-	/* listen=0.0.0.0 时本机访问仍走 127.0.0.1，跳转地址不受影响 */
+	go s.RestartFn(port, ln)
 	return RestartResult{URL: fmt.Sprintf("http://127.0.0.1:%d", port), Boot: next}, nil
 }
 
@@ -208,10 +200,10 @@ Format 格式化：清空数据目录的全部内容（配置记录、会话、�
 */
 func (s *AppService) Format() (RestartResult, error) {
 	cur := s.Cfg()
-	if err := config.Save(config.Config{Port: cur.Port, Listen: cur.Listen, DataDir: cur.DataDir}); err != nil {
+	if err := config.Save(config.Config{Port: cur.Port, DataDir: cur.DataDir}); err != nil {
 		return RestartResult{}, fmt.Errorf("保存配置失败: %w", err)
 	}
 	next := s.Boot.Add(1)
-	go s.FormatFn(cur.Port, cur.Listen)
+	go s.FormatFn(cur.Port)
 	return RestartResult{URL: fmt.Sprintf("http://127.0.0.1:%d", cur.Port), Boot: next}, nil
 }

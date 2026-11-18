@@ -8,6 +8,7 @@ app 是应用生命周期管理：持有当前一代 http.Server 与配置快照
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"log"
 	"net"
@@ -20,7 +21,6 @@ import (
 	"time"
 
 	"ezharness/core/internal/config"
-	"ezharness/core/internal/controller"
 	"ezharness/core/internal/domain"
 	"ezharness/core/internal/service"
 
@@ -30,7 +30,8 @@ import (
 type app struct {
 	mu        sync.Mutex
 	cfg       config.Config
-	tokens    *controller.TokenStore   // 双令牌：会话（进程内）+ openapi（落盘 openapi.json）
+	auth      *service.AuthStore       // 密码与会话令牌（数据目录 auth.json，跨代复用）
+	openapi   *service.OpenapiStore    // OpenAPI 令牌（数据目录 openapi.json，跨代复用）
 	hub       *domain.Hub              // 当前代领域根（换代重建；退出/换代收尾用）
 	srv       *http.Server             // 当前代 HTTP 服务
 	term      *service.TerminalService // 当前代共享终端（换代重建；收尾杀全部 shell）
@@ -56,7 +57,7 @@ func (a *app) setCallbacks(c *service.CallbackService) {
 }
 
 /* newApp 创建应用、切到数据目录并把布局初始化完整，再允许开始监听。 */
-func newApp(c config.Config, token string) (*app, error) {
+func newApp(c config.Config) (*app, error) {
 	if err := os.MkdirAll(c.DataDir, 0o755); err != nil {
 		return nil, fmt.Errorf("创建数据目录 %s 失败: %w", c.DataDir, err)
 	}
@@ -70,18 +71,18 @@ func newApp(c config.Config, token string) (*app, error) {
 	if len(created) > 0 {
 		log.Printf("数据目录初始化：新建 %d 个配置文件（%s）", len(created), strings.Join(created, "、"))
 	}
-	// openapi 令牌随数据目录（换代切目录时在 restart 重新加载）
-	tokens := controller.NewTokenStore(token, service.LoadOrCreateOpenapiToken())
-	return &app{cfg: c, tokens: tokens}, nil
+	// 凭证随数据目录（cwd 已切）：会话在 auth.json，openapi 令牌在 openapi.json
+	return &app{cfg: c, auth: service.LoadAuthState(), openapi: service.LoadOpenapiStore()}, nil
 }
 
 /* start 启动第一代 server（端口占用失败即退出）。 */
 func (a *app) start() error {
 	cfg := a.snapshot()
-	ln, err := net.Listen("tcp", config.ListenAddr(cfg.Listen, cfg.Port))
+	ln, err := net.Listen("tcp", config.ListenAddr(cfg.Port))
 	if err != nil {
 		return err
 	}
+	writeServerInfo(cfg)
 	engine := a.buildRouter()
 	srv := &http.Server{Handler: engine}
 	a.mu.Lock()
@@ -98,19 +99,19 @@ func (a *app) snapshot() config.Config {
 	return a.cfg
 }
 
-func (a *app) addr() string { return config.ListenAddr(a.cfg.Listen, a.cfg.Port) }
+func (a *app) addr() string { return config.ListenAddr(a.cfg.Port) }
 
 /*
 restart 换代重启（由 AppService 异步调用，此刻 HTTP 响应已写完，
 Shutdown 不会与活跃 handler 死锁）。ln 非 nil 时是预占的新端口 listener。
 数据目录换代不存在（不在可改面内）：换目录 = 手改 ezharness.json 后整进程重启。
 */
-func (a *app) restart(port int, listen string, ln net.Listener) {
+func (a *app) restart(port int, ln net.Listener) {
 	a.shutdownGeneration()
 	engine := a.buildRouter()
 	srv := &http.Server{Handler: engine}
 	a.mu.Lock()
-	a.cfg.Port, a.cfg.Listen = port, listen
+	a.cfg.Port = port
 	a.srv = srv
 	a.mu.Unlock()
 	if ln == nil {
@@ -120,6 +121,7 @@ func (a *app) restart(port int, listen string, ln net.Listener) {
 			return
 		}
 	}
+	writeServerInfo(a.snapshot())
 	go func() { _ = srv.Serve(ln) }()
 }
 
@@ -129,7 +131,7 @@ format 格式化（由 AppService 异步调用）：先收尾当前代——会�
 不变，页面原地重连即首次运行状态）。
 日志文件先关再删：Windows 上打开中的文件删不掉，下次写日志会自动重开。
 */
-func (a *app) format(port int, listen string) {
+func (a *app) format(port int) {
 	a.shutdownGeneration()
 	config.CloseLogWriter()
 	if err := wipeDataDir(); err != nil {
@@ -141,7 +143,7 @@ func (a *app) format(port int, listen string) {
 	/* 跨代常驻服务持有旧目录状态（MCP OAuth 探测缓存、浏览器截图目录）：
 	   重置它们，让 buildRouter 按新默认布局重建（桌面桥会自动重连） */
 	a.mu.Lock()
-	oldRouter, oldAuth := a.mcpRouter, a.mcpAuth
+	oldRouter, oldAuth, oldBrowser := a.mcpRouter, a.mcpAuth, a.browser
 	a.mcpRouter, a.mcpAuth, a.browser = nil, nil, nil
 	a.mu.Unlock()
 	if oldRouter != nil {
@@ -150,12 +152,18 @@ func (a *app) format(port int, listen string) {
 	if oldAuth != nil {
 		oldAuth.Close()
 	}
-	// 数据目录已清空：OpenAPI 令牌随新 openapi.json 重新生成
-	a.tokens.SetOpenapi(service.LoadOrCreateOpenapiToken())
+	if oldBrowser != nil {
+		oldBrowser.Close() // 停无头浏览器并清临时 profile
+	}
+	// 数据目录已清空：回到未初始化状态，凭证随新目录重新加载
+	a.mu.Lock()
+	a.auth = service.LoadAuthState()
+	a.openapi = service.LoadOpenapiStore()
+	a.mu.Unlock()
 	engine := a.buildRouter()
 	srv := &http.Server{Handler: engine}
 	a.mu.Lock()
-	a.cfg.Port, a.cfg.Listen = port, listen
+	a.cfg.Port = port
 	a.srv = srv
 	a.mu.Unlock()
 	ln, err := net.Listen("tcp", a.addr())
@@ -163,6 +171,7 @@ func (a *app) format(port int, listen string) {
 		log.Printf("格式化后重新监听失败: %v", err)
 		return
 	}
+	writeServerInfo(a.snapshot())
 	go func() { _ = srv.Serve(ln) }()
 }
 
@@ -218,12 +227,15 @@ func wipeDataDir() error {
 换代走 restart，router 不在此路径释放（跨代常驻）。
 */
 func (a *app) stop() {
+	clearServerInfo()
 	a.shutdownGeneration()
 	a.mu.Lock()
 	r := a.mcpRouter
 	m := a.mcpAuth
+	b := a.browser
 	a.mcpRouter = nil
 	a.mcpAuth = nil
+	a.browser = nil
 	a.mu.Unlock()
 	if r != nil {
 		_ = r.Close()
@@ -231,6 +243,37 @@ func (a *app) stop() {
 	if m != nil {
 		m.Close()
 	}
+	if b != nil {
+		b.Close() // 停无头浏览器（桥由 desktop 侧退出断开）
+	}
+}
+
+/*
+serverInfo 是应用根 server.json 的落盘结构：常驻实例的进程簿记，
+
+	供入口程序附着/探活，不含任何令牌。
+*/
+type serverInfo struct {
+	Port    int    `json:"port"`
+	Pid     int    `json:"pid"`
+	Version string `json:"version"`
+	DataDir string `json:"dataDir"`
+}
+
+/* writeServerInfo 落盘实例簿记（bind 成功后调用；上实例异常退出留下的旧文件直接覆盖）。 */
+func writeServerInfo(cfg config.Config) {
+	data, err := json.MarshalIndent(serverInfo{
+		Port: cfg.Port, Pid: os.Getpid(), Version: config.Version, DataDir: cfg.DataDir,
+	}, "", "  ")
+	if err != nil {
+		return
+	}
+	_ = os.WriteFile(filepath.Join(config.Root(), "server.json"), data, 0o644)
+}
+
+/* clearServerInfo 删除实例簿记（进程退出时）。 */
+func clearServerInfo() {
+	_ = os.Remove(filepath.Join(config.Root(), "server.json"))
 }
 
 /*

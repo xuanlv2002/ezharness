@@ -1,29 +1,25 @@
 /*
 controller 包是表现层：gin handler 只做绑定、校验与响应，业务在 service。
+路由分两面：会话面 /api/*（EzHarnessToken，人驾全量能力）与 OpenAPI 面
+/api/open/*（EzHarnessOpenToken，agent 产物）。中间件与认证端点见 auth.go。
 */
 package controller
 
 import (
-	"crypto/subtle"
 	"fmt"
 	"io/fs"
 	"net/http"
 	"strings"
-	"sync"
 	"time"
 
-	"github.com/coder/websocket"
 	"github.com/gin-gonic/gin"
+
+	"ezharness/core/internal/service"
 )
-
-/* authCookieName 是浏览器自动请求的鉴权 cookie（HttpOnly、SameSite=Strict）。 */
-const authCookieName = "ez_token"
-
-/* openapiTokenHeader 是 OpenAPI 面的令牌请求头。 */
-const openapiTokenHeader = "X-EZ-Open-Token"
 
 /* Controllers 是路由依赖集合（main 装配）。 */
 type Controllers struct {
+	Auth      *AuthController
 	Session   *SessionController
 	Chat      *ChatController
 	Settings  *SettingsController
@@ -37,44 +33,6 @@ type Controllers struct {
 	Workspace *WorkspaceController
 	Pinboard  *PinboardController
 	Media     *MediaController
-}
-
-/*
-TokenStore 持有两枚 API 令牌，重置/换代时原地更新、中间件实时读取：
-
-  - session：前端（桌面壳+网页）会话令牌，每次启动换，只活在进程内
-  - openapi：OpenAPI 面令牌，持久于数据目录 openapi.json，可重置换新
-*/
-type TokenStore struct {
-	mu      sync.RWMutex
-	session string
-	openapi string
-}
-
-/* NewTokenStore 构造令牌组。 */
-func NewTokenStore(session, openapi string) *TokenStore {
-	return &TokenStore{session: session, openapi: openapi}
-}
-
-/* Session 返回会话令牌。 */
-func (t *TokenStore) Session() string {
-	t.mu.RLock()
-	defer t.mu.RUnlock()
-	return t.session
-}
-
-/* Openapi 返回 OpenAPI 令牌。 */
-func (t *TokenStore) Openapi() string {
-	t.mu.RLock()
-	defer t.mu.RUnlock()
-	return t.openapi
-}
-
-/* SetOpenapi 原地更新 OpenAPI 令牌（重置后中间件即时生效）。 */
-func (t *TokenStore) SetOpenapi(v string) {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	t.openapi = v
 }
 
 /*
@@ -107,18 +65,23 @@ func accessLog() gin.HandlerFunc {
 
 /*
 NewRouter 装配 gin engine 与全部路由。dist 非 nil 时服务前端静态资源。
-路由分两面：
-
-  - 会话面 /api/*：全量能力，会话凭证（X-EZ-Token / cookie / WS 子协议）
-  - OpenAPI 面 /api/open/*：模型直调与 MCP 调用，openapi 令牌或会话凭证，
-    跨源放行（file:// 页面、外部脚本直调）；SDK 免鉴权伺服
+免鉴权面全量清单：health、/api/auth/*（status/init/login）、
+/api/open/sdk.js、/apps/* 静态资产——其余全部要凭证。
 */
-func NewRouter(c Controllers, dist fs.FS, tokens *TokenStore) *gin.Engine {
+func NewRouter(c Controllers, dist fs.FS, auth *service.AuthStore, openapi *service.OpenapiStore) *gin.Engine {
 	r := gin.New()
 	r.Use(accessLog(), gin.Recovery())
 
-	/* 换代探活：旧页面重启后在新 origin 上跨域轮询，必须免鉴权（只回 boot） */
+	/* 换代探活：旧页面重启后在新 origin 上跨域轮询，必须免鉴权（只回 boot/version） */
 	r.GET("/api/app/health", c.App.Health)
+
+	/* 认证：状态查询与密码初始化/登录；init 仅未初始化时开放 */
+	authGrp := r.Group("/api/auth")
+	{
+		authGrp.GET("/status", c.Auth.Status)
+		authGrp.POST("/init", c.Auth.Init)
+		authGrp.POST("/login", c.Auth.Login)
+	}
 
 	/* OpenAPI SDK：本身无秘密，免鉴权、跨源放行，任何页面可直接引 */
 	r.GET("/api/open/sdk.js", corsOpen(), serveSdk)
@@ -127,7 +90,7 @@ func NewRouter(c Controllers, dist fs.FS, tokens *TokenStore) *gin.Engine {
 	   method 直接 404、中间件不跑，预检必须显式挂通配路由应答。 */
 	r.OPTIONS("/api/open/*path", corsOpen())
 
-	open := r.Group("/api/open", corsOpen(), openAuth(tokens))
+	open := r.Group("/api/open", corsOpen(), openGuard(auth, openapi))
 	{
 		open.POST("/model/call", c.Settings.CallModel) // 直调大模型
 		open.POST("/mcp/call", c.Mcp.Call)             // 调 MCP 工具
@@ -144,19 +107,22 @@ func NewRouter(c Controllers, dist fs.FS, tokens *TokenStore) *gin.Engine {
 		open.POST("/mcp/oauth/cancel", c.Mcp.OAuthCancel)
 	}
 
-	api := r.Group("/api", authRequired(tokens))
+	api := r.Group("/api", sessionAuth(auth))
 	{
+		api.POST("/auth/logout", c.Auth.Logout)
+		api.GET("/auth/sessions", c.Auth.Sessions)
+		api.DELETE("/auth/sessions/:id", c.Auth.RevokeSession)
+
 		api.GET("/app/config", c.App.Config)
 		api.GET("/app/update-check", c.App.UpdateCheck) // 版本检查：最新 release 摘要（比对在前端）
 		api.POST("/app/restart", c.App.Restart)
 		api.POST("/app/format", c.App.Format) // 格式化：清空全部配置/会话/数据并重建（不可恢复）
-		/* 令牌管理（设置页展示/复制/重置；能过鉴权者才可见） */
-		api.GET("/app/token", c.App.SessionToken)
-		api.GET("/app/openapi-token", c.App.OpenapiToken)
-		api.POST("/app/openapi-token/reset", c.App.ResetOpenapiToken)
-		/* 令牌换 HttpOnly cookie：浏览器自动发起的导航、图片/PDF 请求
-		   无法加自定义头，前端启动时用入口令牌换一次 cookie。 */
-		api.POST("/auth/cookie", c.App.AuthCookie)
+
+		/* 凭证管理（安全页） */
+		api.GET("/security/openapi-tokens", c.Auth.OpenapiTokens)
+		api.POST("/security/openapi-tokens", c.Auth.CreateOpenapiToken)
+		api.DELETE("/security/openapi-tokens/:id", c.Auth.RevokeOpenapiToken)
+		api.GET("/security/openapi-audit", c.Auth.OpenapiAudit)
 
 		api.GET("/bootstrap", c.Session.Bootstrap)
 		api.GET("/status", c.Session.Status)
@@ -267,39 +233,6 @@ func NewRouter(c Controllers, dist fs.FS, tokens *TokenStore) *gin.Engine {
 	return r
 }
 
-// authRequired 校验会话面令牌：X-EZ-Token 头 / ez_token cookie / WS 子协议
-// 任一匹配即可（恒定时间比较）；不认来源（Origin/Host 可伪造）。
-func authRequired(tokens *TokenStore) gin.HandlerFunc {
-	return func(g *gin.Context) {
-		if validToken(g, tokens.Session()) {
-			g.Next()
-			return
-		}
-		g.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
-	}
-}
-
-/*
-openAuth 鉴权 OpenAPI 面：X-EZ-Open-Token 命中 openapi 令牌，或持有效
-会话凭证（ezharness 前端与同源页面）。同源页面 cookie 与页面自带令牌头
-两通道并存、任一命中即过——硬编码令牌已被重置的页面，同源下凭 cookie
-仍可调用。
-*/
-func openAuth(tokens *TokenStore) gin.HandlerFunc {
-	return func(g *gin.Context) {
-		if t := g.GetHeader(openapiTokenHeader); t != "" &&
-			subtle.ConstantTimeCompare([]byte(t), []byte(tokens.Openapi())) == 1 {
-			g.Next()
-			return
-		}
-		if validToken(g, tokens.Session()) {
-			g.Next()
-			return
-		}
-		g.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
-	}
-}
-
 /*
 corsOpen 放行 OpenAPI 面跨源：file:// 页面与外部脚本直调 core。鉴权只认
 令牌头，不放开凭证（ACAO * 与 cookie 凭证互斥；同源页面的 cookie 不受
@@ -309,8 +242,8 @@ func corsOpen() gin.HandlerFunc {
 	return func(g *gin.Context) {
 		h := g.Writer.Header()
 		h.Set("Access-Control-Allow-Origin", "*")
-		h.Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-		h.Set("Access-Control-Allow-Headers", "Content-Type, X-EZ-Open-Token, X-EZ-Token")
+		h.Set("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
+		h.Set("Access-Control-Allow-Headers", "Content-Type, "+openapiTokenHeader+", "+sessionTokenHeader)
 		h.Set("Access-Control-Max-Age", "86400")
 		if g.Request.Method == http.MethodOptions {
 			g.AbortWithStatus(http.StatusNoContent)
@@ -318,62 +251,6 @@ func corsOpen() gin.HandlerFunc {
 		}
 		g.Next()
 	}
-}
-
-// validToken 收集会话凭证通道并逐一恒定时间比较。cookie 供浏览器自动
-// 发起的请求（导航、<img>/<video>/PDF、快应用页）使用——这些请求加不了
-// 自定义请求头。任一通道有效即通过。
-func validToken(g *gin.Context, token string) bool {
-	candidates := []string{g.GetHeader("X-EZ-Token")}
-	if c, err := g.Cookie(authCookieName); err == nil {
-		candidates = append(candidates, c)
-	}
-	if t, _ := wsProtocolToken(g.GetHeader("Sec-WebSocket-Protocol")); t != "" {
-		candidates = append(candidates, t)
-	}
-	for _, c := range candidates {
-		if c != "" && subtle.ConstantTimeCompare([]byte(c), []byte(token)) == 1 {
-			return true
-		}
-	}
-	return false
-}
-
-// setAuthCookie 下发 HttpOnly 会话 cookie：SameSite=Strict 阻断跨站请求
-// 顺手携带；HTTPS 下补 Secure。
-func setAuthCookie(g *gin.Context, token string) {
-	http.SetCookie(g.Writer, &http.Cookie{
-		Name:     authCookieName,
-		Value:    token,
-		Path:     "/",
-		HttpOnly: true,
-		SameSite: http.SameSiteStrictMode,
-		Secure:   g.Request.TLS != nil,
-	})
-}
-
-// wsProtocolToken 从 Sec-WebSocket-Protocol 提取前端令牌与完整子协议值：
-// 浏览器 WebSocket 不能设置自定义请求头，前端把令牌编码成
-// `ez-token.<token>` 子协议。Accept 需要把这个值原样回显，否则部分客户端
-// （如 ws）会以 "Server sent no subprotocol" 拒绝连接。
-func wsProtocolToken(header string) (token, proto string) {
-	for _, p := range strings.Split(header, ",") {
-		p = strings.TrimSpace(p)
-		if t, ok := strings.CutPrefix(p, "ez-token."); ok {
-			return t, p
-		}
-	}
-	return "", ""
-}
-
-// wsAcceptOptions 组装 WebSocket Accept 选项：放行本机开发来源；若客户端
-// 用子协议携带令牌，回显该子协议（ws 等客户端要求服务端确认所选协议）。
-func wsAcceptOptions(g *gin.Context) *websocket.AcceptOptions {
-	opts := &websocket.AcceptOptions{OriginPatterns: []string{"localhost:*", "127.0.0.1:*"}}
-	if _, proto := wsProtocolToken(g.GetHeader("Sec-WebSocket-Protocol")); proto != "" {
-		opts.Subprotocols = []string{proto}
-	}
-	return opts
 }
 
 /* serveStatic 服务 SPA：静态资源 + 非 /api 路径回退 index.html。 */

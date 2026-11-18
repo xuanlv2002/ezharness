@@ -11,16 +11,16 @@ core 在本机暴露 HTTP API（基址见 system `<local_api>` 段，形如 `htt
 
 | 调用方 | 取令牌 | 依赖 SDK |
 | --- | --- | --- |
-| 终端/子进程脚本 | env `$EZHARNESS_OPENAPI_TOKEN`（Windows `%…%`，自动继承） | 否 |
-| 外部程序/手写脚本 | 读 `<数据目录>/openapi.json`（0600）的 `token` | 否 |
+| 终端/子进程脚本 | env `$EZHARNESS_OPENAPI_TOKEN`（Windows `%…%`，自动继承最新一枚） | 否 |
+| 外部程序/手写脚本 | 读 `<数据目录>/openapi.json`（0600）的 `tokens[].token`（多枚任选） | 否 |
 | 快应用后端（推荐交付形态） | env 或文件，实时新鲜 | 否（裸 HTTP） |
 | 纯前端页面（含 `file://` 测试页） | **硬编码**进 `ez.config` | 是（`/api/open/sdk.js`） |
 
-策略：**调试期允许硬编码，交付期切后端**——长住应用一律后端取令牌（页面→后端→core），令牌不出后端。
+策略：**调试期允许硬编码，交付期切后端**——长住应用一律后端取令牌（页面→后端→core），令牌不出后端。env 只在终端继承且可能是旧一枚（吊销后失效），正式做法读 openapi.json。
 
 ## 做法
 
-**鉴权**：请求头 `X-EZ-Open-Token: <令牌>`。令牌持久有效，直到用户在设置页重置；**不要让用户把令牌贴进对话**，指引用户去设置页。ezharness 同源页面还会自动带 cookie，与令牌头两通道任一命中即过——硬编码令牌被重置的页面在 ezharness 里仍可用，拿到外面才失效。
+**鉴权**：请求头 `EzHarnessOpenToken: <令牌>`。令牌由用户在安全页生成（多枚、可命名、可吊销）；env 里没有且 openapi.json 为空时，**不要让用户把令牌贴进对话**，指引用户去安全页生成。ezharness 同源页面还会自动带 cookie，与令牌头两通道任一命中即过——硬编码令牌被吊销的页面在 ezharness 里仍可用，拿到外面才失效。
 
 **端点**：
 
@@ -53,7 +53,7 @@ core 在本机暴露 HTTP API（基址见 system `<local_api>` 段，形如 `htt
 curl（其余语言同构：node 用内置 fetch、powershell 用 Invoke-RestMethod，头一样）：
 
 ```bash
-curl -s -H "X-EZ-Open-Token: $EZHARNESS_OPENAPI_TOKEN" -H 'Content-Type: application/json' \
+curl -s -H "EzHarnessOpenToken: $EZHARNESS_OPENAPI_TOKEN" -H 'Content-Type: application/json' \
   -d '{"prompt":"把这段话翻译成英文：你好世界"}' http://127.0.0.1:5260/api/open/model/call
 ```
 
@@ -66,7 +66,7 @@ def ez_call(path, body):
     req = urllib.request.Request(f"http://127.0.0.1:5260/api/open/{path}",
         data=json.dumps(body).encode(),
         headers={"Content-Type": "application/json",
-                 "X-EZ-Open-Token": os.environ["EZHARNESS_OPENAPI_TOKEN"]})
+                 "EzHarnessOpenToken": os.environ["EZHARNESS_OPENAPI_TOKEN"]})
     with urllib.request.urlopen(req, timeout=300) as r:
         return json.load(r)
 
@@ -117,7 +117,7 @@ if not tok:
 def call(path, body=None):
     req = urllib.request.Request(base + "/api/open/" + path,
         data=json.dumps(body).encode() if body else None,
-        headers={"Content-Type": "application/json", "X-EZ-Open-Token": tok})
+        headers={"Content-Type": "application/json", "EzHarnessOpenToken": tok})
     with urllib.request.urlopen(req, timeout=30) as r: return json.load(r)
 
 try:

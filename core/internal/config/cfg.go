@@ -16,10 +16,12 @@ import (
 /* DefaultPort 是缺省监听端口。 */
 const DefaultPort = 5260
 
+/* Version 是构建期注入的版本号（-X ezharness/core/internal/config.Version），dev 构建为 "dev"。 */
+var Version = "dev"
+
 /* Config 是 ezharness 启动配置（结构配置）。 */
 type Config struct {
 	Port    int
-	Listen  string // 监听地址（127.0.0.1=仅本机，0.0.0.0=局域网可达；空 = 默认 127.0.0.1）
 	DataDir string // 绝对路径，进程 cwd 即此
 	WindowW int    // 主窗口默认宽（0 = 1280）
 	WindowH int    // 主窗口默认高（0 = 800）
@@ -34,7 +36,6 @@ const (
 /* appFile 是 ezharness.json 的落盘结构。 */
 type appFile struct {
 	Port    int    `json:"port"`
-	Listen  string `json:"listen,omitempty"`
 	DataDir string `json:"dataDir"`
 	WindowW int    `json:"windowWidth,omitempty"`
 	WindowH int    `json:"windowHeight,omitempty"`
@@ -88,11 +89,9 @@ func Load() (Config, error) {
 	return loadLocked()
 }
 
-// defaultConfig 是首次运行/配置损坏重建时的默认配置。Listen 必须走
-// normalizeListen：落盘文件会被归一，但首次进程若直接返回未归一的空值，
-// 设置页的监听地址会显示为空（第二次启动读文件才恢复）。
+// defaultConfig 是首次运行/配置损坏重建时的默认配置。
 func defaultConfig() Config {
-	return Config{Port: DefaultPort, Listen: normalizeListen(""), DataDir: ResolveDataDir("data")}
+	return Config{Port: DefaultPort, DataDir: ResolveDataDir("data")}
 }
 
 func loadLocked() (Config, error) {
@@ -129,7 +128,7 @@ func loadLocked() (Config, error) {
 	if h <= 200 {
 		h = DefaultWindowH
 	}
-	return Config{Port: port, Listen: normalizeListen(af.Listen), DataDir: ResolveDataDir(af.DataDir), WindowW: w, WindowH: h}, nil
+	return Config{Port: port, DataDir: ResolveDataDir(af.DataDir), WindowW: w, WindowH: h}, nil
 }
 
 /* Save 持久化结构配置到应用根的 ezharness.json。 */
@@ -141,7 +140,7 @@ func Save(c Config) error {
 
 func saveLocked(c Config) error {
 	data, err := json.MarshalIndent(appFile{
-		Port: c.Port, Listen: normalizeListen(c.Listen), DataDir: c.DataDir, WindowW: c.WindowW, WindowH: c.WindowH,
+		Port: c.Port, DataDir: c.DataDir, WindowW: c.WindowW, WindowH: c.WindowH,
 	}, "", "  ")
 	if err != nil {
 		return err
@@ -152,21 +151,10 @@ func saveLocked(c Config) error {
 	return os.WriteFile(filepath.Join(Root(), "ezharness.json"), data, 0o644)
 }
 
-/*
-	normalizeListen 归一监听地址：空 = 默认 127.0.0.1（仅本机，不触发
-
-防火墙公网放行弹窗）。
-*/
-func normalizeListen(listen string) string {
-	if strings.TrimSpace(listen) == "" {
-		return "127.0.0.1"
-	}
-	return strings.TrimSpace(listen)
-}
-
-/* ListenAddr 返回监听地址（listen 经 normalizeListen 归一）。 */
-func ListenAddr(listen string, port int) string {
-	return fmt.Sprintf("%s:%d", normalizeListen(listen), port)
+/* ListenAddr 返回监听地址。本阶段一律仅本机 127.0.0.1（不触发防火墙
+放行弹窗）；远程门户是预留方向，开启时也只放行登录与 /api/open/*。 */
+func ListenAddr(port int) string {
+	return fmt.Sprintf("127.0.0.1:%d", port)
 }
 
 /*

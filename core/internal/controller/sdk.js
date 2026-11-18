@@ -31,7 +31,7 @@ OAuth 时自动弹出授权框，用户在浏览器完成授权后自动重试�
   var token = ''
 
   function headers() {
-    return token ? { 'X-EZ-Open-Token': token } : {}
+    return token ? { 'EzHarnessOpenToken': token } : {}
   }
 
   /* post POST /api/open/<path>（JSON 载荷）。 */

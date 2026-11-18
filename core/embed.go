@@ -1,5 +1,5 @@
 /*
-前端产物嵌入单二进制（构建流程先 npm run build 产出 frontend/dist，
+前端产物嵌入单二进制（构建流程先 npm run build 产出 core/frontend/dist，
 再拷贝到 core/web/dist 后编译；目录缺失则 go build 直接报错。
 core/web/dist 是构建产物，不入库）。
 */

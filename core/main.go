@@ -6,13 +6,13 @@ package main
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"log"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"time"
 
@@ -49,29 +49,24 @@ func main() {
 	// modeldump 输出恒进日志（写不写由开关决定，开关随设置/换代在 buildRouter 推导）
 	modeldump.Out = logWriter
 
-	/* 会话令牌：desktop 经 EZHARNESS_TOKEN 注入；web 直跑自生成并打印入口
-	   URL。会话令牌只活在进程内：不落盘、不下发子进程——终端与快应用后端
-	   等子进程用 openapi 令牌（openapi.json / EZHARNESS_OPENAPI_TOKEN）。 */
-	token := os.Getenv("EZHARNESS_TOKEN")
-	_ = os.Unsetenv("EZHARNESS_TOKEN")
-	if token == "" {
-		b := make([]byte, 18)
-		if _, err := rand.Read(b); err != nil {
-			log.Fatal(err)
-		}
-		token = hex.EncodeToString(b)
-		url := fmt.Sprintf("http://127.0.0.1:%d/?token=%s", c.Port, token)
-		/* 入口 URL 的 token 是一次性引导：前端换 HttpOnly cookie 后立即从地址栏摘掉 */
-		log.Printf("web 入口（含一次性引导 token，勿外传）：%s", url)
-	}
-
-	a, err := newApp(c, token)
+	a, err := newApp(c)
 	if err != nil {
 		// 初始化失败常常正是日志目录不可写：stderr 必须直接可见
 		fmt.Fprintln(os.Stderr, "启动失败:", err)
 		log.Fatalf("启动失败: %v", err)
 	}
 	if err := a.start(); err != nil {
+		/* bind 抢不上即仲裁失败（谁 bind 成功谁是主 core）：查实例簿记给一句指路 */
+		if b, rerr := os.ReadFile(filepath.Join(config.Root(), "server.json")); rerr == nil {
+			var si struct {
+				Port int `json:"port"`
+				Pid  int `json:"pid"`
+			}
+			if json.Unmarshal(b, &si) == nil && si.Pid != 0 {
+				log.Fatalf("端口 %d 监听失败: %v（server.json 记录 pid %d 端口 %d，可能已有实例在跑，客户端可直接附着）",
+					c.Port, err, si.Pid, si.Port)
+			}
+		}
 		log.Fatalf("端口 %d 监听失败: %v", c.Port, err)
 	}
 	url := fmt.Sprintf("http://127.0.0.1:%d", c.Port)
@@ -133,6 +128,7 @@ func (a *app) buildRouter() *gin.Engine {
 		Boot:      &a.boot,
 	}
 	controllers := controller.Controllers{
+		Auth:    &controller.AuthController{Auth: a.auth, Openapi: a.openapi},
 		Session: &controller.SessionController{Svc: &service.SessionService{Hub: hub, Callbacks: agents.Callbacks, Agents: agents}},
 		Chat:    &controller.ChatController{Svc: chatSvc, Memory: &service.MemoryService{Hub: hub}, Callbacks: agents.Callbacks},
 		Settings: &controller.SettingsController{
@@ -143,7 +139,7 @@ func (a *app) buildRouter() *gin.Engine {
 		Mcp:       &controller.McpController{Svc: service.NewMcpService(hub.Fsys, a.mcpRouter, a.mcpAuth)},
 		Apps:      &controller.AppsController{Svc: appsSvc},
 		Callbacks: &controller.CallbackController{Svc: agents.Callbacks},
-		App:       &controller.AppController{Svc: appSvc, Tokens: a.tokens},
+		App:       &controller.AppController{Svc: appSvc},
 		Terminal:  &controller.TerminalController{Svc: termSvc},
 		Browser:   &controller.BrowserController{Svc: a.browser},
 		Workspace: &controller.WorkspaceController{Svc: service.NewWorkspaceService(hub.Fsys, hub)},
@@ -151,5 +147,5 @@ func (a *app) buildRouter() *gin.Engine {
 		Media: &controller.MediaController{Svc: agents.Media,
 			Settings: &service.SettingsService{Hub: hub, Agents: agents}},
 	}
-	return controller.NewRouter(controllers, distFS(), a.tokens)
+	return controller.NewRouter(controllers, distFS(), a.auth, a.openapi)
 }
