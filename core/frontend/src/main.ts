@@ -2,15 +2,11 @@ import { mount } from 'svelte'
 import './app.css'
 import App from './App.svelte'
 import { isDesktop } from './lib/desktop'
-import { initToken } from './lib/auth'
+import { loadToken } from './lib/auth'
 
-/* 令牌/cookie 就绪后再挂载：首屏接口与资源请求都要用到鉴权 */
+/* 令牌装载后再挂载：首屏接口就要带 EzHarnessToken 头 */
 void (async () => {
-  try {
-    await initToken()
-  } catch {
-    /* 鉴权初始化失败也挂载：页面会以未授权状态提示 */
-  }
+  loadToken()
   mount(App, { target: document.getElementById('app')! })
 })()
 

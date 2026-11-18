@@ -258,11 +258,36 @@ export interface PathEntry {
 
 export interface AppConfig {
   port: number
-  listen: string
   dataDir: string
   boot: number
   paths: PathEntry[]
   memory: { longterm: string; skills: string; topics: string }
+}
+
+/* 会话（安全页列表，不含 token 值） */
+export interface AuthSession {
+  id: string
+  name: string
+  ip: string
+  created_at: string
+}
+
+/* OpenAPI 命名令牌（安全页生成/吊销） */
+export interface OpenapiToken {
+  id: string
+  name: string
+  token: string
+  created_at: string
+}
+
+/* /api/open/* 调用审计 */
+export interface OpenapiAuditEntry {
+  time: string
+  method: string
+  path: string
+  token_id: string
+  token_name: string
+  status: number
 }
 
 /* ReasoningEffort 是思考档位（Claude Code / Codex 分档；请求侧归一为 low/high/max）。 */
@@ -954,17 +979,34 @@ export const api = {
 
   appConfig: () => fetch('/api/app/config').then(json<AppConfig>),
 
-  appToken: () => fetch('/api/app/token').then(json<{ token: string }>),
+  /* 认证：status/init/login 免鉴权；logout 与会话管理在会话面 */
+  authStatus: () => fetch('/api/auth/status').then(json<{ initialized: boolean }>()),
 
-  /* OpenAPI 令牌：脚本/快应用/外部程序调 /api/open/* 用的持久令牌（设置页展示/重置） */
-  openapiToken: () => fetch('/api/app/openapi-token').then(json<{ token: string }>),
+  authInit: (password: string, client: string) => post<{ token: string }>('/api/auth/init', { password, client }),
 
-  resetOpenapiToken: () => post<{ token: string }>('/api/app/openapi-token/reset', {}),
+  authLogin: (password: string, client: string) => post<{ token: string }>('/api/auth/login', { password, client }),
+
+  authLogout: () => fetch('/api/auth/logout', { method: 'POST' }).then(() => undefined),
+
+  authSessions: () => fetch('/api/auth/sessions').then(json<{ sessions: AuthSession[] }>()),
+
+  revokeSession: (id: string) => fetch(`/api/auth/sessions/${id}`, { method: 'DELETE' }).then(() => undefined),
+
+  /* OpenAPI 令牌与审计（安全页） */
+  openapiTokens: () => fetch('/api/security/openapi-tokens').then(json<{ tokens: OpenapiToken[] }>()),
+
+  createOpenapiToken: (name: string) => post<{ token: OpenapiToken }>('/api/security/openapi-tokens', { name }),
+
+  revokeOpenapiToken: (id: string) =>
+    fetch(`/api/security/openapi-tokens/${id}`, { method: 'DELETE' }).then(() => undefined),
+
+  openapiAudit: (limit = 100) =>
+    fetch(`/api/security/openapi-audit?limit=${limit}`).then(json<{ entries: OpenapiAuditEntry[] }>()),
 
   /* 格式化：清空全部配置、会话与数据并恢复首次运行（不可恢复），返回新代地址供轮询 */
   formatAll: () => post<{ url: string; boot: number }>('/api/app/format', {}),
 
-  appRestart: (req: { port?: number; listen?: string }) =>
+  appRestart: (req: { port?: number }) =>
     post<{ url: string; boot: number }>('/api/app/restart', req),
 
   appHealth: (base = '') => fetch(`${base}/api/app/health`).then(json<{ ok: boolean; boot: number }>),
@@ -976,14 +1018,14 @@ class SseFatalError extends Error {}
 /* subscribe 建立 SSE 订阅，返回断开函数。
 window 级单连接：HMR/重复订阅先关旧连接，防泄漏挤占同域连接池。
 用 fetch-event-source 而不是原生 EventSource：EventSource 不能设置请求头，
-过去只能把 token 拼进 URL；现在走 X-EZ-Token 头。 */
+令牌只能进 URL；现在走 EzHarnessToken 头。 */
 export function subscribe(id: string, onEvent: (ev: SseEvent) => void): () => void {
   const w = window as unknown as { __ezSSE?: AbortController }
   w.__ezSSE?.abort()
   const ac = new AbortController()
   w.__ezSSE = ac
   const url = `/api/sessions/${id}/events`
-  const headers = { 'X-EZ-Token': getToken() }
+  const headers = { EzHarnessToken: getToken() }
 
   const connect = () => {
     void fetchEventSource(url, {

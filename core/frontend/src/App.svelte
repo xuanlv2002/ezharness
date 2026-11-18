@@ -24,9 +24,38 @@
   import BrowserPane from './components/board/BrowserPane.svelte'
   import AssistantPet from './components/AssistantPet.svelte'
   import NoticeWindow from './components/NoticeWindow.svelte'
+  import LoginView from './components/LoginView.svelte'
+  import { api } from './lib/api'
+  import { clearToken, getToken } from './lib/auth'
 
   let view = $state<'chat' | 'pinboard' | 'models' | 'media' | 'memory' | 'tools' | 'app' | 'callbacks' | 'mcp' | 'security' | 'settings'>('chat')
   let expanded = $state(false)
+
+  /* 主窗口登录门：凭证无效（首次/被吊销/格式化后）先走初始化/登录页 */
+  let authed = $state(false)
+
+  async function checkAuth(): Promise<void> {
+    /* 本页必须有显式令牌：只有 cookie 时服务端只放行只读请求，写接口会 401；
+       换端口后 localStorage 为空正是这种状态，直接回登录比半可用干净 */
+    if (!getToken()) {
+      authed = false
+      return
+    }
+    try {
+      await api.authSessions()
+      authed = true
+    } catch {
+      authed = false
+    }
+  }
+
+  function startApp(): void {
+    authed = true
+    void store.bootstrap().catch((e) => {
+      console.error('bootstrap 失败', e)
+      store.lastStatus = `启动失败：${(e as Error).message}`
+    })
+  }
 
   /* 弹出窗口（ez:popout 创建）：只渲染单个工具 pane 的轻布局，无会话/
      SSE（三个 pane 均不依赖 bootstrap），系统标题栏负责宽高/全屏 */
@@ -83,9 +112,14 @@
       store.jumpView = 'pinboard'
       if (!cardId && !pinboardBusy()) void reloadPinboard()
     })
-    void store.bootstrap().catch((e) => {
-      console.error('bootstrap 失败', e)
-      store.lastStatus = `启动失败：${(e as Error).message}`
+    /* 会话凭证失效（别处登出/格式化）：回登录页 */
+    const onAuthExpired = () => {
+      clearToken()
+      authed = false
+    }
+    window.addEventListener('ez-auth-expired', onAuthExpired)
+    void checkAuth().then(() => {
+      if (authed) startApp()
     })
     // 窗口重新聚焦时刷新（skill/MCP 可能在别的窗口或本机文件系统被改；
     // 后台分支的运行/审批状态不经当前 SSE，聚焦时拉取）
@@ -96,7 +130,10 @@
       }
     }
     window.addEventListener('focus', onFocus)
-    return () => window.removeEventListener('focus', onFocus)
+    return () => {
+      window.removeEventListener('focus', onFocus)
+      window.removeEventListener('ez-auth-expired', onAuthExpired)
+    }
   })
 
   /* 便签落盘级撤销/重做（Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y）：焦点不在
@@ -152,6 +189,8 @@
       <BrowserPane active={true} />
     {/if}
   </div>
+{:else if !authed}
+  <LoginView onDone={startApp} />
 {:else}
 <div class="shell">
   <TitleBar onNavigate={(v) => (view = v as typeof view)} sidebarWidth={expanded ? 176 : 64} />

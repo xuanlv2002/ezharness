@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte'
-  import { api, type ApproveLevel } from '../lib/api'
+  import { api, type ApproveLevel, type AuthSession, type OpenapiAuditEntry, type OpenapiToken } from '../lib/api'
 
   /* 安全：agent 操作管控（一行一策略，键=工具名或"工具名:action"；三类名单 + 档位），保存即时生效 */
   type Level = ApproveLevel
@@ -138,7 +138,77 @@
       message = '策略加载失败（后端不可达）'
     }
     loaded = true
+    void loadCreds()
   })
+
+  /* ---- 凭证管理：OpenAPI 令牌 / 登录会话 / 审计 ---- */
+  let oaTokens = $state<OpenapiToken[]>([])
+  let sessions = $state<AuthSession[]>([])
+  let audit = $state<OpenapiAuditEntry[]>([])
+  let newOaName = $state('')
+  let creatingOa = $state(false)
+  let copiedOa = $state('')
+  let credMsg = $state('')
+
+  async function loadCreds(): Promise<void> {
+    try {
+      const [t, s, a] = await Promise.all([api.openapiTokens(), api.authSessions(), api.openapiAudit()])
+      oaTokens = [...t.tokens].reverse()
+      sessions = [...s.sessions].reverse()
+      audit = a.entries
+    } catch {
+      credMsg = '凭证信息加载失败'
+    }
+  }
+
+  async function createOa(): Promise<void> {
+    if (creatingOa) return
+    creatingOa = true
+    credMsg = ''
+    try {
+      await api.createOpenapiToken(newOaName.trim())
+      newOaName = ''
+      await loadCreds()
+    } catch (e) {
+      credMsg = `生成失败：${(e as Error).message}`
+    } finally {
+      creatingOa = false
+    }
+  }
+
+  async function revokeOa(id: string): Promise<void> {
+    try {
+      await api.revokeOpenapiToken(id)
+      await loadCreds()
+    } catch (e) {
+      credMsg = `吊销失败：${(e as Error).message}`
+    }
+  }
+
+  async function revokeSession(id: string): Promise<void> {
+    try {
+      await api.revokeSession(id)
+      await loadCreds()
+    } catch (e) {
+      credMsg = `吊销失败：${(e as Error).message}`
+    }
+  }
+
+  async function copyText(val: string, mark: string): Promise<void> {
+    await navigator.clipboard.writeText(val).catch(() => {})
+    copiedOa = mark
+    setTimeout(() => (copiedOa = ''), 1500)
+  }
+
+  const CLIENT_LABELS: Record<string, string> = { desktop: '桌面端', web: '浏览器', cli: '终端' }
+  function clientLabel(name: string): string {
+    return CLIENT_LABELS[name] || name || '未知端'
+  }
+
+  const fmtTime = (iso: string) => {
+    const d = new Date(iso)
+    return Number.isNaN(d.getTime()) ? iso : d.toLocaleString('zh-CN', { hour12: false })
+  }
 
   /* save 自动保存（档位/名单变更即时提交）。 */
   async function save() {
@@ -273,10 +343,13 @@
 
   <section>
     <div class="section-head">
-      <h2
-        title="多数工具两档：每次审批 / 全部免审。终端命令与 MCP 可配黑白名单（白名单按前缀命中放行，黑名单按包含命中拦下审批）；写文件可配路径前缀白名单。合并式工具（term_action、browser_action）先展开逐 action 单独配档，也可以直接用工具行右边的「全部审批 / 全部免审」一键定。变更自动保存。"
-        >工具审批策略</h2
-      >
+      <div>
+        <h2
+          title="多数工具两档：每次审批 / 全部免审。终端命令与 MCP 可配黑白名单（白名单按前缀命中放行，黑名单按包含命中拦下审批）；写文件可配路径前缀白名单。合并式工具（term_action、browser_action）先展开逐 action 单独配档，也可以直接用工具行右边的「全部审批 / 全部免审」一键定。变更自动保存。"
+          >工具审批策略</h2
+        >
+        <p class="section-desc">决定 agent 哪些操作要先征得同意；改动即时保存。</p>
+      </div>
       {#if saving}
         <span class="saving">保存中…</span>
       {/if}
@@ -295,6 +368,7 @@
           <div class="group">
             <div class="group-head">
               <h3 title={g.desc}>{g.label}</h3>
+              <span class="group-desc">{g.desc}</span>
             </div>
             <div class="list">
               {#each sectionsOf(groupRules) as sec (sec.simple ? `one:${sec.base}` : `actions:${sec.base}`)}
@@ -334,6 +408,118 @@
       {/each}
     {/if}
   </section>
+
+  <section>
+    <div class="section-head">
+      <div>
+        <h2 title="给脚本、快应用、外部程序调 /api/open/* 用的令牌（请求头 EzHarnessOpenToken）。多枚可命名，吊销即失效；终端脚本也可读环境变量 EZHARNESS_OPENAPI_TOKEN（最新一枚）。"
+          >OpenAPI 令牌<span class="count">{oaTokens.length}</span></h2
+        >
+        <p class="section-desc">给脚本、快应用和外部程序调用 /api/open/*；生成后放进请求头 EzHarnessOpenToken。</p>
+      </div>
+    </div>
+    {#if credMsg}
+      <p class="msg">{credMsg}</p>
+    {/if}
+    <div class="panel">
+      <div class="create-row">
+        <input type="text" bind:value={newOaName} placeholder="令牌名称，如 番茄钟后端" />
+        <button class="primary" disabled={creatingOa} onclick={() => void createOa()}>{creatingOa ? '生成中…' : '生成'}</button>
+      </div>
+      {#if oaTokens.length}
+        <ul class="rows">
+          {#each oaTokens as t (t.id)}
+            <li class="row">
+              <div class="row-main">
+                <span class="token-name">{t.name || '未命名'}</span>
+                <span class="token">{t.token.slice(0, 10)}…</span>
+              </div>
+              <div class="row-meta">
+                <span>创建于 {fmtTime(t.created_at)}</span>
+              </div>
+              <div class="row-actions">
+                <button class="mini" onclick={() => void copyText(t.token, t.id)}>{copiedOa === t.id ? '已复制' : '复制'}</button>
+                <button class="mini danger" onclick={() => void revokeOa(t.id)}>吊销</button>
+              </div>
+            </li>
+          {/each}
+        </ul>
+      {:else}
+        <p class="empty">还没有令牌。需要时在上方生成一枚。</p>
+      {/if}
+    </div>
+  </section>
+
+  <section>
+    <div class="section-head">
+      <div>
+        <h2 title="每个端（desktop/cli/浏览器）登录后各持一枚会话令牌，持久有效；吊销后该端下次访问需重新登录。"
+          >登录会话<span class="count">{sessions.length}</span></h2
+        >
+        <p class="section-desc">每个端登录一次就多一枚；看客户端、来源 IP 和登录时间，吊销后该端需要重新登录。</p>
+      </div>
+      <button class="mini" onclick={() => void loadCreds()}>刷新</button>
+    </div>
+    <div class="panel">
+      {#if sessions.length}
+        <ul class="rows">
+          {#each sessions as s (s.id)}
+            <li class="row">
+              <div class="row-main">
+                <span class="badge">{clientLabel(s.name)}</span>
+                <span class="sid">#{s.id}</span>
+              </div>
+              <div class="row-meta">
+                <span>{s.ip || '来源未知'}</span>
+                <span class="sep">·</span>
+                <span>{fmtTime(s.created_at)}</span>
+              </div>
+              <div class="row-actions">
+                <button class="mini danger" onclick={() => void revokeSession(s.id)}>吊销</button>
+              </div>
+            </li>
+          {/each}
+        </ul>
+      {:else}
+        <p class="empty">暂无登录会话。</p>
+      {/if}
+    </div>
+  </section>
+
+  <section>
+    <div class="section-head">
+      <div>
+        <h2 title="/api/open/* 的每笔调用（含被拒的 401）都落审计：谁（令牌）、何时、调了什么、结果如何。"
+          >OpenAPI 调用审计<span class="count">{audit.length}</span></h2
+        >
+        <p class="section-desc">/api/open/* 的每笔调用都记一笔，含被拒的 401。</p>
+      </div>
+      <button class="mini" onclick={() => void loadCreds()}>刷新</button>
+    </div>
+    <div class="panel">
+      {#if audit.length}
+        <ul class="rows">
+          {#each audit as e, i (e.time + e.path + i)}
+            <li class="row">
+              <div class="row-main">
+                <span class="method">{e.method}</span>
+                <span class="path">{e.path}</span>
+              </div>
+              <div class="row-meta">
+                <span class="badge">{e.token_name || '未知'}</span>
+                <span>{fmtTime(e.time)}</span>
+              </div>
+              <div class="row-actions">
+                <span class="status" class:bad={e.status >= 400}>{e.status}</span>
+              </div>
+            </li>
+          {/each}
+        </ul>
+      {:else}
+        <p class="empty">暂无调用记录。</p>
+      {/if}
+    </div>
+  </section>
 </div>
 
 <style>
@@ -359,11 +545,22 @@
   section {
     display: flex;
     flex-direction: column;
-    gap: 10px;
+    gap: 12px;
   }
   h2 {
-    font-size: var(--font-size-section);
+    font-size: var(--font-size-body);
     font-weight: 600;
+    color: var(--fg);
+  }
+  .count {
+    margin-left: 7px;
+    font-size: var(--font-size-small);
+    font-weight: 500;
+    color: var(--faint);
+  }
+  .section-desc {
+    margin-top: 2px;
+    font-size: var(--font-size-ui);
     color: var(--muted);
   }
   .hint {
@@ -373,10 +570,15 @@
   }
   .section-head {
     display: flex;
-    align-items: center;
+    align-items: flex-end;
     justify-content: space-between;
+    gap: 12px;
+  }
+  .section-head > div {
+    min-width: 0;
   }
   .saving {
+    flex: none;
     font-size: var(--font-size-ui);
     color: var(--faint);
   }
@@ -394,13 +596,27 @@
   .group-head {
     display: flex;
     align-items: baseline;
-    gap: 10px;
+    gap: 8px;
     padding: 0 2px;
   }
   .group-head h3 {
     font-size: var(--font-size-ui);
     font-weight: 700;
     color: var(--fg);
+  }
+  .group-head h3::before {
+    content: '';
+    display: inline-block;
+    width: 5px;
+    height: 5px;
+    margin-right: 6px;
+    border-radius: 50%;
+    background: var(--faint);
+    vertical-align: 1px;
+  }
+  .group-desc {
+    font-size: var(--font-size-small);
+    color: var(--faint);
   }
   .list {
     display: flex;
@@ -438,6 +654,10 @@
     justify-content: space-between;
     gap: 16px;
     padding: 10px 14px;
+    transition: background var(--dur-fast) var(--ease-out);
+  }
+  .rule:hover {
+    background: var(--bg-soft);
   }
   .rule-wrap.sub .rule {
     padding-left: 26px;
@@ -572,5 +792,177 @@
   .add-btn:disabled {
     opacity: 0.4;
     cursor: default;
+  }
+
+  /* 凭证管理（令牌/会话/审计）：一条条可读的行，不用小号表格 */
+  .panel {
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    overflow: hidden;
+  }
+  .create-row {
+    display: flex;
+    gap: 8px;
+    padding: 10px 12px;
+  }
+  .create-row + .rows,
+  .create-row + .empty {
+    border-top: 1px solid var(--line);
+  }
+  .create-row input {
+    flex: 1;
+    min-width: 0;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 7px 10px;
+    background: var(--bg);
+    color: var(--fg);
+    font-size: var(--font-size-ui);
+    outline: none;
+    transition: border-color var(--dur-fast) var(--ease-out);
+  }
+  .create-row input:focus {
+    border-color: var(--line-strong);
+  }
+  .create-row input::placeholder {
+    color: var(--faint);
+  }
+  .primary {
+    flex: none;
+    border: 1px solid var(--line-strong);
+    background: var(--bg-invert);
+    color: var(--fg-invert);
+    border-radius: 8px;
+    padding: 0 14px;
+    font-size: var(--font-size-ui);
+    font-weight: 500;
+  }
+  .primary:disabled {
+    opacity: 0.5;
+    cursor: default;
+  }
+  .rows {
+    list-style: none;
+    display: flex;
+    flex-direction: column;
+  }
+  .row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 3px 12px;
+    padding: 10px 12px;
+  }
+  .row + .row {
+    border-top: 1px solid var(--line);
+  }
+  .row-main {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+  }
+  .row-meta {
+    grid-column: 1;
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 6px;
+    min-width: 0;
+    font-size: var(--font-size-small);
+    color: var(--faint);
+  }
+  .row-actions {
+    grid-column: 2;
+    grid-row: 1 / span 2;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .token-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-family: var(--font-ui);
+    font-size: var(--font-size-ui);
+    font-weight: 500;
+    color: var(--fg);
+  }
+  .badge {
+    flex: none;
+    display: inline-flex;
+    align-items: center;
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    padding: 1px 8px;
+    background: var(--bg-soft);
+    font-size: var(--font-size-small);
+    color: var(--muted);
+  }
+  .sid,
+  .token,
+  .method,
+  .path {
+    font-family: var(--font-mono);
+  }
+  .sid {
+    font-size: var(--font-size-small);
+    color: var(--faint);
+  }
+  .token {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: var(--font-size-small);
+    color: var(--muted);
+  }
+  .method {
+    flex: none;
+    font-size: var(--font-size-small);
+    color: var(--faint);
+  }
+  .path {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: var(--font-size-small);
+    color: var(--fg);
+  }
+  .status {
+    font-family: var(--font-mono);
+    font-size: var(--font-size-small);
+    color: var(--muted);
+  }
+  .status.bad {
+    color: var(--danger);
+  }
+  .sep {
+    color: var(--line);
+  }
+  .empty {
+    padding: 14px 12px;
+    font-size: var(--font-size-small);
+    color: var(--faint);
+  }
+  .mini {
+    flex: none;
+    border: 1px solid var(--line);
+    background: transparent;
+    color: var(--fg);
+    border-radius: 6px;
+    font-size: var(--font-size-small);
+    padding: 3px 9px;
+    cursor: pointer;
+    transition:
+      border-color var(--dur-fast) var(--ease-out),
+      color var(--dur-fast) var(--ease-out);
+  }
+  .mini:hover {
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+  .mini.danger:hover {
+    border-color: var(--danger);
+    color: var(--danger);
   }
 </style>

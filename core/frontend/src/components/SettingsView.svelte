@@ -2,7 +2,6 @@
   import { onMount } from 'svelte'
   import pkg from '../../package.json'
   import { api, type AppConfig } from '../lib/api'
-  import { getToken } from '../lib/auth'
   import { store } from '../lib/store.svelte'
 
   const ez = (window as any).ez
@@ -10,7 +9,6 @@
   /* 设置页 = 应用结构配置（服务端）+ 上下文管理 + 数据/配置文件路径。 */
   let cfg = $state<AppConfig | null>(null)
   let port = $state<number | ''>('')
-  let listen = $state('')
   /* 数据目录不可改（挪盘走 ezharness.json 手改）：仅供 resolveWorkDir 解析相对工作目录 */
   let dataDir = $state('')
   let restarting = $state(false)
@@ -69,12 +67,6 @@
     checking = false
   }
 
-  /* 会话令牌（前端↔core；展示 + 复制）与 OpenAPI 令牌（脚本/快应用用；展示 + 复制 + 重置） */
-  let apiToken = $state('')
-  let oaToken = $state('')
-  let copied = $state<'' | 'api' | 'oa'>('')
-  let oaResetting = $state(false)
-
   /* 单轮最大迭代次数（模型工具循环上限；0 = 默认 64，上限 128，随 Reassemble 生效） */
   let iters = $state<number | ''>('')
   let origIters = $state<number | null>(null)
@@ -113,7 +105,6 @@
     try {
       cfg = await api.appConfig()
       port = cfg.port
-      listen = cfg.listen
       dataDir = cfg.dataDir
       appChanged = false
     } catch {
@@ -140,8 +131,6 @@
     } catch {
       /* 上下文配置加载失败不阻塞页面 */
     }
-    api.appToken().then((r) => (apiToken = r.token)).catch(() => {})
-    api.openapiToken().then((r) => (oaToken = r.token)).catch(() => {})
     ez?.autolaunch
       ?.get?.()
       .then((r: any) => {
@@ -150,32 +139,6 @@
       })
       .catch(() => {})
   })
-
-  /* 复制令牌：clipboard 失败（非安全上下文等）时选中文本让用户 Ctrl+C。 */
-  async function copyToken(input: HTMLInputElement, kind: 'api' | 'oa') {
-    const val = kind === 'api' ? apiToken : oaToken
-    if (!val) return
-    try {
-      await navigator.clipboard.writeText(val)
-      copied = kind
-      setTimeout(() => (copied = ''), 1500)
-    } catch {
-      input.select()
-    }
-  }
-
-  /* 重置 OpenAPI 令牌：旧令牌即时作废，硬编码它的快应用/脚本需重新生成 */
-  async function resetOaToken() {
-    oaResetting = true
-    try {
-      const r = await api.resetOpenapiToken()
-      oaToken = r.token
-    } catch {
-      /* 失败保持现状，下次进页面重查 */
-    } finally {
-      oaResetting = false
-    }
-  }
 
   async function saveTray(v: boolean) {
     savingTray = true
@@ -258,7 +221,7 @@
   }
 
   function checkChanged() {
-    appChanged = !!cfg && (String(port) !== String(cfg.port) || listen.trim() !== cfg.listen)
+    appChanged = !!cfg && String(port) !== String(cfg.port)
   }
 
   async function saveThreshold() {
@@ -335,14 +298,11 @@
         if (h.boot !== res.boot) continue
         if (res.url === location.origin) location.reload()
         else {
-          /* 换端口跳转：cookie 按 host 生效（不看端口），同 host 无需再带令牌；
-             跨 host（如 Vite dev 的 localhost 页面跳到 127.0.0.1）才带一次引导令牌 */
+          /* 换端口 = 换 origin：localStorage 里的令牌不复用（令牌只在请求头
+             里走，不进 URL）。cookie 按 host 生效，同 host 的只读请求仍通；
+             写接口会 401，登录门随即让用户重新登录 */
           const q = new URLSearchParams()
           if (new URLSearchParams(location.search).has('desktop')) q.set('desktop', '1')
-          if (new URL(res.url).hostname !== location.hostname) {
-            const t = getToken()
-            if (t) q.set('token', t)
-          }
           const qs = q.toString()
           location.assign(`${res.url}/${qs ? `?${qs}` : ''}`)
         }
@@ -358,9 +318,8 @@
     restarting = true
     restartErr = ''
     try {
-      const req: { port?: number; listen?: string } = {}
+      const req: { port?: number } = {}
       if (String(port) !== String(cfg?.port)) req.port = Number(port)
-      if (listen.trim() !== cfg?.listen) req.listen = listen.trim()
       const res = await api.appRestart(req)
       if (!(await followNewGeneration(res))) restartErr = '等待新服务超时，请手动刷新页面'
     } catch (e) {
@@ -375,12 +334,8 @@
   <h1>设置</h1>
 
   <section id="set-server">
-    <h2 title="监听与端口是启动期配置，修改后需点「应用并重启」换代（进程内完成）；其余设置保存即生效，无需重启。监听 127.0.0.1 = 仅本机访问（默认，无防火墙弹窗），0.0.0.0 = 局域网可达（会触发防火墙授权）。数据目录挪盘：手改 ezharness.json 的 dataDir 后重启应用。">服务端配置</h2>
+    <h2 title="端口是启动期配置，修改后需点「应用并重启」换代（进程内完成）；其余设置保存即生效，无需重启。监听一律 127.0.0.1 仅本机。数据目录挪盘：手改 ezharness.json 的 dataDir 后重启应用。">服务端配置</h2>
     <div class="grid2">
-      <label class="field">
-        <span>监听地址</span>
-        <input type="text" bind:value={listen} oninput={checkChanged} placeholder={cfg?.listen ?? '127.0.0.1'} />
-      </label>
       <label class="field">
         <span>端口</span>
         <input type="number" bind:value={port} oninput={checkChanged} min="1" max="65535" />
@@ -392,25 +347,6 @@
     {#if restartErr}
       <p class="err">{restartErr}</p>
     {/if}
-    <label class="field">
-      <span>会话令牌（本次启动内有效；REST/SSE 用 X-EZ-Token 头，浏览器自动发起的导航、图片、PDF 请求用 ez_token cookie）</span>
-      <span class="tokenRow">
-        <input type="text" bind:value={apiToken} readonly placeholder="加载中…" />
-        <button onclick={(e) => copyToken((e.currentTarget as HTMLButtonElement).previousElementSibling as HTMLInputElement, 'api')}>
-          {copied === 'api' ? '已复制' : '复制'}
-        </button>
-      </span>
-    </label>
-    <label class="field">
-      <span>OpenAPI 令牌（脚本/快应用/外部程序调 /api/open/* 用；持久有效，重置后旧令牌立即作废）</span>
-      <span class="tokenRow">
-        <input type="text" bind:value={oaToken} readonly placeholder="加载中…" />
-        <button onclick={(e) => copyToken((e.currentTarget as HTMLButtonElement).previousElementSibling as HTMLInputElement, 'oa')}>
-          {copied === 'oa' ? '已复制' : '复制'}
-        </button>
-        <button onclick={resetOaToken} disabled={oaResetting || !oaToken}>{oaResetting ? '重置中…' : '重置'}</button>
-      </span>
-    </label>
   </section>
 
   <section id="set-context">
