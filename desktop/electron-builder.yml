@@ -1,18 +1,25 @@
-# ezharness desktop 打包配置：win NSIS+绿色版 / mac dmg / linux AppImage，内嵌 core exe
-# 本地构建走 script/build.bat（win）；三平台自动构建走 .github/workflows/build.yml
+# ezharness desktop 打包配置：win NSIS+绿色版 / mac dmg / linux AppImage。
+# 本地构建走 script/build.bat（win）；三平台自动构建走 .github/workflows/build.yml。
 appId: com.ezharness.desktop
 productName: ezharness
+# 桌面端 exe 名：安装目录里三 exe 并排（ezharness.exe 是 CLI），productName
+# 不动——它决定 userData 目录名，改了会丢老数据与密码
+executableName: ezharness-desktop
 directories:
   output: ../release
 files:
   - src/**
   - package.json
-# core 打进 resources/（产物统一命名 ezharness-core.exe，三平台一致——spawn 与打包都认）。
-# 配置与数据不放安装目录（升级/卸载会整目录删除）：开发态在 release/dev/，
-# 便携版在 exe 同目录，安装版在系统用户数据目录（见 desktop/src/main/index.js rootDir）
-extraResources:
+# 三 exe 同放应用 exe 旁（extraFiles 落安装根目录，PATH 一条目录直达）；
+# tray 图标仍走 resources/。配置与数据不放安装目录（升级/卸载会整目录
+# 删除）：开发态在 release/dev/，便携版在 exe 同目录，安装版在系统用户
+# 数据目录（见 desktop/src/main/index.js rootDir）
+extraFiles:
   - from: ../release/dev/ezharness-core.exe
     to: ezharness-core.exe
+  - from: ../release/dev/ezharness.exe
+    to: ezharness.exe
+extraResources:
   - from: ../assets/icon.png
     to: icon.png
 win:
@@ -21,14 +28,15 @@ win:
     - portable
   # 图标用默认约定位置 desktop/build/icon.png（越出项目目录的路径 app-builder 不识别，会静默回落 Electron 默认图标）
 nsis:
-  # 升级前把旧版放在安装目录里的配置与数据预拷到用户数据目录
+  # 升级前把旧版放在安装目录里的配置与数据预拷到用户数据目录；装完后
+  # 把安装目录写进 HKCU PATH（ezharness 命令直达）
   include: build/installer.nsh
   oneClick: false
   allowToChangeInstallationDirectory: true
   perMachine: false
-  artifactName: ezharness-v${version}-setup.exe
+  artifactName: ezharness-desktop-v${version}-setup.exe
 portable:
-  artifactName: ezharness-v${version}.exe
+  artifactName: ezharness-desktop-v${version}.exe
 mac:
   target:
     - dmg
@@ -41,4 +49,4 @@ linux:
   target:
     - AppImage
   category: Utility
-  artifactName: ezharness-v${version}.AppImage
+  artifactName: ezharness-desktop-v${version}.AppImage

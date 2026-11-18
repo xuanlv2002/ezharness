@@ -2,13 +2,13 @@
 ezharness desktop：Electron 壳主进程——拉起 core sidecar，健康就绪后开主窗口加载 core 伺服的页面。
 core 是唯一业务后端，本进程只做壳与桌面资产，不做业务。
 */
-const { app, BrowserWindow, Tray, Menu, ipcMain, shell, nativeImage, screen, dialog, session } = require('electron')
+const { app, BrowserWindow, Tray, Menu, ipcMain, shell, nativeImage, screen, dialog } = require('electron')
 const path = require('path')
 const fs = require('fs')
 const http = require('http')
-const crypto = require('crypto')
+const https = require('https')
 const { spawn } = require('child_process')
-const { startBrowserModule, overlayBrowser } = require('./browser')
+const { startBrowserModule, overlayBrowser, reconnectBridge } = require('./browser')
 const { startPreviewModule, overlayPreview } = require('./preview')
 const { attachInspectMenu } = require('./inspect')
 
@@ -22,6 +22,8 @@ let coreProc = null
 let quitting = false
 let coreReady = false
 let corePort = 5260
+let activeBase = 'http://127.0.0.1:5260' // 当前连接的 core origin
+let customBase = '' // 登录页切过去的地址；空 = 本机自动发现（server.json）
 /* 桌面宠物：透明置顶小窗，固定 288×288 一次到位（不动态扩缩）。默认
    整窗鼠标穿透（透明区点击归下层应用）。悬浮/穿透判定：主进程 60ms 轮询
    把光标换算成窗口内坐标推给渲染层（ez:pet-move），渲染层用
@@ -42,44 +44,127 @@ const PANE_MIN_WIDTH = 640
 const PANE_MIN_HEIGHT = 480
 let petHoverTimer = null
 let petDrag = null // { dx, dy }：拖拽中光标与窗口左上角的偏移（JS 拖拽替代 app-region）
-/* API 令牌：每次启动随机生成，env 注入 core、URL query 带入页面。 */
-const coreToken = crypto.randomBytes(18).toString('hex')
+/* 会话令牌：登录后由页面经 ez:auth-token 交给主进程，存 <应用根>/session.json。
+   令牌持久（core 重启不换），主进程的浏览器桥/coreFetch 都用它；文件丢失 =
+   页面重新登录一次。 */
+let sessionToken = ''
+function loadSessionToken() {
+  try {
+    sessionToken = JSON.parse(fs.readFileSync(path.join(rootDir(), 'session.json'), 'utf8')).token || ''
+  } catch {
+    sessionToken = ''
+  }
+}
+function saveSessionToken(t) {
+  sessionToken = t || ''
+  try {
+    fs.writeFileSync(path.join(rootDir(), 'session.json'), JSON.stringify({ token: sessionToken }, null, 2))
+  } catch {
+    /* 只写内存：本次会话仍可用 */
+  }
+}
 let findBrowserPopout = () => null // registerIpc 注入：当前浏览器页的独立窗口（无则 null）
 
 /* 页面基地址：开发模式（EZHARNESS_DEV_URL=vite dev server）走热更页面
-   （其 /api 代理到 core），生产模式直接用 core 伺服的内嵌页面 */
+   （其 /api 代理到 core）；登录页显式切过服务器则用该地址，否则用本机
+   core。本机模式下每次取前重读 server.json，core 换端口后新窗口与桥跟着走。 */
 function pageBase() {
-  return process.env.EZHARNESS_DEV_URL || `http://127.0.0.1:${corePort}`
+  refreshActiveBase()
+  if (!customBase && process.env.EZHARNESS_DEV_URL) return process.env.EZHARNESS_DEV_URL
+  return activeBase
 }
 
-/* 页面地址：令牌不再进 URL，由 setCoreCookie 写进 HttpOnly cookie。 */
+/* apiBase 主进程访问 core 的真实地址（开发模式也不走 Vite 代理）。 */
+function apiBase() {
+  refreshActiveBase()
+  return activeBase
+}
+
+/* refreshActiveBase 未切服务器时跟随本机 server.json；切过就固定在其地址。 */
+function refreshActiveBase() {
+  if (customBase) return
+  refreshPort()
+  activeBase = `http://127.0.0.1:${corePort}`
+}
+
+/* normalizeBase 把登录页输入变成 origin：无协议默认 http、无端口默认 5260。 */
+function normalizeBase(raw) {
+  let s = String(raw || '').trim()
+  if (!s) return ''
+  const hasScheme = /^https?:\/\//i.test(s)
+  if (!hasScheme) s = 'http://' + s
+  let u
+  try {
+    u = new URL(s)
+  } catch {
+    return ''
+  }
+  if (u.protocol !== 'http:' && u.protocol !== 'https:') return ''
+  if (!hasScheme && !u.port) u.port = '5260'
+  return u.hostname ? u.origin : ''
+}
+
+/* probeBase 探活任意 core 地址（server.json 只描述本机实例）。 */
+function probeBase(base, timeoutMs = 1500) {
+  return new Promise((resolve) => {
+    let u
+    try {
+      u = new URL(base)
+    } catch {
+      resolve(false)
+      return
+    }
+    const mod = u.protocol === 'https:' ? https : http
+    const req = mod.get(
+      {
+        host: u.hostname.replace(/^\[|\]$/g, ''),
+        port: u.port || (u.protocol === 'https:' ? 443 : 80),
+        path: '/api/app/health',
+        timeout: timeoutMs,
+      },
+      (res) => {
+        let body = ''
+        res.setEncoding('utf8')
+        res.on('data', (chunk) => {
+          body += chunk
+        })
+        res.on('end', () => {
+          try {
+            resolve(res.statusCode === 200 && JSON.parse(body).ok === true)
+          } catch {
+            resolve(false)
+          }
+        })
+      },
+    )
+    req.on('error', () => resolve(false))
+    req.on('timeout', () => {
+      req.destroy()
+      resolve(false)
+    })
+  })
+}
+
+/* desktop.json 记住登录页切过去的服务器；空 = 本机自动发现。 */
+function loadCustomBase() {
+  try {
+    const doc = JSON.parse(fs.readFileSync(path.join(rootDir(), 'desktop.json'), 'utf8'))
+    return typeof doc.server === 'string' ? doc.server : ''
+  } catch {
+    return ''
+  }
+}
+function saveCustomBase() {
+  try {
+    fs.writeFileSync(path.join(rootDir(), 'desktop.json'), JSON.stringify({ server: customBase }, null, 2))
+  } catch {
+    /* 只影响下次启动是否记住地址 */
+  }
+}
+
+/* 页面地址：鉴权走页面自己的登录流程（令牌入 localStorage，cookie 由登录响应下发）。 */
 function pageUrl(suffix) {
   return `${pageBase()}${suffix}`
-}
-
-/*
-setCoreCookie 把 API 令牌写进默认会话的 HttpOnly cookie。浏览器自动发起的
-请求——页面导航、<img>/<video>/PDF、快应用页的 fetch——没法加自定义请求头，
-只能靠 cookie 鉴权；REST/SSE/WS 仍走 X-EZ-Token 头（或子协议）。
-*/
-async function setCoreCookie() {
-  let origin = ''
-  try {
-    origin = new URL(pageBase()).origin
-  } catch {
-    return
-  }
-  try {
-    await session.defaultSession.cookies.set({
-      url: `${origin}/`,
-      name: 'ez_token',
-      value: coreToken,
-      httpOnly: true,
-      sameSite: 'strict',
-    })
-  } catch {
-    /* 设置失败不阻塞启动：前端会再用入口令牌换一次 cookie */
-  }
 }
 
 /* failStart 打包环境没有终端可看：启动失败弹系统对话框，细节留在日志里。 */
@@ -104,30 +189,10 @@ function installAppMenu() {
 
 /* coreFetch 主进程访问 core API，统一带头。 */
 function coreFetch(pathname, opts = {}) {
-  return fetch(`http://127.0.0.1:${corePort}${pathname}`, {
+  return fetch(`${apiBase()}${pathname}`, {
     ...opts,
-    headers: { 'Content-Type': 'application/json', 'X-EZ-Token': coreToken, ...(opts.headers || {}) },
+    headers: { 'Content-Type': 'application/json', EzHarnessToken: sessionToken, ...(opts.headers || {}) },
   })
-}
-
-/* killCore 结束 core 及其全部子进程（Windows 用 taskkill /T 树杀）；
-   Unix 先 SIGTERM 让 core 走正常收尾（关终端 shell / MCP 子进程），
-   2 秒未退再 SIGKILL。 */
-function killCore() {
-  if (!coreProc || coreProc.killed) return
-  if (process.platform === 'win32') {
-    spawn('taskkill', ['/PID', String(coreProc.pid), '/T', '/F'], { windowsHide: true })
-    return
-  }
-  const pid = coreProc.pid
-  coreProc.kill('SIGTERM')
-  setTimeout(() => {
-    try {
-      process.kill(pid, 'SIGKILL')
-    } catch {
-      /* 已退出 */
-    }
-  }, 2000).unref()
 }
 
 /* guardWebContents 导航守卫：只许停留在 core origin，外部目标转系统浏览器。 */
@@ -157,11 +222,15 @@ function guardWebContents(wc) {
   })
 }
 
-/* core exe 所在目录：打包后在 resources/；开发模式在 release/dev/ */
+/*
+core exe 所在目录：打包后三 exe 同放应用根（安装器布局，PATH 直达）；
+开发模式在 release/dev/。mac 的 extraFiles 落 .app/Contents/，可执行文件
+在 Contents/MacOS/，所以 packaged 取 exe 目录的上一级。
+*/
 function coreDir() {
-  return app.isPackaged
-    ? process.resourcesPath
-    : path.join(path.resolve(__dirname, '../../..'), 'release', 'dev')
+  if (!app.isPackaged) return path.join(path.resolve(__dirname, '../../..'), 'release', 'dev')
+  const exeDir = path.dirname(process.execPath)
+  return process.platform === 'darwin' ? path.join(exeDir, '..') : exeDir
 }
 
 /*
@@ -264,10 +333,56 @@ function readCoreConfig() {
   }
 }
 
-/* startCore 拉起 core sidecar 并等健康就绪（30s 超时） */
-function startCore() {
+/*
+readServerInfo 读应用根的 server.json（core 常驻实例簿记）。端口以它
+为准（core 换端口重启后重读即跟随）；首次运行没有该文件，回落
+ezharness.json 的 port。
+*/
+function refreshPort() {
+  try {
+    const si = JSON.parse(fs.readFileSync(path.join(rootDir(), 'server.json'), 'utf8'))
+    if (si.port > 0) {
+      corePort = si.port
+      return
+    }
+  } catch {
+    /* 无 server.json：首次运行 */
+  }
   const cfg = readCoreConfig()
   corePort = cfg.port || 5260
+}
+
+/*
+ensureCore 附着或拉起 core 并等健康就绪（30s 超时）：登录页切过服务器
+（desktop.json）且可达就直接附着；否则回到本机 core——已在跑（可能是
+ezharness server / cli 拉起的）直接附着，没跑则 detached 拉起。core 不
+属于桌面壳，三端退出都不杀它（停止走 ezharness stop）。仅当本进程是
+拉起者时保留子进程句柄用于崩溃检测。
+*/
+async function ensureCore() {
+  const saved = loadCustomBase()
+  if (saved) {
+    if (await probeBase(saved, 3000)) {
+      customBase = saved
+      activeBase = saved
+      console.log(`core 已在运行（${saved}），附着`)
+      return
+    }
+    console.log(`记住的服务器不可达（${saved}），回到本机 core`)
+    customBase = ''
+    saveCustomBase()
+  }
+  refreshPort()
+  activeBase = `http://127.0.0.1:${corePort}`
+  if (await probeBase(activeBase)) {
+    console.log(`core 已在运行（${activeBase}），附着`)
+    return
+  }
+  return spawnCore(rootDir())
+}
+
+/* spawnCore detached 拉起 core 并等健康就绪（30s 超时）。 */
+function spawnCore(root) {
   const exe = process.env.EZHARNESS_CORE_EXE ||
     path.join(coreDir(), 'ezharness-core.exe')
   if (!fs.existsSync(exe)) {
@@ -275,7 +390,6 @@ function startCore() {
     app.quit()
     return Promise.reject(new Error('core missing'))
   }
-  const root = rootDir()
   try {
     fs.mkdirSync(root, { recursive: true })
   } catch (err) {
@@ -291,13 +405,12 @@ function startCore() {
       /* 只读挂载或权限不足：交给 spawn 报错 */
     }
   }
-  /* windowsHide：让 core 拿到一个隐藏控制台（非 Windows 忽略）——它 spawn 的
-     控制台程序（terminal 的 cmd.exe、taskkill、MCP server）继承该控制台，否则
-     Windows 会给每个子进程新开一个可见控制台，黑框一闪。stdio 仍走 inherit，
-     dev 下 core 日志照常出现在启动它的控制台里 */
+  /* detached + windowsHide：core 常驻（本进程退出不杀），并拿到隐藏控制台
+     （非 Windows 忽略）——它 spawn 的控制台程序继承该控制台，否则 Windows
+     会给每个子进程新开可见控制台，黑框一闪。日志走 core 自己的文件 */
   coreProc = spawn(exe, ['--root', root], {
-    cwd: root, stdio: 'inherit', windowsHide: true,
-    env: { ...process.env, PATH: loginPath(), EZHARNESS_TOKEN: coreToken },
+    cwd: root, stdio: 'ignore', detached: true, windowsHide: true,
+    env: { ...process.env, PATH: loginPath() },
   })
   coreProc.on('error', (err) => {
     console.error('core 启动失败:', err.message)
@@ -305,6 +418,7 @@ function startCore() {
     quitting = true
     app.quit()
   })
+  /* 本进程拉起的 core 崩溃：桌面壳报错退出（附着场景无句柄，由 ezharness server 兜） */
   coreProc.on('exit', (code) => {
     if (!quitting) {
       console.error('core 进程退出，桌面壳随之退出')
@@ -317,29 +431,27 @@ function startCore() {
   })
   const started = Date.now()
   return new Promise((resolve, reject) => {
-    const tick = () => {
-      if (quitting) return reject(new Error('quitting'))
-      const req = http.get({
-        host: '127.0.0.1', port: corePort, path: '/api/app/health', timeout: 1500,
-        headers: { 'X-EZ-Token': coreToken },
-      }, (res) => {
-        res.resume()
+    const tick = async () => {
+      if (quitting) {
+        reject(new Error('quitting'))
+        return
+      }
+      if (await probeBase(activeBase)) {
         coreReady = true
         resolve()
-      })
-      req.on('error', () => {
-        if (Date.now() - started > 30000) {
-          console.error('core 健康检查超时（30s）')
-          failStart(`core 30 秒内未就绪。\n请确认端口 ${corePort} 未被占用、数据目录可写：${root}\n日志：${path.join(root, 'data', 'logs')}`)
-          quitting = true
-          app.quit()
-          reject(new Error('health timeout'))
-        } else {
-          setTimeout(tick, 300)
-        }
-      })
+        return
+      }
+      if (Date.now() - started > 30000) {
+        console.error('core 健康检查超时（30s）')
+        failStart(`core 30 秒内未就绪。\n请确认端口 ${corePort} 未被占用、数据目录可写：${root}\n日志：${path.join(root, 'data', 'logs')}`)
+        quitting = true
+        app.quit()
+        reject(new Error('health timeout'))
+        return
+      }
+      setTimeout(tick, 300)
     }
-    tick()
+    void tick()
   })
 }
 
@@ -530,9 +642,9 @@ async function handleCloseRequest() {
   return { prompt: true }
 }
 
+/* quitApp 退出桌面壳。core 常驻单实例，不随壳退出——停止走 ezharness stop。 */
 function quitApp() {
   quitting = true
-  killCore()
   app.quit()
 }
 
@@ -645,7 +757,7 @@ function registerIpc() {
     }
   })
   /* 快应用子窗口：加载 core 同源页面，独立标题；右键可检查元素。
-     URL 自带受限令牌（主渲染层拼好），不能再补主令牌。 */
+     页面本身免鉴权，其 /api/open/* 调用带页面自己的 openapi 令牌或同源 cookie。 */
   ipcMain.on('ez:open-app', (_e, url, title) => {
     if (typeof url !== 'string' || !url.startsWith('/')) return
     const win = new BrowserWindow({
@@ -735,6 +847,9 @@ function registerIpc() {
   })
   /* 宠物 JS 拖拽：按下记光标与窗口左上角偏移
      （不用 app-region:drag——那会把右键变成系统窗口菜单） */
+  /* 页面登录/登出同步会话令牌：存 session.json 供主进程（浏览器桥/coreFetch）用 */
+  ipcMain.on('ez:auth-token', (_e, t) => saveSessionToken(typeof t === 'string' ? t : ''))
+
   ipcMain.on('ez:pet-drag', (_e, on) => {
     const win = petWindow
     if (!win || win.isDestroyed()) return
@@ -835,18 +950,48 @@ function registerIpc() {
     win.focus()
     win.webContents.send('ez:popout-signal', name, value)
   })
+  /* 登录页切换服务器：先探活目标 core，成功才改 base；页面收到 ok 后
+     自行跳转到新 origin（导航守卫已按新 base 放行）。旧会话令牌不属于
+     新 core，清掉；新页面会按自己 origin 的 localStorage 再同步一次。 */
+  ipcMain.handle('ez:server-get', () => ({ base: apiBase() }))
+  ipcMain.handle('ez:server-connect', async (e, raw) => {
+    const base = normalizeBase(raw)
+    if (!base) return { ok: false, error: '地址格式不对，例：localhost:5260' }
+    if (base === apiBase()) return { ok: true }
+    if (!(await probeBase(base, 3000))) {
+      return { ok: false, error: `连不上 ${base.replace(/^https?:\/\//, '')}` }
+    }
+    customBase = base
+    activeBase = base
+    saveCustomBase()
+    saveSessionToken('')
+    reconnectBridge()
+    /* 附属窗口还挂在旧 core 上：销毁，等新页面登录后按需重开 */
+    const sender = BrowserWindow.fromWebContents(e.sender)
+    for (const w of [petWindow, noticeWindow, pinWindow, ...popoutWindows.values()]) {
+      if (w && !w.isDestroyed() && w !== sender) w.destroy()
+    }
+    return { ok: true }
+  })
 }
 
 app.whenReady().then(async () => {
   installAppMenu()
   migrateLegacyRoot()
-  await startCore()
-  await setCoreCookie()
+  loadSessionToken()
+  await ensureCore()
   startPreviewModule()
+  registerIpc()
   createMainWindow()
   createTray()
-  registerIpc()
-  startBrowserModule({ corePort, token: coreToken, getParentWindow: () => mainWindow, findBrowserOwner: () => findBrowserPopout() })
+  startBrowserModule({
+    /* 桥断开后每 3s 重连一次：本机模式跟随 server.json，切过服务器则用
+       登录页选的地址 */
+    getBase: () => apiBase(),
+    getToken: () => sessionToken,
+    getParentWindow: () => mainWindow,
+    findBrowserOwner: () => findBrowserPopout(),
+  })
   /* 悬浮球默认开：读 petEnabled !== false（coreSettings 失败返回 {} 时也开） */
   const settings = await coreSettings()
   if (settings.petEnabled !== false) petWindow = createPetWindow()
@@ -865,5 +1010,4 @@ app.on('activate', () => {
 
 app.on('before-quit', () => {
   quitting = true
-  killCore()
 })
