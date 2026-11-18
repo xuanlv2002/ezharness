@@ -52,28 +52,30 @@ DEV_DIR="$ROOT/release/dev"
 CORE_EXE="$DEV_DIR/ezharness-core.exe"   # 内核按该文件名查找 core，macOS 下沿用
 
 if [ "$DO_BUILD" = 1 ]; then
-  # 版本覆盖：临时改 frontend/package.json 让 Vite 把指定版本打进产物，
+  # 版本覆盖：临时改 core/frontend/package.json 让 Vite 把指定版本打进产物，
   # 构建后立即还原（构建失败也还原——RC 延迟退出兜在还原之后）
   VER_PATCHED=0
   if [ -n "$DEV_VERSION" ]; then
     echo "[dev] 版本覆盖：v${DEV_VERSION}（仅本次构建产物，version.yaml 不动）"
-    cp frontend/package.json frontend/package.json.devbak
+    cp core/frontend/package.json core/frontend/package.json.devbak
     VER_PATCHED=1
-    node -e 'const fs=require("fs");const p="frontend/package.json";const j=JSON.parse(fs.readFileSync(p,"utf8"));j.version="v"+process.argv[1];fs.writeFileSync(p,JSON.stringify(j,null,2)+"\n")' "$DEV_VERSION"
+    node -e 'const fs=require("fs");const p="core/frontend/package.json";const j=JSON.parse(fs.readFileSync(p,"utf8"));j.version="v"+process.argv[1];fs.writeFileSync(p,JSON.stringify(j,null,2)+"\n")' "$DEV_VERSION"
   fi
   echo "[dev] building frontend..."
   RC=0
-  ( cd frontend && npm run build ) || RC=$?
-  if [ "$VER_PATCHED" = 1 ]; then mv frontend/package.json.devbak frontend/package.json; fi
+  ( cd core/frontend && npm run build ) || RC=$?
+  if [ "$VER_PATCHED" = 1 ]; then mv core/frontend/package.json.devbak core/frontend/package.json; fi
   if [ "$RC" != 0 ]; then exit "$RC"; fi
 
   echo "[dev] copying dist -> core/web/dist..."
   rm -rf core/web/dist
-  cp -R frontend/dist core/web/dist
+  cp -R core/frontend/dist core/web/dist
 
   echo "[dev] building core..."
   mkdir -p "$DEV_DIR"
   ( cd core && go build -o "$CORE_EXE" . )
+  echo "[dev] building cli..."
+  ( cd cli && go build -o "$DEV_DIR/ezharness.exe" . )
 else
   if [ -n "$DEV_VERSION" ]; then
     echo "[dev] --version 只在构建时生效（--no-build 跳过了构建，忽略）"
@@ -88,7 +90,6 @@ mkdir -p "$DEV_DIR/data"
 cat > "$DEV_DIR/ezharness.json" <<EOF
 {
   "port": $PORT,
-  "listen": "127.0.0.1",
   "dataDir": "$DEV_DIR/data"
 }
 EOF

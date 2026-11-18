@@ -13,7 +13,8 @@ if (!dir) {
 const exts = ['.exe', '.dmg', '.AppImage']
 const files = fs
   .readdirSync(dir)
-  .filter((f) => exts.some((e) => f.endsWith(e)))
+  // 裸名 ezharness / ezharness-core 是 linux/mac 的直接下载入口（无扩展名）
+  .filter((f) => f === 'ezharness' || f === 'ezharness-core' || exts.some((e) => f.endsWith(e)))
   .filter((f) => fs.statSync(path.join(dir, f)).isFile())
   .sort()
 

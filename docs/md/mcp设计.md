@@ -64,7 +64,7 @@ MCP 让 agent 接入外部工具服务器。ezharness 除了把 MCP 工具交给
 
 ## 四、对外暴露的 API
 
-直调 MCP、模型与多媒体生成的能力在 OpenAPI 面 `/api/open/*`：跨源放行，鉴权用 `X-EZ-Open-Token: <openapi 令牌>`（或会话凭证）。令牌怎么取、CORS 细节、路由两面模型见[认证与 OpenAPI](认证与openapi.md)。
+直调 MCP、模型与多媒体生成的能力在 OpenAPI 面 `/api/open/*`：跨源放行，鉴权用 `EzHarnessOpenToken: <openapi 令牌>`（或会话凭证）。令牌怎么取、CORS 细节、路由两面模型见[认证与 OpenAPI](认证与openapi.md)。
 
 ### 4.1 直调 MCP 工具
 
@@ -134,7 +134,7 @@ POST /api/open/model/call
 ## 五、一个最小调用示例
 
 ```bash
-curl -s -H "X-EZ-Open-Token: $EZHARNESS_OPENAPI_TOKEN" \
+curl -s -H "EzHarnessOpenToken: $EZHARNESS_OPENAPI_TOKEN" \
   -H 'Content-Type: application/json' \
   -d '{"server":"filesystem","tool":"read_text_file","args":{"path":"D:/work/README.md"}}' \
   http://127.0.0.1:5260/api/open/mcp/call

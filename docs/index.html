@@ -476,9 +476,10 @@
       <div class="section-head">
         <div class="kicker">设计文档</div>
         <h2>每个机制的取舍与边界</h2>
-        <p>十二篇文档按主题拆开，需要时再深入；设计理念已在上方。</p>
+        <p>十三篇文档按主题拆开，需要时再深入；设计理念已在上方。</p>
       </div>
       <div class="doc-grid">
+        <a class="doc-card" href="#doc=三分架构"><span class="n">01</span><span class="body"><div class="t">三分架构</div><div class="d">三 exe、常驻 core、认证与浏览器双后端</div></span></a>
         <a class="doc-card" href="#doc=模型配置"><span class="n">02</span><span class="body"><div class="t">模型配置</div><div class="d">主模型、会话级偏好与用量</div></span></a>
         <a class="doc-card" href="#doc=多媒体"><span class="n">03</span><span class="body"><div class="t">多媒体生成</div><div class="d">生成模型、工作台、异步任务与配额</div></span></a>
         <a class="doc-card" href="#doc=session设计"><span class="n">04</span><span class="body"><div class="t">session 管理</div><div class="d">节点与线、分叉、归档与不丢档</div></span></a>
@@ -511,6 +512,7 @@
 <section id="docview" hidden>
   <div class="doc-wrap">
     <nav class="doc-tabs" id="docTabs">
+      <a href="#doc=三分架构" data-doc="三分架构">三分架构</a>
       <a href="#doc=模型配置" data-doc="模型配置">模型配置</a>
       <a href="#doc=多媒体" data-doc="多媒体">多媒体生成</a>
       <a href="#doc=session设计" data-doc="session设计">session 管理</a>
@@ -538,6 +540,7 @@
 <script src="assets/marked.umd.js"></script>
 <script>
   const DOCS = {
+    三分架构: { n: '01', title: '三分架构' },
     模型配置: { n: '02', title: '模型配置' },
     多媒体: { n: '03', title: '多媒体生成' },
     session设计: { n: '04', title: 'session 管理' },

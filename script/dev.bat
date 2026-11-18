@@ -24,24 +24,30 @@ goto parse
 
 if not defined DEV_VERSION goto no_ver
 echo [dev] 版本覆盖: v%DEV_VERSION% （仅本次构建产物，version.yaml 不动）
-copy /y "%ROOT%\frontend\package.json" "%ROOT%\frontend\package.json.devbak" >nul
-node -e "const fs=require('fs');const p='frontend/package.json';const j=JSON.parse(fs.readFileSync(p,'utf8'));j.version='v'+process.argv[1];fs.writeFileSync(p,JSON.stringify(j,null,2)+'\n')" %DEV_VERSION%
+copy /y "%ROOT%\core\frontend\package.json" "%ROOT%\core\frontend\package.json.devbak" >nul
+node -e "const fs=require('fs');const p='core/frontend/package.json';const j=JSON.parse(fs.readFileSync(p,'utf8'));j.version='v'+process.argv[1];fs.writeFileSync(p,JSON.stringify(j,null,2)+'\n')" %DEV_VERSION%
 :no_ver
 
 echo [dev] building frontend...
-cd frontend
+cd core\frontend
 call npm run build
 set "RC=%errorlevel%"
 cd /d "%ROOT%"
-if exist "%ROOT%\frontend\package.json.devbak" move /y "%ROOT%\frontend\package.json.devbak" "%ROOT%\frontend\package.json" >nul
+if exist "%ROOT%\core\frontend\package.json.devbak" move /y "%ROOT%\core\frontend\package.json.devbak" "%ROOT%\core\frontend\package.json" >nul
 if not "%RC%"=="0" exit /b %RC%
 
-powershell -NoProfile -Command "Remove-Item -Recurse -Force core/web/dist -ErrorAction SilentlyContinue; Copy-Item -Recurse frontend/dist core/web/dist"
+powershell -NoProfile -Command "Remove-Item -Recurse -Force core/web/dist -ErrorAction SilentlyContinue; Copy-Item -Recurse core/frontend/dist core/web/dist"
 
 echo [dev] building core...
 if not exist release\dev mkdir release\dev
 cd core
 go build -o ..\release\dev\ezharness-core.exe .
+if errorlevel 1 exit /b 1
+cd ..
+
+echo [dev] building cli...
+cd cli
+go build -o ..\release\dev\ezharness.exe .
 if errorlevel 1 exit /b 1
 cd ..
 
