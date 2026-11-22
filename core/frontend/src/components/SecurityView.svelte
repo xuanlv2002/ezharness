@@ -148,9 +148,11 @@
   let oaTokens = $state<OpenapiToken[]>([])
   let sessions = $state<AuthSession[]>([])
   let audit = $state<OpenapiAuditEntry[]>([])
-  const SESSION_PREVIEW = 5
+  const LIST_PREVIEW = 5
   let sessionsExpanded = $state(false)
-  const visibleSessions = $derived(sessionsExpanded ? sessions : sessions.slice(0, SESSION_PREVIEW))
+  const visibleSessions = $derived(sessionsExpanded ? sessions : sessions.slice(0, LIST_PREVIEW))
+  let auditExpanded = $state(false)
+  const visibleAudit = $derived(auditExpanded ? audit : audit.slice(0, LIST_PREVIEW))
   let newOaName = $state('')
   let creatingOa = $state(false)
   let copiedOa = $state('')
@@ -492,7 +494,7 @@
             </li>
           {/each}
         </ul>
-        {#if sessions.length > SESSION_PREVIEW}
+        {#if sessions.length > LIST_PREVIEW}
           <button class="more" onclick={() => (sessionsExpanded = !sessionsExpanded)}>
             {sessionsExpanded ? '收起' : `展开全部 ${sessions.length} 条`}
           </button>
@@ -516,7 +518,7 @@
     <div class="panel">
       {#if audit.length}
         <ul class="rows">
-          {#each audit as e, i (e.time + e.path + i)}
+          {#each visibleAudit as e, i (e.time + e.path + i)}
             <li class="row">
               <div class="row-main">
                 <span class="method">{e.method}</span>
@@ -532,6 +534,11 @@
             </li>
           {/each}
         </ul>
+        {#if audit.length > LIST_PREVIEW}
+          <button class="more" onclick={() => (auditExpanded = !auditExpanded)}>
+            {auditExpanded ? '收起' : `展开全部 ${audit.length} 条`}
+          </button>
+        {/if}
       {:else}
         <p class="empty">暂无调用记录。</p>
       {/if}
