@@ -401,7 +401,7 @@
       </span>
       {#if cfg && !coreStopped && !coreOffline}
         <span class="coredetail">
-          v{cfg.version} · 127.0.0.1:{cfg.port} · PID {cfg.pid} · 第 {cfg.boot} 代 · 已运行
+          v{cfg.version} · 127.0.0.1:{cfg.port} · PID {cfg.pid} · 已运行
           {fmtUptime(cfg.startedAt)}
         </span>
       {/if}
