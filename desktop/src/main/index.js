@@ -966,7 +966,22 @@ function registerIpc() {
   })
 }
 
+/* 桌面壳单实例：第二个进程只负责唤醒已开的窗口。core 可以多客户端，但托盘、
+   悬浮球和真实浏览器桥都绑在本进程，多开会互相抢窗口。 */
+const hasLock = app.requestSingleInstanceLock()
+if (!hasLock) {
+  app.quit()
+} else {
+  app.on('second-instance', () => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      if (mainWindow.isMinimized()) mainWindow.restore()
+      showMain()
+    }
+  })
+}
+
 app.whenReady().then(async () => {
+  if (!hasLock) return
   installAppMenu()
   migrateLegacyRoot()
   loadSessionToken()
