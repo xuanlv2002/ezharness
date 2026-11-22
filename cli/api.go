@@ -8,8 +8,13 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"fmt"
+	"io"
+	"mime/multipart"
 	"net/http"
 	"net/url"
+	"os"
+	"path/filepath"
 )
 
 /* branch 是分支清单条目（/api/bootstrap.branches）。 */
@@ -94,6 +99,70 @@ func (c *client) send(rootID, text, dir string, files []sendFile) error {
 		body["files"] = files
 	}
 	return c.callJSON(http.MethodPost, "/api/sessions/"+rootID+"/messages", body, nil)
+}
+
+/*
+stash 把本地文件写到 core 的 tmp/ 暂存区（与网页端拖入同一接口），返回
+暂存后的真实路径——消息里只引用暂存副本，原始文件不再被占用。
+*/
+func (c *client) stash(paths []string) ([]string, error) {
+	pr, pw := io.Pipe()
+	mw := multipart.NewWriter(pw)
+	go func() {
+		for _, p := range paths {
+			f, err := os.Open(p)
+			if err != nil {
+				_ = pw.CloseWithError(err)
+				return
+			}
+			part, err := mw.CreateFormFile("file", filepath.Base(p))
+			if err == nil {
+				_, err = io.Copy(part, f)
+			}
+			_ = f.Close()
+			if err != nil {
+				_ = pw.CloseWithError(err)
+				return
+			}
+		}
+		if err := mw.Close(); err != nil {
+			_ = pw.CloseWithError(err)
+			return
+		}
+		_ = pw.Close()
+	}()
+
+	req, err := http.NewRequest(http.MethodPost, c.base+"/api/workspace/stash", pr)
+	if err != nil {
+		_ = pr.CloseWithError(err)
+		return nil, err
+	}
+	req.Header.Set("EzHarnessToken", c.token)
+	req.Header.Set("Content-Type", mw.FormDataContentType())
+	res, err := c.http.Do(req)
+	if err != nil {
+		_ = pr.CloseWithError(err)
+		return nil, err
+	}
+	defer res.Body.Close()
+	data, _ := io.ReadAll(io.LimitReader(res.Body, 1<<20))
+	if res.StatusCode >= 300 {
+		var e struct {
+			Error string `json:"error"`
+		}
+		msg := fmt.Sprintf("HTTP %d", res.StatusCode)
+		if json.Unmarshal(data, &e) == nil && e.Error != "" {
+			msg = e.Error
+		}
+		return nil, &apiError{Status: res.StatusCode, Msg: msg}
+	}
+	var out struct {
+		Files []string `json:"files"`
+	}
+	if err := json.Unmarshal(data, &out); err != nil {
+		return nil, err
+	}
+	return out.Files, nil
 }
 
 /* activate 切换分支。 */

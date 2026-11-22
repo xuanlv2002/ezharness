@@ -652,8 +652,22 @@ func (m *tuiModel) pasteAttach(raw string) bool {
 	if len(paths) == 0 {
 		return false
 	}
-	for _, p := range paths {
-		m.addAttach(p)
+	if len(m.attaches)+len(paths) > maxAttach {
+		m.lines = append(m.lines, line{kind: "err", text: "附件最多 8 个"})
+		return true
+	}
+	stashed, err := m.cl.stash(paths)
+	if err != nil {
+		m.lines = append(m.lines, line{kind: "err", text: "附件暂存失败: " + err.Error()})
+		return true
+	}
+	for i, p := range stashed {
+		name := filepath.Base(p)
+		if i < len(paths) {
+			name = filepath.Base(paths[i])
+		}
+		image := i < len(paths) && isImageFile(paths[i]) // 按本地原件判图，远端 core 也成立
+		m.attaches = append(m.attaches, attach{name: name, path: filepath.ToSlash(p), image: image})
 	}
 	return true
 }
@@ -668,19 +682,6 @@ func filePathOf(raw string) (string, bool) {
 		}
 	}
 	return "", false
-}
-
-/* addAttach 登记一个文件；图片用 [IMAGE]，其余 [FILE]。 */
-func (m *tuiModel) addAttach(path string) {
-	if len(m.attaches) >= maxAttach {
-		m.lines = append(m.lines, line{kind: "err", text: "附件最多 8 个"})
-		return
-	}
-	abs, err := filepath.Abs(path)
-	if err != nil {
-		abs = path
-	}
-	m.attaches = append(m.attaches, attach{name: filepath.Base(abs), path: filepath.ToSlash(abs), image: isImageFile(abs)})
 }
 
 /* isImageFile 按魔数判图片（与 core 图片通道同一集合）。 */
