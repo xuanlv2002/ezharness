@@ -337,18 +337,6 @@
     }
   }
 
-  /* 运行时长只做展示，页面停留久了会偏旧；进程状态以每次进入设置页为准 */
-  function fmtUptime(iso: string): string {
-    const ms = Date.now() - Date.parse(iso)
-    if (!Number.isFinite(ms) || ms < 0) return '—'
-    const min = Math.floor(ms / 60000)
-    if (min < 1) return '刚刚'
-    if (min < 60) return `${min} 分钟`
-    const h = Math.floor(min / 60)
-    if (h < 24) return `${h} 小时 ${min % 60} 分`
-    return `${Math.floor(h / 24)} 天 ${h % 24} 小时`
-  }
-
   async function restartCore() {
     if (!ez?.core) return
     coreBusy = true
@@ -399,12 +387,6 @@
         <i></i>
         {coreStopped ? '已停止' : coreOffline ? '未连接' : '运行中'}
       </span>
-      {#if cfg && !coreStopped && !coreOffline}
-        <span class="coredetail">
-          v{cfg.version} · 127.0.0.1:{cfg.port} · PID {cfg.pid} · 已运行
-          {fmtUptime(cfg.startedAt)}
-        </span>
-      {/if}
     </div>
     {#if coreStopped || coreOffline}
       {#if ez?.core}
@@ -423,9 +405,6 @@
       <button class="ghost" disabled={restarting} onclick={restartApp}>
         {restarting ? '重启中…' : '重启服务'}
       </button>
-    {/if}
-    {#if !ez?.core}
-      <p class="msg">进程级启停仅在桌面端可用；网页端请用 ezharness stop / ezharness server。</p>
     {/if}
     {#if coreMsg}
       <p class="msg">{coreMsg}</p>
@@ -784,12 +763,11 @@
     color: var(--fg-invert);
     text-decoration: none;
   }
-  /* core 状态行：状态点 + 进程信息，操作按钮在下一行 */
+  /* core 状态行：状态点；操作按钮在下一行 */
   .corerow {
     display: flex;
     align-items: center;
-    flex-wrap: wrap;
-    gap: 8px 14px;
+    gap: 8px;
     border: 1px solid var(--line);
     border-radius: 10px;
     padding: 10px 14px;
@@ -810,13 +788,6 @@
   }
   .corestate.down i {
     background: var(--danger);
-  }
-  .coredetail {
-    min-width: 0;
-    font-family: var(--font-mono);
-    font-size: var(--font-size-ui);
-    color: var(--muted);
-    overflow-wrap: anywhere;
   }
   .coreacts {
     display: flex;

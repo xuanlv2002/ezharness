@@ -259,9 +259,6 @@ export interface PathEntry {
 export interface AppConfig {
   port: number
   dataDir: string
-  version: string
-  pid: number
-  startedAt: string
   boot: number
   paths: PathEntry[]
   memory: { longterm: string; skills: string; topics: string }

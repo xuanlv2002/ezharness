@@ -126,7 +126,6 @@ func (a *app) buildRouter() *gin.Engine {
 		RestartFn: a.restart,
 		FormatFn:  a.format,
 		Boot:      &a.boot,
-		StartedAt: a.startedAt,
 	}
 	controllers := controller.Controllers{
 		Auth:    &controller.AuthController{Auth: a.auth},

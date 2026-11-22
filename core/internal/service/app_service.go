@@ -34,7 +34,6 @@ type AppService struct {
 	RestartFn func(port int, ln net.Listener)
 	FormatFn  func(port int)
 	Boot      *atomic.Int64
-	StartedAt time.Time
 }
 
 /* AppStatus 是应用配置视图。 */
@@ -104,16 +103,13 @@ type PathEntry struct {
 	Path  string `json:"path"`
 }
 
-/* AppConfigView 是设置页完整配置视图：进程信息、端口、数据目录、路径清单、记忆三路径。 */
+/* AppConfigView 是设置页完整配置视图：端口、数据目录、路径清单、记忆三路径。 */
 type AppConfigView struct {
-	Port      int             `json:"port"`
-	DataDir   string          `json:"dataDir"`
-	Version   string          `json:"version"`
-	Pid       int             `json:"pid"`
-	StartedAt time.Time       `json:"startedAt"`
-	Boot      int64           `json:"boot"`
-	Paths     []PathEntry     `json:"paths"`
-	Memory    MemoryPathsView `json:"memory"`
+	Port    int             `json:"port"`
+	DataDir string          `json:"dataDir"`
+	Boot    int64           `json:"boot"`
+	Paths   []PathEntry     `json:"paths"`
+	Memory  MemoryPathsView `json:"memory"`
 }
 
 /* MemoryPathsView 是记忆三文件夹绝对路径。 */
@@ -129,12 +125,9 @@ func (s *AppService) ConfigView() AppConfigView {
 	cwd, _ := os.Getwd()
 	join := func(rel string) string { return filepath.Join(cwd, rel) }
 	return AppConfigView{
-		Port:      c.Port,
-		DataDir:   c.DataDir,
-		Version:   config.Version,
-		Pid:       os.Getpid(),
-		StartedAt: s.StartedAt,
-		Boot:      s.Boot.Load(),
+		Port:    c.Port,
+		DataDir: c.DataDir,
+		Boot:    s.Boot.Load(),
 		Paths: []PathEntry{
 			{Label: "结构配置", File: "ezharness.json", Path: filepath.Join(config.Root(), "ezharness.json")},
 			{Label: "模型配置", File: "models.json", Path: join("models.json")},
