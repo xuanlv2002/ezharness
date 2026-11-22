@@ -343,8 +343,9 @@
   <div class="strip">
     {#if workTerms.length && appTerms.length}<span class="grouplab">工作</span>{/if}
     {#each workTerms as s (s.id)}
-      <button class="strip-item" class:active={current === s.id} onclick={() => switchTo(s.id)} title="{s.name}{s.desc ? ` · ${s.desc}` : ''} · 来源 {s.origin || '?'}">
+      <button class="strip-item" class:active={current === s.id} onclick={() => switchTo(s.id)} title="{s.id} · {s.name}{s.desc ? ` · ${s.desc}` : ''} · 来源 {s.origin || '?'}">
         <span class="dot" class:exited={s.exited}></span>
+        <span class="tid">{s.id}</span>
         <span class="name">{s.name}</span>
         <span class="x" onclick={(e) => closeOne(e, s)} role="button" tabindex="-1" title="关闭">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round">
@@ -356,8 +357,9 @@
     {#if appTerms.length}
       <span class="grouplab" title="快应用的后端服务终端（agent 启动应用时拉起；应用卸载时自动收掉）">快应用后端</span>
       {#each appTerms as s (s.id)}
-        <button class="strip-item app" class:active={current === s.id} onclick={() => switchTo(s.id)} title="{s.name}{s.desc ? ` · ${s.desc}` : ''} · 来源 {s.origin || '?'}">
+        <button class="strip-item app" class:active={current === s.id} onclick={() => switchTo(s.id)} title="{s.id} · {s.name}{s.desc ? ` · ${s.desc}` : ''} · 来源 {s.origin || '?'}">
           <span class="dot" class:exited={s.exited}></span>
+          <span class="tid">{s.id}</span>
           <AppLogo
             size={13}
             name={appNameOf(s)}
@@ -450,6 +452,15 @@
     color: var(--faint);
     user-select: none;
     white-space: nowrap;
+  }
+  .tid {
+    flex: none;
+    font-family: var(--font-mono);
+    font-size: var(--font-size-small);
+    color: var(--faint);
+  }
+  .strip-item.active .tid {
+    color: var(--accent);
   }
   .name {
     max-width: 120px;
