@@ -74,7 +74,9 @@ func newApp(c config.Config) (*app, error) {
 	// 凭证随数据目录（cwd 已切）：会话在 auth.json，openapi 令牌在 openapi.json
 	auth := service.LoadAuthState()
 	auth.EnsureDefaultPassword()
-	return &app{cfg: c, auth: auth, openapi: service.LoadOpenapiStore()}, nil
+	openapi := service.LoadOpenapiStore()
+	openapi.EnsureDefaultToken()
+	return &app{cfg: c, auth: auth, openapi: openapi}, nil
 }
 
 /* start 启动第一代 server（端口占用失败即退出）。 */
@@ -157,12 +159,14 @@ func (a *app) format(port int) {
 	if oldBrowser != nil {
 		oldBrowser.Close() // 停无头浏览器并清临时 profile
 	}
-	// 数据目录已清空：凭证随新目录重建，认证回到默认密码
+	// 数据目录已清空：凭证随新目录重建，认证回到默认密码、令牌补默认一枚
 	auth := service.LoadAuthState()
 	auth.EnsureDefaultPassword()
+	openapi := service.LoadOpenapiStore()
+	openapi.EnsureDefaultToken()
 	a.mu.Lock()
 	a.auth = auth
-	a.openapi = service.LoadOpenapiStore()
+	a.openapi = openapi
 	a.mu.Unlock()
 	engine := a.buildRouter()
 	srv := &http.Server{Handler: engine}

@@ -11,11 +11,13 @@ core 暴露两件东西，各有各的凭证，全部显式请求头：
 | 请求头 | `EzHarnessToken` | `EzHarnessOpenToken` |
 | 谁用 | desktop / cli / 浏览器页面（人驾） | agent 产物：脚本、快应用页面/后端、外部程序 |
 | 权限 | 全量 `/api/*`（agent 控制、设置、终端、工作区） | 只有 `/api/open/*`（模型直调、MCP 调用、多媒体生成、服务清单、MCP 授权） |
-| 来源 | 默认密码 login 签发 | 安全页生成（多枚、可命名、可吊销） |
+| 来源 | 默认密码 login 签发 | core 启动自动补「默认」+ 安全页生成（多枚、可命名、可吊销） |
 | 生命周期 | 持久（core 重启不换），多端并存，可吊销 | 持久，随时吊销 |
 | 存放 | 浏览器 localStorage；desktop 的 session.json（令牌）；cli 的 session.json（令牌） | `<数据目录>/openapi.json`（0600，多枚清单） |
 
 **默认密码**：core 启动时确保 `<数据目录>/auth.json`（0600）里是默认密码 `ezharness` 的 bcrypt 哈希；缺失、损坏或仍是旧密码就重建哈希并清空旧会话。web / desktop / cli 启动时用默认密码静默换会话令牌，令牌各自持久保存，失效自动重登。安全页可看会话清单（客户端类型、来源 IP、登录时间、会话 id）并吊销任意一端。显式改密码留给远程形态。
+
+**默认 OpenAPI 令牌**：core 启动时若 `<数据目录>/openapi.json` 为空，自动生成一枚名为「默认」的令牌并写入 `EZHARNESS_OPENAPI_TOKEN`，终端脚本与子进程开箱即用。令牌可随时吊销；清单为空后重启 core 会再补一枚，安全页也能手动生成多枚、按用途命名。
 
 **连接地址**：web 与 desktop 固定跟随本机 core（server.json）；cli 默认本机，`--server <主机:端口>` 可显式指定（无端口默认 5260）。core 目前只绑 127.0.0.1，跨机访问留给之后的远程形态（login 的本机 Origin 校验也只放行回环来源）。
 

@@ -419,10 +419,10 @@
   <section>
     <div class="section-head">
       <div>
-        <h2 title="给脚本、快应用、外部程序调 /api/open/* 用的令牌（请求头 EzHarnessOpenToken）。多枚可命名，吊销即失效；终端脚本也可读环境变量 EZHARNESS_OPENAPI_TOKEN（最新一枚）。"
+        <h2 title="给脚本、快应用、外部程序调 /api/open/* 用的令牌（请求头 EzHarnessOpenToken）。core 启动时若没有令牌会自动生成一枚「默认」；多枚可命名，吊销即失效。终端脚本也可读环境变量 EZHARNESS_OPENAPI_TOKEN（最新一枚）。"
           >OpenAPI 令牌<span class="count">{oaTokens.length}</span></h2
         >
-        <p class="section-desc">给脚本、快应用和外部程序调用 /api/open/*；生成后放进请求头 EzHarnessOpenToken。</p>
+        <p class="section-desc">core 启动自动准备一枚「默认」令牌，脚本与终端开箱即用；也可按用途生成多枚，吊销即失效。</p>
       </div>
     </div>
     {#if credMsg}
@@ -452,7 +452,7 @@
           {/each}
         </ul>
       {:else}
-        <p class="empty">还没有令牌。需要时在上方生成一枚。</p>
+        <p class="empty">令牌清单为空；重启 core 会自动补一枚「默认」令牌，也可以现在生成一枚。</p>
       {/if}
     </div>
   </section>

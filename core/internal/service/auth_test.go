@@ -85,6 +85,26 @@ func TestAuditEmpty(t *testing.T) {
 	}
 }
 
+/* 启动保证有默认令牌：空清单补一枚，已有令牌不重复补，env 跟着最新一枚。 */
+func TestEnsureDefaultOpenapiToken(t *testing.T) {
+	t.Chdir(t.TempDir())
+	o := LoadOpenapiStore()
+	o.EnsureDefaultToken()
+	list := o.List()
+	if len(list) != 1 || list[0].Name != "默认" {
+		t.Fatalf("default token = %+v", list)
+	}
+	if got := os.Getenv(OpenapiTokenEnv); got != list[0].Token {
+		t.Fatalf("env token = %q, want %q", got, list[0].Token)
+	}
+	o.EnsureDefaultToken()
+	re := LoadOpenapiStore()
+	re.EnsureDefaultToken()
+	if len(re.List()) != 1 {
+		t.Fatalf("existing token should not be duplicated: %+v", re.List())
+	}
+}
+
 /* OpenAPI 多令牌：create/verify/revoke 与落盘重载。 */
 func TestOpenapiStore(t *testing.T) {
 	t.Chdir(t.TempDir())

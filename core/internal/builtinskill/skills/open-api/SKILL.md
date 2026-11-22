@@ -11,7 +11,7 @@ core 在本机暴露 HTTP API（基址见 system `<local_api>` 段，形如 `htt
 
 | 调用方 | 取令牌 | 依赖 SDK |
 | --- | --- | --- |
-| 终端/子进程脚本 | env `$EZHARNESS_OPENAPI_TOKEN`（Windows `%…%`，自动继承最新一枚） | 否 |
+| 终端/子进程脚本 | env `$EZHARNESS_OPENAPI_TOKEN`（Windows `%…%`，自动继承最新一枚；core 启动自动生成默认令牌） | 否 |
 | 外部程序/手写脚本 | 读 `<数据目录>/openapi.json`（0600）的 `tokens[].token`（多枚任选） | 否 |
 | 快应用后端（推荐交付形态） | env 或文件，实时新鲜 | 否（裸 HTTP） |
 | 纯前端页面（含 `file://` 测试页） | **硬编码**进 `ez.config` | 是（`/api/open/sdk.js`） |
@@ -20,7 +20,7 @@ core 在本机暴露 HTTP API（基址见 system `<local_api>` 段，形如 `htt
 
 ## 做法
 
-**鉴权**：请求头 `EzHarnessOpenToken: <令牌>`。令牌由用户在安全页生成（多枚、可命名、可吊销）；env 里没有且 openapi.json 为空时，**不要让用户把令牌贴进对话**，指引用户去安全页生成。ezharness 同源页面还会自动带 cookie，与令牌头两通道任一命中即过——硬编码令牌被吊销的页面在 ezharness 里仍可用，拿到外面才失效。
+**鉴权**：请求头 `EzHarnessOpenToken: <令牌>`。core 启动时若一枚令牌都没有，会自动生成一枚「默认」令牌并注入 env；终端/子进程直接读 env 即可，不需要先让用户生成。安全页可另生成多枚、吊销；env 里没有时先读 openapi.json 的 `tokens[].token`，两者都没有才让用户重启 core（会自动补默认令牌）或在安全页生成——**不要让用户把令牌贴进对话**。ezharness 同源页面还会自动带 cookie，与令牌头两通道任一命中即过——硬编码令牌被吊销的页面在 ezharness 里仍可用，拿到外面才失效。
 
 **端点**：
 
@@ -42,11 +42,11 @@ core 在本机暴露 HTTP API（基址见 system `<local_api>` 段，形如 `htt
 | 状态 | 含义 | 处理 |
 | --- | --- | --- |
 | 400 | 参数错误 | 不重试，查载荷 |
-| 401（无 needs_auth） | 令牌无效/被重置 | 重取令牌再试；仍 401 让用户去设置页 |
+| 401（无 needs_auth） | 令牌无效/被重置 | 重取令牌再试；env 旧了就重开终端或重启 core（会补默认令牌），仍 401 让用户在安全页生成 |
 | 401 + needs_auth | MCP 未授权（仅 mcp/call） | 见模板·授权等待 |
 | 502 | 上游失败（模型配置/apiKey/额度；MCP 服务不可达） | 修因后重试 |
 
-**令牌重置的影响面**：纯前端页面在 ezharness 内仍可用（cookie），外面失效 → 重新生成；后端与终端脚本 → **已运行进程的 env 是旧值，重启后端/重开终端**即恢复，文件永远新鲜。
+**令牌重置的影响面**：纯前端页面在 ezharness 内仍可用（cookie），外面失效 → 重新生成；后端与终端脚本 → **已运行进程的 env 是旧值，重启后端/重开终端**即恢复，文件永远新鲜。令牌清单被清空后重启 core 会自动补一枚「默认」令牌。
 
 ## 模板
 
@@ -111,8 +111,8 @@ import json, os, sys, urllib.request, urllib.error
 base = "http://127.0.0.1:" + (sys.argv[1] if len(sys.argv) > 1 and sys.argv[1].isdigit() else "5260")
 tok = os.environ.get("EZHARNESS_OPENAPI_TOKEN")
 if not tok:
-    try: tok = json.load(open("openapi.json"))["token"]   # cwd=数据目录时
-    except Exception: sys.exit("取不到令牌：EZHARNESS_OPENAPI_TOKEN 或 openapi.json")
+    try: tok = json.load(open("openapi.json"))["tokens"][-1]["token"]   # cwd=数据目录时
+    except Exception: sys.exit("取不到令牌：重启 core 会自动补默认令牌")
 
 def call(path, body=None):
     req = urllib.request.Request(base + "/api/open/" + path,

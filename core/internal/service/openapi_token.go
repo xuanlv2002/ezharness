@@ -1,9 +1,10 @@
 /*
-OpenAPI 令牌：/api/open/* 面的访问凭证，多枚、可命名、可吊销，由用户在
-安全页生成；持久于数据目录 openapi.json（0600）。与登录会话（auth.json）
-分开——会话给人驾的端，令牌给 agent 产物（脚本、快应用、外部程序）。
-最新一枚写进子进程环境 EZHARNESS_OPENAPI_TOKEN（终端里的脚本随手可用，
-正式做法是读 openapi.json 拿实时清单）。
+OpenAPI 令牌：/api/open/* 面的访问凭证，多枚、可命名、可吊销，持久于
+数据目录 openapi.json（0600）。与登录会话（auth.json）分开——会话给人驾
+的端，令牌给 agent 产物（脚本、快应用、外部程序）。启动时若一枚都没有
+自动补「默认」令牌，脚本开箱即用；最新一枚写进子进程环境
+EZHARNESS_OPENAPI_TOKEN（终端里的脚本随手可用，正式做法是读
+openapi.json 拿实时清单）。
 */
 package service
 
@@ -27,6 +28,9 @@ const OpenapiTokenEnv = "EZHARNESS_OPENAPI_TOKEN"
 
 /* openapiTokenFile 令牌落盘文件（数据目录内，相对路径）。 */
 const openapiTokenFile = "openapi.json"
+
+/* defaultTokenName 启动时自动补的令牌名。 */
+const defaultTokenName = "默认"
 
 /* OpenapiToken 是一枚命名令牌。 */
 type OpenapiToken struct {
@@ -56,6 +60,16 @@ func LoadOpenapiStore() *OpenapiStore {
 	}
 	o.applyEnv()
 	return o
+}
+
+/*
+EnsureDefaultToken 启动时保证至少有一枚令牌：openapi.json 为空或损坏时
+自动补一枚「默认」令牌，agent 脚本不用先让用户去安全页生成。
+*/
+func (o *OpenapiStore) EnsureDefaultToken() {
+	if len(o.List()) == 0 {
+		o.Create(defaultTokenName)
+	}
 }
 
 /* Create 生成新令牌并落盘。 */

@@ -223,3 +223,19 @@ desktop 三个 JS `node --check` ✓。临时端口冒烟：init/status 404、�
   不再缺描述且跑到系统自带组开头。
 
 验证：前端 `npm run build` ✓；CDP 截图亮/暗主题、折叠/展开态 ✓。
+
+## Phase 11 · OpenAPI 默认令牌 — 已完成
+
+- **core**：`OpenapiStore.EnsureDefaultToken` 在启动/格式化后检查 `openapi.json`，
+  空清单自动生成一枚名为「默认」的令牌并注入 `EZHARNESS_OPENAPI_TOKEN`；
+  已有令牌不重复补。脚本、终端、快应用后端不再先让用户去安全页初始化。
+- **安全页**：OpenAPI 令牌区文案改成“启动自动准备一枚‘默认’”，空态提示重启
+  core 会补；仍支持多枚命名与吊销。
+- **open-api 技能**：令牌获取改为默认令牌优先，只有 env/文件都没有时才让用户
+  重启 core 或去安全页生成；顺手修正自检脚本读取 `openapi.json` 的字段
+  （`tokens[-1].token`，原写法少了 `tokens`）。
+- **文档 / CI**：认证与openapi、三分架构、README 中英补默认令牌说明；
+  CI 冒烟新增默认令牌调 `/api/open/mcp` 校验。
+
+验证：core 测试与 vet 全绿；临时端口冒烟确认空目录启动自动生成「默认」令牌、
+令牌调 open 面 200、重启不重复；前端 build ✓。
