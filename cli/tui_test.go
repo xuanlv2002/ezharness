@@ -131,19 +131,22 @@ func TestSlashHintsAndDirLine(t *testing.T) {
 	}
 }
 
-/* 审批不进时间线；底栏点名工具、队列位置与 y/n/理由的动作。 */
+/* 审批不进时间线；选择栏点名工具/参数，底栏给操作键。 */
 func TestPendingApprovalHint(t *testing.T) {
-	m := &tuiModel{}
+	m := &tuiModel{width: 100}
 	m.applyFrame(frame{Type: "approve.request", Data: json.RawMessage(`{"id":"a1","name":"write_file","args":{"path":"/tmp/a.ts"}}`)})
 	m.applyFrame(frame{Type: "approve.request", Data: json.RawMessage(`{"id":"a2","name":"terminal","args":{"cmd":"npm run build"}}`)})
 	if len(m.lines) != 0 {
 		t.Fatalf("审批不该进时间线：%+v", m.lines)
 	}
-	hint := m.pendingHint()
-	for _, want := range []string{"1/2", "write_file", "/tmp/a.ts", "y 允许", "填理由"} {
-		if !strings.Contains(hint, want) {
-			t.Fatalf("提示缺 %q：%q", want, hint)
+	panel := strings.Join(m.decisionPanel(10), "\n")
+	for _, want := range []string{"1/2", "write_file", "/tmp/a.ts", "允许", "拒绝"} {
+		if !strings.Contains(panel, want) {
+			t.Fatalf("选择栏缺 %q：%q", want, panel)
 		}
+	}
+	if hint := m.pendingHint(); !strings.Contains(hint, "↑↓ 选择") {
+		t.Fatalf("底栏键位不对：%q", hint)
 	}
 }
 

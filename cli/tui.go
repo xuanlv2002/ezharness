@@ -1,8 +1,8 @@
 /*
 tui 终端界面：与桌面端同一套时间线——用户消息、流式回复、折叠成一行
-的思考和工具组；提问 / 计划 / 授权进时间线，审批只在底栏逐项点名工具
-与参数等 y/n。斜杠命令管分支、归档、审批档与模型；启动目录随消息带给
-core，作软提示。
+的思考和工具组；提问 / 计划 / 授权进时间线，审批与授权走底部选择栏
+（↑↓ 选择 · Enter 确认，审批输入文字后 Enter 为拒绝理由）。斜杠命令管
+分支、归档、审批档与模型；启动目录随消息带给 core，作软提示。
 */
 package main
 
@@ -173,7 +173,7 @@ type tuiModel struct {
 	picker       *picker
 	status       *statusView
 	sugSel       int                // 斜杠提示当前选中项
-	askSel       int                // 提问选项当前选中项
+	sel          int                // 当前待办的选中项（提问选项 / 允许拒绝 / 去授权取消）
 	cursor       *cursorWriter      // 真实光标定位（输入法合成位置）
 	mcpStop      context.CancelFunc // 取消进行中的 MCP 授权轮询
 	interrupting bool               // 刚发新消息打断上一轮：忽略其取消错误
@@ -326,7 +326,7 @@ func (m *tuiModel) reload() {
 	m.status = b.Status
 	m.stopMcp()
 	m.pending = nil
-	m.askSel = 0
+	m.resetSel()
 	m.loadHistory()
 	m.subscribe()
 	m.err = ""
@@ -447,7 +447,7 @@ func (m *tuiModel) applyFrame(f frame) {
 			m.input.SetValue("") // 待办已随轮作废，草稿也别留成消息
 		}
 		m.pending = nil // 轮结束：没答完的请求已随轮作废，别留着挡住输入
-		m.askSel = 0
+		m.resetSel()
 		m.echoUser = ""
 		if d.Err != "" {
 			m.lines = append(m.lines, line{kind: "err", text: d.Err})
@@ -465,7 +465,7 @@ func (m *tuiModel) applyFrame(f frame) {
 				m.input.SetValue("") // 该待办已由别处作答，清掉理由/答案草稿
 			}
 			m.pending = slices.DeleteFunc(m.pending, func(x decision) bool { return x.id == d.ID })
-			m.askSel = 0
+			m.resetSel()
 		}
 	case "approve.request", "askuser.request", "plan.request":
 		m.addDecision(f.Type, f.Data)
@@ -574,8 +574,8 @@ func (m *tuiModel) addDecision(typ string, data json.RawMessage) {
 	}
 	m.groupOpen = false
 	m.pending = append(m.pending, dec)
-	if dec.kind == "ask" && len(m.pending) == 1 {
-		m.askSel = 0
+	if len(m.pending) == 1 {
+		m.resetSel()
 	}
 }
 
@@ -640,7 +640,7 @@ func (m *tuiModel) waitForFrame() tea.Cmd {
 func (m *tuiModel) dropPending() decision {
 	d := m.pending[0]
 	m.pending = m.pending[1:]
-	m.askSel = 0
+	m.resetSel()
 	return d
 }
 
@@ -651,7 +651,7 @@ func (m *tuiModel) decideApprove(ok bool, reason string) {
 		return
 	}
 	m.pending = m.pending[1:]
-	m.askSel = 0
+	m.resetSel()
 	m.input.SetValue("")
 	if !ok && strings.TrimSpace(reason) != "" {
 		m.lines = append(m.lines, line{kind: "info", text: "已拒绝 " + oneLine(d.name) + "：" + oneLine(reason)})
@@ -665,7 +665,7 @@ func (m *tuiModel) resolvePlan(action, feedback string) {
 		return
 	}
 	m.pending = m.pending[1:]
-	m.askSel = 0
+	m.resetSel()
 	if action == "confirm" {
 		m.lines = append(m.lines, line{kind: "info", text: "计划已确认"})
 	} else {
@@ -681,6 +681,14 @@ func (m *tuiModel) stopMcp() {
 	}
 }
 
+/* resetSel 待办切换后重置选中项：审批默认落在拒绝，其余落在第一项。 */
+func (m *tuiModel) resetSel() {
+	m.sel = 0
+	if len(m.pending) > 0 && m.pending[0].kind == "approve" {
+		m.sel = 1
+	}
+}
+
 /* answerAsk 回传提问的答案（选中的选项或自由输入）。 */
 func (m *tuiModel) answerAsk(d decision, answer string) {
 	if err := m.cl.decideAnswer(m.rootID, d.id, answer); err != nil {
@@ -688,7 +696,7 @@ func (m *tuiModel) answerAsk(d decision, answer string) {
 		return
 	}
 	m.pending = m.pending[1:]
-	m.askSel = 0
+	m.resetSel()
 	m.lines = append(m.lines, line{kind: "user", text: answer})
 }
 
@@ -755,7 +763,7 @@ func (m *tuiModel) finishMcpAuth(msg mcpAuthMsg) {
 	}
 	d := m.pending[idx]
 	m.pending = append(m.pending[:idx], m.pending[idx+1:]...)
-	m.askSel = 0
+	m.resetSel()
 	m.mcpStop = nil
 	if msg.err == "" && msg.ok {
 		_ = m.cl.decideMcpAuth(m.rootID, d.id, true, "")
@@ -805,7 +813,7 @@ func (m *tuiModel) runCommand(cmd string) tea.Cmd {
 	case "help":
 		m.lines = append(m.lines,
 			line{kind: "info", text: "命令：/session 分支 · /new 新分支 · /compact 归档 · /permissions 审批档 · /models 模型 · /status 状态"},
-			line{kind: "info", text: "审批/提问/计划/授权出现时按提示直接回答（y 允许 · n 拒绝）"},
+			line{kind: "info", text: "审批/提问/计划/授权：↑↓ 选择 · Enter 确认；审批输入文字后 Enter 为拒绝理由"},
 		)
 	case "session":
 		m.openSessionPicker()
@@ -915,7 +923,7 @@ func (m *tuiModel) applyPick() {
 	case "session":
 		m.stopMcp()
 		m.pending = nil
-		m.askSel = 0
+		m.resetSel()
 		if err := m.cl.activate(it.id); err != nil {
 			m.lines = append(m.lines, line{kind: "err", text: "切换分支失败: " + err.Error()})
 			return
@@ -1033,14 +1041,23 @@ func (m *tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 		}
-		if d, ok := m.headAsk(); ok {
-			switch msg.Type {
-			case tea.KeyUp:
-				m.askSel = (m.askSel - 1 + len(d.options)) % len(d.options)
-				return m, nil
-			case tea.KeyDown:
-				m.askSel = (m.askSel + 1) % len(d.options)
-				return m, nil
+		if len(m.pending) > 0 {
+			n := 0
+			switch m.pending[0].kind {
+			case "ask":
+				n = len(m.pending[0].options)
+			case "approve", "mcp":
+				n = 2
+			}
+			if n > 0 {
+				switch msg.Type {
+				case tea.KeyUp:
+					m.sel = (m.sel - 1 + n) % n
+					return m, nil
+				case tea.KeyDown:
+					m.sel = (m.sel + 1) % n
+					return m, nil
+				}
 			}
 		}
 		switch msg.Type {
@@ -1049,50 +1066,8 @@ func (m *tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case tea.KeyEnter:
 			return m, m.submit()
 		}
-		if len(m.pending) > 0 && msg.Type == tea.KeyRunes {
-			d := m.pending[0]
-			handled := false
-			switch strings.ToLower(string(msg.Runes)) {
-			case "y":
-				switch d.kind {
-				case "approve":
-					if strings.TrimSpace(m.input.Value()) == "" {
-						m.decideApprove(true, "")
-						handled = true
-					}
-				case "mcp":
-					if !d.busy {
-						ctx, cancel := context.WithCancel(context.Background())
-						m.mcpStop = cancel
-						m.pending[0].busy = true
-						return m, startMcpAuth(m.cl, d, ctx)
-					}
-				}
-			case "n":
-				switch d.kind {
-				case "approve":
-					if strings.TrimSpace(m.input.Value()) == "" {
-						m.decideApprove(false, "")
-						handled = true
-					}
-				case "mcp":
-					if d.busy {
-						m.stopMcp() // 轮询会回来按「已取消」结算
-					} else {
-						m.dropPending()
-						_ = m.cl.oauthCancel(d.name)
-						_ = m.cl.decideMcpAuth(m.rootID, d.id, false, "已取消")
-						m.lines = append(m.lines, line{kind: "info", text: "已取消 MCP 授权"})
-					}
-					handled = true
-				}
-			}
-			if handled {
-				return m, nil
-			}
-		}
 		if len(m.pending) > 0 && m.pending[0].kind == "mcp" {
-			return m, nil // 授权期间只认 y/n，避免误发消息打断本轮
+			return m, nil // 授权期间不出文本输入
 		}
 	case frame:
 		m.applyFrame(msg)
@@ -1107,6 +1082,9 @@ func (m *tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 	var cmd tea.Cmd
 	m.input, cmd = m.input.Update(msg)
+	if len(m.pending) > 0 && m.pending[0].kind == "approve" && strings.TrimSpace(m.input.Value()) != "" {
+		m.sel = 1 // 写了理由：选中拒绝（↑ 可再选回允许）
+	}
 	return m, cmd
 }
 
@@ -1117,19 +1095,37 @@ func (m *tuiModel) submit() tea.Cmd {
 		d := m.pending[0]
 		switch d.kind {
 		case "approve":
-			if text != "" {
-				m.decideApprove(false, text) // 填了理由 = 带理由拒绝
+			if m.sel == 1 {
+				m.decideApprove(false, text) // 选中拒绝：输入的文字作为理由
+			} else {
+				m.decideApprove(true, "") // 选中允许：理由不参与
 			}
 			return nil
 		case "mcp":
+			if m.sel == 1 { // 取消
+				if d.busy {
+					m.stopMcp() // 轮询会回来按「已取消」结算
+				} else {
+					m.dropPending()
+					_ = m.cl.oauthCancel(d.name)
+					_ = m.cl.decideMcpAuth(m.rootID, d.id, false, "已取消")
+					m.lines = append(m.lines, line{kind: "info", text: "已取消 MCP 授权"})
+				}
+			} else if !d.busy { // 去授权
+				ctx, cancel := context.WithCancel(context.Background())
+				m.mcpStop = cancel
+				m.pending[0].busy = true
+				m.sel = 1 // 等待中默认停在取消
+				return startMcpAuth(m.cl, d, ctx)
+			}
 			return nil
 		case "ask":
 			if text == "" {
 				if len(d.options) > 0 {
-					if m.askSel < 0 || m.askSel >= len(d.options) {
-						m.askSel = 0
+					if m.sel < 0 || m.sel >= len(d.options) {
+						m.sel = 0
 					}
-					m.answerAsk(d, d.options[m.askSel])
+					m.answerAsk(d, d.options[m.sel])
 				}
 				return nil
 			}
@@ -1251,6 +1247,9 @@ func (m *tuiModel) View() string {
 	if panel == nil {
 		panel = m.askPanel(bodyH)
 	}
+	if panel == nil {
+		panel = m.decisionPanel(bodyH)
+	}
 	keep := bodyH - len(panel)
 	chat := m.chatRows(m.width)
 	if len(chat) > keep {
@@ -1286,13 +1285,12 @@ func (m *tuiModel) View() string {
 	return strings.Join(out, "\n")
 }
 
-/* inputRow 输入行：左边输入框，右边工作目录；审批时整行换成 y/n 操作。 */
+/* inputRow 输入行：左边输入框，右边工作目录；MCP 授权时整行换成操作提示。 */
 func (m *tuiModel) inputRow() string {
 	if len(m.pending) > 0 && m.pending[0].kind == "mcp" {
-		d := m.pending[0]
-		prompt := "y 打开浏览器 · n 取消"
-		if d.busy {
-			prompt = "等待浏览器授权…（n 取消）"
+		prompt := "↑↓ 选择 · Enter 确认"
+		if m.pending[0].busy {
+			prompt = "等待浏览器授权…（选取消后 Enter）"
 		}
 		if m.cursor != nil {
 			m.cursor.col.Store(0) // 不画输入框，真实光标留在行首
@@ -1422,11 +1420,7 @@ func (m *tuiModel) pendingHint() string {
 	}
 	switch d.kind {
 	case "approve":
-		head := "审批" + pos + " · " + oneLine(d.name)
-		if d.detail != "" {
-			head += " · " + oneLine(d.detail)
-		}
-		return head + "：空输入 y 允许 / n 拒绝 · 填理由 Enter 拒绝（Ctrl+U 清空）"
+		return "↑↓ 选择 · Enter 确认 · 输入文字后 Enter 为拒绝理由"
 	case "ask":
 		if len(d.options) > 0 {
 			if strings.TrimSpace(m.input.Value()) != "" {
@@ -1439,9 +1433,9 @@ func (m *tuiModel) pendingHint() string {
 		return "计划" + pos + "：Enter 确认 · 输入反馈后 Enter 提交"
 	case "mcp":
 		if d.busy {
-			return "等待浏览器授权" + pos + " · " + oneLine(d.name)
+			return "等待浏览器授权：↑↓ 选取消 · Enter 确认"
 		}
-		return "授权" + pos + " · " + oneLine(d.name)
+		return "↑↓ 选择 · Enter 确认"
 	}
 	return ""
 }
@@ -1604,6 +1598,33 @@ func (m *tuiModel) panelRows(titleText string, labels []string, sel, maxH int) [
 	return rows
 }
 
+/* decisionPanel 审批/MCP 的操作选择栏：允许/拒绝、去授权/取消。 */
+func (m *tuiModel) decisionPanel(maxH int) []string {
+	if len(m.pending) == 0 {
+		return nil
+	}
+	d := m.pending[0]
+	pos := ""
+	if len(m.pending) > 1 {
+		pos = fmt.Sprintf(" 1/%d", len(m.pending))
+	}
+	switch d.kind {
+	case "approve":
+		title := "审批" + pos + " · " + oneLine(d.name)
+		if d.detail != "" {
+			title += " · " + oneLine(d.detail)
+		}
+		return m.panelRows(title, []string{"允许", "拒绝（输入的文字作为理由）"}, m.sel, maxH)
+	case "mcp":
+		title := "MCP 授权" + pos + " · " + oneLine(d.name)
+		if d.busy {
+			title += " · 等待浏览器"
+		}
+		return m.panelRows(title, []string{"去授权", "取消"}, m.sel, maxH)
+	}
+	return nil
+}
+
 func (m *tuiModel) pickerPanel(maxH int) []string {
 	p := m.picker
 	if p == nil {
@@ -1626,5 +1647,5 @@ func (m *tuiModel) askPanel(maxH int) []string {
 	for i, o := range d.options {
 		labels[i] = fmt.Sprintf("%d. %s", i+1, o)
 	}
-	return m.panelRows("提问 · 选择或直接输入回答", labels, m.askSel, maxH)
+	return m.panelRows("提问 · 选择或直接输入回答", labels, m.sel, maxH)
 }
