@@ -8,7 +8,7 @@ const fs = require('fs')
 const http = require('http')
 const https = require('https')
 const { spawn } = require('child_process')
-const { startBrowserModule, overlayBrowser, reconnectBridge } = require('./browser')
+const { startBrowserModule, overlayBrowser } = require('./browser')
 const { startPreviewModule, overlayPreview } = require('./preview')
 const { attachInspectMenu } = require('./inspect')
 
@@ -22,8 +22,7 @@ let coreProc = null
 let quitting = false
 let coreReady = false
 let corePort = 5260
-let activeBase = 'http://127.0.0.1:5260' // 当前连接的 core origin
-let customBase = '' // 登录页切过去的地址；空 = 本机自动发现（server.json）
+let activeBase = 'http://127.0.0.1:5260' // 本机 core origin（跟随 server.json）
 /* 桌面宠物：透明置顶小窗，固定 288×288 一次到位（不动态扩缩）。默认
    整窗鼠标穿透（透明区点击归下层应用）。悬浮/穿透判定：主进程 60ms 轮询
    把光标换算成窗口内坐标推给渲染层（ez:pet-move），渲染层用
@@ -44,9 +43,9 @@ const PANE_MIN_WIDTH = 640
 const PANE_MIN_HEIGHT = 480
 let petHoverTimer = null
 let petDrag = null // { dx, dy }：拖拽中光标与窗口左上角的偏移（JS 拖拽替代 app-region）
-/* 会话令牌：登录后由页面经 ez:auth-token 交给主进程，存 <应用根>/session.json。
+/* 会话令牌：页面静默登录后经 ez:auth-token 交给主进程，存 <应用根>/session.json。
    令牌持久（core 重启不换），主进程的浏览器桥/coreFetch 都用它；文件丢失 =
-   页面重新登录一次。 */
+   页面启动时自动登录再同步一次。 */
 let sessionToken = ''
 function loadSessionToken() {
   try {
@@ -66,11 +65,11 @@ function saveSessionToken(t) {
 let findBrowserPopout = () => null // registerIpc 注入：当前浏览器页的独立窗口（无则 null）
 
 /* 页面基地址：开发模式（EZHARNESS_DEV_URL=vite dev server）走热更页面
-   （其 /api 代理到 core）；登录页显式切过服务器则用该地址，否则用本机
-   core。本机模式下每次取前重读 server.json，core 换端口后新窗口与桥跟着走。 */
+   （其 /api 代理到 core）；否则用本机 core。每次取前重读 server.json，
+   core 换端口后新窗口与桥跟着走。 */
 function pageBase() {
   refreshActiveBase()
-  if (!customBase && process.env.EZHARNESS_DEV_URL) return process.env.EZHARNESS_DEV_URL
+  if (process.env.EZHARNESS_DEV_URL) return process.env.EZHARNESS_DEV_URL
   return activeBase
 }
 
@@ -80,31 +79,13 @@ function apiBase() {
   return activeBase
 }
 
-/* refreshActiveBase 未切服务器时跟随本机 server.json；切过就固定在其地址。 */
+/* refreshActiveBase 跟随本机 server.json。 */
 function refreshActiveBase() {
-  if (customBase) return
   refreshPort()
   activeBase = `http://127.0.0.1:${corePort}`
 }
 
-/* normalizeBase 把登录页输入变成 origin：无协议默认 http、无端口默认 5260。 */
-function normalizeBase(raw) {
-  let s = String(raw || '').trim()
-  if (!s) return ''
-  const hasScheme = /^https?:\/\//i.test(s)
-  if (!hasScheme) s = 'http://' + s
-  let u
-  try {
-    u = new URL(s)
-  } catch {
-    return ''
-  }
-  if (u.protocol !== 'http:' && u.protocol !== 'https:') return ''
-  if (!hasScheme && !u.port) u.port = '5260'
-  return u.hostname ? u.origin : ''
-}
-
-/* probeBase 探活任意 core 地址（server.json 只描述本机实例）。 */
+/* probeBase 探活本机 core。 */
 function probeBase(base, timeoutMs = 1500) {
   return new Promise((resolve) => {
     let u
@@ -145,24 +126,7 @@ function probeBase(base, timeoutMs = 1500) {
   })
 }
 
-/* desktop.json 记住登录页切过去的服务器；空 = 本机自动发现。 */
-function loadCustomBase() {
-  try {
-    const doc = JSON.parse(fs.readFileSync(path.join(rootDir(), 'desktop.json'), 'utf8'))
-    return typeof doc.server === 'string' ? doc.server : ''
-  } catch {
-    return ''
-  }
-}
-function saveCustomBase() {
-  try {
-    fs.writeFileSync(path.join(rootDir(), 'desktop.json'), JSON.stringify({ server: customBase }, null, 2))
-  } catch {
-    /* 只影响下次启动是否记住地址 */
-  }
-}
-
-/* 页面地址：鉴权走页面自己的登录流程（令牌入 localStorage，cookie 由登录响应下发）。 */
+/* 页面地址：鉴权由页面启动时静默完成（令牌入 localStorage，cookie 由登录响应下发）。 */
 function pageUrl(suffix) {
   return `${pageBase()}${suffix}`
 }
@@ -353,27 +317,13 @@ function refreshPort() {
 }
 
 /*
-ensureCore 附着或拉起 core 并等健康就绪（30s 超时）：登录页切过服务器
-（desktop.json）且可达就直接附着；否则回到本机 core——已在跑（可能是
+ensureCore 附着或拉起本机 core 并等健康就绪（30s 超时）：已在跑（可能是
 ezharness server / cli 拉起的）直接附着，没跑则 detached 拉起。core 不
 属于桌面壳，三端退出都不杀它（停止走 ezharness stop）。仅当本进程是
 拉起者时保留子进程句柄用于崩溃检测。
 */
 async function ensureCore() {
-  const saved = loadCustomBase()
-  if (saved) {
-    if (await probeBase(saved, 3000)) {
-      customBase = saved
-      activeBase = saved
-      console.log(`core 已在运行（${saved}），附着`)
-      return
-    }
-    console.log(`记住的服务器不可达（${saved}），回到本机 core`)
-    customBase = ''
-    saveCustomBase()
-  }
-  refreshPort()
-  activeBase = `http://127.0.0.1:${corePort}`
+  refreshActiveBase()
   if (await probeBase(activeBase)) {
     console.log(`core 已在运行（${activeBase}），附着`)
     return
@@ -950,29 +900,6 @@ function registerIpc() {
     win.focus()
     win.webContents.send('ez:popout-signal', name, value)
   })
-  /* 登录页切换服务器：先探活目标 core，成功才改 base；页面收到 ok 后
-     自行跳转到新 origin（导航守卫已按新 base 放行）。旧会话令牌不属于
-     新 core，清掉；新页面会按自己 origin 的 localStorage 再同步一次。 */
-  ipcMain.handle('ez:server-get', () => ({ base: apiBase() }))
-  ipcMain.handle('ez:server-connect', async (e, raw) => {
-    const base = normalizeBase(raw)
-    if (!base) return { ok: false, error: '地址格式不对，例：localhost:5260' }
-    if (base === apiBase()) return { ok: true }
-    if (!(await probeBase(base, 3000))) {
-      return { ok: false, error: `连不上 ${base.replace(/^https?:\/\//, '')}` }
-    }
-    customBase = base
-    activeBase = base
-    saveCustomBase()
-    saveSessionToken('')
-    reconnectBridge()
-    /* 附属窗口还挂在旧 core 上：销毁，等新页面登录后按需重开 */
-    const sender = BrowserWindow.fromWebContents(e.sender)
-    for (const w of [petWindow, noticeWindow, pinWindow, ...popoutWindows.values()]) {
-      if (w && !w.isDestroyed() && w !== sender) w.destroy()
-    }
-    return { ok: true }
-  })
 }
 
 app.whenReady().then(async () => {
@@ -985,8 +912,7 @@ app.whenReady().then(async () => {
   createMainWindow()
   createTray()
   startBrowserModule({
-    /* 桥断开后每 3s 重连一次：本机模式跟随 server.json，切过服务器则用
-       登录页选的地址 */
+    /* 桥断开后每 3s 重连一次：地址跟随本机 server.json */
     getBase: () => apiBase(),
     getToken: () => sessionToken,
     getParentWindow: () => mainWindow,

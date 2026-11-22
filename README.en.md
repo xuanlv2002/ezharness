@@ -70,7 +70,7 @@ Download `ezharness` and `ezharness-core` (`.exe` on Windows) into the same fold
 
 Run `ezharness-core.exe` directly and open `http://127.0.0.1:<port>` in a browser — same page as the desktop app. Browser tools fall back to a headless local Chrome/Edge when the desktop shell is not around.
 
-Every client asks for a password on first use; log in from any other client with the same password.
+All three clients sign in silently with the default password `ezharness` — there is no login page; tokens persist and are renewed automatically.
 
 ## Up and running in 30 seconds
 
@@ -111,12 +111,12 @@ flowchart TB
     HE["Headless browser<br/>chromedp → local Chrome/Edge"]
     CLI -- "ensureCore: attach or spawn" --> CORE
     DESK -- "ensureCore: attach; shell quit keeps core" --> CORE
-    WEB -- "after password login" --> CORE
+    WEB -- "silent default-password login" --> CORE
     CORE -. "browser bridge (preferred when desktop is present)" .-> DESK
     CORE -. "fallback when bridge absent" .-> HE
 ```
 
-Every endpoint requires a password on first use; API auth uses the `EzHarnessToken` header (scripts and quick apps call `/api/open/*` with `EzHarnessOpenToken`). See [three-part architecture](docs/md/三分架构.md) (Chinese).
+The core prepares a default password at startup and all clients log in silently; API auth uses the `EzHarnessToken` header (scripts and quick apps call `/api/open/*` with `EzHarnessOpenToken`). See [three-part architecture](docs/md/三分架构.md) (Chinese).
 
 Division of labor with the sister repo [ezloop](https://github.com/xuanlv2002/ezloop): ezloop is a lean agent loop engine (model↔tool loop, hook / warp extension points, fork sub-agents); ezharness builds session management, context engineering, tool wrapping and interaction design on top.
 

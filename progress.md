@@ -187,3 +187,25 @@ frontend/ 整体迁入 core/（core 的内嵌 web 端，git mv 保留历史）�
 与 `go vet` 全绿、cli 三平台交叉编译 ✓、前端 build ✓、desktop 三个 JS
 `node --check` ✓；`--server` 指向死端口返回"core 不可达"且不拉起本机 core ✓。
 desktop 切换地址、Windows/NSIS 安装包留真机/CI 验证。
+
+## Phase 9 · 默认密码与隐式登录 — 已完成
+
+- **core**：启动时确保 `auth.json` 内是默认密码 `ezharness` 的 bcrypt 哈希
+  （缺失/损坏/旧自定义密码则重建并清空旧会话）；删除 `/api/auth/init` 与
+  `/api/auth/status` 及初始化引导，登录端点保留给三端静默换令牌；会话 cookie
+  改为一年持久，浏览器重启后图片/PDF/视频仍可加载。
+- **web**：删除 LoginView 与 App 登录门；`main.ts` 挂载前校验本地令牌，缺失或
+  失效时用默认密码静默登录；`ez-auth-expired` 改为静默重登后刷新页面。
+- **desktop**：移除登录页服务器切换残留（`desktop.json`、`ez:server-*` IPC、
+  preload `server`、`reconnectBridge`）；固定跟随本机 `server.json`，令牌仍由
+  页面登录后经 `ez:auth-token` 同步给主进程。
+- **cli**：`chat`/`tui` 不再询问密码或地址，默认密码静默登录；`--server` 仍可
+  显式指定 core；`session.json` 只存令牌。
+- **文档**：README 中英、[三分架构](docs/md/三分架构.md)、
+  [认证与 OpenAPI](docs/md/认证与openapi.md) 同步默认密码与隐式登录。
+
+验证：core `go test -count=1 ./internal/...` 与 `-race`（service/controller）全绿；
+cli `go test -count=1 ./...`、`go vet`、三平台交叉编译 ✓；前端 `npm run build` ✓；
+desktop 三个 JS `node --check` ✓。临时端口冒烟：init/status 404、默认密码登录 ✓、
+错密码 401、auth.json 0600；headless Chrome 打开 web 端无登录页并自动生成 web
+会话；cli `--server` 自动生成 cli 会话 ✓。

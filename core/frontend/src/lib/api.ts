@@ -979,15 +979,7 @@ export const api = {
 
   appConfig: () => fetch('/api/app/config').then(json<AppConfig>),
 
-  /* 认证：status/init/login 免鉴权；logout 与会话管理在会话面 */
-  authStatus: () => fetch('/api/auth/status').then(json<{ initialized: boolean }>()),
-
-  authInit: (password: string, client: string) => post<{ token: string }>('/api/auth/init', { password, client }),
-
-  authLogin: (password: string, client: string) => post<{ token: string }>('/api/auth/login', { password, client }),
-
-  authLogout: () => fetch('/api/auth/logout', { method: 'POST' }).then(() => undefined),
-
+  /* 登录在 main.ts 启动时静默完成；这里只留安全页的会话管理 */
   authSessions: () => fetch('/api/auth/sessions').then(json<{ sessions: AuthSession[] }>()),
 
   revokeSession: (id: string) => fetch(`/api/auth/sessions/${id}`, { method: 'DELETE' }).then(() => undefined),

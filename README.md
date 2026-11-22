@@ -63,7 +63,7 @@ ezharness 把模型放进你的真实工作环境：文件、终端、浏览器�
 - **macOS / Linux**：`.dmg` / `.AppImage` 里带齐三件；也可以只下载 `ezharness` 与 `ezharness-core` 放同一目录，走命令行。
 - **纯 server**：`ezharness-core.exe`（或 `ezharness server [--detach]`）起后端，浏览器访问 `http://127.0.0.1:<port>`，与桌面端同一份页面；`ezharness tui` 是终端界面，`ezharness --server <主机:端口> tui` 可连另一台 core。
 
-首次打开任意端会引导设置密码，之后每个端用它登录（凭证各自保存，丢失重新登录）。
+三端用默认密码 `ezharness` 隐式登录，不显示登录页；会话令牌各自保存，失效自动重登。
 
 1. 打开「模型」页填入语言模型 apiKey，并点亮新会话的默认模型；需要生成图片/语音/视频时，到「多媒体 · 模型与限额」配置对应模型；
 2. 回到对话页，把任务交给它——文件整理、脚本编写、报错排查、网页操作、生成素材都行；输入框上方可随时切换本会话的模型 / 思考强度 / 审批档位；
@@ -98,12 +98,12 @@ flowchart TB
     HE["无头浏览器<br/>chromedp → 本机 Chrome/Edge"]
     CLI -- "ensureCore：附着或拉起" --> CORE
     DESK -- "ensureCore：附着，壳退 core 不退" --> CORE
-    WEB -- "密码登录后访问" --> CORE
+    WEB -- "默认密码隐式登录" --> CORE
     CORE -. "浏览器桥（桌面端在场时优先）" .-> DESK
     CORE -. "桥未连接时兜底" .-> HE
 ```
 
-所有端首次都要设密码；接口鉴权用请求头 `EzHarnessToken`（脚本/快应用用 `EzHarnessOpenToken` 调 `/api/open/*`）。详见[三分架构](docs/md/三分架构.md)。
+core 启动时备好默认密码，三端静默登录；接口鉴权用请求头 `EzHarnessToken`（脚本/快应用用 `EzHarnessOpenToken` 调 `/api/open/*`）。详见[三分架构](docs/md/三分架构.md)。
 
 与姊妹仓库 [ezloop](https://github.com/xuanlv2002/ezloop) 的分工：ezloop 是精简的 agent loop 引擎；ezharness 在其上做会话管理、上下文工程、工具封装与人机交互设计。
 

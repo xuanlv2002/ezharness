@@ -1,6 +1,9 @@
 /* 会话令牌：REST/SSE 走 EzHarnessToken 请求头（fetch 补丁统一注入），WebSocket
    走子协议 ["agent-auth", token]，浏览器自动请求（img/video/PDF）走登录时下发
-   的 HttpOnly cookie。令牌持久（core 重启不换），存 localStorage 跨标签页共享。 */
+   的 HttpOnly cookie。令牌持久（core 重启不换），存 localStorage 跨标签页共享。
+   当前阶段三端都用默认密码静默登录，不向用户展示登录界面。 */
+
+const DEFAULT_PASSWORD = 'ezharness'
 
 let token = ''
 
@@ -42,7 +45,25 @@ export function loadToken(): void {
   if (token) (window as any).ez?.auth?.save?.(token)
 }
 
-/* setToken 保存登录/init 签发的令牌，并同步给桌面壳主进程（浏览器桥要用）。 */
+/* ensureAuth 保证挂载前有可用令牌：本地令牌仍有效就复用，失效/缺失时用
+   默认密码换一枚。core 启动时已备好默认密码，正常情况下不会失败。 */
+export async function ensureAuth(): Promise<void> {
+  if (token) {
+    const res = await fetch('/api/auth/sessions', { headers: { EzHarnessToken: token } })
+    if (res.ok) return
+  }
+  const client = (window as any).ez?.desktop ? 'desktop' : 'web'
+  const res = await fetch('/api/auth/login', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ password: DEFAULT_PASSWORD, client }),
+  })
+  if (!res.ok) throw new Error(`自动登录失败（HTTP ${res.status}）`)
+  const { token: t } = await res.json()
+  setToken(t)
+}
+
+/* setToken 保存静默登录签发的令牌，并同步给桌面壳主进程（浏览器桥要用）。 */
 export function setToken(t: string): void {
   token = t
   localStorage.setItem('ez-token', t)

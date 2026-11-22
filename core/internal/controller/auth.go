@@ -1,6 +1,6 @@
 /*
 认证：两枚令牌、两个信任域，全部显式请求头——会话令牌 EzHarnessToken
-（init/login 签发，desktop/cli/浏览器页面用），OpenAPI 令牌
+（默认密码 login 签发，desktop/cli/浏览器页面用），OpenAPI 令牌
 EzHarnessOpenToken（安全页生成，agent 产物用）。cookie 是同一会话凭证
 的浏览器传输适配：img/video/PDF 等自动请求加不了自定义头。WS 握手用
 子协议 ["agent-auth", token] 带令牌。/api/open/* 全量审计。
@@ -32,36 +32,7 @@ type AuthController struct {
 	Openapi *service.OpenapiStore
 }
 
-/* Status GET /api/auth/status：密码是否已初始化（端首启判断走引导还是登录）。 */
-func (c *AuthController) Status(g *gin.Context) {
-	g.Header("Cache-Control", "no-store") // 初始化状态会变，缓存住会让端停在错误的分支
-	g.JSON(http.StatusOK, gin.H{"initialized": c.Auth.Initialized()})
-}
-
-/* Init POST /api/auth/init：仅未初始化时开放，设密码并签发首枚会话。 */
-func (c *AuthController) Init(g *gin.Context) {
-	if !localOrigin(g) {
-		g.JSON(http.StatusForbidden, gin.H{"error": "仅允许本机页面初始化"})
-		return
-	}
-	var req struct {
-		Password string `json:"password"`
-		Client   string `json:"client"`
-	}
-	if err := g.ShouldBindJSON(&req); err != nil {
-		g.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
-	s, err := c.Auth.Init(req.Password, req.Client, clientIP(g))
-	if err != nil {
-		g.JSON(http.StatusConflict, gin.H{"error": err.Error()})
-		return
-	}
-	setAuthCookie(g, s.Token)
-	g.JSON(http.StatusOK, gin.H{"token": s.Token})
-}
-
-/* Login POST /api/auth/login：密码换会话令牌（凭证丢失后重新登录）。 */
+/* Login POST /api/auth/login：默认密码换会话令牌（三端启动时静默调用）。 */
 func (c *AuthController) Login(g *gin.Context) {
 	if !localOrigin(g) {
 		g.JSON(http.StatusForbidden, gin.H{"error": "仅允许本机页面登录"})
@@ -237,10 +208,10 @@ func isWebSocketUpgrade(g *gin.Context) bool {
 }
 
 /*
-localOrigin 限制初始化/登录只接受本机页面发起：gin 的 JSON 绑定不看
-Content-Type，跨站页面可以用 text/plain 的简单请求 POST 到 127.0.0.1，
-不拦的话任意网站都能抢先设密码。非浏览器客户端（cli/desktop 主进程）
-不带 Origin，直接放行；Host 必须与 Origin 一致，防 DNS 重绑定。
+localOrigin 限制登录只接受本机页面发起：gin 的 JSON 绑定不看 Content-Type，
+跨站页面可以用 text/plain 的简单请求 POST 到 127.0.0.1 换令牌。非浏览器
+客户端（cli/desktop 主进程）不带 Origin，直接放行；Host 必须与 Origin
+一致，防 DNS 重绑定。
 */
 func localOrigin(g *gin.Context) bool {
 	origin := g.GetHeader("Origin")
@@ -280,7 +251,8 @@ func currentToken(g *gin.Context) string {
 }
 
 // setAuthCookie 下发 HttpOnly 会话 cookie：SameSite=Strict 阻断跨站请求
-// 顺手携带；HTTPS 下补 Secure。
+// 顺手携带；与令牌同寿命（MaxAge 一年），浏览器重启后资产请求仍可用。
+// HTTPS 下补 Secure。
 func setAuthCookie(g *gin.Context, token string) {
 	http.SetCookie(g.Writer, &http.Cookie{
 		Name:     authCookieName,
@@ -289,6 +261,7 @@ func setAuthCookie(g *gin.Context, token string) {
 		HttpOnly: true,
 		SameSite: http.SameSiteStrictMode,
 		Secure:   g.Request.TLS != nil,
+		MaxAge:   365 * 24 * 60 * 60,
 	})
 }
 

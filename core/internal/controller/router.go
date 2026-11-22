@@ -65,8 +65,8 @@ func accessLog() gin.HandlerFunc {
 
 /*
 NewRouter 装配 gin engine 与全部路由。dist 非 nil 时服务前端静态资源。
-免鉴权面全量清单：health、/api/auth/*（status/init/login）、
-/api/open/sdk.js、/apps/* 静态资产——其余全部要凭证。
+免鉴权面全量清单：health、/api/auth/login、/api/open/sdk.js、/apps/*
+静态资产——其余全部要凭证。
 */
 func NewRouter(c Controllers, dist fs.FS, auth *service.AuthStore, openapi *service.OpenapiStore) *gin.Engine {
 	r := gin.New()
@@ -75,13 +75,8 @@ func NewRouter(c Controllers, dist fs.FS, auth *service.AuthStore, openapi *serv
 	/* 换代探活：旧页面重启后在新 origin 上跨域轮询，必须免鉴权（只回 boot/version） */
 	r.GET("/api/app/health", c.App.Health)
 
-	/* 认证：状态查询与密码初始化/登录；init 仅未初始化时开放 */
-	authGrp := r.Group("/api/auth")
-	{
-		authGrp.GET("/status", c.Auth.Status)
-		authGrp.POST("/init", c.Auth.Init)
-		authGrp.POST("/login", c.Auth.Login)
-	}
+	/* 认证：默认密码换会话令牌（三端启动时静默调用） */
+	r.POST("/api/auth/login", c.Auth.Login)
 
 	/* OpenAPI SDK：本身无秘密，免鉴权、跨源放行，任何页面可直接引 */
 	r.GET("/api/open/sdk.js", corsOpen(), serveSdk)

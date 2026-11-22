@@ -1,7 +1,7 @@
 /*
 认证状态：密码哈希与全部已签发会话持久于数据目录 auth.json（0600）。
-会话令牌由 init/login 签发：多端并存、core 重启不换、可吊销；OpenAPI
-令牌另存 openapi.json（openapi_token.go）。
+当前阶段固定默认密码，三端静默登录；会话令牌多端并存、core 重启不换、
+可吊销。OpenAPI 令牌另存 openapi.json（openapi_token.go）。
 */
 package service
 
@@ -44,9 +44,12 @@ type AuthStore struct {
 
 const authStateFile = "auth.json"
 
+/* DefaultPassword 当前阶段的固定密码：三端隐式登录，不向用户展示。 */
+const DefaultPassword = "ezharness"
+
 /*
-LoadAuthState 读取认证状态（cwd = 数据目录）；缺失或损坏视为未初始化，
-首个客户端重新走 init。
+LoadAuthState 读取认证状态（cwd = 数据目录）；缺失或损坏返回空状态，
+由启动流程补默认密码。
 */
 func LoadAuthState() *AuthStore {
 	a := &AuthStore{}
@@ -72,32 +75,25 @@ func (a *AuthStore) save() {
 	}
 }
 
-/* Initialized 密码是否已初始化。 */
-func (a *AuthStore) Initialized() bool {
+/*
+EnsureDefaultPassword 启动时把认证状态收敛到固定默认密码：缺失、损坏或
+仍是旧自定义密码都重建哈希并清空会话。当前没有改密码入口，旧密码不再
+保留；远程形态再开显式密码。
+*/
+func (a *AuthStore) EnsureDefaultPassword() {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	return a.hash != ""
-}
-
-/* Init 设置密码并签发首枚会话（仅未初始化时开放）。 */
-func (a *AuthStore) Init(password, client, ip string) (Session, error) {
-	if len(password) < 6 {
-		return Session{}, fmt.Errorf("密码至少 6 位")
+	if a.hash != "" && bcrypt.CompareHashAndPassword([]byte(a.hash), []byte(DefaultPassword)) == nil {
+		return
 	}
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	if a.hash != "" {
-		return Session{}, fmt.Errorf("密码已初始化，请直接登录")
-	}
-	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	hash, err := bcrypt.GenerateFromPassword([]byte(DefaultPassword), bcrypt.DefaultCost)
 	if err != nil {
-		return Session{}, err
+		log.Printf("默认密码初始化失败: %v", err)
+		return
 	}
 	a.hash = string(hash)
-	s := a.mint(client, ip)
-	a.sessions = append(a.sessions, s)
+	a.sessions = nil
 	a.save()
-	return s, nil
 }
 
 /* Login 校验密码并签发新会话。 */

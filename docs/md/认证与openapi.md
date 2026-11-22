@@ -1,6 +1,6 @@
 # 认证与 OpenAPI
 
-> 两枚令牌、两个信任域：会话令牌驾驶 core，OpenAPI 令牌使用 core 的能力。所有端第一次都必须过密码。
+> 两枚令牌、两个信任域：会话令牌驾驶 core，OpenAPI 令牌使用 core 的能力。当前阶段三端用默认密码静默登录，不展示登录界面。
 
 ## 一、模型
 
@@ -11,29 +11,27 @@ core 暴露两件东西，各有各的凭证，全部显式请求头：
 | 请求头 | `EzHarnessToken` | `EzHarnessOpenToken` |
 | 谁用 | desktop / cli / 浏览器页面（人驾） | agent 产物：脚本、快应用页面/后端、外部程序 |
 | 权限 | 全量 `/api/*`（agent 控制、设置、终端、工作区） | 只有 `/api/open/*`（模型直调、MCP 调用、多媒体生成、服务清单、MCP 授权） |
-| 来源 | 密码 init/login 签发 | 安全页生成（多枚、可命名、可吊销） |
+| 来源 | 默认密码 login 签发 | 安全页生成（多枚、可命名、可吊销） |
 | 生命周期 | 持久（core 重启不换），多端并存，可吊销 | 持久，随时吊销 |
-| 存放 | 浏览器 localStorage；desktop 的 session.json（令牌）+ desktop.json（服务器地址）；cli 的 session.json（服务器 + 令牌） | `<数据目录>/openapi.json`（0600，多枚清单） |
+| 存放 | 浏览器 localStorage；desktop 的 session.json（令牌）；cli 的 session.json（令牌） | `<数据目录>/openapi.json`（0600，多枚清单） |
 
-**密码**：core 首次启动无认证逻辑；首个连上的客户端进入初始化引导设置密码（bcrypt 哈希落 `<数据目录>/auth.json`，0600）。此后所有端第一次都必须密码登录换会话令牌；凭证丢失重新登录即可。安全页可看会话清单（客户端类型、来源 IP、登录时间、会话 id）并吊销任意一端。
+**默认密码**：core 启动时确保 `<数据目录>/auth.json`（0600）里是默认密码 `ezharness` 的 bcrypt 哈希；缺失、损坏或仍是旧密码就重建哈希并清空旧会话。web / desktop / cli 启动时用默认密码静默换会话令牌，令牌各自持久保存，失效自动重登。安全页可看会话清单（客户端类型、来源 IP、登录时间、会话 id）并吊销任意一端。显式改密码留给远程形态。
 
-**登录地址**：desktop 登录页与 cli 登录可填 core 地址（`主机:端口` 或 `http(s)://…`，无端口默认 5260），默认本机——desktop 跟随 server.json，cli 跟随 server.json 或 session.json 里记住的地址；切到另一个 core 时按新地址重新登录。core 目前只绑 127.0.0.1，所以主要用途是本机另一实例/端口，跨机访问留给之后的远程形态（init/login 的本机 Origin 校验也只放行回环来源）。
+**连接地址**：web 与 desktop 固定跟随本机 core（server.json）；cli 默认本机，`--server <主机:端口>` 可显式指定（无端口默认 5260）。core 目前只绑 127.0.0.1，跨机访问留给之后的远程形态（login 的本机 Origin 校验也只放行回环来源）。
 
 **传输适配**（同一凭证，不是第二套认证）：
 
 - 页面 fetch 层所有接口一律带 `EzHarnessToken` 头；令牌存 localStorage（新标签页、重启后仍可带头与建 WS）。
-- `<img>`/`<video>`/PDF/页面导航这类浏览器自动发起的请求加不了自定义头——登录响应同时下发 HttpOnly cookie（`ez_token`，SameSite=Strict）作资产传输。**cookie 只在只读 HTTP 请求（GET/HEAD：导航、图片、SSE）上生效**；状态变更接口必须带显式请求头，挡住同 host 其他端口页面借浏览器发起的 CSRF（cookie 按 host 生效、不看端口，SameSite 也挡不住跨端口）。
+- `<img>`/`<video>`/PDF/页面导航这类浏览器自动发起的请求加不了自定义头——登录响应同时下发 HttpOnly cookie（`ez_token`，SameSite=Strict，与令牌同寿命一年）作资产传输。**cookie 只在只读 HTTP 请求（GET/HEAD：导航、图片、SSE）上生效**；状态变更接口必须带显式请求头，挡住同 host 其他端口页面借浏览器发起的 CSRF（cookie 按 host 生效、不看端口，SameSite 也挡不住跨端口）。
 - WebSocket 握手虽然是 GET，但连上能发命令，**不接受 cookie**：浏览器 WS 不能设自定义头，令牌走子协议 `new WebSocket(url, ["agent-auth", token])`（core 要求 `agent-auth` 排首位、令牌为第二个条目，校验后回显 `agent-auth`）；desktop 桥这类非浏览器客户端走 `EzHarnessToken` 头。
-- `/api/auth/init` 与 `/api/auth/login` 只接受本机页面发起：请求带 `Origin` 时其 host 必须是回环地址且与 `Host` 一致（cli/desktop 主进程不带 `Origin`，直接放行）。否则任意网站都能用一个无需预检的跨站 POST 抢先设密码。
+- `/api/auth/login` 只接受本机页面发起：请求带 `Origin` 时其 host 必须是回环地址且与 `Host` 一致（cli/desktop 主进程不带 `Origin`，直接放行）。否则任意网站都能用一个无需预检的跨站 POST 换会话令牌。
 
 ## 二、路由两面
 
 ```
 免鉴权面（全量清单）：
   GET  /api/app/health        探活 {ok, boot, version}（入口程序附着判断）
-  GET  /api/auth/status       密码是否已初始化（端首启判断走引导还是登录）
-  POST /api/auth/init         设密码并签发首枚会话（仅未初始化时开放）
-  POST /api/auth/login        密码换会话令牌
+  POST /api/auth/login        默认密码换会话令牌（三端启动时静默调用）
   GET  /api/open/sdk.js       SDK（本身无秘密）
   GET  /apps/*                快应用静态页（页面无秘密，令牌在页面自己的调用里）
 
@@ -87,7 +85,7 @@ MCP 管理（配置读写、连接、探测、注销）留在会话面——open
 ## 六、边界与演进
 
 - core 一律绑 127.0.0.1；OpenAPI 令牌泄露的代价上限是"烧 LLM 额度、消耗多媒体配额 + 免审批调 MCP"，吊销即止损；生成另有每日配额封顶
-- 格式化 = 恢复首次运行状态：auth.json 与 openapi.json 一并清空，回到"未初始化"引导
+- 格式化 = 恢复首次运行状态：auth.json 与 openapi.json 一并清空；core 重建默认密码，页面刷新后自动登录
 - 远程门户是预留方向：开了也只放行登录与 `/api/open/*`，其余一概不露——本模型不需要为此改动
 
 ---

@@ -152,29 +152,6 @@ func normalizeServer(raw string) (string, error) {
 	return u.Scheme + "://" + u.Host, nil
 }
 
-func isLocalHost(host string) bool {
-	return host == "127.0.0.1" || host == "localhost" || host == "::1"
-}
-
-func isLocalBase(base string) bool {
-	u, err := url.Parse(base)
-	return err == nil && isLocalHost(u.Hostname())
-}
-
-/* sameServer 判断两个地址是否同一台 core（回环主机名视为同一个）。 */
-func sameServer(a, b string) bool {
-	if a == b {
-		return true
-	}
-	ua, err1 := url.Parse(a)
-	ub, err2 := url.Parse(b)
-	if err1 != nil || err2 != nil {
-		return false
-	}
-	return ua.Scheme == ub.Scheme && ua.Port() == ub.Port() &&
-		(ua.Hostname() == ub.Hostname() || (isLocalHost(ua.Hostname()) && isLocalHost(ub.Hostname())))
-}
-
 /* displayAddr 提示里省掉 http 前缀并把回环显示成 localhost。 */
 func displayAddr(base string) string {
 	if strings.HasPrefix(base, "https://") {
@@ -183,21 +160,9 @@ func displayAddr(base string) string {
 	return strings.Replace(strings.TrimPrefix(base, "http://"), "127.0.0.1", "localhost", 1)
 }
 
-/* probeBase 探活任意 core 地址。 */
-func probeBase(base string, timeoutMs int) bool {
-	client := &http.Client{Timeout: time.Duration(timeoutMs) * time.Millisecond}
-	res, err := client.Get(base + "/api/app/health")
-	if err != nil {
-		return false
-	}
-	defer res.Body.Close()
-	var h healthInfo
-	return json.NewDecoder(res.Body).Decode(&h) == nil && h.OK
-}
-
 /*
 resolveBase 决定 chat/tui 连哪台 core：--server 显式地址优先；否则
-session.json 里记住的非本机地址（可达才用）；都没有就 ensureCore 本机。
+ensureCore 本机 core（默认值，无需用户输入）。
 */
 func resolveBase(serverFlag string) string {
 	if serverFlag != "" {
@@ -206,14 +171,6 @@ func resolveBase(serverFlag string) string {
 			fatalf("%v", err)
 		}
 		return base
-	}
-	saved, _ := loadSession()
-	if saved != "" && !isLocalBase(saved) {
-		if probeBase(saved, 2000) {
-			return saved
-		}
-		fmt.Printf("保存的服务器不可达（%s），回到本机 core\n", displayAddr(saved))
-		saveSession("", "") // 失效地址与旧令牌一起清掉
 	}
 	si := ensureCore()
 	return localBase(si.Port)

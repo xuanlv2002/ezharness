@@ -5,44 +5,34 @@ import (
 	"testing"
 )
 
-// 认证状态全链路：init 只许一次、login 签发多端会话、logout/revoke 撤销、
+// 认证状态全链路：启动补默认密码、login 签发多端会话、logout/revoke 撤销、
 // 落盘后重载仍有效（重启不换令牌）。
 func TestAuthStateLifecycle(t *testing.T) {
 	t.Chdir(t.TempDir())
 	a := LoadAuthState()
-	if a.Initialized() {
-		t.Fatal("fresh state should be uninitialized")
+	a.EnsureDefaultPassword()
+	if _, err := a.Login("wrong-pw", "端", "127.0.0.1"); err == nil {
+		t.Fatal("wrong password should fail")
 	}
-	if _, err := a.Login("pw123456", "端", "127.0.0.1"); err == nil {
-		t.Fatal("login before init should fail")
-	}
-	if _, err := a.Init("123", "端", "127.0.0.1"); err == nil {
-		t.Fatal("short password should fail")
-	}
-	first, err := a.Init("pw123456", "desktop", "127.0.0.1")
+	first, err := a.Login(DefaultPassword, "desktop", "127.0.0.1")
 	if err != nil {
 		t.Fatal(err)
-	}
-	if _, err := a.Init("again123", "cli", "127.0.0.1"); err == nil {
-		t.Fatal("second init should fail")
 	}
 	if !a.VerifySession(first.Token) {
 		t.Fatal("first session should verify")
 	}
-	second, err := a.Login("pw123456", "浏览器", "192.168.1.9")
+	second, err := a.Login(DefaultPassword, "浏览器", "192.168.1.9")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := a.Login("wrong-pw", "x", "127.0.0.1"); err == nil {
-		t.Fatal("wrong password should fail")
-	}
 
-	// 重载（模拟 core 重启）：会话仍在、密码仍对
+	// 重载（模拟 core 重启）：默认密码已匹配就不动会话
 	re := LoadAuthState()
+	re.EnsureDefaultPassword()
 	if !re.VerifySession(first.Token) || !re.VerifySession(second.Token) {
 		t.Fatal("sessions should survive restart")
 	}
-	if _, err := re.Login("pw123456", "x", "127.0.0.1"); err != nil {
+	if _, err := re.Login(DefaultPassword, "x", "127.0.0.1"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -66,6 +56,23 @@ func TestAuthStateLifecycle(t *testing.T) {
 	}
 	if _, err := os.Stat(authStateFile); err != nil {
 		t.Fatalf("auth state file missing: %v", err)
+	}
+}
+
+/* 旧安装的自定义密码/损坏哈希：启动收敛回默认密码，旧会话一并清空。 */
+func TestEnsureDefaultPasswordResets(t *testing.T) {
+	t.Chdir(t.TempDir())
+	old := []byte(`{"passwordHash":"broken","sessions":[{"id":"dead","token":"old-token"}]}`)
+	if err := os.WriteFile(authStateFile, old, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	a := LoadAuthState()
+	a.EnsureDefaultPassword()
+	if a.VerifySession("old-token") {
+		t.Fatal("old sessions should be cleared when password resets")
+	}
+	if _, err := a.Login(DefaultPassword, "cli", "127.0.0.1"); err != nil {
+		t.Fatalf("default password should work after reset: %v", err)
 	}
 }
 

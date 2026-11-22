@@ -35,14 +35,8 @@ contextBridge.exposeInMainWorld('ez', {
     get: () => ipcRenderer.invoke('ez:get-autolaunch'),
     set: (on) => ipcRenderer.invoke('ez:set-autolaunch', !!on),
   },
-  /* 服务器地址：登录页读当前 core 地址 / 探活后切换（主进程存 desktop.json，
-     切成功后页面自行导航到新 origin） */
-  server: {
-    get: () => ipcRenderer.invoke('ez:server-get'),
-    connect: (addr) => ipcRenderer.invoke('ez:server-connect', addr),
-  },
-  /* 会话令牌同步：页面登录/登出后把令牌交给主进程（浏览器桥/coreFetch 用，
-     存应用根 session.json；登出传空串） */
+  /* 会话令牌同步：页面静默登录后把令牌交给主进程（浏览器桥/coreFetch 用，
+     存应用根 session.json） */
   auth: {
     save: (token) => ipcRenderer.send('ez:auth-token', token),
   },

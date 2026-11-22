@@ -59,7 +59,7 @@ func cmdTUI(server string) {
 		fatalf("tui 需要在终端里运行")
 	}
 	base := resolveBase(server)
-	cl := ensureAuth(base, server == "")
+	cl := ensureAuth(base)
 	b, err := cl.bootstrap()
 	if err != nil {
 		fatalf("获取会话失败: %v", err)

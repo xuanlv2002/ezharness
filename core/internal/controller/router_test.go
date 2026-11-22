@@ -11,11 +11,12 @@ import (
 	"ezharness/core/internal/service"
 )
 
-/* newTestAuth 在临时数据目录里初始化密码并签发一枚会话（cwd 即数据目录）。 */
+/* newTestAuth 在临时数据目录里备好默认密码并签发一枚会话（cwd 即数据目录）。 */
 func newTestAuth(t *testing.T) (*service.AuthStore, string) {
 	t.Chdir(t.TempDir())
 	a := service.LoadAuthState()
-	s, err := a.Init("test-password", "测试端", "127.0.0.1")
+	a.EnsureDefaultPassword()
+	s, err := a.Login(service.DefaultPassword, "测试端", "127.0.0.1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -172,7 +173,7 @@ func TestSessionCookieReadOnly(t *testing.T) {
 	}
 }
 
-/* 初始化/登录拒绝非本机来源：跨站页面不能抢先设密码，DNS 重绑定也过不去。 */
+/* 登录拒绝非本机来源：跨站页面不能换会话令牌，DNS 重绑定也过不去。 */
 func TestLocalOrigin(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	cases := []struct {
@@ -189,7 +190,7 @@ func TestLocalOrigin(t *testing.T) {
 		{"file:// 页面", "null", "127.0.0.1:5260", false},
 	}
 	for _, c := range cases {
-		req := httptest.NewRequest(http.MethodPost, "/api/auth/init", nil)
+		req := httptest.NewRequest(http.MethodPost, "/api/auth/login", nil)
 		req.Host = c.host
 		if c.origin != "" {
 			req.Header.Set("Origin", c.origin)
@@ -245,7 +246,8 @@ func TestSetAuthCookie(t *testing.T) {
 		t.Fatalf("got %d cookies, want 1", len(cookies))
 	}
 	ck := cookies[0]
-	if ck.Name != authCookieName || ck.Value != "abc123" || ck.Path != "/" || !ck.HttpOnly || ck.SameSite != http.SameSiteStrictMode {
+	if ck.Name != authCookieName || ck.Value != "abc123" || ck.Path != "/" || !ck.HttpOnly ||
+		ck.SameSite != http.SameSiteStrictMode || ck.MaxAge <= 0 {
 		t.Fatalf("unexpected cookie: %+v", ck)
 	}
 }

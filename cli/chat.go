@@ -1,5 +1,5 @@
 /*
-chat 一问一答：附着 core → 登录 → 向当前活动分支发一句 → 流式打印回答
+chat 一问一答：附着 core → 静默登录 → 向当前活动分支发一句 → 流式打印回答
 （工具调用只显示一行动作名），turn_end 后退出。已有轮次运行中时不再发送，
 跟随当前输出到本轮结束。
 */
@@ -20,7 +20,7 @@ import (
 func cmdChat(rest []string, server string) {
 	text := strings.TrimSpace(strings.Join(rest, " "))
 	base := resolveBase(server)
-	cl := ensureAuth(base, server == "")
+	cl := ensureAuth(base)
 	b, err := cl.bootstrap()
 	if err != nil {
 		fatalf("获取会话失败: %v", err)

@@ -29,15 +29,3 @@ func TestNormalizeServer(t *testing.T) {
 		}
 	}
 }
-
-func TestSameServer(t *testing.T) {
-	if !sameServer("http://127.0.0.1:5260", "http://localhost:5260") {
-		t.Fatal("loopback hostnames should match")
-	}
-	if sameServer("http://127.0.0.1:5260", "http://127.0.0.1:5270") {
-		t.Fatal("different ports should not match")
-	}
-	if sameServer("http://127.0.0.1:5260", "http://192.168.1.5:5260") {
-		t.Fatal("different hosts should not match")
-	}
-}

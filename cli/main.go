@@ -1,8 +1,7 @@
 /*
-ezharness.exe 是唯一命令入口：无参打印信息卡；chat/tui 默认走
-resolveBase()（读 server.json → 探活 → 附着或拉起），--server 指定时
-直接连该地址。core 常驻单实例，本进程只是它的客户端（纯 HTTP，不
-import core 内部包）。
+ezharness.exe 是唯一命令入口：无参打印信息卡；chat/tui 默认连本机 core
+（读 server.json → 探活 → 附着或拉起），--server 可显式指定地址。core
+常驻单实例，本进程只是它的客户端（纯 HTTP，不 import core 内部包）。
 */
 package main
 
@@ -32,8 +31,7 @@ const usageText = `ezharness — 本机 AI 工作台入口
   help                本帮助
   -v, --version       版本号（单行）
 
---server <主机:端口>  chat/tui 连指定 core（默认本机自动发现；也可在
-                      登录提示里填）`
+--server <主机:端口>  chat/tui 连指定 core（默认本机自动发现）`
 
 func main() {
 	args := os.Args[1:]
@@ -108,7 +106,7 @@ func infoCard() {
 	fmt.Printf("数据　%s\n", dataDir)
 	/* 模型行尽力而为：已登录且 core 在跑才显示，失败静默 */
 	if si != nil {
-		if _, tok := loadSession(); tok != "" {
+		if tok := loadSession(); tok != "" {
 			cl := newClient(localBase(si.Port), tok)
 			if b, err := cl.bootstrap(); err == nil && b.Status != nil && b.Status.Model != "" {
 				fmt.Printf("模型　%s\n", b.Status.Model)

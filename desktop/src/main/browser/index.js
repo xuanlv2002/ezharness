@@ -894,8 +894,7 @@ function delay(ms) {
 
 /* ── core 桥客户端 ── */
 
-/* bridgeURL 由当前 core 地址推出：本机模式跟随 server.json，登录页切过
-   服务器则用新地址（重连即生效）。 */
+/* bridgeURL 由本机 core 地址推出（跟随 server.json，重连即生效）。 */
 function bridgeURL() {
   const u = new URL(getBase())
   return `${u.protocol === 'https:' ? 'wss:' : 'ws:'}//${u.host}/api/browser/bridge`
@@ -951,18 +950,6 @@ function connectBridge() {
   }
   ws.onclose = drop
   ws.onerror = () => ws.close()
-}
-
-/* reconnectBridge 切换 core 后断开旧桥：新地址/新令牌在下次重连生效。 */
-function reconnectBridge() {
-  if (!bridge) return
-  const old = bridge
-  bridge = null
-  try {
-    old.close()
-  } catch {
-    /* 已断开 */
-  }
 }
 
 /* ── renderer IPC（浏览器页 UI + 联动入口；上报者可来自主窗口或弹出窗口） ── */
@@ -1064,4 +1051,4 @@ function overlayBrowser(hide) {
   }
 }
 
-module.exports = { startBrowserModule, detachViewsFromWindow, overlayBrowser, reconnectBridge }
+module.exports = { startBrowserModule, detachViewsFromWindow, overlayBrowser }
