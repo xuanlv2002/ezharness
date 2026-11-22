@@ -16,6 +16,7 @@
   }
 
   const SETTINGS: { label: string; hint: string; anchor: string }[] = [
+    { label: 'core 运行状态', hint: '版本、端口、进程号、重启与停止', anchor: 'core' },
     { label: '服务端配置', hint: '监听、端口、数据目录、API 令牌', anchor: 'server' },
     { label: '上下文管理', hint: '整理水位、迭代次数、卸载阈值', anchor: 'context' },
     { label: '工作目录', hint: 'terminal 默认执行目录', anchor: 'workdir' },

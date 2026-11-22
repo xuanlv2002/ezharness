@@ -7,7 +7,7 @@ const path = require('path')
 const fs = require('fs')
 const http = require('http')
 const https = require('https')
-const { spawn } = require('child_process')
+const { spawn, execFileSync } = require('child_process')
 const { startBrowserModule, overlayBrowser } = require('./browser')
 const { startPreviewModule, overlayPreview } = require('./preview')
 const { attachInspectMenu } = require('./inspect')
@@ -358,18 +358,22 @@ function spawnCore(root) {
   /* detached + windowsHide：core 常驻（本进程退出不杀），并拿到隐藏控制台
      （非 Windows 忽略）——它 spawn 的控制台程序继承该控制台，否则 Windows
      会给每个子进程新开可见控制台，黑框一闪。日志走 core 自己的文件 */
-  coreProc = spawn(exe, ['--root', root], {
+  const proc = spawn(exe, ['--root', root], {
     cwd: root, stdio: 'ignore', detached: true, windowsHide: true,
     env: { ...process.env, PATH: loginPath() },
   })
-  coreProc.on('error', (err) => {
+  coreProc = proc
+  proc.on('error', (err) => {
+    if (proc !== coreProc) return
     console.error('core 启动失败:', err.message)
     failStart(`无法启动 core：${err.message}`)
     quitting = true
     app.quit()
   })
-  /* 本进程拉起的 core 崩溃：桌面壳报错退出（附着场景无句柄，由 ezharness server 兜） */
-  coreProc.on('exit', (code) => {
+  /* 本进程拉起的 core 崩溃：桌面壳报错退出（附着场景无句柄，由 ezharness server 兜）。
+     设置页停/重启时先把 coreProc 置空，旧进程的退出事件据此忽略。 */
+  proc.on('exit', (code) => {
+    if (proc !== coreProc) return
     if (!quitting) {
       console.error('core 进程退出，桌面壳随之退出')
       if (!coreReady) {
@@ -386,6 +390,8 @@ function spawnCore(root) {
         reject(new Error('quitting'))
         return
       }
+      // 新进程可能按 ezharness.json 落在别的端口（上一轮 server.json 已失效）
+      refreshActiveBase()
       if (await probeBase(activeBase)) {
         coreReady = true
         resolve()
@@ -403,6 +409,59 @@ function spawnCore(root) {
     }
     void tick()
   })
+}
+
+/* corePid 读 server.json 的 core 进程号。 */
+function corePid() {
+  try {
+    const si = JSON.parse(fs.readFileSync(path.join(rootDir(), 'server.json'), 'utf8'))
+    return si.pid > 0 ? si.pid : 0
+  } catch {
+    return 0
+  }
+}
+
+/* stopCore 停本机 core 并等探活失败（设置页进程控制用）。 */
+async function stopCore() {
+  refreshActiveBase()
+  if (!(await probeBase(activeBase))) return { ok: true }
+  const pid = corePid()
+  if (!pid) return { ok: false, error: 'server.json 里没有 core 进程号' }
+  const proc = coreProc
+  coreProc = null // 停进程期间旧句柄的退出不算崩溃
+  try {
+    if (process.platform === 'win32') execFileSync('taskkill', ['/PID', String(pid), '/T', '/F'])
+    else process.kill(pid, 'SIGTERM')
+    const deadline = Date.now() + 5000
+    while (Date.now() < deadline) {
+      if (!(await probeBase(activeBase, 300))) return { ok: true }
+      await new Promise((r) => setTimeout(r, 200))
+    }
+    if (proc) coreProc = proc // 没停掉：恢复崩溃监听
+    return { ok: false, error: 'core 未在 5 秒内退出' }
+  } catch (err) {
+    if (proc && proc.exitCode === null && proc.signalCode === null) coreProc = proc
+    return { ok: false, error: err.message }
+  }
+}
+
+/* startCore 拉起本机 core；已在运行则直接附着。 */
+async function startCore() {
+  refreshActiveBase()
+  if (await probeBase(activeBase)) return { ok: true }
+  try {
+    await spawnCore(rootDir())
+    return { ok: true }
+  } catch (err) {
+    return { ok: false, error: err.message }
+  }
+}
+
+/* restartCore 先停再起（换新构建的二进制）。 */
+async function restartCore() {
+  const stopped = await stopCore()
+  if (!stopped.ok) return stopped
+  return startCore()
 }
 
 /* createMainWindow 主窗口：Windows/Linux 无边框（前端 TitleBar 自绘 +
@@ -800,6 +859,10 @@ function registerIpc() {
      （不用 app-region:drag——那会把右键变成系统窗口菜单） */
   /* 页面登录/登出同步会话令牌：存 session.json 供主进程（浏览器桥/coreFetch）用 */
   ipcMain.on('ez:auth-token', (_e, t) => saveSessionToken(typeof t === 'string' ? t : ''))
+  /* core 进程启停（设置页；网页端没有这组 IPC，只能看状态） */
+  ipcMain.handle('ez:core-stop', () => stopCore())
+  ipcMain.handle('ez:core-start', () => startCore())
+  ipcMain.handle('ez:core-restart', () => restartCore())
 
   ipcMain.on('ez:pet-drag', (_e, on) => {
     const win = petWindow

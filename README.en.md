@@ -100,7 +100,7 @@ All three clients sign in silently with the default password `ezharness` — the
 
 ## Architecture at a glance
 
-Three executables, one resident core: the CLI and the desktop app are both clients of the same core, and quitting either leaves the core running:
+Three executables, one resident core: the CLI and the desktop app are both clients of the same core, and quitting either leaves the core running. The desktop settings page can explicitly restart or stop the core process:
 
 ```mermaid
 flowchart TB

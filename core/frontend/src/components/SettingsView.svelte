@@ -16,6 +16,12 @@
   let appChanged = $state(false)
   let showPaths = $state(false)
 
+  /* core 进程状态：网页端只能看；桌面端经 IPC 停/启整个进程 */
+  let coreStopped = $state(false)
+  let coreOffline = $state(false)
+  let coreBusy = $state(false)
+  let coreMsg = $state('')
+
   /* 上下文整理水位（模型窗口百分比；0 = 关闭自动整理，模型仍可主动调 trim_context 工具） */
   let percent = $state<number | ''>('')
   let origPercent = $state<number | null>(null)
@@ -107,8 +113,10 @@
       port = cfg.port
       dataDir = cfg.dataDir
       appChanged = false
+      coreOffline = false
     } catch {
       restartErr = '配置加载失败（后端不可达）'
+      coreOffline = true
     }
     try {
       const st = await api.getSettings()
@@ -328,10 +336,101 @@
       restarting = false
     }
   }
+
+  /* 运行时长只做展示，页面停留久了会偏旧；进程状态以每次进入设置页为准 */
+  function fmtUptime(iso: string): string {
+    const ms = Date.now() - Date.parse(iso)
+    if (!Number.isFinite(ms) || ms < 0) return '—'
+    const min = Math.floor(ms / 60000)
+    if (min < 1) return '刚刚'
+    if (min < 60) return `${min} 分钟`
+    const h = Math.floor(min / 60)
+    if (h < 24) return `${h} 小时 ${min % 60} 分`
+    return `${Math.floor(h / 24)} 天 ${h % 24} 小时`
+  }
+
+  async function restartCore() {
+    if (!ez?.core) return
+    coreBusy = true
+    coreMsg = ''
+    const r = await ez.core.restart()
+    if (r?.ok) location.reload()
+    else {
+      coreBusy = false
+      coreMsg = `重启失败：${r?.error || '未知错误'}`
+    }
+  }
+
+  async function stopCore() {
+    if (!ez?.core) return
+    if (!confirm('停止后本页立即失去连接；需要点击「启动 core」或重开桌面端才能恢复。确定停止？')) return
+    coreBusy = true
+    coreMsg = ''
+    const r = await ez.core.stop()
+    coreBusy = false
+    if (r?.ok) {
+      coreStopped = true
+      coreMsg = 'core 已停止'
+    } else {
+      coreMsg = `停止失败：${r?.error || '未知错误'}`
+    }
+  }
+
+  async function startCore() {
+    if (!ez?.core) return
+    coreBusy = true
+    coreMsg = ''
+    const r = await ez.core.start()
+    if (r?.ok) location.reload()
+    else {
+      coreBusy = false
+      coreMsg = `启动失败：${r?.error || '未知错误'}`
+    }
+  }
 </script>
 
 <div class="page">
   <h1>设置</h1>
+
+  <section id="set-core">
+    <h2 title="core 是本机常驻服务：重启/停止作用于整个进程，会断开当前页面；网页端没有拉起进程的能力，只能用桌面端或命令行启停。">core 运行状态</h2>
+    <div class="corerow">
+      <span class="corestate" class:down={coreStopped || coreOffline}>
+        <i></i>
+        {coreStopped ? '已停止' : coreOffline ? '未连接' : '运行中'}
+      </span>
+      {#if cfg && !coreStopped && !coreOffline}
+        <span class="coredetail">
+          v{cfg.version} · 127.0.0.1:{cfg.port} · PID {cfg.pid} · 第 {cfg.boot} 代 · 已运行
+          {fmtUptime(cfg.startedAt)}
+        </span>
+      {/if}
+    </div>
+    {#if coreStopped || coreOffline}
+      {#if ez?.core}
+        <button class="primary" disabled={coreBusy} onclick={startCore}>
+          {coreBusy ? '启动中…' : coreStopped ? '启动 core' : '重新连接'}
+        </button>
+      {/if}
+    {:else if ez?.core}
+      <div class="coreacts">
+        <button class="ghost" disabled={coreBusy} onclick={restartCore} title="重启整个 core 进程（会加载新构建的二进制），页面短暂断开后自动刷新">
+          {coreBusy ? '处理中…' : '重启 core'}
+        </button>
+        <button class="ghost danger" disabled={coreBusy} onclick={stopCore}>停止 core</button>
+      </div>
+    {:else}
+      <button class="ghost" disabled={restarting} onclick={restartApp}>
+        {restarting ? '重启中…' : '重启服务'}
+      </button>
+    {/if}
+    {#if !ez?.core}
+      <p class="msg">进程级启停仅在桌面端可用；网页端请用 ezharness stop / ezharness server。</p>
+    {/if}
+    {#if coreMsg}
+      <p class="msg">{coreMsg}</p>
+    {/if}
+  </section>
 
   <section id="set-server">
     <h2 title="端口是启动期配置，修改后需点「应用并重启」换代（进程内完成）；其余设置保存即生效，无需重启。监听一律 127.0.0.1 仅本机。数据目录挪盘：手改 ezharness.json 的 dataDir 后重启应用。">服务端配置</h2>
@@ -684,6 +783,45 @@
     background: var(--bg-invert);
     color: var(--fg-invert);
     text-decoration: none;
+  }
+  /* core 状态行：状态点 + 进程信息，操作按钮在下一行 */
+  .corerow {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px 14px;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 10px 14px;
+  }
+  .corestate {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    flex: none;
+    font-size: var(--font-size-section);
+    font-weight: 600;
+  }
+  .corestate i {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: #3fb950;
+  }
+  .corestate.down i {
+    background: var(--danger);
+  }
+  .coredetail {
+    min-width: 0;
+    font-family: var(--font-mono);
+    font-size: var(--font-size-ui);
+    color: var(--muted);
+    overflow-wrap: anywhere;
+  }
+  .coreacts {
+    display: flex;
+    align-items: center;
+    gap: 8px;
   }
   .grid2 {
     display: grid;

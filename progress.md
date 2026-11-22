@@ -268,3 +268,21 @@ OpenAPI 令牌与登录会话、无控制台错误 ✓。
 
 验证：用假 npm 拉起 core 后退出，dev.sh 的 EXIT trap 停掉 core 并移除
 `server.json`；`bash -n` ✓；重启后默认密码登录 200 ✓。
+
+## Phase 13 · 设置页 core 进程管理 — 已完成
+
+- **状态**：设置页新增「core 运行状态」：版本、监听地址、PID、当前代、运行时长；
+  页面加载失败显示「未连接」，不再误报运行中。
+- **桌面端启停**：桌面壳新增 `ez:core-stop/start/restart` IPC——按 server.json
+  停进程（Windows 用 `taskkill /T`），健康探活确认退出后可按原端口重新拉起；
+  重启后页面自动刷新，换的二进制立即生效。停止时先把 `coreProc` 置空，旧进程的
+  退出按句柄比对忽略，不会误判成崩溃把桌面壳带走。
+- **网页端边界**：网页没有拉起进程的能力，只展示状态；「重启服务」走原有
+  换代接口，进程级启停提示改用桌面端/CLI。停止后跨页重挂载显示「未连接」，
+  桌面端可「重新连接」。
+- **接口**：`AppConfigView` 增加 `version/pid/startedAt`；`spawnCore` 健康轮询
+  前重读 server.json，避免上一轮残留端口把新进程探活探错。
+
+验证：core 全量测试、vet、前端 build ✓；headless Chrome 网页端设置页正常；
+Electron CDP 实测停止 → 重挂载「未连接」→ 重新连接 → 重启（PID 93487→93827）
+均成功，页面自动刷新 ✓。

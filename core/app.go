@@ -30,6 +30,7 @@ import (
 type app struct {
 	mu        sync.Mutex
 	cfg       config.Config
+	startedAt time.Time                // 进程启动时刻（跨代不变，设置页展示运行时长）
 	auth      *service.AuthStore       // 密码与会话令牌（数据目录 auth.json，跨代复用）
 	openapi   *service.OpenapiStore    // OpenAPI 令牌（数据目录 openapi.json，跨代复用）
 	hub       *domain.Hub              // 当前代领域根（换代重建；退出/换代收尾用）
@@ -74,7 +75,7 @@ func newApp(c config.Config) (*app, error) {
 	// 凭证随数据目录（cwd 已切）：会话在 auth.json，openapi 令牌在 openapi.json
 	auth := service.LoadAuthState()
 	auth.EnsureDefaultPassword()
-	return &app{cfg: c, auth: auth, openapi: service.LoadOpenapiStore()}, nil
+	return &app{cfg: c, startedAt: time.Now(), auth: auth, openapi: service.LoadOpenapiStore()}, nil
 }
 
 /* start 启动第一代 server（端口占用失败即退出）。 */

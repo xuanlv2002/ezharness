@@ -87,7 +87,7 @@ ezharness 把模型放进你的真实工作环境：文件、终端、浏览器�
 
 ## 它由什么组成
 
-三个 exe、一个常驻 core：CLI 与桌面端都是 core 的入口，退出它们都不停 core：
+三个 exe、一个常驻 core：CLI 与桌面端都是 core 的入口，退出它们都不停 core；桌面端设置页可显式重启/停止 core 进程：
 
 ```mermaid
 flowchart TB
