@@ -261,11 +261,11 @@ func (a *AgentService) Assemble(s *domain.Session, st domain.Settings) {
 		}
 		return out
 	}
-	tabsBrief := func() []string {
+	tabsBrief := func(ctx context.Context) []string {
 		if a.Browser == nil {
 			return nil
 		}
-		return a.Browser.TabsBrief()
+		return a.Browser.TabsBrief(ctx)
 	}
 	remindHook := hooks.NewRemind(s.Fsys, s.Sess,
 		func() int { return s.CtxTokens() },

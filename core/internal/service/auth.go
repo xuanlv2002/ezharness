@@ -114,17 +114,19 @@ func (a *AuthStore) Login(password, client, ip string) (Session, error) {
 
 /* VerifySession 恒定时间校验会话令牌。 */
 func (a *AuthStore) VerifySession(token string) bool {
-	if token == "" {
-		return false
-	}
+	return a.ClientOf(token) != ""
+}
+
+/* ClientOf 令牌所属端的名称（desktop/web/cli）；未知令牌返回空串。 */
+func (a *AuthStore) ClientOf(token string) string {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	for _, s := range a.sessions {
 		if subtle.ConstantTimeCompare([]byte(s.Token), []byte(token)) == 1 {
-			return true
+			return s.Name
 		}
 	}
-	return false
+	return ""
 }
 
 /* Logout 撤销令牌对应的会话；令牌本身即凭证，无需 id。 */

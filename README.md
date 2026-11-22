@@ -99,8 +99,8 @@ flowchart TB
     CLI -- "ensureCore：附着或拉起" --> CORE
     DESK -- "ensureCore：附着，壳退 core 不退" --> CORE
     WEB -- "默认密码隐式登录" --> CORE
-    CORE -. "浏览器桥（桌面端在场时优先）" .-> DESK
-    CORE -. "桥未连接时兜底" .-> HE
+    CORE -. "浏览器桥（桌面端发起的一轮）" .-> DESK
+    CORE -. "web / cli / 后台轮" .-> HE
 ```
 
 core 启动时备好默认密码，三端静默登录；接口鉴权用请求头 `EzHarnessToken`（脚本/快应用用 `EzHarnessOpenToken` 调 `/api/open/*`）。详见[三分架构](docs/md/三分架构.md)。

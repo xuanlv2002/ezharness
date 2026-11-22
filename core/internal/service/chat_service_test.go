@@ -53,11 +53,11 @@ func TestChatSendInterruptsRunningTurn(t *testing.T) {
 	hub.SetActive(sess)
 	svc := &ChatService{Hub: hub}
 
-	if err := svc.Send(sess.RootID, "first", nil); err != nil {
+	if err := svc.Send(sess.RootID, "first", nil, "web"); err != nil {
 		t.Fatal(err)
 	}
 	waitUntil(t, 2*time.Second, sess.Busy)
-	if err := svc.Send(sess.RootID, "second", nil); err != nil {
+	if err := svc.Send(sess.RootID, "second", nil, "web"); err != nil {
 		t.Fatalf("interrupting send: %v", err)
 	}
 	waitUntil(t, 2*time.Second, func() bool {

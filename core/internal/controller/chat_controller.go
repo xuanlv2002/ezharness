@@ -100,7 +100,7 @@ func (c *ChatController) SendMessage(g *gin.Context) {
 		}
 		refs = append(refs, hooks.RefFile{Path: abs, Items: items})
 	}
-	if err := c.Svc.Send(g.Param("id"), body.Text, refs); err != nil {
+	if err := c.Svc.Send(g.Param("id"), body.Text, refs, g.GetString(clientCtxKey)); err != nil {
 		if errors.Is(err, domain.ErrBusy) {
 			g.JSON(http.StatusConflict, gin.H{"error": err.Error()})
 			return

@@ -1,11 +1,11 @@
 /*
 魔法看板·共享浏览器——core 侧门面。browser_* 工具的端无关定义在 core
-(tools 层)。两个后端按可用性择一：desktop 壳的桥（Electron WebContentsView，
-真实浏览器 + 抽屉实时共见，经 /api/browser/bridge WS 转发并等回执）优先；
-桥未连接时用无头后端（chromedp 驱动本机 Chrome/Edge，见 browser_headless.go）
-兜底——抽屉/共见是桌面端独有，能力面跨端一致。截图统一 core 落盘并走
-image_loaded 通道转持久化图片消息。服务无页面状态,换代不重建;桥断线由
-desktop 自动重连。
+(tools 层)。两个后端按轮的来源端择一：桌面端发起的轮走桥（Electron
+WebContentsView，真实浏览器 + 抽屉实时共见，经 /api/browser/bridge WS
+转发并等回执）；web/cli/后台轮及桥未连接时用无头后端（chromedp 驱动本机
+Chrome/Edge，见 browser_headless.go）——抽屉/共见是桌面端独有，能力面跨端
+一致。截图统一 core 落盘并走 image_loaded 通道转持久化图片消息。服务无页面
+状态,换代不重建;桥断线由 desktop 自动重连。
 */
 package service
 
@@ -48,8 +48,7 @@ type bridgeReply struct {
 	Note   string   `json:"note,omitempty"`   // 附加说明(如整页超出屏数上限)
 }
 
-/* BrowserService 是浏览器门面：桥优先、无头兜底（桥连接期间不切后端——
-标签属于各自后端，中途切换会让 tabId 失效）。 */
+/* BrowserService 是浏览器门面：按轮来源选后端（桥 / 无头），轮内不切——标签属于各自后端，中途切换会让 tabId 失效。 */
 type BrowserService struct {
 	mu         sync.Mutex
 	writeMu    sync.Mutex // WS 单写者
@@ -77,9 +76,12 @@ func (s *BrowserService) bridgeConnected() bool {
 	return s.conn != nil
 }
 
-/* hd 无头后端（桥在连时返回 nil——走桥）。 */
-func (s *BrowserService) hd() *headlessBrowser {
-	if s.bridgeConnected() {
+/* turnClientKey 把发起一轮的端（desktop/web/cli，空=后台）带进工具 ctx。 */
+type turnClientKey struct{}
+
+/* hd 无头后端：只有桌面端自己发起的一轮才走桥——桥是桌面壳的真实浏览器，桌面端在场时不该被 web/cli/后台轮劫持画面（也别在这些轮里悄悄开标签）。 */
+func (s *BrowserService) hd(ctx context.Context) *headlessBrowser {
+	if client, _ := ctx.Value(turnClientKey{}).(string); client == "desktop" && s.bridgeConnected() {
 		return nil
 	}
 	return s.headless
@@ -222,7 +224,7 @@ func bridgeTimeout(timeoutMs, fallbackMs, maxMs int) time.Duration {
 
 /* StartBrowser 新建标签(name 必填,desc 可选)并可选导航,返回标签状态 JSON。 */
 func (s *BrowserService) StartBrowser(ctx context.Context, name, desc, rawURL string, timeoutMs int) (string, error) {
-	if h := s.hd(); h != nil {
+	if h := s.hd(ctx); h != nil {
 		return h.StartBrowser(ctx, name, desc, rawURL, timeoutMs)
 	}
 	reply, err := s.call(ctx, "start", map[string]any{
@@ -237,7 +239,7 @@ func (s *BrowserService) StartBrowser(ctx context.Context, name, desc, rawURL st
 
 /* NavigateBrowser 跳转并等加载,返回新页面标题。 */
 func (s *BrowserService) NavigateBrowser(ctx context.Context, tabID, rawURL string, timeoutMs int) (string, error) {
-	if h := s.hd(); h != nil {
+	if h := s.hd(ctx); h != nil {
 		return h.NavigateBrowser(ctx, tabID, rawURL, timeoutMs)
 	}
 	reply, err := s.call(ctx, "navigate", map[string]any{
@@ -252,7 +254,7 @@ func (s *BrowserService) NavigateBrowser(ctx context.Context, tabID, rawURL stri
 
 /* UploadBrowser 给 <input type=file> 设置文件（files 为本机绝对路径,逗号分隔）。 */
 func (s *BrowserService) UploadBrowser(ctx context.Context, tabID, selector, files string) (string, error) {
-	if h := s.hd(); h != nil {
+	if h := s.hd(ctx); h != nil {
 		return h.UploadBrowser(ctx, tabID, selector, files)
 	}
 	reply, err := s.call(ctx, "upload", map[string]any{"tabId": tabID, "selector": selector, "files": files}, bridgeOpTimeout)
@@ -264,7 +266,7 @@ func (s *BrowserService) UploadBrowser(ctx context.Context, tabID, selector, fil
 
 /* SelectTab 把某个标签切到前台（用户也会看到它）。 */
 func (s *BrowserService) SelectTab(ctx context.Context, tabID string) (string, error) {
-	if h := s.hd(); h != nil {
+	if h := s.hd(ctx); h != nil {
 		return h.SelectTab(ctx, tabID)
 	}
 	reply, err := s.call(ctx, "activate", map[string]any{"tabId": tabID}, bridgeQuickTimeout)
@@ -282,7 +284,7 @@ timeoutMs 透传 desktop——页面仍在加载时先等收尾(默认 8000ms)�
 免读到半页;桥等待上限随之放宽(超时+10s 余量给正文提取)。
 */
 func (s *BrowserService) ReadBrowser(ctx context.Context, tabID, mode, selector string, chars, timeoutMs int) (string, error) {
-	if h := s.hd(); h != nil {
+	if h := s.hd(ctx); h != nil {
 		return h.ReadBrowser(ctx, tabID, mode, selector, chars, timeoutMs)
 	}
 	if chars <= 0 {
@@ -306,7 +308,7 @@ func (s *BrowserService) ReadBrowser(ctx context.Context, tabID, mode, selector 
 
 /* EvalBrowser 在页面内执行 JS,返回求值结果(可改 DOM、读状态)。 */
 func (s *BrowserService) EvalBrowser(ctx context.Context, tabID, js string) (string, error) {
-	if h := s.hd(); h != nil {
+	if h := s.hd(ctx); h != nil {
 		return h.EvalBrowser(ctx, tabID, js)
 	}
 	reply, err := s.call(ctx, "eval", map[string]any{"tabId": tabID, "js": js}, bridgeOpTimeout)
@@ -318,7 +320,7 @@ func (s *BrowserService) EvalBrowser(ctx context.Context, tabID, js string) (str
 
 /* ConsoleBrowser 读/清控制台(errorsOnly 只留 error;mode=read|clear)。 */
 func (s *BrowserService) ConsoleBrowser(ctx context.Context, tabID, mode string, errorsOnly bool) (string, error) {
-	if h := s.hd(); h != nil {
+	if h := s.hd(ctx); h != nil {
 		return h.ConsoleBrowser(ctx, tabID, mode, errorsOnly)
 	}
 	reply, err := s.call(ctx, "console", map[string]any{
@@ -332,7 +334,7 @@ func (s *BrowserService) ConsoleBrowser(ctx context.Context, tabID, mode string,
 
 /* NetworkBrowser 读网络请求:index=0 清单,>0 该序号详情。 */
 func (s *BrowserService) NetworkBrowser(ctx context.Context, tabID string, index int, filter string, errorsOnly bool) (string, error) {
-	if h := s.hd(); h != nil {
+	if h := s.hd(ctx); h != nil {
 		return h.NetworkBrowser(ctx, tabID, index, filter, errorsOnly)
 	}
 	reply, err := s.call(ctx, "network", map[string]any{"tabId": tabID, "index": index, "filter": filter, "errorsOnly": errorsOnly}, bridgeOpTimeout)
@@ -352,7 +354,7 @@ image_loaded 标记(filetools 的 OnLoop 会把批内全部标记合并成一条
 */
 func (s *BrowserService) ScreenshotBrowser(ctx context.Context, tabID string, fullPage bool, selector, note string, timeoutMs int) (string, error) {
 	images, shotNote := []string(nil), ""
-	if h := s.hd(); h != nil {
+	if h := s.hd(ctx); h != nil {
 		imgs, n, err := h.ScreenshotRaw(ctx, tabID, fullPage, selector, timeoutMs)
 		if err != nil {
 			return "", err
@@ -419,15 +421,18 @@ func (s *BrowserService) saveShots(tabID string, images []string, shotNote, note
 	return head + "\n" + strings.Join(markers, "\n"), nil
 }
 
-/* imageNote 把看图目的压成单行标记属性值(空白折叠、双引号换单引号,
-属性正则才安全)。 */
+/*
+	imageNote 把看图目的压成单行标记属性值(空白折叠、双引号换单引号,
+
+属性正则才安全)。
+*/
 func imageNote(s string) string {
 	return strings.ReplaceAll(strings.Join(strings.Fields(s), " "), `"`, `'`)
 }
 
 /* CloseBrowserTab 关闭标签;幂等,返回 desktop 回执的 closed JSON。 */
 func (s *BrowserService) CloseBrowserTab(ctx context.Context, tabID string) (string, error) {
-	if h := s.hd(); h != nil {
+	if h := s.hd(ctx); h != nil {
 		return h.CloseBrowserTab(ctx, tabID)
 	}
 	reply, err := s.call(ctx, "close", map[string]any{"tabId": tabID}, bridgeQuickTimeout)
@@ -439,7 +444,7 @@ func (s *BrowserService) CloseBrowserTab(ctx context.Context, tabID string) (str
 
 /* ListBrowserTabsJSON 标签清单 JSON 文本(browser_list 工具直接返回)。 */
 func (s *BrowserService) ListBrowserTabsJSON(ctx context.Context) string {
-	if h := s.hd(); h != nil {
+	if h := s.hd(ctx); h != nil {
 		return h.ListTabsJSON(ctx)
 	}
 	reply, err := s.call(ctx, "list", nil, bridgeQuickTimeout)
@@ -452,17 +457,17 @@ func (s *BrowserService) ListBrowserTabsJSON(ctx context.Context) string {
 /*
 TabsBrief 返回开启中标签的展示名清单("name（页面标题）[tabId]",
 agent_status 快照每轮现查用;id 供模型直接 browser_action/read 与
-交付 browser:// 入口,免一次 list 发现)。桥未连接/查询失败/超时
-返回 nil(渲染为"（无）",不视为错误——web 端直连本就无浏览器)。
+交付 browser:// 入口,免一次 list 发现)。清单与本轮工具的后端一致
+(ctx 定桥/无头);查询失败/超时返回 nil(渲染为"（无）",不视为错误)。
 自带 2 秒短超时:每轮 OnStart 同步调用,desktop 卡死不能拖住轮首。
 */
-func (s *BrowserService) TabsBrief() []string {
-	if h := s.hd(); h != nil {
+func (s *BrowserService) TabsBrief(ctx context.Context) []string {
+	if h := s.hd(ctx); h != nil {
 		return h.TabsBrief()
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), bridgeBriefTimeout)
+	bctx, cancel := context.WithTimeout(context.Background(), bridgeBriefTimeout)
 	defer cancel()
-	reply, err := s.call(ctx, "list", nil, bridgeBriefTimeout)
+	reply, err := s.call(bctx, "list", nil, bridgeBriefTimeout)
 	if err != nil {
 		return nil
 	}

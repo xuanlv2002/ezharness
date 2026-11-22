@@ -57,15 +57,15 @@ type Remind struct {
 	ctxTokens func() int
 	ctxWindow int
 	mcpList   func() []StatusMcp
-	mcpOff    func() []string    // 可空：已停用 MCP server 名（与启用清单互补，启停 diff 用）
-	disabled  func() []string    // 可空：禁用技能目录名（实时读设置快照）
-	terms     func() []string    // 可空：运行中终端名（终端/浏览器是进程生命周期态，重启即失，
-	tabs      func() []string    // 不进 system 固定段，走每轮快照——与 skill/mcp 类持久资源分界
-	model     func() string      // 可空：主模型摘要（名称+视觉）；快照行展示 + 变更基线 diff
-	modelList func() []StatusMcp // 可空：可选模型清单（名称+能力）；资源变更 diff + available 清单
-	modelOff  func() []string    // 可空：已关闭模型名（与可用清单互补，启停 diff 用）
-	media     func() []StatusMcp // 可空：多媒体三类能力清单（名称+生效模型/未配置）；变更 diff + available 清单
-	planRoot  string             // 计划归属的分支根 ID（空=不注入计划）
+	mcpOff    func() []string                // 可空：已停用 MCP server 名（与启用清单互补，启停 diff 用）
+	disabled  func() []string                // 可空：禁用技能目录名（实时读设置快照）
+	terms     func() []string                // 可空：运行中终端名（终端/浏览器是进程生命周期态，重启即失，
+	tabs      func(context.Context) []string // 不进 system 固定段，走每轮快照——与 skill/mcp 类持久资源分界；带轮 ctx 选浏览器后端
+	model     func() string                  // 可空：主模型摘要（名称+视觉）；快照行展示 + 变更基线 diff
+	modelList func() []StatusMcp             // 可空：可选模型清单（名称+能力）；资源变更 diff + available 清单
+	modelOff  func() []string                // 可空：已关闭模型名（与可用清单互补，启停 diff 用）
+	media     func() []StatusMcp             // 可空：多媒体三类能力清单（名称+生效模型/未配置）；变更 diff + available 清单
+	planRoot  string                         // 计划归属的分支根 ID（空=不注入计划）
 }
 
 /*
@@ -76,7 +76,7 @@ terms/tabs 可空：运行中终端名与浏览器标签名（每轮现查注入
 */
 func NewRemind(fsys fs.FileSystem, store *Store, ctxTokens func() int, ctxWindow int,
 	mcpList func() []StatusMcp, disabled func() []string,
-	terms func() []string, tabs func() []string) *Remind {
+	terms func() []string, tabs func(context.Context) []string) *Remind {
 	return &Remind{fsys: fsys, store: store, ctxTokens: ctxTokens, ctxWindow: ctxWindow,
 		mcpList: mcpList, disabled: disabled, terms: terms, tabs: tabs}
 }
@@ -116,7 +116,7 @@ func (h *Remind) OnStart(ctx context.Context, state *types.LoopState) error {
 			Content: renderResChange(items, skills, mcps, models, media, apps, callbacks)})
 		state.EmitEvent(EventResChange, items)
 	}
-	data := h.buildSnapshot()
+	data := h.buildSnapshot(ctx)
 	plan, _ := LoadPlan(ctx, h.fsys, h.planRoot)
 	h.insertBeforeLastUser(state, types.Message{Role: types.RoleUser,
 		Content: "<" + StatusTag + ">\n" + renderStatus(data, plan) + "\n</" + StatusTag + ">"})
@@ -140,7 +140,7 @@ func (h *Remind) insertBeforeLastUser(state *types.LoopState, msg types.Message)
 /*
 buildSnapshot 组装水位快照数据（时间/距上次输出/水位/压缩建议）。
 */
-func (h *Remind) buildSnapshot() StatusData {
+func (h *Remind) buildSnapshot(ctx context.Context) StatusData {
 	now := time.Now()
 	data := StatusData{
 		Now:       now.Format("2006-01-02 15:04"),
@@ -160,7 +160,7 @@ func (h *Remind) buildSnapshot() StatusData {
 		data.Terms = h.terms()
 	}
 	if h.tabs != nil {
-		data.Tabs = h.tabs()
+		data.Tabs = h.tabs(ctx)
 	}
 	return data
 }

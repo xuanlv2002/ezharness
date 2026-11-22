@@ -301,7 +301,7 @@ func (s *CallbackService) runSession(ctx context.Context, task callback.Task, st
 		out.Target = "新建会话"
 		sess := s.Hub.CreateBranch()
 		s.Agents.Assemble(sess, s.Hub.SettingsSnapshot())
-		if err := s.Chat.Send(sess.RootID, text, nil); err != nil {
+		if err := s.Chat.Send(sess.RootID, text, nil, ""); err != nil {
 			s.Hub.Unregister(sess.RootID)
 			return out, fmt.Errorf("新建会话发送失败: %w", err)
 		}
