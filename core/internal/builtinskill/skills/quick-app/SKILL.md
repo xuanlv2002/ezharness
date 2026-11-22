@@ -7,7 +7,7 @@ description: 构建/更新快应用——app.quick 协议、save_app 增量语�
 
 快应用 = `<数据目录>/apps/<名>/` 目录（绝对路径见 system `<workspace>` 段）。目录里有 `app.quick` 才算一个应用；用户点启动 = **打开应用窗口**，声明了 `backend` 就在内置终端把后端跑起来。
 
-快应用是一套**与宿主无关的打包标准**：只约定文件组织，不约束语言技术栈；页面要用大模型/MCP 能力时的调用方法见 open-api 技能。令牌属于应用自己的代码/配置：页面写进 `ez.config`，后端读 `<数据目录>/openapi.json`（core 不注入 env）。
+快应用是一套**与宿主无关的打包标准**：只约定文件组织，不约束语言技术栈；页面要用大模型/MCP 能力时的调用方法见 open-api 技能。需要令牌时先用 `create_openapi_token` 生成，再明文写进 `ez.config` 或后端配置（core 不注入 env）。
 
 ## 判定
 

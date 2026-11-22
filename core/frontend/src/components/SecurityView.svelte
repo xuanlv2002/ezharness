@@ -59,6 +59,7 @@
     'plan:clear': '清除当前计划',
     save_app: '保存快应用清单与前端',
     load_app: '读取快应用调用文档（只读）',
+    create_openapi_token: '生成 agent 自用的 OpenAPI 令牌（脚本/快应用调 /api/open/* 用）',
     memory: '提交长期记忆 / 项目记忆变更（提案在记忆页审阅）',
     model_call: '一次性调用指定模型（识别 / 翻译 / 改写）',
     'media:image': '文生图（贵价：默认每次审批 + 每日配额；异步任务）',
@@ -107,7 +108,7 @@
   }
 
   /* 稳定排序：先按工具、再按 action，避免后端返回顺序抖动导致行乱跳 */
-  const BASE_ORDER = ['read_file', 'grep', 'write_file', 'edit_file', 'terminal', 'term_tab', 'term_action', 'browser_tab', 'browser_action', 'media', 'task', 'plan', 'save_app', 'load_app', 'memory', 'model_call', 'callback', 'sleep', 'ask_user', 'trim_context', 'load_skill', 'mcp.*']
+  const BASE_ORDER = ['read_file', 'grep', 'write_file', 'edit_file', 'terminal', 'term_tab', 'term_action', 'browser_tab', 'browser_action', 'media', 'task', 'plan', 'save_app', 'load_app', 'create_openapi_token', 'memory', 'model_call', 'callback', 'sleep', 'ask_user', 'trim_context', 'load_skill', 'mcp.*']
   const ACTION_ORDER: Record<string, string[]> = {
     term_action: ['send', 'read'],
     browser_action: ['navigate', 'read', 'eval', 'console', 'network', 'screenshot', 'upload'],
@@ -419,11 +420,12 @@
   <section>
     <div class="section-head">
       <div>
-        <h2 title="给脚本、快应用、外部程序调 /api/open/* 用的令牌（请求头 EzHarnessOpenToken）。OpenAPI 与登录会话完全独立，只认这枚令牌；core 启动时若没有令牌会自动生成一枚「默认」，多枚可命名、吊销即失效。"
+        <h2 title="给脚本、快应用、外部程序调 /api/open/* 用的令牌（请求头 EzHarnessOpenToken）。OpenAPI 与登录会话完全独立，只认这里的令牌；没有默认令牌，需要时由 agent 用 create_openapi_token 工具生成，或在这里生成。"
           >OpenAPI 令牌<span class="count">{oaTokens.length}</span></h2
         >
-        <p class="section-desc">OpenAPI 是独立模块，只认这里的令牌、不弹登录；core 启动自动准备一枚「默认」，脚本与终端读 openapi.json 显式传入即可，也可另生成多枚。</p>
+        <p class="section-desc">OpenAPI 是独立模块，只认这里的令牌、不弹登录；没有默认令牌，agent 需要调用时会自己生成，你也可以在这里生成。</p>
       </div>
+      <button class="mini" onclick={() => void loadCreds()}>刷新</button>
     </div>
     {#if credMsg}
       <p class="msg">{credMsg}</p>
@@ -452,7 +454,7 @@
           {/each}
         </ul>
       {:else}
-        <p class="empty">令牌清单为空；重启 core 会自动补一枚「默认」令牌，也可以现在生成一枚。</p>
+        <p class="empty">还没有令牌。agent 需要调用 OpenAPI 时会用 create_openapi_token 生成；你也可以在这里生成。</p>
       {/if}
     </div>
   </section>

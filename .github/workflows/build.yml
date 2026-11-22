@@ -73,10 +73,13 @@ jobs:
             http://127.0.0.1:5391/api/auth/sessions \
             | grep -q '"name":"ci"'
 
-          # 空 openapi.json 启动应自动补「默认」令牌，且该令牌能调 open 面
-          openapi_token=$(python3 -c \
-            'import json,sys; d=json.load(open(sys.argv[1])); assert d["tokens"][0]["name"] == "默认"; print(d["tokens"][0]["token"])' \
-            "$root/data/openapi.json")
+          # 没有默认令牌；需要时在会话面生成一枚
+          test ! -e "$root/data/openapi.json"
+          openapi_token=$(curl -sf -X POST \
+            -H "EzHarnessToken: $token" -H 'Content-Type: application/json' \
+            -d '{"name":"ci"}' \
+            http://127.0.0.1:5391/api/security/openapi-tokens \
+            | python3 -c 'import json,sys; print(json.load(sys.stdin)["token"]["token"])')
           curl -sf -H "EzHarnessOpenToken: $openapi_token" \
             http://127.0.0.1:5391/api/open/mcp > /dev/null
           # OpenAPI 与登录态独立：会话头调 open 面必须 401，会话面正常

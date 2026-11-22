@@ -136,8 +136,8 @@ POST /api/open/model/call
 ## 五、一个最小调用示例
 
 ```bash
-# 令牌从 <数据目录>/openapi.json 的 tokens[].token 显式取；core 不注入 env
-TOKEN=$(python3 -c 'import json; print(json.load(open("<数据目录>/openapi.json"))["tokens"][-1]["token"])')
+# 令牌由 agent 用 create_openapi_token 生成后填到这里；core 不注入 env
+TOKEN='<令牌>'
 curl -s -H "EzHarnessOpenToken: $TOKEN" \
   -H 'Content-Type: application/json' \
   -d '{"server":"filesystem","tool":"read_text_file","args":{"path":"D:/work/README.md"}}' \

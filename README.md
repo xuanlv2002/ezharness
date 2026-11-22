@@ -63,7 +63,7 @@ ezharness 把模型放进你的真实工作环境：文件、终端、浏览器�
 - **macOS / Linux**：`.dmg` / `.AppImage` 里带齐三件；也可以只下载 `ezharness` 与 `ezharness-core` 放同一目录，走命令行。
 - **纯 server**：`ezharness-core.exe`（或 `ezharness server [--detach]`）起后端，浏览器访问 `http://127.0.0.1:<port>`，与桌面端同一份页面；`ezharness tui` 是终端界面，`ezharness --server <主机:端口> tui` 可连另一台 core。
 
-三端用默认密码 `ezharness` 隐式登录，不显示登录页；会话令牌各自保存，失效自动重登。core 启动时还会自动补一枚名为「默认」的 OpenAPI 令牌；OpenAPI 与登录完全独立，脚本/快应用显式带上这枚令牌即可，core 不做环境注入。
+三端用默认密码 `ezharness` 隐式登录，不显示登录页；会话令牌各自保存，失效自动重登。OpenAPI 与登录完全独立，没有默认令牌：agent 需要调用时用 `create_openapi_token` 工具生成，脚本/快应用显式带上，core 不做环境注入。
 
 1. 打开「模型」页填入语言模型 apiKey，并点亮新会话的默认模型；需要生成图片/语音/视频时，到「多媒体 · 模型与限额」配置对应模型；
 2. 回到对话页，把任务交给它——文件整理、脚本编写、报错排查、网页操作、生成素材都行；输入框上方可随时切换本会话的模型 / 思考强度 / 审批档位；

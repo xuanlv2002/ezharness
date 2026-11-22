@@ -11,16 +11,18 @@ core 在本机暴露 HTTP API（基址见 system `<local_api>` 段，形如 `htt
 
 | 调用方 | 取令牌 | 依赖 SDK |
 | --- | --- | --- |
-| 终端/子进程脚本 | 读 `<数据目录>/openapi.json`（0600）的 `tokens[].token`，脚本里显式传 | 否 |
-| 外部程序/手写脚本 | 同上；令牌作为参数/配置由调用方自己保存 | 否 |
-| 快应用后端（推荐交付形态） | 启动时读 `openapi.json`，或写进应用自己的配置 | 否（裸 HTTP） |
-| 纯前端页面（含 `file://` 测试页） | **明文硬编码**进 `ez.config` | 是（`/api/open/sdk.js`） |
+| 终端/子进程脚本 | 调 `create_openapi_token` 工具生成，令牌作为脚本常量/参数 | 否 |
+| 外部程序/手写脚本 | 同上；令牌由调用方自己保存 | 否 |
+| 快应用后端（推荐交付形态） | 同上；写进应用自己的配置 | 否（裸 HTTP） |
+| 纯前端页面（含 `file://` 测试页） | 同上；**明文写进** `ez.config` | 是（`/api/open/sdk.js`） |
 
-策略：令牌就是调用方自己的配置，前后端都可以明文使用；core 不做进程环境注入，也不依赖浏览器会话。需要换令牌时改代码里的值或重新读取 `openapi.json`。
+策略：令牌就是调用方自己的配置，前后端都可以明文使用；core 不做进程环境注入，也不依赖浏览器会话。
 
 ## 做法
 
-**鉴权**：请求头 `EzHarnessOpenToken: <令牌>`。core 启动时若一枚都没有，会自动生成一枚「默认」令牌；从 `<数据目录>/openapi.json` 的 `tokens[].token` 取最新一枚即可。安全页可另生成多枚、吊销；清单为空时重启 core 会再补一枚默认令牌。**不要让用户把令牌贴进对话**。
+**鉴权**：请求头 `EzHarnessOpenToken: <令牌>`。需要调 OpenAPI 时先调 `create_openapi_token` 工具生成一枚（name 可选），工具会直接把令牌返回给你；把令牌显式写进调用代码或配置。不需要调用就不要生成。
+
+**MCP OAuth 是唯一例外**：`/api/open/mcp/call` 返回 `401 + needs_auth` 表示该 MCP 服务需要授权，不是 OpenAPI 令牌失效——按 `auth_url` 完成授权后重发原调用；SDK 会自动处理。
 
 **端点**：
 
@@ -42,19 +44,19 @@ core 在本机暴露 HTTP API（基址见 system `<local_api>` 段，形如 `htt
 | 状态 | 含义 | 处理 |
 | --- | --- | --- |
 | 400 | 参数错误 | 不重试，查载荷 |
-| 401（无 needs_auth） | 令牌无效/被吊销 | 重读 `openapi.json`；清单为空就重启 core 补默认令牌，仍失败让用户在安全页生成 |
+| 401（无 needs_auth） | 令牌无效/被吊销 | 重新调 `create_openapi_token` 生成，替换代码/配置里的旧值 |
 | 401 + needs_auth | MCP 未授权（仅 mcp/call） | 见模板·授权等待 |
 | 502 | 上游失败（模型配置/apiKey/额度；MCP 服务不可达） | 修因后重试 |
 
-**令牌重置的影响面**：所有调用方都拿显式令牌——页面改 `ez.config`，脚本重新读 `openapi.json` 或改配置值即可；OpenAPI 不随登录/登出变化。令牌清单被清空后重启 core 会自动补一枚「默认」令牌。
+**令牌重置的影响面**：令牌被吊销后旧代码里的值失效，重新生成并替换即可；OpenAPI 不随登录/登出变化。
 
 ## 模板
 
 curl（其余语言同构：node 用内置 fetch、powershell 用 Invoke-RestMethod，头一样）：
 
 ```bash
-token=$(python3 -c 'import json; print(json.load(open("<数据目录>/openapi.json"))["tokens"][-1]["token"])')
-curl -s -H "EzHarnessOpenToken: $token" -H 'Content-Type: application/json' \
+TOKEN='<create_openapi_token 返回的令牌>'
+curl -s -H "EzHarnessOpenToken: $TOKEN" -H 'Content-Type: application/json' \
   -d '{"prompt":"把这段话翻译成英文：你好世界"}' http://127.0.0.1:5260/api/open/model/call
 ```
 
@@ -63,7 +65,7 @@ python（标准库，批量脚本的基础件）：
 ```python
 import json, urllib.request
 
-TOKEN = json.load(open("<数据目录>/openapi.json"))["tokens"][-1]["token"]
+TOKEN = "<create_openapi_token 返回的令牌>"
 
 def ez_call(path, body):
     req = urllib.request.Request(f"http://127.0.0.1:5260/api/open/{path}",
@@ -112,10 +114,7 @@ if r.get("needs_auth"):
 import json, sys, urllib.request, urllib.error
 
 base = "http://127.0.0.1:" + (sys.argv[1] if len(sys.argv) > 1 and sys.argv[1].isdigit() else "5260")
-try:
-    tok = json.load(open("<数据目录>/openapi.json"))["tokens"][-1]["token"]
-except Exception:
-    sys.exit("取不到令牌：重启 core 会自动补默认令牌")
+tok = "<create_openapi_token 返回的令牌>"
 
 def call(path, body=None):
     req = urllib.request.Request(base + "/api/open/" + path,
@@ -136,7 +135,7 @@ if "--model" in sys.argv:
 
 | 症状 | 处置 |
 | --- | --- |
-| 401 | 先分清：带 `needs_auth` 是 OAuth 问题（等授权重发），不带是令牌问题（重读 openapi.json / 重启 core 补默认） |
+| 401 | 先分清：带 `needs_auth` 是 OAuth 问题（等授权重发），不带是令牌问题（重新生成一枚） |
 | `file://` 页面请求被拦 | 引 SDK 用完整地址 `http://127.0.0.1:PORT/api/open/sdk.js`，`ez.config` 传令牌 |
 | 授权后调用仍 401 | 授权全局共享但**调用要重发**；仍不行查 mcp-config 的状态排查 |
 | model/call 502 | 模型配置/apiKey/额度问题，与令牌无关 |

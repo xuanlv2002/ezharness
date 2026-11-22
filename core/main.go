@@ -112,7 +112,7 @@ func (a *app) buildRouter() *gin.Engine {
 	a.mcpAuth.SetRouter(a.mcpRouter)
 
 	agents := &service.AgentService{Hub: hub, Term: termSvc, Browser: a.browser, McpRouter: a.mcpRouter, McpAuth: a.mcpAuth,
-		Media: service.NewMediaService(hub)}
+		Media: service.NewMediaService(hub), Openapi: a.openapi}
 	topicsSvc := &service.TopicService{Hub: hub, Agents: agents}
 	appsSvc := &service.AppsService{Fsys: hub.Fsys, Term: termSvc, Hub: hub}
 	chatSvc := &service.ChatService{Hub: hub}

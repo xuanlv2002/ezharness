@@ -62,7 +62,8 @@ func DefaultToolRules() []ToolRule {
 		/* 系统自带：两档，默认免审（save_app 会覆盖应用文件，默认审批） */
 		{Key: "task", Level: LevelAuto},
 		{Key: "save_app", Level: LevelAsk},
-		{Key: "load_app", Level: LevelAuto}, // 只读应用文档
+		{Key: "load_app", Level: LevelAuto},             // 只读应用文档
+		{Key: "create_openapi_token", Level: LevelAuto}, // 生成 agent 自用的 OpenAPI 令牌
 		/* 多媒体统一工具按 action 分档：生成类按次计费且单价高，默认每次
 		审批（配额是第二道闸，见 Settings.GenQuota*）；status 只读查询恒免审 */
 		{Key: "media:image", Level: LevelAsk},

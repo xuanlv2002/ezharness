@@ -1,9 +1,9 @@
 /*
 OpenAPI 令牌：/api/open/* 面的访问凭证，多枚、可命名、可吊销，持久于
 数据目录 openapi.json（0600）。与登录会话（auth.json）完全分开：会话给
-用户界面，令牌给 agent 产物（脚本、快应用、外部程序）。令牌只由调用方
-显式放进 EzHarnessOpenToken 请求头，core 不注入进程环境。启动时若一枚
-都没有自动补「默认」令牌，脚本从 openapi.json 读取。
+用户界面，令牌给 agent 产物（脚本、快应用、外部程序）。没有默认令牌，
+需要时由 agent 工具或用户安全页生成，调用方显式放进 EzHarnessOpenToken
+请求头；core 不注入进程环境。
 */
 package service
 
@@ -23,9 +23,6 @@ import (
 
 /* openapiTokenFile 令牌落盘文件（数据目录内，相对路径）。 */
 const openapiTokenFile = "openapi.json"
-
-/* defaultTokenName 启动时自动补的令牌名。 */
-const defaultTokenName = "默认"
 
 /* OpenapiToken 是一枚命名令牌。 */
 type OpenapiToken struct {
@@ -54,16 +51,6 @@ func LoadOpenapiStore() *OpenapiStore {
 		}
 	}
 	return o
-}
-
-/*
-EnsureDefaultToken 启动时保证至少有一枚令牌：openapi.json 为空或损坏时
-自动补一枚「默认」令牌，agent 脚本不用先让用户去安全页生成。
-*/
-func (o *OpenapiStore) EnsureDefaultToken() {
-	if len(o.List()) == 0 {
-		o.Create(defaultTokenName)
-	}
 }
 
 /* Create 生成新令牌并落盘。 */

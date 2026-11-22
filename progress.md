@@ -224,41 +224,32 @@ desktop 三个 JS `node --check` ✓。临时端口冒烟：init/status 404、�
 
 验证：前端 `npm run build` ✓；CDP 截图亮/暗主题、折叠/展开态 ✓。
 
-## Phase 11 · OpenAPI 默认令牌 — 已完成
+## Phase 11 · OpenAPI 令牌工具 — 已完成
 
-- **core**：`OpenapiStore.EnsureDefaultToken` 在启动/格式化后检查 `openapi.json`，
-  空清单自动生成一枚名为「默认」的令牌，已有令牌不重复补。令牌只由调用方
-  显式放进请求头，core 不注入环境变量。
-- **安全页**：OpenAPI 令牌区文案改成“启动自动准备一枚‘默认’”，空态提示重启
-  core 会补；仍支持多枚命名与吊销。
-- **open-api 技能**：令牌统一从 `openapi.json` 的 `tokens[-1].token` 读取并显式传入；
-  顺手修正自检脚本原来漏读 `tokens` 字段的问题。
-- **文档 / CI**：认证与openapi、三分架构、README 中英补默认令牌说明；
-  CI 冒烟新增默认令牌调 `/api/open/mcp` 校验。
+- 新增 `create_openapi_token` 工具：agent 需要调 `/api/open/*` 时自己生成，
+  工具直接返回令牌，由 agent 明文写进脚本/快应用/配置；没有默认令牌。
+- 安全页仍可生成/吊销；删除启动自动补令牌与“清单为空再补”逻辑。
+- 安全页凭证列表修复：三个请求误写成 `.then(json<…>())`，改为 `.then(json<…>)`
+  后令牌/会话/审计正常显示。
 
-验证：core 测试与 vet 全绿；临时端口冒烟确认空目录启动自动生成「默认」令牌、
-令牌调 open 面 200、重启不重复；前端 build ✓。
+验证：core 测试与 vet 全绿；前端 build ✓。
 
 ## Phase 12 · OpenAPI 与会话认证解耦 — 已完成
 
 - **认证边界**：`openGuard` 只认 `EzHarnessOpenToken`；有效的会话头、cookie
-  也一律 401，OpenAPI 不触发任何登录流程。控制器拆出 `openapi.go`
-  （`OpenapiController`），令牌管理与审计仍留在会话面给用户安全页。
-- **去环境注入**：删除 `EZHARNESS_OPENAPI_TOKEN` 与 `applyEnv`；令牌只由
-  脚本/快应用/外部程序从 `openapi.json` 读取或作为自己的配置显式传入。
+  也一律 401，OpenAPI 不触发任何登录流程。控制器拆出 `openapi.go`，
+  令牌管理与审计仍留在会话面给用户安全页。
+- **全显式**：删除 `EZHARNESS_OPENAPI_TOKEN` 注入；令牌由 agent 工具或安全页
+  生成后显式传入，core 不注入环境变量、不读登录态。
 - **界面改走会话面**：MCP 调用/OAuth 与多媒体生成/任务从 `/api/open/*`
   改到 `/api/mcp/*`、`/api/media/*`；open 面继续服务 SDK/外部程序，
-  SDK 请求 `credentials: omit`，不带任何会话 cookie。
-- **agent 侧隔离**：system `<local_api>` 与内置技能只讲 OpenAPI（读
-  `openapi.json`、显式请求头），不再出现 `EzHarnessToken`、`auth.json`、
-  `/api/auth`；systemprompt 测试新增泄漏断言。
-- **前端补丁**：会话 fetch 不再给 `/api/open/*` 注入 `EzHarnessToken`；
-  MCP OAuth 的 401+needs_auth 不再误判为会话失效。
-- **凭证列表修复**：`api.ts` 三个凭证请求误写成 `.then(json<…>())`，等于立即
-  调用 `json()`，安全页的令牌/会话/审计永远加载不出来——这也是“总让人初始化
-  token”的根因。改为 `.then(json<…>)` 后默认令牌与登录会话正常显示。
+  SDK 请求 `credentials: omit`。
+- **agent 侧隔离**：system `<local_api>` 与内置技能只讲 OpenAPI
+  （`create_openapi_token`、显式请求头），不再出现 `EzHarnessToken`、
+  `auth.json`、`/api/auth`；systemprompt 测试新增泄漏断言。
+- **MCP OAuth**：`401 + needs_auth` 按授权流程处理，不与 OpenAPI 令牌失效混用。
 
 验证：core 全量测试与 vet 全绿；临时端口冒烟 open 面带会话头/cookie 均 401、
 带 OpenAPI 令牌 200，会话面 `/api/media/jobs`、`/api/mcp/call` 正常；进程
-env 无 `EZHARNESS_OPENAPI_TOKEN`；前端 build ✓；headless 加载安全页显示默认
-令牌与登录会话、无控制台错误 ✓。
+env 无 `EZHARNESS_OPENAPI_TOKEN`；前端 build ✓；headless 安全页正常显示
+OpenAPI 令牌与登录会话、无控制台错误 ✓。

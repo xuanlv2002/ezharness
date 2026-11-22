@@ -11,13 +11,13 @@ core 暴露两件东西，各有各的凭证，全部显式请求头：
 | 请求头 | `EzHarnessToken` | `EzHarnessOpenToken` |
 | 谁用 | desktop / cli / 浏览器页面（人驾） | agent 产物：脚本、快应用页面/后端、外部程序 |
 | 权限 | 全量 `/api/*`（用户界面、设置、终端、工作区） | 只有 `/api/open/*`（模型直调、MCP 调用、多媒体生成、服务清单、MCP 授权） |
-| 来源 | 默认密码 login 签发 | core 启动自动补「默认」+ 安全页生成（多枚、可命名、可吊销） |
+| 来源 | 默认密码 login 签发 | `create_openapi_token` 工具 / 安全页生成（无默认，多枚可命名、可吊销） |
 | 生命周期 | 持久（core 重启不换），多端并存，可吊销 | 持久，随时吊销 |
 | 存放 | 浏览器 localStorage；desktop 的 session.json（令牌）；cli 的 session.json（令牌） | `<数据目录>/openapi.json`（0600，多枚清单） |
 
 **默认密码**：core 启动时确保 `<数据目录>/auth.json`（0600）里是默认密码 `ezharness` 的 bcrypt 哈希；缺失、损坏或仍是旧密码就重建哈希并清空旧会话。web / desktop / cli 启动时用默认密码静默换会话令牌，令牌各自持久保存，失效自动重登。安全页可看会话清单（客户端类型、来源 IP、登录时间、会话 id）并吊销任意一端。显式改密码留给远程形态。
 
-**默认 OpenAPI 令牌**：core 启动时若 `<数据目录>/openapi.json` 为空，自动生成一枚名为「默认」的令牌。令牌只由调用方显式放进 `EzHarnessOpenToken` 请求头：脚本/快应用从 `openapi.json` 读取，页面写进 `ez.config`，外部程序由调用方自己保存。**core 不把令牌注入进程环境**。令牌可随时吊销；清单为空后重启 core 会再补一枚，安全页也能手动生成多枚、按用途命名。
+**OpenAPI 令牌**：没有默认令牌。需要调用 `/api/open/*` 时生成一枚：agent 用 `create_openapi_token` 工具，用户也可在安全页生成。令牌显式放进 `EzHarnessOpenToken` 请求头，脚本/页面/后端都可以明文保存。core 不注入环境变量，也不认会话凭证。MCP 的 `401 + needs_auth` 是 OAuth 授权问题，不是令牌失效。
 
 **连接地址**：web 与 desktop 固定跟随本机 core（server.json）；cli 默认本机，`--server <主机:端口>` 可显式指定（无端口默认 5260）。core 目前只绑 127.0.0.1，跨机访问留给之后的远程形态（login 的本机 Origin 校验也只放行回环来源）。
 
@@ -82,13 +82,13 @@ MCP 管理（配置读写、连接、探测、注销）与界面里的 MCP/多�
 
 - 基址从脚本自身的加载地址推导：`file://` 直开、远程页面都能用
 - 令牌只经 `ez.config` 显式传入（请求头 `EzHarnessOpenToken`），请求不带 cookie；SDK 文件本身无秘密，所以敢免鉴权开放伺服
-- 脚本/后端/快应用从 `<数据目录>/openapi.json` 的 `tokens[].token` 读取，或由调用方作为配置显式传入；core 不注入环境变量
+- 脚本/后端/快应用用 `create_openapi_token` 生成后由调用方明文保存；core 不注入环境变量
 - 快应用协议本身不出现令牌、鉴权、同源——协议只约定文件组织；对接 core 能力的方法全部在 open-api 技能里
 
 ## 六、边界与演进
 
 - core 一律绑 127.0.0.1；OpenAPI 令牌泄露的代价上限是"烧 LLM 额度、消耗多媒体配额 + 免审批调 MCP"，吊销即止损；生成另有每日配额封顶
-- 格式化 = 恢复首次运行状态：auth.json 与 openapi.json 一并清空；core 重建默认密码与默认 OpenAPI 令牌，页面刷新后自动登录
+- 格式化 = 恢复首次运行状态：auth.json 与 openapi.json 一并清空；默认密码重建，OpenAPI 令牌需要重新生成
 - 远程门户是预留方向：开了也只放行登录与 `/api/open/*`，其余一概不露——本模型不需要为此改动
 
 ---
