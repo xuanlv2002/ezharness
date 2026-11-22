@@ -131,7 +131,42 @@ func TestSlashHintsAndDirLine(t *testing.T) {
 	}
 }
 
-/* 决策帧：提问/审批/计划都登记为待办并进时间线；重放重复帧按 id 去重。 */
+/* 审批不进时间线；底栏按顺序点名工具与参数，截断时保留动作。 */
+func TestPendingApprovalHint(t *testing.T) {
+	m := &tuiModel{}
+	m.applyFrame(frame{Type: "approve.request", Data: json.RawMessage(`{"id":"a1","name":"write_file","args":{"path":"/tmp/a.ts"}}`)})
+	m.applyFrame(frame{Type: "approve.request", Data: json.RawMessage(`{"id":"a2","name":"terminal","args":{"cmd":"npm run build"}}`)})
+	if len(m.lines) != 0 {
+		t.Fatalf("审批不该进时间线：%+v", m.lines)
+	}
+	hint := m.pendingHint()
+	for _, want := range []string{"1/2", "write_file", "/tmp/a.ts", "y 允许"} {
+		if !strings.Contains(hint, want) {
+			t.Fatalf("提示缺 %q：%q", want, hint)
+		}
+	}
+	if got := fitHint(hint, 48); !strings.Contains(got, "y 允许") || !strings.Contains(got, "write_file") {
+		t.Fatalf("截断后丢了工具名或动作：%q", got)
+	}
+	if got := fitHint(hint, 24); !strings.Contains(got, "y 允许") {
+		t.Fatalf("极窄屏截断丢了动作：%q", got)
+	}
+}
+
+/* 斜杠命令按精确/唯一前缀解析；含糊时给候选。 */
+func TestResolveCommand(t *testing.T) {
+	if name, _ := resolveCommand("pe"); name != "permissions" {
+		t.Fatalf("唯一前缀未解析：%q", name)
+	}
+	if name, hits := resolveCommand("s"); name != "" || len(hits) != 2 {
+		t.Fatalf("含糊前缀：name=%q hits=%v", name, hits)
+	}
+	if name, _ := resolveCommand(""); name != "help" {
+		t.Fatalf("空命令应进帮助：%q", name)
+	}
+}
+
+/* 决策帧：提问/审批/计划都登记为待办，提问/计划进时间线；重放重复帧按 id 去重。 */
 func TestApplyFrameDecisions(t *testing.T) {
 	m := &tuiModel{}
 	m.applyFrame(frame{Type: "askuser.request", Data: json.RawMessage(`{"id":"c1","name":"ask_user","args":"{\"question\":\"选哪个\",\"options\":[\"A\",\"B\"]}"}`)})

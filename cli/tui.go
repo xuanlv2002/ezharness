@@ -1,7 +1,8 @@
 /*
 tui 终端界面：与桌面端同一套时间线——用户消息、流式回复、折叠成一行
-的思考和工具组；审批 / 提问 / 计划 / 授权直接进时间线等回答。斜杠命令
-管分支、归档、审批档与模型；启动目录随消息带给 core，作软提示。
+的思考和工具组；提问 / 计划 / 授权进时间线，审批只在底栏逐项点名工具
+与参数等 y/n。斜杠命令管分支、归档、审批档与模型；启动目录随消息带给
+core，作软提示。
 */
 package main
 
@@ -24,7 +25,7 @@ import (
 
 /* line 是会话区一条逻辑消息。 */
 type line struct {
-	kind string // user | assistant | reasoning | tools | ask | plan | approve | mcp | info | err
+	kind string // user | assistant | reasoning | tools | ask | plan | mcp | info | err
 	text string
 }
 
@@ -33,6 +34,7 @@ type decision struct {
 	id       string
 	kind     string // approve | ask | plan | mcp
 	name     string // 工具名 / MCP 服务名
+	detail   string // 审批参数摘要（cmd / path …）
 	question string
 	options  []string
 	goal     string
@@ -340,6 +342,9 @@ func (m *tuiModel) applyFrame(f frame) {
 		var d toolEndData
 		if json.Unmarshal(f.Data, &d) == nil {
 			m.running = slices.DeleteFunc(m.running, func(r toolRun) bool { return r.id == d.CallID })
+			if len(m.running) == 0 {
+				m.groupOpen = false // 这一批工具结束：下一批另起一行
+			}
 		}
 	case "turn_end":
 		var d turnEndData
@@ -370,24 +375,13 @@ func (m *tuiModel) addTool(id, name string) {
 	m.lines = append(m.lines, line{kind: "tools", text: toolsText(m.group)})
 }
 
-/* reasoningText 折叠思考：字数 + 最后一行摘要。 */
+/* reasoningText 折叠思考：只留字数（与桌面端的折叠标题一致）。 */
 func reasoningText(s string) string {
-	s = strings.TrimSpace(s)
-	if s == "" {
+	n := len([]rune(strings.TrimSpace(s)))
+	if n == 0 {
 		return ""
 	}
-	last := ""
-	for _, ln := range strings.Split(s, "\n") {
-		if t := strings.TrimSpace(ln); t != "" {
-			last = t
-		}
-	}
-	last = runewidth.Truncate(strings.Join(strings.Fields(last), " "), 60, "…")
-	n := len([]rune(s))
-	if last == "" {
-		return fmt.Sprintf("%d 字", n)
-	}
-	return fmt.Sprintf("%d 字 · %s", n, last)
+	return fmt.Sprintf("%d 字", n)
 }
 
 /* toolsText 折叠工具组：调用数 + 按名计数（terminal ×3、read_file）。 */
@@ -439,8 +433,10 @@ func (m *tuiModel) addDecision(typ string, data json.RawMessage) {
 	dec := decision{id: d.ID, name: d.Name}
 	switch typ {
 	case "approve.request":
-		dec.kind = "approve"
-		m.lines = append(m.lines, line{kind: "approve", text: "需要批准：" + d.Name})
+		// 审批不进时间线：底栏带工具名逐项询问，避免一串审批行刷屏
+		dec.kind, dec.detail = "approve", argsSummary(d.Args)
+		m.pending = append(m.pending, dec)
+		return
 	case "askuser.request":
 		var a struct {
 			Question string   `json:"question"`
@@ -476,6 +472,20 @@ func (m *tuiModel) addMcpAuth(data json.RawMessage) {
 	m.pending = append(m.pending, decision{id: d.ID, kind: "mcp", name: d.Server, metaURL: d.MetadataURL})
 	m.lines = append(m.lines, line{kind: "mcp", text: "MCP 服务 " + d.Server + " 需要 OAuth 授权"})
 	m.groupOpen = false
+}
+
+/* argsSummary 取审批工具参数的一行摘要（命令/路径/网址优先）。 */
+func argsSummary(raw json.RawMessage) string {
+	var m map[string]any
+	if !decodeArgs(raw, &m) {
+		return ""
+	}
+	for _, k := range []string{"cmd", "command", "path", "url", "query", "task", "name", "text"} {
+		if v, ok := m[k].(string); ok && strings.TrimSpace(v) != "" {
+			return runewidth.Truncate(strings.Join(strings.Fields(v), " "), 40, "…")
+		}
+	}
+	return ""
 }
 
 /* decodeArgs 解工具参数（兼容 JSON 对象与「字符串里再放 JSON」两种形态）。 */
@@ -518,28 +528,25 @@ func (m *tuiModel) dropPending() decision {
 }
 
 func (m *tuiModel) decideApprove(ok bool) {
-	d := m.dropPending()
+	d := m.pending[0]
 	if err := m.cl.decideApprove(m.rootID, d.id, ok, ""); err != nil {
 		m.lines = append(m.lines, line{kind: "err", text: "审批回传失败: " + err.Error()})
 		return
 	}
-	if ok {
-		m.lines = append(m.lines, line{kind: "info", text: "已允许"})
-	} else {
-		m.lines = append(m.lines, line{kind: "info", text: "已拒绝"})
-	}
+	m.pending = m.pending[1:]
 }
 
 func (m *tuiModel) resolvePlan(action, feedback string) {
-	d := m.dropPending()
+	d := m.pending[0]
 	if err := m.cl.decidePlan(m.rootID, d.id, action, feedback); err != nil {
 		m.lines = append(m.lines, line{kind: "err", text: "计划回传失败: " + err.Error()})
 		return
 	}
+	m.pending = m.pending[1:]
 	if action == "confirm" {
 		m.lines = append(m.lines, line{kind: "info", text: "计划已确认"})
 	} else {
-		m.lines = append(m.lines, line{kind: "info", text: "计划反馈已提交"})
+		m.lines = append(m.lines, line{kind: "user", text: feedback})
 	}
 }
 
@@ -606,13 +613,37 @@ func (m *tuiModel) finishMcpAuth(msg mcpAuthMsg) {
 
 /* ---- 斜杠命令 ---- */
 
+/* resolveCommand 精确或唯一前缀匹配斜杠命令；hits 是含糊时的候选。 */
+func resolveCommand(s string) (string, []string) {
+	if s == "" {
+		return "help", nil
+	}
+	exact := ""
+	var hits []string
+	for _, c := range slashCommands {
+		if c.name == s {
+			exact = c.name
+		}
+		if strings.HasPrefix(c.name, s) {
+			hits = append(hits, c.name)
+		}
+	}
+	if exact != "" {
+		return exact, nil
+	}
+	if len(hits) == 1 {
+		return hits[0], nil
+	}
+	return "", hits
+}
+
 func (m *tuiModel) runCommand(cmd string) tea.Cmd {
 	if len(m.pending) > 0 && (cmd == "session" || cmd == "new" || cmd == "compact") {
 		m.lines = append(m.lines, line{kind: "info", text: "先处理当前请求（审批/回答）再切分支"})
 		return nil
 	}
 	switch cmd {
-	case "", "help":
+	case "help":
 		m.lines = append(m.lines,
 			line{kind: "info", text: "命令：/session 分支 · /new 新分支 · /compact 归档 · /permissions 审批档 · /models 模型 · /status 状态"},
 			line{kind: "info", text: "审批/提问/计划/授权出现时按提示直接回答（y 允许 · n 拒绝）"},
@@ -881,8 +912,18 @@ func (m *tuiModel) submit() tea.Cmd {
 		return nil
 	}
 	if strings.HasPrefix(text, "/") {
+		raw := strings.TrimSpace(strings.TrimPrefix(text, "/"))
+		name, hits := resolveCommand(raw)
+		if name == "" {
+			if len(hits) == 0 {
+				m.lines = append(m.lines, line{kind: "err", text: "未知命令 /" + raw + "，/help 查看"})
+			} else {
+				m.lines = append(m.lines, line{kind: "info", text: "匹配：/" + strings.Join(hits, " /")})
+			}
+			return nil // 输入留着，方便接着改
+		}
 		m.input.SetValue("")
-		return m.runCommand(strings.TrimSpace(strings.TrimPrefix(text, "/")))
+		return m.runCommand(name)
 	}
 	if len(m.pending) > 0 {
 		d := m.pending[0]
@@ -892,12 +933,12 @@ func (m *tuiModel) submit() tea.Cmd {
 			if n, err := strconv.Atoi(text); err == nil && n >= 1 && n <= len(d.options) {
 				answer = d.options[n-1]
 			}
-			m.dropPending()
 			if err := m.cl.decideAnswer(m.rootID, d.id, answer); err != nil {
 				m.lines = append(m.lines, line{kind: "err", text: "回答回传失败: " + err.Error()})
 				return nil
 			}
-			m.lines = append(m.lines, line{kind: "info", text: "已回答"})
+			m.pending = m.pending[1:]
+			m.lines = append(m.lines, line{kind: "user", text: answer})
 		case "plan":
 			m.resolvePlan("feedback", text)
 		default:
@@ -974,8 +1015,14 @@ func (m *tuiModel) View() string {
 		body = rows
 	}
 
-	hint := m.statusHint(len(sugs) > 0)
-	hintRow := dimStyle.Render(" " + runewidth.Truncate(hint, m.width-2, "…"))
+	hintStyle := dimStyle
+	switch {
+	case len(m.pending) > 0:
+		hintStyle = askStyle // 待回答的请求要显眼
+	case m.err != "" && !m.streaming:
+		hintStyle = errStyle
+	}
+	hintRow := hintStyle.Render(" " + fitHint(m.statusHint(len(sugs) > 0), m.width-2))
 
 	out := []string{head}
 	out = append(out, body...)
@@ -1026,7 +1073,7 @@ func (m *tuiModel) statusHint(hasSug bool) string {
 	case m.picker != nil:
 		return "↑↓ 选择 · Enter 确认 · Esc 取消"
 	case len(m.pending) > 0:
-		return pendingHint(m.pending[0])
+		return m.pendingHint()
 	case m.streaming:
 		if len(m.running) > 0 {
 			names := make([]string, 0, len(m.running))
@@ -1050,28 +1097,57 @@ func (m *tuiModel) statusHint(hasSug bool) string {
 	return "输入消息，/ 开头是命令"
 }
 
-/* pendingHint 底栏提示：当前等待什么回答。 */
-func pendingHint(d decision) string {
+/* pendingHint 底栏提示：当前要回答的是哪一项、还有几项。 */
+func (m *tuiModel) pendingHint() string {
+	d := m.pending[0]
+	pos := ""
+	if len(m.pending) > 1 {
+		pos = fmt.Sprintf(" %d/%d", 1, len(m.pending))
+	}
 	switch d.kind {
 	case "approve":
-		return "审批中：y 允许 · n 拒绝"
+		head := "审批" + pos + " · " + d.name
+		if d.detail != "" {
+			head += " · " + d.detail
+		}
+		return head + "：y 允许 · n 拒绝"
 	case "ask":
-		return "等待回答：输入答案后 Enter 发送"
+		return "等待回答" + pos + "：输入答案后 Enter 发送"
 	case "plan":
-		return "计划：Enter 确认 · 输入反馈后 Enter 提交"
+		return "计划" + pos + "：Enter 确认 · 输入反馈后 Enter 提交"
 	case "mcp":
 		if d.busy {
-			return "等待浏览器授权…"
+			return "等待浏览器授权：" + d.name
 		}
-		return "授权：y 打开浏览器 · n 取消"
+		return "授权" + pos + " · " + d.name + "：y 打开浏览器 · n 取消"
 	}
 	return ""
+}
+
+/* fitHint 按宽度截断底栏提示；有「：动作」后缀时优先保留动作。 */
+func fitHint(s string, w int) string {
+	if w <= 0 {
+		return ""
+	}
+	if runewidth.StringWidth(s) <= w {
+		return s
+	}
+	if i := strings.LastIndex(s, "："); i > 0 {
+		tail := s[i:]
+		if room := w - runewidth.StringWidth(tail) - 1; room > 0 {
+			return runewidth.Truncate(s[:i], room, "…") + tail
+		}
+	}
+	return runewidth.Truncate(s, w, "…")
 }
 
 /* chatRows 把消息展开成终端行（按显示宽度折行），末尾接流式正文/思考。 */
 func (m *tuiModel) chatRows(width int) []string {
 	var out []string
 	for _, l := range m.lines {
+		if l.kind == "user" && len(out) > 0 {
+			out = append(out, "") // 新一轮前空一行，把对话和上一轮过程分开
+		}
 		out = appendMessageRows(out, l, width)
 	}
 	if m.liveThink != "" {
@@ -1098,8 +1174,6 @@ func appendMessageRows(out []string, l line, width int) []string {
 		prefix, style = "?   ", askStyle
 	case "plan":
 		prefix, style = "计划 ", askStyle
-	case "approve":
-		prefix, style = "审批 ", askStyle
 	case "mcp":
 		prefix, style = "授权 ", askStyle
 	case "err":
@@ -1109,7 +1183,11 @@ func appendMessageRows(out []string, l line, width int) []string {
 	if w < 10 {
 		w = 10
 	}
-	for i, row := range strings.Split(runewidth.Wrap(l.text, w), "\n") {
+	text := l.text
+	if l.kind == "tools" {
+		text = runewidth.Truncate(text, w, "…") // 工具组固定一行，不折行刷屏
+	}
+	for i, row := range strings.Split(runewidth.Wrap(text, w), "\n") {
 		if i == 0 {
 			out = append(out, style.Render(prefix+row))
 		} else {
