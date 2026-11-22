@@ -38,7 +38,8 @@ type ChatController struct {
 文本与引用至少其一；引用为绝对路径（一切皆资源：拖入暂存的 tmp
 文件、画板编辑的图片、AI 生成的文件均可引用）——files 是整文件引用
 （附件 chips），refs 带标注片段（文件页「添加到对话」），均经
-<reference_file> 记录告知模型。路径须有效且文件存在。
+<reference_file> 记录告知模型。路径须有效且文件存在。dir 是发起端
+目录（TUI 启动目录），只进 agent_status 作软提示，不限制访问。
 */
 func (c *ChatController) SendMessage(g *gin.Context) {
 	var body struct {
@@ -47,6 +48,7 @@ func (c *ChatController) SendMessage(g *gin.Context) {
 			Name string `json:"name"`
 			Path string `json:"path"`
 		} `json:"files"`
+		Dir  string `json:"dir"`
 		Refs []struct {
 			Path  string `json:"path"`
 			Items []struct {
@@ -100,7 +102,7 @@ func (c *ChatController) SendMessage(g *gin.Context) {
 		}
 		refs = append(refs, hooks.RefFile{Path: abs, Items: items})
 	}
-	if err := c.Svc.Send(g.Param("id"), body.Text, refs); err != nil {
+	if err := c.Svc.Send(g.Param("id"), body.Text, refs, body.Dir); err != nil {
 		if errors.Is(err, domain.ErrBusy) {
 			g.JSON(http.StatusConflict, gin.H{"error": err.Error()})
 			return
