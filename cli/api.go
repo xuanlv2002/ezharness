@@ -55,6 +55,7 @@ func (c *client) bootstrap() (*bootstrapView, error) {
 type historyMsg struct {
 	Role      string `json:"role"`
 	Content   string `json:"content"`
+	Reasoning string `json:"reasoning,omitempty"`
 	Err       string `json:"err,omitempty"`
 	ToolCalls []struct {
 		ID   string `json:"id"`
@@ -201,10 +202,21 @@ type frame struct {
 // 需要关心的帧的解包结构（其余忽略）
 type modelEndData struct {
 	Content   string `json:"content"`
+	Reasoning string `json:"reasoning,omitempty"`
 	ToolCalls []struct {
 		ID   string `json:"id"`
 		Name string `json:"name"`
 	} `json:"toolCalls,omitempty"`
+}
+
+type toolStartData struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
+type toolEndData struct {
+	CallID string `json:"callId"`
+	Name   string `json:"name"`
 }
 
 type turnEndData struct {

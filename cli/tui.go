@@ -1,8 +1,7 @@
 /*
-tui 终端界面：只显示用户消息、每轮最终回复和需要人回答的请求（审批 /
-提问 / 计划 / MCP 授权）；工具调用与思考过程折叠成底栏计数，不进时间线。
-斜杠命令管分支、归档、审批档与模型；启动目录随消息带给 core，在
-agent_status 里作软提示。
+tui 终端界面：与桌面端同一套时间线——用户消息、流式回复、折叠成一行
+的思考和工具组；审批 / 提问 / 计划 / 授权直接进时间线等回答。斜杠命令
+管分支、归档、审批档与模型；启动目录随消息带给 core，作软提示。
 */
 package main
 
@@ -12,6 +11,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -22,9 +22,9 @@ import (
 	"github.com/mattn/go-runewidth"
 )
 
-/* line 是会话区一条逻辑消息（只放正式内容与需要人看的决策）。 */
+/* line 是会话区一条逻辑消息。 */
 type line struct {
-	kind string // user | assistant | ask | plan | approve | mcp | info | err
+	kind string // user | assistant | reasoning | tools | ask | plan | approve | mcp | info | err
 	text string
 }
 
@@ -54,6 +54,23 @@ type pickItem struct {
 	label string
 }
 
+/* toolRun 是执行中的工具（底栏「执行中 xxx」）。 */
+type toolRun struct {
+	id   string
+	name string
+}
+
+/* slashCommands 是输入 / 时的命令提示（顺序即展示顺序）。 */
+var slashCommands = []struct{ name, desc string }{
+	{"session", "切换分支"},
+	{"new", "新建分支"},
+	{"compact", "归档并开新话题"},
+	{"permissions", "审批档（无审批 / 跟随安全 / 全审批）"},
+	{"models", "切换模型"},
+	{"status", "会话状态"},
+	{"help", "命令帮助"},
+}
+
 type tuiModel struct {
 	cl        *client
 	addr      string
@@ -65,7 +82,11 @@ type tuiModel struct {
 	histCount int // 历史消息行数：replay.sync 重建时截回这里
 	input     textinput.Model
 	streaming bool
-	tools     int
+	liveText  string    // 当前这次模型调用的流式正文
+	liveThink string    // 当前这次模型调用的流式思考
+	running   []toolRun // 执行中的工具
+	group     []string  // 最近一组工具调用的名字（多个折叠成一行）
+	groupOpen bool
 	echoUser  string
 	frames    chan frame
 	stopSse   func()
@@ -110,23 +131,21 @@ func cmdTUI(server string) {
 
 	cwd, _ := os.Getwd()
 	in := textinput.New()
-	in.Placeholder = "输入消息，/ 开头是命令"
+	in.Prompt = "" // 输入行的 ❯ 由 View 统一画，避免 "❯ > " 双前缀
 	in.Focus()
 	in.CharLimit = 8000
 
-	in.Width = 76
 	m := &tuiModel{
 		cl: cl, addr: displayAddr(base), version: version, cwd: cwd,
 		rootID: b.SessionID, branches: b.Branches, input: in,
 		frames: make(chan frame, 256), status: b.Status,
 		width: 80, height: 24, // 无窗口尺寸事件时的兜底（管道/pty 尺寸为 0）
 	}
+	m.applyWidth(m.width)
 	m.loadHistory()
-	m.lines = append(m.lines,
-		line{kind: "info", text: "工作中 " + cwd},
-		line{kind: "info", text: "/help 查看命令"},
-	)
 
+	/* 进入前净屏（含滚动区）：部分终端切备用屏不擦已滚出的旧内容 */
+	fmt.Print("\x1b[2J\x1b[3J\x1b[H")
 	p := tea.NewProgram(m, tea.WithAltScreen())
 	final, err := p.Run()
 	if mm, ok := final.(*tuiModel); ok && mm.stopSse != nil {
@@ -175,9 +194,9 @@ func isSystemNote(s string) bool {
 }
 
 /*
-	loadHistory 拉当前分支的持久消息：只留用户输入与最终回复（带工具调用的
+	loadHistory 拉当前分支的持久消息：用户输入、思考、回复与工具组都还原
 
-中间发言、思考、工具结果都折叠掉）。
+（带工具调用的中间发言也显示，与桌面端一致）。
 */
 func (m *tuiModel) loadHistory() {
 	m.lines = m.lines[:0]
@@ -194,8 +213,18 @@ func (m *tuiModel) loadHistory() {
 				m.lines = append(m.lines, line{kind: "user", text: msg.Content})
 			}
 		case "assistant":
-			if msg.Content != "" && len(msg.ToolCalls) == 0 {
+			if t := reasoningText(msg.Reasoning); t != "" {
+				m.lines = append(m.lines, line{kind: "reasoning", text: t})
+			}
+			if strings.TrimSpace(msg.Content) != "" {
 				m.lines = append(m.lines, line{kind: "assistant", text: msg.Content})
+			}
+			if len(msg.ToolCalls) > 0 {
+				names := make([]string, 0, len(msg.ToolCalls))
+				for _, tc := range msg.ToolCalls {
+					names = append(names, tc.Name)
+				}
+				m.lines = append(m.lines, line{kind: "tools", text: toolsText(names)})
 			}
 		}
 	}
@@ -218,7 +247,16 @@ func (m *tuiModel) reload() {
 	m.err = ""
 }
 
-/* applyFrame 把 SSE 帧并入界面：只有正式输出和决策进时间线，其余折叠。 */
+/* resetTurn 清掉本轮临时流式状态（切轮 / 回放重建时）。 */
+func (m *tuiModel) resetTurn() {
+	m.liveText = ""
+	m.liveThink = ""
+	m.running = nil
+	m.group = nil
+	m.groupOpen = false
+}
+
+/* applyFrame 把 SSE 帧并入界面：正文流式追加，思考与工具折叠成行。 */
 func (m *tuiModel) applyFrame(f frame) {
 	if f.ForkID != "" {
 		return // 后台分支的帧不进主时间线
@@ -235,12 +273,13 @@ func (m *tuiModel) applyFrame(f frame) {
 			TurnActive bool `json:"turnActive"`
 		}
 		_ = json.Unmarshal(f.Data, &d)
-		if d.TurnActive {
+		m.resetTurn()
+		m.echoUser = ""
+		m.err = ""
+		if d.TurnActive && len(m.lines) > m.histCount {
 			m.lines = m.lines[:m.histCount]
-			m.streaming = true
-			m.tools = 0
-			m.echoUser = ""
 		}
+		m.streaming = d.TurnActive
 	case "loop_start":
 		var text string
 		if json.Unmarshal(f.Data, &text) != nil {
@@ -258,20 +297,55 @@ func (m *tuiModel) applyFrame(f frame) {
 				m.lines = append(m.lines, line{kind: "user", text: text})
 			}
 		}
+		m.resetTurn()
 		m.streaming = true
-		m.tools = 0
-	case "tool_start":
-		m.tools++
+	case "stream.snapshot":
+		// 回放重建：当前这次调用的正文/思考全量（增量帧不进回放缓存）
+		var d struct {
+			Content   string `json:"content"`
+			Reasoning string `json:"reasoning"`
+		}
+		if json.Unmarshal(f.Data, &d) == nil {
+			m.liveText, m.liveThink = d.Content, d.Reasoning
+		}
+	case "reasoning_chunk":
+		var s string
+		if json.Unmarshal(f.Data, &s) == nil {
+			m.liveThink += s
+		}
+	case "model_chunk":
+		var s string
+		if json.Unmarshal(f.Data, &s) == nil {
+			m.liveText += s
+		}
 	case "model_end":
 		var d modelEndData
-		if json.Unmarshal(f.Data, &d) == nil && len(d.ToolCalls) == 0 && strings.TrimSpace(d.Content) != "" {
-			m.lines = append(m.lines, line{kind: "assistant", text: d.Content})
+		if json.Unmarshal(f.Data, &d) == nil {
+			if t := reasoningText(d.Reasoning); t != "" {
+				m.lines = append(m.lines, line{kind: "reasoning", text: t})
+				m.groupOpen = false
+			}
+			if strings.TrimSpace(d.Content) != "" {
+				m.lines = append(m.lines, line{kind: "assistant", text: d.Content})
+				m.groupOpen = false
+			}
+		}
+		m.liveText, m.liveThink = "", ""
+	case "tool_start":
+		var d toolStartData
+		if json.Unmarshal(f.Data, &d) == nil && d.Name != "" {
+			m.addTool(d.ID, d.Name)
+		}
+	case "tool_end":
+		var d toolEndData
+		if json.Unmarshal(f.Data, &d) == nil {
+			m.running = slices.DeleteFunc(m.running, func(r toolRun) bool { return r.id == d.CallID })
 		}
 	case "turn_end":
 		var d turnEndData
 		_ = json.Unmarshal(f.Data, &d)
 		m.streaming = false
-		m.tools = 0
+		m.resetTurn()
 		m.echoUser = ""
 		if d.Err != "" {
 			m.lines = append(m.lines, line{kind: "err", text: d.Err})
@@ -281,6 +355,65 @@ func (m *tuiModel) applyFrame(f frame) {
 	case "mcp.auth.request":
 		m.addMcpAuth(f.Data)
 	}
+}
+
+/* addTool 登记一次工具调用：连续的调用折叠进同一行，中间有正文则另开一组。 */
+func (m *tuiModel) addTool(id, name string) {
+	m.running = append(m.running, toolRun{id: id, name: name})
+	if m.groupOpen && len(m.lines) > 0 && m.lines[len(m.lines)-1].kind == "tools" {
+		m.group = append(m.group, name)
+		m.lines[len(m.lines)-1].text = toolsText(m.group)
+		return
+	}
+	m.group = []string{name}
+	m.groupOpen = true
+	m.lines = append(m.lines, line{kind: "tools", text: toolsText(m.group)})
+}
+
+/* reasoningText 折叠思考：字数 + 最后一行摘要。 */
+func reasoningText(s string) string {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return ""
+	}
+	last := ""
+	for _, ln := range strings.Split(s, "\n") {
+		if t := strings.TrimSpace(ln); t != "" {
+			last = t
+		}
+	}
+	last = runewidth.Truncate(strings.Join(strings.Fields(last), " "), 60, "…")
+	n := len([]rune(s))
+	if last == "" {
+		return fmt.Sprintf("%d 字", n)
+	}
+	return fmt.Sprintf("%d 字 · %s", n, last)
+}
+
+/* toolsText 折叠工具组：调用数 + 按名计数（terminal ×3、read_file）。 */
+func toolsText(names []string) string {
+	return fmt.Sprintf("%d 个调用 · %s", len(names), countNames(names))
+}
+
+/* countNames 按名计数并按首次出现顺序拼接。 */
+func countNames(names []string) string {
+	var order []string
+	counts := map[string]int{}
+	for _, n := range names {
+		if counts[n] == 0 {
+			order = append(order, n)
+		}
+		counts[n]++
+	}
+	parts := make([]string, 0, len(order))
+	for _, n := range order {
+		if counts[n] > 1 {
+			parts = append(parts, fmt.Sprintf("%s ×%d", n, counts[n]))
+		} else {
+			parts = append(parts, n)
+		}
+	}
+	return strings.Join(parts, "、")
 }
 
 /* decisionData 是审批/提问/计划请求的载荷。 */
@@ -330,6 +463,7 @@ func (m *tuiModel) addDecision(typ string, data json.RawMessage) {
 		dec.kind, dec.goal, dec.steps = "plan", p.Goal, len(p.Progress)
 		m.lines = append(m.lines, line{kind: "plan", text: "计划：" + p.Goal})
 	}
+	m.groupOpen = false
 	m.pending = append(m.pending, dec)
 }
 
@@ -341,6 +475,7 @@ func (m *tuiModel) addMcpAuth(data json.RawMessage) {
 	}
 	m.pending = append(m.pending, decision{id: d.ID, kind: "mcp", name: d.Server, metaURL: d.MetadataURL})
 	m.lines = append(m.lines, line{kind: "mcp", text: "MCP 服务 " + d.Server + " 需要 OAuth 授权"})
+	m.groupOpen = false
 }
 
 /* decodeArgs 解工具参数（兼容 JSON 对象与「字符串里再放 JSON」两种形态）。 */
@@ -477,7 +612,7 @@ func (m *tuiModel) runCommand(cmd string) tea.Cmd {
 		return nil
 	}
 	switch cmd {
-	case "help":
+	case "", "help":
 		m.lines = append(m.lines,
 			line{kind: "info", text: "命令：/session 分支 · /new 新分支 · /compact 归档 · /permissions 审批档 · /models 模型 · /status 状态"},
 			line{kind: "info", text: "审批/提问/计划/授权出现时按提示直接回答（y 允许 · n 拒绝）"},
@@ -662,8 +797,8 @@ func (m *tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		if msg.Width > 0 && msg.Height > 0 { // 尺寸为 0 的伪终端不覆盖兜底尺寸
-			m.width, m.height = msg.Width, msg.Height
-			m.input.Width = msg.Width - 4
+			m.height = msg.Height
+			m.applyWidth(msg.Width)
 		}
 		return m, nil
 	case compactMsg:
@@ -784,19 +919,44 @@ func (m *tuiModel) submit() tea.Cmd {
 	m.lines = append(m.lines, line{kind: "user", text: text})
 	m.echoUser = text
 	m.streaming = true
-	m.tools = 0
 	m.input.SetValue("")
 	return nil
 }
 
 /* ---- 渲染 ---- */
 
+/*
+applyWidth 按终端宽度排输入区：右侧留出「工作中 目录」；空输入时
+textinput 的光标块比 Width 多一格，末尾再留一列不写——写满最后一格
+会触发终端自动换行，部分终端（conhost）会因此滚屏。
+*/
+func (m *tuiModel) applyWidth(w int) {
+	m.width = w
+	m.input.Width = w - 6 - lipgloss.Width(m.dirLabel())
+	if m.input.Width < 10 {
+		m.input.Width = 10
+	}
+}
+
+/* dirLabel 输入行右侧的工作目录（窄屏截短，太窄就不显示）。 */
+func (m *tuiModel) dirLabel() string {
+	max := m.width / 2
+	if max < 16 {
+		return ""
+	}
+	return runewidth.Truncate("工作中 "+m.cwd, max, "…")
+}
+
 func (m *tuiModel) View() string {
 	if m.width == 0 {
 		return "启动中…"
 	}
 	head := titleStyle.Render(" ezharness tui") + dimStyle.Render(" · "+m.addr+" · "+m.version)
-	bodyH := m.height - 3 // 标题 / 提示 / 输入
+	sugs := m.suggestRows()
+	for len(sugs) > 0 && m.height-len(sugs) < 5 { // 太矮时少给几行提示
+		sugs = sugs[:len(sugs)-1]
+	}
+	bodyH := m.height - 3 - len(sugs) // 标题 / 提示 / 输入
 	if bodyH < 1 {
 		bodyH = 1
 	}
@@ -814,20 +974,80 @@ func (m *tuiModel) View() string {
 		body = rows
 	}
 
-	hint := ""
+	hint := m.statusHint(len(sugs) > 0)
+	hintRow := dimStyle.Render(" " + runewidth.Truncate(hint, m.width-2, "…"))
+
+	out := []string{head}
+	out = append(out, body...)
+	out = append(out, sugs...)
+	out = append(out, hintRow, m.inputRow())
+	return strings.Join(out, "\n")
+}
+
+/* inputRow 输入行：左边输入框，右边工作目录。 */
+func (m *tuiModel) inputRow() string {
+	row := " ❯ " + m.input.View()
+	dir := m.dirLabel()
+	if dir == "" {
+		return row
+	}
+	right := dimStyle.Render(dir)
+	pad := m.width - 1 - lipgloss.Width(row) - lipgloss.Width(right)
+	if pad < 1 {
+		return row
+	}
+	return row + strings.Repeat(" ", pad) + right
+}
+
+/* suggestRows 输入 / 时的命令提示（按前缀过滤）。 */
+func (m *tuiModel) suggestRows() []string {
+	if m.picker != nil {
+		return nil
+	}
+	v := m.input.Value()
+	if !strings.HasPrefix(v, "/") || strings.ContainsAny(v, " \t") {
+		return nil
+	}
+	prefix := strings.TrimPrefix(v, "/")
+	var out []string
+	for _, c := range slashCommands {
+		if !strings.HasPrefix(c.name, prefix) {
+			continue
+		}
+		row := fmt.Sprintf(" /%-10s %s", c.name, c.desc)
+		out = append(out, dimStyle.Render(runewidth.Truncate(row, m.width-1, "…")))
+	}
+	return out
+}
+
+/* statusHint 底栏左侧：当前状态或待回答的请求。 */
+func (m *tuiModel) statusHint(hasSug bool) string {
 	switch {
 	case m.picker != nil:
-		hint = "↑↓ 选择 · Enter 确认 · Esc 取消"
+		return "↑↓ 选择 · Enter 确认 · Esc 取消"
 	case len(m.pending) > 0:
-		hint = pendingHint(m.pending[0])
+		return pendingHint(m.pending[0])
 	case m.streaming:
-		hint = fmt.Sprintf("● 运行中 · 工具 %d", m.tools)
+		if len(m.running) > 0 {
+			names := make([]string, 0, len(m.running))
+			for _, r := range m.running {
+				names = append(names, r.name)
+			}
+			return "执行中 " + countNames(names)
+		}
+		if m.liveThink != "" && m.liveText == "" {
+			return "思考中…"
+		}
+		if m.liveText != "" {
+			return "输出中…"
+		}
+		return "运行中…"
 	case m.err != "":
-		hint = m.err
+		return m.err
+	case hasSug:
+		return "Enter 执行命令"
 	}
-	hint = runewidth.Truncate(hint, m.width-2, "…")
-
-	return head + "\n" + strings.Join(body, "\n") + "\n" + dimStyle.Render(" "+hint) + "\n" + " ❯ " + m.input.View()
+	return "输入消息，/ 开头是命令"
 }
 
 /* pendingHint 底栏提示：当前等待什么回答。 */
@@ -848,37 +1068,52 @@ func pendingHint(d decision) string {
 	return ""
 }
 
-/* chatRows 把消息展开成终端行（按显示宽度折行）。 */
+/* chatRows 把消息展开成终端行（按显示宽度折行），末尾接流式正文/思考。 */
 func (m *tuiModel) chatRows(width int) []string {
 	var out []string
 	for _, l := range m.lines {
-		prefix, style := "  ", infoStyle
-		switch l.kind {
-		case "user":
-			prefix, style = "你  ", userStyle
-		case "assistant":
-			prefix, style = "AI  ", aiStyle
-		case "ask":
-			prefix, style = "?   ", askStyle
-		case "plan":
-			prefix, style = "计划 ", askStyle
-		case "approve":
-			prefix, style = "审批 ", askStyle
-		case "mcp":
-			prefix, style = "授权 ", askStyle
-		case "err":
-			prefix, style = "!   ", errStyle
-		}
-		w := width - runewidth.StringWidth(prefix) - 1
-		if w < 10 {
-			w = 10
-		}
-		for i, row := range strings.Split(runewidth.Wrap(l.text, w), "\n") {
-			if i == 0 {
-				out = append(out, style.Render(prefix+row))
-			} else {
-				out = append(out, style.Render(strings.Repeat(" ", runewidth.StringWidth(prefix))+row))
-			}
+		out = appendMessageRows(out, l, width)
+	}
+	if m.liveThink != "" {
+		out = appendMessageRows(out, line{kind: "reasoning", text: reasoningText(m.liveThink)}, width)
+	}
+	if m.liveText != "" {
+		out = appendMessageRows(out, line{kind: "assistant", text: m.liveText + "▍"}, width)
+	}
+	return out
+}
+
+func appendMessageRows(out []string, l line, width int) []string {
+	prefix, style := "  ", infoStyle
+	switch l.kind {
+	case "user":
+		prefix, style = "你  ", userStyle
+	case "assistant":
+		prefix, style = "AI  ", aiStyle
+	case "reasoning":
+		prefix, style = "思考 ", dimStyle
+	case "tools":
+		prefix, style = "工具 ", dimStyle
+	case "ask":
+		prefix, style = "?   ", askStyle
+	case "plan":
+		prefix, style = "计划 ", askStyle
+	case "approve":
+		prefix, style = "审批 ", askStyle
+	case "mcp":
+		prefix, style = "授权 ", askStyle
+	case "err":
+		prefix, style = "!   ", errStyle
+	}
+	w := width - runewidth.StringWidth(prefix) - 1
+	if w < 10 {
+		w = 10
+	}
+	for i, row := range strings.Split(runewidth.Wrap(l.text, w), "\n") {
+		if i == 0 {
+			out = append(out, style.Render(prefix+row))
+		} else {
+			out = append(out, style.Render(strings.Repeat(" ", runewidth.StringWidth(prefix))+row))
 		}
 	}
 	return out

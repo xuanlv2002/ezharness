@@ -2,7 +2,11 @@ package main
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
+
+	"github.com/charmbracelet/bubbles/textinput"
+	tea "github.com/charmbracelet/bubbletea"
 )
 
 // 本地回显的用户消息与 loop_start 回放同一条时只显示一次；回放重建
@@ -45,20 +49,85 @@ func TestApplyFrameSseError(t *testing.T) {
 	}
 }
 
-/* 工具/思考折叠：工具只计数，带工具调用的中间发言不落时间线，只显示最终回复。 */
+/* 工具折叠：连续调用合成一行；正文/思考照常渲染（带工具调用的中间发言也显示）。 */
 func TestApplyFrameFoldsProcess(t *testing.T) {
 	m := &tuiModel{}
 	m.applyFrame(frame{Type: "tool_start", Data: json.RawMessage(`{"id":"c1","name":"terminal"}`)})
-	if m.tools != 1 || len(m.lines) != 0 {
-		t.Fatalf("tool_start 不该进时间线：tools=%d lines=%+v", m.tools, m.lines)
+	if len(m.lines) != 1 || m.lines[0].kind != "tools" || m.lines[0].text != "1 个调用 · terminal" {
+		t.Fatalf("工具组未建：%+v", m.lines)
 	}
-	m.applyFrame(frame{Type: "model_end", Data: json.RawMessage(`{"content":"中间话","toolCalls":[{"id":"c1","name":"terminal"}]}`)})
-	if len(m.lines) != 0 {
-		t.Fatalf("带工具调用的中间发言应折叠：%+v", m.lines)
+	m.applyFrame(frame{Type: "tool_start", Data: json.RawMessage(`{"id":"c2","name":"terminal"}`)})
+	if len(m.lines) != 1 || m.lines[0].text != "2 个调用 · terminal ×2" {
+		t.Fatalf("连续工具未折叠：%+v", m.lines)
 	}
-	m.applyFrame(frame{Type: "model_end", Data: json.RawMessage(`{"content":"最终回答"}`)})
-	if len(m.lines) != 1 || m.lines[0].kind != "assistant" || m.lines[0].text != "最终回答" {
-		t.Fatalf("最终回复未显示：%+v", m.lines)
+	m.applyFrame(frame{Type: "tool_end", Data: json.RawMessage(`{"callId":"c1","name":"terminal"}`)})
+	if len(m.running) != 1 || m.running[0].id != "c2" {
+		t.Fatalf("执行中工具未出清：%+v", m.running)
+	}
+
+	m.applyFrame(frame{Type: "model_end", Data: json.RawMessage(`{"content":"中间话","reasoning":"想一想","toolCalls":[{"id":"c3","name":"read_file"}]}`)})
+	if len(m.lines) != 3 || m.lines[1].kind != "reasoning" || m.lines[2].kind != "assistant" || m.lines[2].text != "中间话" {
+		t.Fatalf("思考/正文未渲染：%+v", m.lines)
+	}
+	m.applyFrame(frame{Type: "tool_start", Data: json.RawMessage(`{"id":"c3","name":"read_file"}`)})
+	if len(m.lines) != 4 || m.lines[3].kind != "tools" || m.lines[3].text != "1 个调用 · read_file" {
+		t.Fatalf("正文后的工具应另起一组：%+v", m.lines)
+	}
+}
+
+/* 流式帧累积成当前正文/思考，model_end 落定后再清空。 */
+func TestApplyFrameStreaming(t *testing.T) {
+	m := &tuiModel{}
+	m.streaming = true
+	m.applyFrame(frame{Type: "reasoning_chunk", Data: json.RawMessage(`"想一"`)})
+	m.applyFrame(frame{Type: "reasoning_chunk", Data: json.RawMessage(`"想"`)})
+	if got := m.statusHint(false); got != "思考中…" {
+		t.Fatalf("思考中提示不对：%q", got)
+	}
+	m.applyFrame(frame{Type: "model_chunk", Data: json.RawMessage(`"你"`)})
+	m.applyFrame(frame{Type: "model_chunk", Data: json.RawMessage(`"好"`)})
+	if m.liveThink != "想一想" || m.liveText != "你好" {
+		t.Fatalf("流式未累积：think=%q text=%q", m.liveThink, m.liveText)
+	}
+	if rows := strings.Join(m.chatRows(80), "\n"); !strings.Contains(rows, "你好▍") {
+		t.Fatalf("流式正文未渲染：\n%s", rows)
+	}
+	m.applyFrame(frame{Type: "model_end", Data: json.RawMessage(`{"content":"你好","reasoning":"想一想"}`)})
+	if m.liveThink != "" || m.liveText != "" {
+		t.Fatalf("model_end 未清流式态：think=%q text=%q", m.liveThink, m.liveText)
+	}
+	if len(m.lines) != 2 || m.lines[0].kind != "reasoning" || m.lines[1].kind != "assistant" {
+		t.Fatalf("落定顺序不对：%+v", m.lines)
+	}
+	m.applyFrame(frame{Type: "tool_start", Data: json.RawMessage(`{"id":"c1","name":"terminal"}`)})
+	if got := m.statusHint(false); got != "执行中 terminal" {
+		t.Fatalf("执行中提示不对：%q", got)
+	}
+}
+
+/* 输入 / 出命令提示；输入行右侧显示工作目录。 */
+func TestSlashHintsAndDirLine(t *testing.T) {
+	m := &tuiModel{cwd: "/tmp/ez-work", height: 24, input: textinput.New()}
+	m.input.Prompt = ""
+	m.input.Focus()
+	m.applyWidth(80)
+	m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
+	if len(m.suggestRows()) != len(slashCommands) {
+		t.Fatalf("斜杠未出命令提示：%+v", m.suggestRows())
+	}
+	view := m.View()
+	if !strings.Contains(view, "/session") || !strings.Contains(view, "切换分支") {
+		t.Fatalf("命令提示未渲染：\n%s", view)
+	}
+
+	m.input.SetValue("/n")
+	if rows := m.suggestRows(); len(rows) != 1 || !strings.Contains(rows[0], "/new") {
+		t.Fatalf("前缀过滤不对：%+v", rows)
+	}
+
+	row := m.inputRow()
+	if !strings.HasSuffix(row, "工作中 /tmp/ez-work") {
+		t.Fatalf("目录未贴输入行右侧：%q", row)
 	}
 }
 
