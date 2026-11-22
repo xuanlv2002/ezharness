@@ -29,6 +29,8 @@ import (
 type line struct {
 	kind string // user | assistant | reasoning | tools | ask | plan | mcp | info | err
 	text string
+	md   string // assistant 的 markdown 渲染缓存（按 mdW 宽）
+	mdW  int
 }
 
 /* decision 是一条等待用户回答的请求。 */
@@ -88,6 +90,22 @@ type cursorWriter struct {
 	out io.Writer
 	col atomic.Int64 // 1-based 列；0 = 不移动
 }
+
+/*
+Fd/Read/Close 让 cursorWriter 满足 term.File：bubbletea 用 WithOutput
+
+	换上包装 writer 后原本会丢掉 ttyOutput，初始尺寸和窗口缩放全探不到。
+	Read 不会被调用（输出端只写），Close 不能真的关掉 stdout。
+*/
+func (w *cursorWriter) Fd() uintptr {
+	if f, ok := w.out.(interface{ Fd() uintptr }); ok {
+		return f.Fd()
+	}
+	return os.Stdout.Fd()
+}
+
+func (w *cursorWriter) Read([]byte) (int, error) { return 0, io.EOF }
+func (w *cursorWriter) Close() error             { return nil }
 
 func (w *cursorWriter) Write(p []byte) (int, error) {
 	n, err := w.out.Write(p)
@@ -153,6 +171,7 @@ type tuiModel struct {
 	picker    *picker
 	status    *statusView
 	sugSel    int           // 斜杠提示当前选中项
+	askSel    int           // 提问选项当前选中项
 	cursor    *cursorWriter // 真实光标定位（输入法合成位置）
 }
 
@@ -302,6 +321,7 @@ func (m *tuiModel) reload() {
 	m.rootID = b.SessionID
 	m.status = b.Status
 	m.pending = nil
+	m.askSel = 0
 	m.loadHistory()
 	m.subscribe()
 	m.err = ""
@@ -503,9 +523,6 @@ func (m *tuiModel) addDecision(typ string, data json.RawMessage) {
 		decodeArgs(d.Args, &a)
 		dec.kind, dec.question, dec.options = "ask", a.Question, a.Options
 		m.lines = append(m.lines, line{kind: "ask", text: "提问：" + a.Question})
-		if len(a.Options) > 0 {
-			m.lines = append(m.lines, line{kind: "info", text: "选项：" + strings.Join(a.Options, " / ")})
-		}
 	case "plan.request":
 		var p struct {
 			Goal     string `json:"goal"`
@@ -516,9 +533,15 @@ func (m *tuiModel) addDecision(typ string, data json.RawMessage) {
 		decodeArgs(d.Args, &p)
 		dec.kind, dec.goal, dec.steps = "plan", p.Goal, len(p.Progress)
 		m.lines = append(m.lines, line{kind: "plan", text: "计划：" + p.Goal})
+		for i, s := range p.Progress {
+			m.lines = append(m.lines, line{kind: "info", text: fmt.Sprintf("%d. %s", i+1, s.Title)})
+		}
 	}
 	m.groupOpen = false
 	m.pending = append(m.pending, dec)
+	if dec.kind == "ask" && len(m.pending) == 1 {
+		m.askSel = 0
+	}
 }
 
 /* addMcpAuth 登记一条 MCP OAuth 授权请求。 */
@@ -582,6 +605,7 @@ func (m *tuiModel) waitForFrame() tea.Cmd {
 func (m *tuiModel) dropPending() decision {
 	d := m.pending[0]
 	m.pending = m.pending[1:]
+	m.askSel = 0
 	return d
 }
 
@@ -592,6 +616,7 @@ func (m *tuiModel) decideApprove(ok bool) {
 		return
 	}
 	m.pending = m.pending[1:]
+	m.askSel = 0
 }
 
 func (m *tuiModel) resolvePlan(action, feedback string) {
@@ -601,11 +626,31 @@ func (m *tuiModel) resolvePlan(action, feedback string) {
 		return
 	}
 	m.pending = m.pending[1:]
+	m.askSel = 0
 	if action == "confirm" {
 		m.lines = append(m.lines, line{kind: "info", text: "计划已确认"})
 	} else {
 		m.lines = append(m.lines, line{kind: "user", text: feedback})
 	}
+}
+
+/* answerAsk 回传提问的答案（选中的选项或自由输入）。 */
+func (m *tuiModel) answerAsk(d decision, answer string) {
+	if err := m.cl.decideAnswer(m.rootID, d.id, answer); err != nil {
+		m.lines = append(m.lines, line{kind: "err", text: "回答回传失败: " + err.Error()})
+		return
+	}
+	m.pending = m.pending[1:]
+	m.askSel = 0
+	m.lines = append(m.lines, line{kind: "user", text: answer})
+}
+
+/* headAsk 当前待回答且带选项的提问。 */
+func (m *tuiModel) headAsk() (decision, bool) {
+	if len(m.pending) == 0 || m.pending[0].kind != "ask" || len(m.pending[0].options) == 0 {
+		return decision{}, false
+	}
+	return m.pending[0], true
 }
 
 /* compactMsg 是归档（总结开新会话）的结果。 */
@@ -656,6 +701,7 @@ func (m *tuiModel) finishMcpAuth(msg mcpAuthMsg) {
 	}
 	d := m.pending[idx]
 	m.pending = append(m.pending[:idx], m.pending[idx+1:]...)
+	m.askSel = 0
 	if msg.err == "" && msg.ok {
 		_ = m.cl.decideMcpAuth(m.rootID, d.id, true, "")
 		m.lines = append(m.lines, line{kind: "info", text: "MCP 已授权：" + d.name})
@@ -813,6 +859,7 @@ func (m *tuiModel) applyPick() {
 	switch p.kind {
 	case "session":
 		m.pending = nil
+		m.askSel = 0
 		if err := m.cl.activate(it.id); err != nil {
 			m.lines = append(m.lines, line{kind: "err", text: "切换分支失败: " + err.Error()})
 			return
@@ -930,6 +977,16 @@ func (m *tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 		}
+		if d, ok := m.headAsk(); ok {
+			switch msg.Type {
+			case tea.KeyUp:
+				m.askSel = (m.askSel - 1 + len(d.options)) % len(d.options)
+				return m, nil
+			case tea.KeyDown:
+				m.askSel = (m.askSel + 1) % len(d.options)
+				return m, nil
+			}
+		}
 		switch msg.Type {
 		case tea.KeyCtrlC, tea.KeyEsc:
 			return m, tea.Quit
@@ -983,10 +1040,21 @@ func (m *tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m *tuiModel) submit() tea.Cmd {
 	text := strings.TrimSpace(m.input.Value())
 	if text == "" {
-		if len(m.pending) > 0 && m.pending[0].kind == "plan" {
-			m.resolvePlan("confirm", "")
-			m.input.SetValue("")
+		if len(m.pending) > 0 {
+			d := m.pending[0]
+			switch d.kind {
+			case "ask":
+				if len(d.options) > 0 {
+					if m.askSel < 0 || m.askSel >= len(d.options) {
+						m.askSel = 0
+					}
+					m.answerAsk(d, d.options[m.askSel])
+				}
+			case "plan":
+				m.resolvePlan("confirm", "")
+			}
 		}
+		m.input.SetValue("")
 		return nil
 	}
 	if strings.HasPrefix(text, "/") {
@@ -1021,12 +1089,7 @@ func (m *tuiModel) submit() tea.Cmd {
 			if n, err := strconv.Atoi(text); err == nil && n >= 1 && n <= len(d.options) {
 				answer = d.options[n-1]
 			}
-			if err := m.cl.decideAnswer(m.rootID, d.id, answer); err != nil {
-				m.lines = append(m.lines, line{kind: "err", text: "回答回传失败: " + err.Error()})
-				return nil
-			}
-			m.pending = m.pending[1:]
-			m.lines = append(m.lines, line{kind: "user", text: answer})
+			m.answerAsk(d, answer)
 		case "plan":
 			m.resolvePlan("feedback", text)
 		default:
@@ -1105,6 +1168,9 @@ func (m *tuiModel) View() string {
 
 	// 会话贴底：内容紧挨输入区，空白留在上方；选择栏/命令提示压在会话底部
 	panel := m.pickerPanel(bodyH)
+	if panel == nil {
+		panel = m.askPanel(bodyH)
+	}
 	keep := bodyH - len(panel)
 	chat := m.chatRows(m.width)
 	if len(chat) > keep {
@@ -1254,6 +1320,12 @@ func (m *tuiModel) pendingHint() string {
 		}
 		return head + "：y 允许 · n 拒绝"
 	case "ask":
+		if len(d.options) > 0 {
+			if strings.TrimSpace(m.input.Value()) != "" {
+				return "等待回答" + pos + "：Enter 发送输入 · ↑↓ 选选项"
+			}
+			return "等待回答" + pos + "：↑↓ 选择 · Enter 发送 · 也可直接输入"
+		}
 		return "等待回答" + pos + "：输入答案后 Enter 发送"
 	case "plan":
 		return "计划" + pos + "：Enter 确认 · 输入反馈后 Enter 提交"
@@ -1286,11 +1358,21 @@ func fitHint(s string, w int) string {
 /* chatRows 把消息展开成终端行（按显示宽度折行），末尾接流式正文/思考。 */
 func (m *tuiModel) chatRows(width int) []string {
 	var out []string
-	for _, l := range m.lines {
+	for i := range m.lines {
+		l := &m.lines[i]
 		if l.kind == "user" && len(out) > 0 {
 			out = append(out, "") // 新一轮前空一行，把对话和上一轮过程分开
 		}
-		out = appendMessageRows(out, l, width)
+		if l.kind == "assistant" && width > 24 {
+			if l.mdW != width {
+				l.md, l.mdW = renderMarkdown(l.text, width-5), width
+			}
+			if l.md != "" {
+				out = append(out, markdownLines(l.md)...)
+				continue
+			}
+		}
+		out = appendMessageRows(out, *l, width)
 	}
 	if m.liveThink != "" {
 		out = appendMessageRows(out, line{kind: "reasoning", text: reasoningText(m.liveThink)}, width)
@@ -1339,16 +1421,18 @@ func appendMessageRows(out []string, l line, width int) []string {
 	return out
 }
 
-/* pickerPanel 底部选择栏：分隔线 + 当前窗口内的选项，压在会话底部。 */
-func (m *tuiModel) pickerPanel(maxH int) []string {
-	p := m.picker
-	if p == nil || maxH < 1 {
+/* panelRows 底部选择栏：分隔线 + 标题 + 窗口内选项，选中项高亮。 */
+func (m *tuiModel) panelRows(titleText string, labels []string, sel, maxH int) []string {
+	if maxH < 1 || len(labels) == 0 {
 		return nil
 	}
 	if maxH > 10 { // 选择栏最多占 10 行，上面留出会话
 		maxH = 10
 	}
-	head := " " + p.title + " "
+	if sel < 0 || sel >= len(labels) {
+		sel = 0
+	}
+	head := " " + titleText + " "
 	w := m.width - 1
 	if w < 1 {
 		w = 1
@@ -1365,20 +1449,45 @@ func (m *tuiModel) pickerPanel(maxH int) []string {
 		return rows
 	}
 	start := 0
-	if p.sel >= itemH {
-		start = p.sel - itemH + 1 // 选中项始终留在窗口内
+	if sel >= itemH {
+		start = sel - itemH + 1 // 选中项始终留在窗口内
 	}
 	labelW := m.width - 3
 	if labelW < 4 {
 		labelW = 4
 	}
-	for i := start; i < len(p.items) && len(rows) < maxH; i++ {
-		label := runewidth.Truncate(p.items[i].label, labelW, "…")
-		if i == p.sel {
+	for i := start; i < len(labels) && len(rows) < maxH; i++ {
+		label := runewidth.Truncate(labels[i], labelW, "…")
+		if i == sel {
 			rows = append(rows, selStyle.Render("▸ "+label))
 		} else {
 			rows = append(rows, "  "+label)
 		}
 	}
 	return rows
+}
+
+func (m *tuiModel) pickerPanel(maxH int) []string {
+	p := m.picker
+	if p == nil {
+		return nil
+	}
+	labels := make([]string, len(p.items))
+	for i, it := range p.items {
+		labels[i] = it.label
+	}
+	return m.panelRows(p.title, labels, p.sel, maxH)
+}
+
+/* askPanel 提问选项选择栏；空提问（无选项）不占面板。 */
+func (m *tuiModel) askPanel(maxH int) []string {
+	d, ok := m.headAsk()
+	if !ok {
+		return nil
+	}
+	labels := make([]string, len(d.options))
+	for i, o := range d.options {
+		labels[i] = fmt.Sprintf("%d. %s", i+1, o)
+	}
+	return m.panelRows("提问 · 选择或直接输入回答", labels, m.askSel, maxH)
 }
