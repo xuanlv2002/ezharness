@@ -1,7 +1,7 @@
 {
   "name": "ezharness-frontend",
   "private": true,
-  "version": "v1.3.2",
+  "version": "v2.0.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
