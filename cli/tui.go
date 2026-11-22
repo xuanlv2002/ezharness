@@ -176,6 +176,8 @@ type tuiModel struct {
 	stopSse      func()
 	width        int
 	height       int
+	scroll       int // 会话向上翻的行数（0 = 贴底最新）
+	chatTotal    int // 上一帧会话总行数：上翻时新行不把视图顶走
 	err          string
 	pending      []decision
 	attaches     []attach
@@ -239,7 +241,7 @@ func cmdTUI(server string) {
 
 	/* 进入前净屏（含滚动区）：部分终端切备用屏不擦已滚出的旧内容 */
 	fmt.Print("\x1b[2J\x1b[3J\x1b[H")
-	p := tea.NewProgram(m, tea.WithAltScreen(), tea.WithOutput(out))
+	p := tea.NewProgram(m, tea.WithAltScreen(), tea.WithOutput(out), tea.WithMouseCellMotion())
 	final, err := p.Run()
 	if mm, ok := final.(*tuiModel); ok && mm.stopSse != nil {
 		mm.stopSse()
@@ -294,6 +296,7 @@ func isSystemNote(s string) bool {
 */
 func (m *tuiModel) loadHistory() {
 	m.lines = m.lines[:0]
+	m.scroll, m.chatTotal = 0, 0
 	h, err := m.cl.history(m.rootID)
 	if err != nil {
 		m.lines = append(m.lines, line{kind: "err", text: "历史加载失败: " + err.Error()})
@@ -584,6 +587,7 @@ func (m *tuiModel) addDecision(typ string, data json.RawMessage) {
 		}
 	}
 	m.groupOpen = false
+	m.scroll = 0 // 新请求出现：拉回底部，先看它
 	m.pending = append(m.pending, dec)
 	if len(m.pending) == 1 {
 		m.resetSel()
@@ -596,6 +600,7 @@ func (m *tuiModel) addMcpAuth(data json.RawMessage) {
 	if json.Unmarshal(data, &d) != nil || d.ID == "" || d.Server == "" || m.hasPending(d.ID) {
 		return
 	}
+	m.scroll = 0
 	m.pending = append(m.pending, decision{id: d.ID, kind: "mcp", name: d.Server, metaURL: d.MetadataURL})
 	m.lines = append(m.lines, line{kind: "mcp", text: "MCP 服务 " + d.Server + " 需要 OAuth 授权"})
 	m.groupOpen = false
@@ -922,6 +927,7 @@ func (m *tuiModel) runCommand(cmd string) tea.Cmd {
 			line{kind: "info", text: "命令：/session 分支 · /new 新分支 · /compact 归档 · /permissions 审批档 · /models 模型 · /status 状态"},
 			line{kind: "info", text: "审批/提问/计划/授权：↑↓ 选择 · Enter 确认；审批输入文字后 Enter 为拒绝理由"},
 			line{kind: "info", text: "粘贴/拖入文件路径变成 [IMAGE]/[FILE] 附件；空输入退格删除最后一个"},
+			line{kind: "info", text: "PgUp/PgDn 或滚轮翻阅历史；选中文本请按住 Shift 拖拽"},
 		)
 	case "session":
 		m.openSessionPicker()
@@ -1121,16 +1127,22 @@ func (m *tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.finishMcpAuth(msg)
 		return m, nil
 	case tea.KeyMsg:
+		switch msg.Type {
+		case tea.KeyUp:
+			if m.moveSel(-1) {
+				return m, nil
+			}
+		case tea.KeyDown:
+			if m.moveSel(1) {
+				return m, nil
+			}
+		}
 		if m.picker != nil {
 			switch msg.Type {
 			case tea.KeyCtrlC:
 				return m, tea.Quit
 			case tea.KeyEsc:
 				m.picker = nil
-			case tea.KeyUp:
-				m.picker.sel = (m.picker.sel - 1 + len(m.picker.items)) % len(m.picker.items)
-			case tea.KeyDown:
-				m.picker.sel = (m.picker.sel + 1) % len(m.picker.items)
 			case tea.KeyEnter:
 				m.applyPick()
 			}
@@ -1139,43 +1151,21 @@ func (m *tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if (msg.Paste || len(msg.Runes) > 1) && len(m.pending) == 0 && m.pasteAttach(string(msg.Runes)) {
 			return m, nil // 粘贴的是本地文件路径：变成附件，不写进输入框
 		}
-		if sugs := m.suggestions(); len(sugs) > 0 {
-			switch msg.Type {
-			case tea.KeyUp:
-				m.sugSel = (m.sugSel - 1 + len(sugs)) % len(sugs)
-				return m, nil
-			case tea.KeyDown:
-				m.sugSel = (m.sugSel + 1) % len(sugs)
-				return m, nil
-			case tea.KeyTab:
-				m.fillSuggestion()
-				return m, nil
-			}
-		}
-		if len(m.pending) > 0 {
-			n := 0
-			switch m.pending[0].kind {
-			case "ask":
-				n = len(m.pending[0].options)
-			case "approve", "mcp":
-				n = 2
-			}
-			if n > 0 {
-				switch msg.Type {
-				case tea.KeyUp:
-					m.sel = (m.sel - 1 + n) % n
-					return m, nil
-				case tea.KeyDown:
-					m.sel = (m.sel + 1) % n
-					return m, nil
-				}
-			}
+		if len(m.suggestions()) > 0 && msg.Type == tea.KeyTab {
+			m.fillSuggestion()
+			return m, nil
 		}
 		switch msg.Type {
 		case tea.KeyCtrlC, tea.KeyEsc:
 			return m, tea.Quit
 		case tea.KeyEnter:
 			return m, m.submit()
+		case tea.KeyPgUp:
+			m.scrollChat(m.pageStep())
+			return m, nil
+		case tea.KeyPgDown:
+			m.scrollChat(-m.pageStep())
+			return m, nil
 		}
 		if len(m.pending) > 0 && m.pending[0].kind == "mcp" {
 			return m, nil // 授权期间不出文本输入
@@ -1184,6 +1174,18 @@ func (m *tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.attaches = m.attaches[:len(m.attaches)-1] // 空输入退格删最后一个附件
 			return m, nil
 		}
+	case tea.MouseMsg:
+		switch msg.Button {
+		case tea.MouseButtonWheelUp:
+			if !m.moveSel(-1) {
+				m.scrollChat(3)
+			}
+		case tea.MouseButtonWheelDown:
+			if !m.moveSel(1) {
+				m.scrollChat(-3)
+			}
+		}
+		return m, nil
 	case frame:
 		m.applyFrame(msg)
 		return m, m.waitForFrame()
@@ -1312,6 +1314,7 @@ func (m *tuiModel) submit() tea.Cmd {
 	m.lines = append(m.lines, line{kind: "user", text: display})
 	m.echoUser = text
 	m.attaches = nil
+	m.scroll = 0
 	m.streaming = true
 	m.interrupting = wasRunning // 旧轮被 core 主动终止，别把它的取消错误打出来
 	m.input.SetValue("")
@@ -1346,7 +1349,6 @@ func (m *tuiModel) View() string {
 	if m.width == 0 {
 		return "启动中…"
 	}
-	head := titleStyle.Render(" ezharness tui") + dimStyle.Render(" · "+m.addr+" · "+m.version)
 
 	// 命令提示按高度开窗，保证选中项始终可见
 	sugs := m.suggestionRows()
@@ -1382,13 +1384,11 @@ func (m *tuiModel) View() string {
 		panel = m.decisionPanel(bodyH)
 	}
 	keep := bodyH - len(panel)
-	chat := m.chatRows(m.width)
-	if len(chat) > keep {
-		chat = chat[len(chat)-keep:]
-	} else if len(chat) < keep {
-		chat = append(chat, make([]string, keep-len(chat))...)
+	body := append(m.chatWindow(m.chatRows(m.width), keep), panel...)
+	head := titleStyle.Render(" ezharness tui") + dimStyle.Render(" · "+m.addr+" · "+m.version)
+	if m.scroll > 0 {
+		head += dimStyle.Render(fmt.Sprintf(" · 已上翻 %d 行", m.scroll))
 	}
-	body := append(chat, panel...)
 	if len(sugs) > 0 {
 		body = append(body[:bodyH-len(sugs)], sugs...)
 	}
@@ -1619,6 +1619,78 @@ func cleanText(s string) string {
 		}
 	}
 	return b.String()
+}
+
+/* chatWindow 按滚动偏移取可视窗口；上翻时新行不把视图顶走。 */
+func (m *tuiModel) chatWindow(all []string, keep int) []string {
+	total := len(all)
+	if m.scroll > 0 && total > m.chatTotal {
+		m.scroll += total - m.chatTotal
+	}
+	m.chatTotal = total
+	maxScroll := total - keep
+	if maxScroll < 0 {
+		maxScroll = 0
+	}
+	if m.scroll > maxScroll {
+		m.scroll = maxScroll
+	}
+	if m.scroll < 0 {
+		m.scroll = 0
+	}
+	if total > keep {
+		end := total - m.scroll
+		return all[end-keep : end]
+	}
+	return append(all, make([]string, keep-total)...)
+}
+
+/* scrollChat 上翻/下翻会话；正数向上翻。 */
+func (m *tuiModel) scrollChat(delta int) {
+	m.scroll += delta
+	if m.scroll < 0 {
+		m.scroll = 0
+	}
+	if m.scroll > m.chatTotal {
+		m.scroll = m.chatTotal
+	}
+}
+
+/* pageStep 一页滚动的行数。 */
+func (m *tuiModel) pageStep() int {
+	n := m.height - 6
+	if n < 5 {
+		n = 5
+	}
+	return n
+}
+
+/* moveSel 上下移动当前可选项（选择栏/命令提示/待办）；没有列表返回 false。 */
+func (m *tuiModel) moveSel(delta int) bool {
+	if m.picker != nil {
+		if n := len(m.picker.items); n > 0 {
+			m.picker.sel = (m.picker.sel + delta + n) % n
+		}
+		return true
+	}
+	if sugs := m.suggestions(); len(sugs) > 0 {
+		m.sugSel = (m.sugSel + delta + len(sugs)) % len(sugs)
+		return true
+	}
+	if len(m.pending) > 0 {
+		n := 0
+		switch m.pending[0].kind {
+		case "ask":
+			n = len(m.pending[0].options)
+		case "approve", "mcp":
+			n = 2
+		}
+		if n > 0 {
+			m.sel = (m.sel + delta + n) % n
+			return true
+		}
+	}
+	return false
 }
 
 /* chatRows 把消息展开成终端行（按显示宽度折行），末尾接流式正文/思考。 */
