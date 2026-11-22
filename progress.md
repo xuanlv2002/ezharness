@@ -200,9 +200,12 @@ desktop 切换地址、Windows/NSIS 安装包留真机/CI 验证。
   preload `server`、`reconnectBridge`）；固定跟随本机 `server.json`，令牌仍由
   页面登录后经 `ez:auth-token` 同步给主进程。
 - **cli**：`chat`/`tui` 不再询问密码或地址，默认密码静默登录；`--server` 仍可
-  显式指定 core；`session.json` 只存令牌。
+  显式指定 core；`session.json` 只存令牌；`go mod tidy` 移除不再直接使用的
+  `golang.org/x/term`。
 - **文档**：README 中英、[三分架构](docs/md/三分架构.md)、
   [认证与 OpenAPI](docs/md/认证与openapi.md) 同步默认密码与隐式登录。
+- **CI**：新增 `test` job（前端构建、core/cli 测试与 vet、默认登录冒烟），
+  三平台 `build` 依赖它；普通 push / PR 只跑测试，v* 标签或手动触发才出安装包。
 
 验证：core `go test -count=1 ./internal/...` 与 `-race`（service/controller）全绿；
 cli `go test -count=1 ./...`、`go vet`、三平台交叉编译 ✓；前端 `npm run build` ✓；
