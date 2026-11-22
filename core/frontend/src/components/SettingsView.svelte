@@ -401,7 +401,7 @@
       </span>
       {#if cfg && !coreStopped && !coreOffline}
         <span class="coredetail">
-          v{cfg.version} · 127.0.0.1:{cfg.port} · PID {cfg.pid} · 已运行
+          {cfg.version} · 127.0.0.1:{cfg.port} · PID {cfg.pid} · 已运行
           {fmtUptime(cfg.startedAt)}
         </span>
       {/if}
@@ -423,9 +423,6 @@
       <button class="ghost" disabled={restarting} onclick={restartApp}>
         {restarting ? '重启中…' : '重启服务'}
       </button>
-    {/if}
-    {#if !ez?.core}
-      <p class="msg">进程级启停仅在桌面端可用；网页端请用 ezharness stop / ezharness server。</p>
     {/if}
     {#if coreMsg}
       <p class="msg">{coreMsg}</p>
@@ -451,7 +448,7 @@
   <section id="set-context">
     <h2 title="上下文整理水位 = 模型上下文窗口 × 百分比：模型调用的 prompt tokens 超过即自动整理（早期对话就地折叠为摘要，立即生效，会话不变），换模型自动适配 （如 128K 窗口 × 75% = 96000）；0 表示关闭自动整理（模型仍可主动调用 trim_context 工具）。话题归档（总结归档开新会话）请用分支面板的「归档」按钮。">上下文管理</h2>
     <label class="field">
-      <span>整理水位（窗口百分比）</span>
+      <span>整理水位（%）</span>
       <input type="number" bind:value={percent} min="0" max="100" />
     </label>
     <button
@@ -465,7 +462,7 @@
       <p class="msg">{thresholdMsg}</p>
     {/if}
     <label class="field">
-      <span>单轮最大迭代次数（0 = 默认 64，上限 128）</span>
+      <span title="0 = 默认 64，上限 128">单轮最大迭代次数</span>
       <input type="number" bind:value={iters} min="0" max="128" />
     </label>
     <button
@@ -479,7 +476,7 @@
       <p class="msg">{itersMsg}</p>
     {/if}
     <label class="field">
-      <span>工具结果卸载阈值/字节（超过即卸载到文件、上下文只留摘要头；0 = 默认 4096，上限 1MB；摘要头默认 512 字节、随阈值放宽但封顶 1KB）</span>
+      <span title="超过即卸载到文件、上下文只留摘要头；0 = 默认 4096，上限 1MB；摘要头默认 512 字节、随阈值放宽但封顶 1KB">工具结果卸载阈值/字节</span>
       <input type="number" bind:value={offload} min="0" max="1048576" />
     </label>
     <button
@@ -555,7 +552,7 @@
   <section id="set-debug">
     <h2 title="调试模式：把每次发给模型的完整输入（消息 + 工具清单）写进 data/logs/core-日期.log，排查上下文问题用；关闭时日志不记模型输入。dev.bat 启动时默认开启。">调试</h2>
     <label class="switch-row">
-      <span>模型输入进日志（调试模式）</span>
+      <span>模型输入进日志</span>
       <input
         type="checkbox"
         checked={debugMode}
