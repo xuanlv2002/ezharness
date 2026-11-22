@@ -21,7 +21,6 @@ const (
 	sessionTokenHeader = "EzHarnessToken"
 	authCookieName     = "ez_token"
 	wsAuthProto        = "agent-auth"
-	clientCtxKey       = "ezClient" // 本请求令牌所属端名（desktop/web/cli），轮启动时带给工具
 )
 
 /* AuthController 是会话认证端点。 */
@@ -80,7 +79,6 @@ sessionAuth 校验会话面：EzHarnessToken 头 / WS 子协议任一命中（�
 func sessionAuth(auth *service.AuthStore) gin.HandlerFunc {
 	return func(g *gin.Context) {
 		if validSession(g, auth) {
-			g.Set(clientCtxKey, auth.ClientOf(currentToken(g)))
 			g.Next()
 			return
 		}

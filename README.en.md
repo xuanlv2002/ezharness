@@ -112,8 +112,8 @@ flowchart TB
     CLI -- "ensureCore: attach or spawn" --> CORE
     DESK -- "ensureCore: attach; shell quit keeps core" --> CORE
     WEB -- "silent default-password login" --> CORE
-    CORE -. "browser bridge (turns started from desktop)" .-> DESK
-    CORE -. "web / cli / background turns" .-> HE
+    CORE -. "browser bridge (preferred when desktop is present)" .-> DESK
+    CORE -. "fallback when bridge absent" .-> HE
 ```
 
 The core prepares a default password at startup and all clients log in silently; API auth uses the `EzHarnessToken` header (scripts and quick apps call `/api/open/*` with `EzHarnessOpenToken`). See [three-part architecture](docs/md/三分架构.md) (Chinese).

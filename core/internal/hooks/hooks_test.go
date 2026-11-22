@@ -226,7 +226,7 @@ func TestRemindNoChangeNoMessage(t *testing.T) {
 
 /* remind 快照段：终端/浏览器清单进 <agent_status>；空/无闭包渲染"（无）"。 */
 func TestRemindStatusTermTabs(t *testing.T) {
-	mk := func(terms func() []string, tabs func(context.Context) []string) *types.LoopState {
+	mk := func(terms, tabs func() []string) *types.LoopState {
 		h := NewRemind(memFS{}, NewStore(memFS{}, "t1"), func() int { return 0 }, 1000,
 			func() []StatusMcp { return nil }, nil, terms, tabs)
 		state := newTestState([]types.Message{{Role: types.RoleUser, Content: "q"}})
@@ -236,7 +236,7 @@ func TestRemindStatusTermTabs(t *testing.T) {
 		return state
 	}
 	s := mk(func() []string { return []string{"编译监控（盯构建）[t1]", "爬虫[t2]"} },
-		func(context.Context) []string { return []string{"文档（React 文档）[b3]"} })
+		func() []string { return []string{"文档（React 文档）[b3]"} })
 	body := s.Messages[0].Content
 	for _, want := range []string{
 		"当前运行中终端：编译监控（盯构建）[t1]、爬虫[t2]",
