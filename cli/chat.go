@@ -79,7 +79,7 @@ func cmdChat(rest []string, server string) {
 	})
 	defer stop()
 
-	if err := cl.send(b.SessionID, text, ""); err != nil {
+	if err := cl.send(b.SessionID, text, "", nil); err != nil {
 		var ae *apiError
 		if errors.As(err, &ae) && ae.Status == http.StatusConflict {
 			// 已有轮次运行中：跟随现有输出到本轮结束

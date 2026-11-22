@@ -14,6 +14,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -66,6 +67,13 @@ type pickItem struct {
 type toolRun struct {
 	id   string
 	name string
+}
+
+/* attach 是待发送的本地文件（粘贴文件路径得到）。 */
+type attach struct {
+	name  string
+	path  string
+	image bool
 }
 
 /* slashCmd 是斜杠命令的一条提示。 */
@@ -170,6 +178,7 @@ type tuiModel struct {
 	height       int
 	err          string
 	pending      []decision
+	attaches     []attach
 	picker       *picker
 	status       *statusView
 	sugSel       int                // 斜杠提示当前选中项
@@ -188,6 +197,8 @@ var (
 	infoStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
 	errStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("9"))
 	dimStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
+	imgStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("13"))
+	fileStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("14"))
 )
 
 func cmdTUI(server string) {
@@ -616,6 +627,102 @@ func decodeArgs(raw json.RawMessage, out any) bool {
 	return json.Unmarshal(raw, out) == nil
 }
 
+/* maxAttach 单条消息附件上限（与 core 的 files+refs 上限一致）。 */
+const maxAttach = 8
+
+/* pasteAttach 把粘贴进来的本地文件路径转成附件；不是文件返回 false。 */
+func (m *tuiModel) pasteAttach(raw string) bool {
+	var paths []string
+	for _, ln := range strings.Split(strings.TrimSpace(raw), "\n") {
+		ln = strings.TrimSpace(ln)
+		if ln == "" {
+			continue
+		}
+		p, ok := filePathOf(ln)
+		if !ok {
+			return false
+		}
+		paths = append(paths, p)
+	}
+	if len(paths) == 0 {
+		return false
+	}
+	for _, p := range paths {
+		m.addAttach(p)
+	}
+	return true
+}
+
+/* filePathOf 解析终端粘贴/拖入的路径（可能带引号或反斜杠转义）。 */
+func filePathOf(raw string) (string, bool) {
+	unq := strings.Trim(raw, "\"'")
+	cands := []string{raw, unq, strings.ReplaceAll(unq, `\ `, " ")}
+	for _, c := range cands {
+		if st, err := os.Stat(c); err == nil && !st.IsDir() {
+			return c, true
+		}
+	}
+	return "", false
+}
+
+/* addAttach 登记一个文件；图片用 [IMAGE]，其余 [FILE]。 */
+func (m *tuiModel) addAttach(path string) {
+	if len(m.attaches) >= maxAttach {
+		m.lines = append(m.lines, line{kind: "err", text: "附件最多 8 个"})
+		return
+	}
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		abs = path
+	}
+	m.attaches = append(m.attaches, attach{name: filepath.Base(abs), path: filepath.ToSlash(abs), image: isImageFile(abs)})
+}
+
+/* isImageFile 按魔数判图片（与 core 图片通道同一集合）。 */
+func isImageFile(path string) bool {
+	f, err := os.Open(path)
+	if err != nil {
+		return false
+	}
+	defer f.Close()
+	buf := make([]byte, 12)
+	n, _ := f.Read(buf)
+	b := buf[:n]
+	switch {
+	case len(b) >= 8 && string(b[:8]) == "\x89PNG\r\n\x1a\n":
+		return true
+	case len(b) >= 3 && b[0] == 0xFF && b[1] == 0xD8 && b[2] == 0xFF:
+		return true
+	case len(b) >= 6 && (string(b[:6]) == "GIF87a" || string(b[:6]) == "GIF89a"):
+		return true
+	case len(b) >= 12 && string(b[:4]) == "RIFF" && string(b[8:12]) == "WEBP":
+		return true
+	}
+	return false
+}
+
+/* attachRow 附件行：一眼看到 [IMAGE] / [FILE]。 */
+func (m *tuiModel) attachRow() string {
+	parts := make([]string, 0, len(m.attaches))
+	for _, a := range m.attaches {
+		tag := fileStyle.Render("[FILE]")
+		if a.image {
+			tag = imgStyle.Render("[IMAGE]")
+		}
+		parts = append(parts, tag+dimStyle.Render(" "+a.name))
+	}
+	return ansi.Truncate(" "+strings.Join(parts, "  "), m.width-2, "…")
+}
+
+/* sendFiles 把待发附件转成 API 载荷。 */
+func (m *tuiModel) sendFiles() []sendFile {
+	files := make([]sendFile, 0, len(m.attaches))
+	for _, a := range m.attaches {
+		files = append(files, sendFile{Name: a.name, Path: a.path})
+	}
+	return files
+}
+
 func (m *tuiModel) hasPending(id string) bool {
 	for _, d := range m.pending {
 		if d.id == id {
@@ -814,6 +921,7 @@ func (m *tuiModel) runCommand(cmd string) tea.Cmd {
 		m.lines = append(m.lines,
 			line{kind: "info", text: "命令：/session 分支 · /new 新分支 · /compact 归档 · /permissions 审批档 · /models 模型 · /status 状态"},
 			line{kind: "info", text: "审批/提问/计划/授权：↑↓ 选择 · Enter 确认；审批输入文字后 Enter 为拒绝理由"},
+			line{kind: "info", text: "粘贴/拖入文件路径变成 [IMAGE]/[FILE] 附件；空输入退格删除最后一个"},
 		)
 	case "session":
 		m.openSessionPicker()
@@ -1028,6 +1136,9 @@ func (m *tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		}
+		if (msg.Paste || len(msg.Runes) > 1) && len(m.pending) == 0 && m.pasteAttach(string(msg.Runes)) {
+			return m, nil // 粘贴的是本地文件路径：变成附件，不写进输入框
+		}
 		if sugs := m.suggestions(); len(sugs) > 0 {
 			switch msg.Type {
 			case tea.KeyUp:
@@ -1068,6 +1179,10 @@ func (m *tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if len(m.pending) > 0 && m.pending[0].kind == "mcp" {
 			return m, nil // 授权期间不出文本输入
+		}
+		if msg.Type == tea.KeyBackspace && len(m.pending) == 0 && m.input.Value() == "" && len(m.attaches) > 0 {
+			m.attaches = m.attaches[:len(m.attaches)-1] // 空输入退格删最后一个附件
+			return m, nil
 		}
 	case frame:
 		m.applyFrame(msg)
@@ -1146,10 +1261,10 @@ func (m *tuiModel) submit() tea.Cmd {
 			return nil
 		}
 	}
-	if text == "" {
+	if text == "" && len(m.attaches) == 0 {
 		return nil
 	}
-	if strings.HasPrefix(text, "/") {
+	if len(m.attaches) == 0 && strings.HasPrefix(text, "/") {
 		raw := strings.TrimSpace(strings.TrimPrefix(text, "/"))
 		if sugs := m.suggestions(); len(sugs) > 0 {
 			if m.sugSel < 0 || m.sugSel >= len(sugs) {
@@ -1174,7 +1289,7 @@ func (m *tuiModel) submit() tea.Cmd {
 		return m.runCommand(name)
 	}
 	wasRunning := m.streaming
-	if err := m.cl.send(m.rootID, text, m.cwd); err != nil {
+	if err := m.cl.send(m.rootID, text, m.cwd, m.sendFiles()); err != nil {
 		var ae *apiError
 		if errors.As(err, &ae) && ae.Status == http.StatusConflict {
 			m.lines = append(m.lines, line{kind: "info", text: "已有轮次运行中"})
@@ -1183,8 +1298,20 @@ func (m *tuiModel) submit() tea.Cmd {
 		}
 		return nil
 	}
-	m.lines = append(m.lines, line{kind: "user", text: text})
+	display := text
+	for _, a := range m.attaches {
+		tag := "[FILE]"
+		if a.image {
+			tag = "[IMAGE]"
+		}
+		if display != "" {
+			display += "  "
+		}
+		display += tag + " " + a.name
+	}
+	m.lines = append(m.lines, line{kind: "user", text: display})
 	m.echoUser = text
+	m.attaches = nil
 	m.streaming = true
 	m.interrupting = wasRunning // 旧轮被 core 主动终止，别把它的取消错误打出来
 	m.input.SetValue("")
@@ -1237,7 +1364,11 @@ func (m *tuiModel) View() string {
 			sugs = sugs[start : start+max]
 		}
 	}
-	bodyH := m.height - 3 // 标题 / 提示 / 输入
+	attachRows := 0
+	if len(m.attaches) > 0 {
+		attachRows = 1
+	}
+	bodyH := m.height - 3 - attachRows // 标题 / 提示 / 附件 / 输入
 	if bodyH < 1 {
 		bodyH = 1
 	}
@@ -1273,7 +1404,11 @@ func (m *tuiModel) View() string {
 
 	out := []string{head}
 	out = append(out, body...)
-	out = append(out, hintRow, m.inputRow())
+	out = append(out, hintRow)
+	if len(m.attaches) > 0 {
+		out = append(out, m.attachRow())
+	}
+	out = append(out, m.inputRow())
 	/* 最后一道保险：任何一行都不许写满终端宽度，避免自动换行把整屏
 	   行序冲乱（markdown 的内边距、宽字符宽度差异都可能超一格）。 */
 	for i := range out {

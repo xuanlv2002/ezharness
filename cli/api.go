@@ -78,11 +78,20 @@ func (c *client) history(rootID string) (*historyView, error) {
 	return &h, nil
 }
 
+/* sendFile 是消息附件：整文件引用，core 校验路径存在且不是目录。 */
+type sendFile struct {
+	Name string `json:"name"`
+	Path string `json:"path"`
+}
+
 /* send 向分支发消息（dir = 发起端目录，随轮进 agent_status 作软提示）；409 = 已有轮次运行中。 */
-func (c *client) send(rootID, text, dir string) error {
+func (c *client) send(rootID, text, dir string, files []sendFile) error {
 	body := map[string]any{"text": text}
 	if dir != "" {
 		body["dir"] = dir
+	}
+	if len(files) > 0 {
+		body["files"] = files
 	}
 	return c.callJSON(http.MethodPost, "/api/sessions/"+rootID+"/messages", body, nil)
 }
