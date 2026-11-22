@@ -9,6 +9,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"net/url"
 )
 
 /* branch 是分支清单条目（/api/bootstrap.branches）。 */
@@ -23,9 +24,16 @@ type branch struct {
 	UpdatedAt int64  `json:"updatedAt"`
 }
 
-/* statusView 信息卡的模型行用（/api/bootstrap.status）。 */
+/* statusView 是 /api/status 与本会话状态（bootstrap.status）的共用视图。 */
 type statusView struct {
-	Model string `json:"model"`
+	Model         string `json:"model"`
+	ApproveMode   string `json:"approveMode"`
+	SessionID     string `json:"sessionId"`
+	RootID        string `json:"rootId"`
+	SessionMsgs   int    `json:"sessionMsgs"`
+	ContextTokens int    `json:"contextTokens"`
+	ContextWindow int    `json:"contextWindow"`
+	Busy          bool   `json:"busy"`
 }
 
 type bootstrapView struct {
@@ -45,9 +53,13 @@ func (c *client) bootstrap() (*bootstrapView, error) {
 
 /* historyMsg 是历史消息（/api/sessions/:id.messages；role=user/assistant/tool）。 */
 type historyMsg struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
-	Err     string `json:"err,omitempty"`
+	Role      string `json:"role"`
+	Content   string `json:"content"`
+	Err       string `json:"err,omitempty"`
+	ToolCalls []struct {
+		ID   string `json:"id"`
+		Name string `json:"name"`
+	} `json:"tool_calls,omitempty"`
 }
 
 type historyView struct {
@@ -65,10 +77,13 @@ func (c *client) history(rootID string) (*historyView, error) {
 	return &h, nil
 }
 
-/* send 向分支发消息；409 = 已有轮次运行中。 */
-func (c *client) send(rootID, text string) error {
-	return c.callJSON(http.MethodPost, "/api/sessions/"+rootID+"/messages",
-		map[string]any{"text": text}, nil)
+/* send 向分支发消息（dir = 发起端目录，随轮进 agent_status 作软提示）；409 = 已有轮次运行中。 */
+func (c *client) send(rootID, text, dir string) error {
+	body := map[string]any{"text": text}
+	if dir != "" {
+		body["dir"] = dir
+	}
+	return c.callJSON(http.MethodPost, "/api/sessions/"+rootID+"/messages", body, nil)
 }
 
 /* activate 切换分支。 */
@@ -87,6 +102,92 @@ func (c *client) newBranch() (string, error) {
 	return out.ID, nil
 }
 
+/* status 拉活动会话状态。 */
+func (c *client) status() (*statusView, error) {
+	var st statusView
+	if err := c.callJSON(http.MethodGet, "/api/status", nil, &st); err != nil {
+		return nil, err
+	}
+	return &st, nil
+}
+
+/* modelEntry 是 /api/models 主模型条目（只取选择需要的字段）。 */
+type modelEntry struct {
+	Name     string `json:"name"`
+	Vision   bool   `json:"vision"`
+	Disabled bool   `json:"disabled"`
+}
+
+func (c *client) models() ([]modelEntry, error) {
+	var out struct {
+		Main []modelEntry `json:"main"`
+	}
+	if err := c.callJSON(http.MethodGet, "/api/models", nil, &out); err != nil {
+		return nil, err
+	}
+	return out.Main, nil
+}
+
+/* prefsView 是会话偏好更新的回执。 */
+type prefsView struct {
+	ApproveMode string `json:"approveMode"`
+	Model       string `json:"model"`
+}
+
+func (c *client) setPrefs(rootID string, patch map[string]any) (prefsView, error) {
+	var out prefsView
+	err := c.callJSON(http.MethodPost, "/api/sessions/"+rootID+"/prefs", patch, &out)
+	return out, err
+}
+
+/* compact 归档当前话题（总结归档并开新会话）。 */
+func (c *client) compact(rootID string) error {
+	return c.callJSON(http.MethodPost, "/api/topics/compact", map[string]any{"rootId": rootID}, nil)
+}
+
+/* ---- 人机决策 ---- */
+
+func (c *client) decideApprove(rootID, callID string, approve bool, reason string) error {
+	return c.callJSON(http.MethodPost, "/api/sessions/"+rootID+"/decisions/approve",
+		map[string]any{"callId": callID, "approve": approve, "reason": reason}, nil)
+}
+
+func (c *client) decideAnswer(rootID, callID, input string) error {
+	return c.callJSON(http.MethodPost, "/api/sessions/"+rootID+"/decisions/answer",
+		map[string]any{"callId": callID, "input": input}, nil)
+}
+
+func (c *client) decidePlan(rootID, callID, action, feedback string) error {
+	return c.callJSON(http.MethodPost, "/api/sessions/"+rootID+"/decisions/plan",
+		map[string]any{"callId": callID, "action": action, "feedback": feedback}, nil)
+}
+
+func (c *client) decideMcpAuth(rootID, callID string, ok bool, reason string) error {
+	return c.callJSON(http.MethodPost, "/api/sessions/"+rootID+"/decisions/mcp-auth",
+		map[string]any{"callId": callID, "ok": ok, "reason": reason}, nil)
+}
+
+func (c *client) oauthStart(name, metadataURL string) (string, error) {
+	var out struct {
+		URL string `json:"url"`
+	}
+	err := c.callJSON(http.MethodPost, "/api/mcp/oauth/start",
+		map[string]any{"name": name, "metadata_url": metadataURL}, &out)
+	return out.URL, err
+}
+
+func (c *client) oauthStatus(name string) (bool, error) {
+	var out struct {
+		Authorized bool `json:"authorized"`
+	}
+	err := c.callJSON(http.MethodGet, "/api/mcp/oauth/status?name="+url.QueryEscape(name), nil, &out)
+	return out.Authorized, err
+}
+
+func (c *client) oauthCancel(name string) error {
+	return c.callJSON(http.MethodPost, "/api/mcp/oauth/cancel", map[string]any{"name": name}, nil)
+}
+
 /* ---- SSE ---- */
 
 /* frame 是 /api/sessions/:id/events 的帧（forkId 非空 = 后台分身帧）。 */
@@ -98,12 +199,12 @@ type frame struct {
 }
 
 // 需要关心的帧的解包结构（其余忽略）
-type toolStartData struct {
-	Name string `json:"name"`
-}
-
 type modelEndData struct {
-	Content string `json:"content"`
+	Content   string `json:"content"`
+	ToolCalls []struct {
+		ID   string `json:"id"`
+		Name string `json:"name"`
+	} `json:"toolCalls,omitempty"`
 }
 
 type turnEndData struct {

@@ -1,15 +1,13 @@
 /*
-ezharness.exe 是唯一命令入口：无参打印信息卡；chat/tui 默认连本机 core
+ezharness.exe 是唯一命令入口：无参直接进 tui；tui/chat 默认连本机 core
 （读 server.json → 探活 → 附着或拉起），--server 可显式指定地址。core
 常驻单实例，本进程只是它的客户端（纯 HTTP，不 import core 内部包）。
 */
 package main
 
 import (
-	"bufio"
 	"fmt"
 	"os"
-	"runtime"
 	"strings"
 )
 
@@ -20,23 +18,25 @@ const usageText = `ezharness — 本机 AI 工作台入口
 
 用法：ezharness [--server 地址] <命令> [参数]
 
-  server [--detach]   启动 core（前台；--detach 后台常驻）
-  status              实例状态（纯键值，供脚本）
-  stop                停止常驻 core
-  logs                跟随 core 日志
-  web                 打开浏览器端（未运行则拉起 core）
-  desktop             打开桌面端
-  chat <一句话>        问一句（未运行则拉起 core）
-  tui                 终端界面：分支 + 会话（未运行则拉起 core）
-  help                本帮助
-  -v, --version       版本号（单行）
+  （无参数直接进入 tui，已登录则直达会话）
 
---server <主机:端口>  chat/tui 连指定 core（默认本机自动发现）`
+  status              查看 core 状态
+  server [--detach]   前台启动 core（已在跑则重启）；--detach 后台常驻
+  stop                停止 core
+  chat [一句话]        单轮问答：发一句，打印最终回复
+  tui                 终端对话界面
+  logs                跟随 core 日志
+  web                 打开浏览器端
+  desktop             打开桌面端
+  help                本帮助
+  -v, --version       版本号
+
+--server <主机:端口>   tui / chat 连接指定 core（默认本机自动发现）`
 
 func main() {
 	args := os.Args[1:]
 	if len(args) == 0 {
-		infoCard()
+		cmdTUI("")
 		return
 	}
 	server := ""
@@ -79,49 +79,6 @@ func main() {
 	default:
 		fmt.Printf("未知命令 %q\n\n%s\n", cmd, usageText)
 		os.Exit(1)
-	}
-}
-
-/*
-infoCard 无参信息卡：幂等、无副作用、300ms 短探活。双击运行（stdin 非
-终端）时打印后等一次回车，窗口不闪退。
-*/
-func infoCard() {
-	si := readServerInfo()
-	var state, dataDir string
-	if si != nil {
-		if h := probeHealth(si.Port, 300); h != nil {
-			state = fmt.Sprintf("● 运行中 · 127.0.0.1:%d · pid %d · v%s", si.Port, si.Pid, h.Version)
-		} else {
-			state = fmt.Sprintf("○ 未运行（server.json 残留：端口 %d pid %d）", si.Port, si.Pid)
-		}
-		dataDir = si.DataDir
-	} else {
-		state = "○ 未运行（ezharness server 启动）"
-		dataDir = defaultDataDir()
-	}
-
-	fmt.Printf("ezharness v%s\n", version)
-	fmt.Printf("状态　%s\n", state)
-	fmt.Printf("数据　%s\n", dataDir)
-	/* 模型行尽力而为：已登录且 core 在跑才显示，失败静默 */
-	if si != nil {
-		if tok := loadSession(); tok != "" {
-			cl := newClient(localBase(si.Port), tok)
-			if b, err := cl.bootstrap(); err == nil && b.Status != nil && b.Status.Model != "" {
-				fmt.Printf("模型　%s\n", b.Status.Model)
-			}
-		}
-	}
-	fmt.Println()
-	fmt.Println("常用　tui 终端界面 · web 浏览器 · desktop 桌面端")
-	fmt.Println("　　　chat \"…\" 问一句 · status 状态 · stop 停止 · help 全部命令")
-
-	/* Windows 双击无参运行：控制台归本进程所有，退出即关窗——暂停一次防闪退。
-	   管道/重定向输入会立即 EOF，脚本不会被卡住；终端里的其他平台不需要暂停 */
-	if runtime.GOOS == "windows" {
-		fmt.Print("\n按回车退出…")
-		_, _ = bufio.NewReader(os.Stdin).ReadString('\n')
 	}
 }
 

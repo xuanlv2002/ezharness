@@ -61,7 +61,7 @@ ezharness 把模型放进你的真实工作环境：文件、终端、浏览器�
 - **Windows 安装包** `ezharness-desktop-v<版本>-setup.exe`：一次装好桌面端、CLI（`ezharness`）与 core（`ezharness-core.exe`），安装目录写入用户 PATH；配置与数据在用户数据目录（`%APPDATA%\ezharness`），升级不丢。
 - **Windows 绿色版** `ezharness-desktop-v<版本>.exe`：放哪都行，配置与数据就在它旁边。
 - **macOS / Linux**：`.dmg` / `.AppImage` 里带齐三件；也可以只下载 `ezharness` 与 `ezharness-core` 放同一目录，走命令行。
-- **纯 server**：`ezharness-core.exe`（或 `ezharness server [--detach]`）起后端，浏览器访问 `http://127.0.0.1:<port>`，与桌面端同一份页面；`ezharness tui` 是终端界面，`ezharness --server <主机:端口> tui` 可连另一台 core。
+- **纯 server**：`ezharness-core.exe`（或 `ezharness server [--detach]`）起后端，浏览器访问 `http://127.0.0.1:<port>`，与桌面端同一份页面；`ezharness` 无参直接进终端界面（tui），`ezharness --server <主机:端口> tui` 可连另一台 core。
 
 三端用默认密码 `ezharness` 隐式登录，不显示登录页；会话令牌各自保存，失效自动重登。OpenAPI 与登录完全独立，没有默认令牌：agent 需要调用时用 `create_openapi_token` 工具生成，脚本/快应用显式带上，core 不做环境注入。
 
@@ -122,7 +122,7 @@ script\build.bat    # 发布打包 -> release\v<版本>\
 script/dev.sh       # macOS / Linux 同 dev.bat
 ```
 
-产物 `release\dev\` 下三件并排：`ezharness-core.exe`（也可单独前台运行）、`ezharness.exe`（`ezharness tui` / `status` / `stop`）、`ezharness-desktop.exe`。
+产物 `release\dev\` 下三件并排：`ezharness-core.exe`（也可单独前台运行）、`ezharness.exe`（无参进 tui，另有 `status` / `stop` / `chat`）、`ezharness-desktop.exe`。
 
 需要修改 [ezloop](https://github.com/xuanlv2002/ezloop) 本身时，在 `core/go.mod` 用 `replace` 指向本地仓库。
 

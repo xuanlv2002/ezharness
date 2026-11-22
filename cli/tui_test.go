@@ -44,3 +44,41 @@ func TestApplyFrameSseError(t *testing.T) {
 		t.Fatalf("err=%q streaming=%v", m.err, m.streaming)
 	}
 }
+
+/* 工具/思考折叠：工具只计数，带工具调用的中间发言不落时间线，只显示最终回复。 */
+func TestApplyFrameFoldsProcess(t *testing.T) {
+	m := &tuiModel{}
+	m.applyFrame(frame{Type: "tool_start", Data: json.RawMessage(`{"id":"c1","name":"terminal"}`)})
+	if m.tools != 1 || len(m.lines) != 0 {
+		t.Fatalf("tool_start 不该进时间线：tools=%d lines=%+v", m.tools, m.lines)
+	}
+	m.applyFrame(frame{Type: "model_end", Data: json.RawMessage(`{"content":"中间话","toolCalls":[{"id":"c1","name":"terminal"}]}`)})
+	if len(m.lines) != 0 {
+		t.Fatalf("带工具调用的中间发言应折叠：%+v", m.lines)
+	}
+	m.applyFrame(frame{Type: "model_end", Data: json.RawMessage(`{"content":"最终回答"}`)})
+	if len(m.lines) != 1 || m.lines[0].kind != "assistant" || m.lines[0].text != "最终回答" {
+		t.Fatalf("最终回复未显示：%+v", m.lines)
+	}
+}
+
+/* 决策帧：提问/审批/计划都登记为待办并进时间线；重放重复帧按 id 去重。 */
+func TestApplyFrameDecisions(t *testing.T) {
+	m := &tuiModel{}
+	m.applyFrame(frame{Type: "askuser.request", Data: json.RawMessage(`{"id":"c1","name":"ask_user","args":"{\"question\":\"选哪个\",\"options\":[\"A\",\"B\"]}"}`)})
+	if len(m.pending) != 1 || m.pending[0].kind != "ask" || m.pending[0].question != "选哪个" || len(m.pending[0].options) != 2 {
+		t.Fatalf("ask 解析失败：%+v", m.pending)
+	}
+	m.applyFrame(frame{Type: "askuser.request", Data: json.RawMessage(`{"id":"c1","name":"ask_user","args":"{}"}`)})
+	if len(m.pending) != 1 {
+		t.Fatalf("重复决策帧未去重：%+v", m.pending)
+	}
+	m.applyFrame(frame{Type: "approve.request", Data: json.RawMessage(`{"id":"c2","name":"terminal","args":{"cmd":"ls"}}`)})
+	if len(m.pending) != 2 || m.pending[1].kind != "approve" || m.pending[1].name != "terminal" {
+		t.Fatalf("approve 解析失败：%+v", m.pending)
+	}
+	m.applyFrame(frame{Type: "plan.request", Data: json.RawMessage(`{"id":"c3","name":"plan","args":{"goal":"做X","progress":[{"title":"a"},{"title":"b"}]}}`)})
+	if len(m.pending) != 3 || m.pending[2].kind != "plan" || m.pending[2].goal != "做X" || m.pending[2].steps != 2 {
+		t.Fatalf("plan 解析失败：%+v", m.pending)
+	}
+}

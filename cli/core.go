@@ -243,7 +243,26 @@ func spawnCore(root string, detached bool) {
 	}
 }
 
-/* cmdServer ezharness server [--detach]。 */
+/*
+stopInstance 停掉实例并等探活失败（最多 5 秒）。Unix 走 SIGTERM 优雅收尾，
+Windows 直接 taskkill 进程树。
+*/
+func stopInstance(si *serverInfo) bool {
+	if runtime.GOOS == "windows" {
+		_ = exec.Command("taskkill", "/PID", fmt.Sprint(si.Pid), "/T", "/F").Run()
+	} else if p, err := os.FindProcess(si.Pid); err == nil {
+		_ = p.Signal(sigterm())
+	}
+	for i := 0; i < 20; i++ {
+		if probeHealth(si.Port, 300) == nil {
+			return true
+		}
+		time.Sleep(250 * time.Millisecond)
+	}
+	return false
+}
+
+/* cmdServer ezharness server [--detach]：前台启动（已在跑则先停再起）。 */
 func cmdServer(rest []string) {
 	detached := false
 	for _, a := range rest {
@@ -253,33 +272,62 @@ func cmdServer(rest []string) {
 			fatalf("未知参数 %s（可用：--detach）", a)
 		}
 	}
-	if si := readServerInfo(); si != nil && probeHealth(si.Port, 800) != nil {
-		fmt.Printf("core 已在运行（127.0.0.1:%d pid %d），直接附着\n", si.Port, si.Pid)
-		return
-	}
+	si := readServerInfo()
+	alive := si != nil && probeHealth(si.Port, 800) != nil
 	if detached {
+		if alive {
+			fmt.Printf("core 已在运行（127.0.0.1:%d pid %d）\n", si.Port, si.Pid)
+			return
+		}
 		/* ensureCore 自己会拉起并等就绪；再先 spawn 一次会双起进程（第二个 bind 失败） */
 		si := ensureCore()
 		fmt.Printf("core 已后台启动：127.0.0.1:%d（pid %d，数据目录 %s）\n", si.Port, si.Pid, si.DataDir)
 		return
 	}
+	if alive {
+		fmt.Printf("重启 core：停止旧实例（pid %d）…\n", si.Pid)
+		if !stopInstance(si) {
+			fatalf("旧实例未在 5 秒内退出（pid %d）", si.Pid)
+		}
+	}
+	fmt.Println("core 前台运行（Ctrl+C 停止）")
 	spawnCore(rootDir(), false)
 }
 
-/* cmdStatus 纯键值输出（供脚本），退出码 0=运行中 1=未运行。 */
+/* cmdStatus 显示实例状态（未运行退出码 1）。 */
 func cmdStatus() {
 	si := readServerInfo()
-	running := false
-	if si != nil {
-		if h := probeHealth(si.Port, 800); h != nil {
-			running = true
-			fmt.Printf("running=true\nport=%d\npid=%d\nversion=%s\nboot=%d\ndatadir=%s\n",
-				si.Port, si.Pid, h.Version, h.Boot, si.DataDir)
+	if si == nil || probeHealth(si.Port, 800) == nil {
+		fmt.Println("ezharness  ○ 未运行")
+		dataDir := defaultDataDir()
+		if si != nil {
+			dataDir = si.DataDir
 		}
-	}
-	if !running {
-		fmt.Println("running=false")
+		fmt.Printf("  数据  %s\n", dataDir)
+		fmt.Println("  提示  ezharness server 启动")
 		os.Exit(1)
+	}
+
+	fmt.Println("ezharness  ● 运行中")
+	fmt.Printf("  地址  127.0.0.1:%d\n", si.Port)
+	fmt.Printf("  版本  %s\n", si.Version)
+	fmt.Printf("  进程  %d\n", si.Pid)
+	fmt.Printf("  数据  %s\n", si.DataDir)
+	if b, err := ensureAuth(localBase(si.Port)).bootstrap(); err == nil {
+		if b.Status != nil && b.Status.Model != "" {
+			fmt.Printf("  模型  %s\n", b.Status.Model)
+		}
+		title := ""
+		for _, br := range b.Branches {
+			if br.ID == b.SessionID {
+				title = br.Title
+			}
+		}
+		line := fmt.Sprintf("%d 个", len(b.Branches))
+		if title != "" {
+			line += " · 当前 " + title
+		}
+		fmt.Printf("  分支  %s\n", line)
 	}
 }
 
@@ -290,22 +338,10 @@ func cmdStop() {
 		fmt.Println("core 未在运行")
 		return
 	}
-	if runtime.GOOS == "windows" {
-		_ = exec.Command("taskkill", "/PID", fmt.Sprint(si.Pid), "/T", "/F").Run()
-	} else {
-		p, err := os.FindProcess(si.Pid)
-		if err == nil {
-			_ = p.Signal(sigterm())
-		}
+	if !stopInstance(si) {
+		fatalf("core 未在 5 秒内退出（pid %d）", si.Pid)
 	}
-	for i := 0; i < 20; i++ {
-		if probeHealth(si.Port, 300) == nil {
-			fmt.Printf("core 已停止（pid %d）\n", si.Pid)
-			return
-		}
-		time.Sleep(250 * time.Millisecond)
-	}
-	fatalf("core 未在 5 秒内退出（pid %d）", si.Pid)
+	fmt.Printf("core 已停止（pid %d）\n", si.Pid)
 }
 
 /* cmdLogs 跟随 core 日志：先回放最近 40 行，再持续跟随最新日志文件。 */
