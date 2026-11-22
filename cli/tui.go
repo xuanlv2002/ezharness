@@ -1237,7 +1237,7 @@ func (m *tuiModel) View() string {
 		bodyH = 1
 	}
 
-	// 会话贴底：内容紧挨输入区，空白留在上方；选择栏/命令提示压在会话底部
+	// 会话从顶部往下排，空白留在下方；选择栏/命令提示压在底部
 	panel := m.pickerPanel(bodyH)
 	if panel == nil {
 		panel = m.askPanel(bodyH)
@@ -1247,7 +1247,7 @@ func (m *tuiModel) View() string {
 	if len(chat) > keep {
 		chat = chat[len(chat)-keep:]
 	} else if len(chat) < keep {
-		chat = append(make([]string, keep-len(chat)), chat...)
+		chat = append(chat, make([]string, keep-len(chat))...)
 	}
 	body := append(chat, panel...)
 	if len(sugs) > 0 {
