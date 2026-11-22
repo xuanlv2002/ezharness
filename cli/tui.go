@@ -7,6 +7,7 @@ core，作软提示。
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -171,9 +172,10 @@ type tuiModel struct {
 	pending   []decision
 	picker    *picker
 	status    *statusView
-	sugSel    int           // 斜杠提示当前选中项
-	askSel    int           // 提问选项当前选中项
-	cursor    *cursorWriter // 真实光标定位（输入法合成位置）
+	sugSel    int                // 斜杠提示当前选中项
+	askSel    int                // 提问选项当前选中项
+	cursor    *cursorWriter      // 真实光标定位（输入法合成位置）
+	mcpStop   context.CancelFunc // 取消进行中的 MCP 授权轮询
 }
 
 var (
@@ -321,6 +323,7 @@ func (m *tuiModel) reload() {
 	m.branches = b.Branches
 	m.rootID = b.SessionID
 	m.status = b.Status
+	m.stopMcp()
 	m.pending = nil
 	m.askSel = 0
 	m.loadHistory()
@@ -636,6 +639,14 @@ func (m *tuiModel) resolvePlan(action, feedback string) {
 	}
 }
 
+/* stopMcp 取消进行中的授权轮询（切分支/重载时）。 */
+func (m *tuiModel) stopMcp() {
+	if m.mcpStop != nil {
+		m.mcpStop()
+		m.mcpStop = nil
+	}
+}
+
 /* answerAsk 回传提问的答案（选中的选项或自由输入）。 */
 func (m *tuiModel) answerAsk(d decision, answer string) {
 	if err := m.cl.decideAnswer(m.rootID, d.id, answer); err != nil {
@@ -669,8 +680,8 @@ type mcpAuthMsg struct {
 	err string
 }
 
-/* startMcpAuth 先打开授权页，再轮询到授权完成（5 分钟上限）。 */
-func startMcpAuth(cl *client, d decision) tea.Cmd {
+/* startMcpAuth 先打开授权页，再轮询到授权完成（5 分钟上限；n 可取消）。 */
+func startMcpAuth(cl *client, d decision, ctx context.Context) tea.Cmd {
 	return func() tea.Msg {
 		url, err := cl.oauthStart(d.name, d.metaURL)
 		if err != nil {
@@ -678,8 +689,15 @@ func startMcpAuth(cl *client, d decision) tea.Cmd {
 		}
 		openURL(url)
 		deadline := time.Now().Add(5 * time.Minute)
+		tick := time.NewTicker(2 * time.Second)
+		defer tick.Stop()
 		for time.Now().Before(deadline) {
-			time.Sleep(2 * time.Second)
+			select {
+			case <-ctx.Done():
+				_ = cl.oauthCancel(d.name)
+				return mcpAuthMsg{id: d.id, err: "已取消"}
+			case <-tick.C:
+			}
 			ok, err := cl.oauthStatus(d.name)
 			if err == nil && ok {
 				return mcpAuthMsg{id: d.id, ok: true}
@@ -704,6 +722,7 @@ func (m *tuiModel) finishMcpAuth(msg mcpAuthMsg) {
 	d := m.pending[idx]
 	m.pending = append(m.pending[:idx], m.pending[idx+1:]...)
 	m.askSel = 0
+	m.mcpStop = nil
 	if msg.err == "" && msg.ok {
 		_ = m.cl.decideMcpAuth(m.rootID, d.id, true, "")
 		m.lines = append(m.lines, line{kind: "info", text: "MCP 已授权：" + d.name})
@@ -860,6 +879,7 @@ func (m *tuiModel) applyPick() {
 	m.picker = nil
 	switch p.kind {
 	case "session":
+		m.stopMcp()
 		m.pending = nil
 		m.askSel = 0
 		if err := m.cl.activate(it.id); err != nil {
@@ -1004,8 +1024,10 @@ func (m *tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.decideApprove(true)
 				case "mcp":
 					if !d.busy {
+						ctx, cancel := context.WithCancel(context.Background())
+						m.mcpStop = cancel
 						m.pending[0].busy = true
-						return m, startMcpAuth(m.cl, d)
+						return m, startMcpAuth(m.cl, d, ctx)
 					}
 				}
 			case "n":
@@ -1013,7 +1035,9 @@ func (m *tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				case "approve":
 					m.decideApprove(false)
 				case "mcp":
-					if !d.busy {
+					if d.busy {
+						m.stopMcp() // 轮询会回来按「已取消」结算
+					} else {
 						m.dropPending()
 						_ = m.cl.oauthCancel(d.name)
 						_ = m.cl.decideMcpAuth(m.rootID, d.id, false, "已取消")
@@ -1341,7 +1365,7 @@ func (m *tuiModel) pendingHint() string {
 		return "计划" + pos + "：Enter 确认 · 输入反馈后 Enter 提交"
 	case "mcp":
 		if d.busy {
-			return "等待浏览器授权：" + oneLine(d.name)
+			return "等待浏览器授权：" + oneLine(d.name) + "（n 取消）"
 		}
 		return "授权" + pos + " · " + oneLine(d.name) + "：y 打开浏览器 · n 取消"
 	}
