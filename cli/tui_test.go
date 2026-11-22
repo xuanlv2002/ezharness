@@ -112,8 +112,8 @@ func TestSlashHintsAndDirLine(t *testing.T) {
 	m.input.Focus()
 	m.applyWidth(80)
 	m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
-	if len(m.suggestRows()) != len(slashCommands) {
-		t.Fatalf("斜杠未出命令提示：%+v", m.suggestRows())
+	if len(m.suggestionRows()) != len(slashCommands) {
+		t.Fatalf("斜杠未出命令提示：%+v", m.suggestionRows())
 	}
 	view := m.View()
 	if !strings.Contains(view, "/session") || !strings.Contains(view, "切换分支") {
@@ -121,7 +121,7 @@ func TestSlashHintsAndDirLine(t *testing.T) {
 	}
 
 	m.input.SetValue("/n")
-	if rows := m.suggestRows(); len(rows) != 1 || !strings.Contains(rows[0], "/new") {
+	if rows := m.suggestionRows(); len(rows) != 1 || !strings.Contains(rows[0], "/new") {
 		t.Fatalf("前缀过滤不对：%+v", rows)
 	}
 

@@ -10,11 +10,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"slices"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/charmbracelet/bubbles/textinput"
@@ -62,8 +64,11 @@ type toolRun struct {
 	name string
 }
 
+/* slashCmd 是斜杠命令的一条提示。 */
+type slashCmd struct{ name, desc string }
+
 /* slashCommands 是输入 / 时的命令提示（顺序即展示顺序）。 */
-var slashCommands = []struct{ name, desc string }{
+var slashCommands = []slashCmd{
 	{"session", "切换分支"},
 	{"new", "新建分支"},
 	{"compact", "归档并开新话题"},
@@ -71,6 +76,55 @@ var slashCommands = []struct{ name, desc string }{
 	{"models", "切换模型"},
 	{"status", "会话状态"},
 	{"help", "命令帮助"},
+}
+
+/*
+cursorWriter 把真实终端光标挪到输入框光标处：bubbletea v1 每帧只把
+
+	光标停在末行行首，输入法合成文字会贴到屏幕最左边。全屏渲染每帧以
+	\x1b[<行>;H 收尾，这里在帧后补一个同行的列定位。
+*/
+type cursorWriter struct {
+	out io.Writer
+	col atomic.Int64 // 1-based 列；0 = 不移动
+}
+
+func (w *cursorWriter) Write(p []byte) (int, error) {
+	n, err := w.out.Write(p)
+	if err != nil || n != len(p) {
+		return n, err
+	}
+	col := int(w.col.Load())
+	if col < 1 {
+		return n, nil
+	}
+	row, ok := frameRow(p)
+	if !ok {
+		return n, nil
+	}
+	fmt.Fprintf(w.out, "\x1b[%d;%dH", row, col)
+	return n, nil
+}
+
+/* frameRow 取帧末光标归位序列 \x1b[<行>;H 的行号（\x1b[H 是清屏回家，不算帧）。 */
+func frameRow(p []byte) (int, bool) {
+	s := string(p)
+	if !strings.HasSuffix(s, "H") {
+		return 0, false
+	}
+	i := strings.LastIndex(s, "\x1b[")
+	if i < 0 {
+		return 0, false
+	}
+	seq := s[i+2 : len(s)-1]
+	if !strings.HasSuffix(seq, ";") {
+		return 0, false
+	}
+	row, err := strconv.Atoi(strings.TrimSuffix(seq, ";"))
+	if err != nil || row < 1 {
+		return 0, false
+	}
+	return row, true
 }
 
 type tuiModel struct {
@@ -98,6 +152,8 @@ type tuiModel struct {
 	pending   []decision
 	picker    *picker
 	status    *statusView
+	sugSel    int           // 斜杠提示当前选中项
+	cursor    *cursorWriter // 真实光标定位（输入法合成位置）
 }
 
 var (
@@ -137,10 +193,11 @@ func cmdTUI(server string) {
 	in.Focus()
 	in.CharLimit = 8000
 
+	out := &cursorWriter{out: os.Stdout}
 	m := &tuiModel{
 		cl: cl, addr: displayAddr(base), version: version, cwd: cwd,
 		rootID: b.SessionID, branches: b.Branches, input: in,
-		frames: make(chan frame, 256), status: b.Status,
+		frames: make(chan frame, 256), status: b.Status, cursor: out,
 		width: 80, height: 24, // 无窗口尺寸事件时的兜底（管道/pty 尺寸为 0）
 	}
 	m.applyWidth(m.width)
@@ -148,7 +205,7 @@ func cmdTUI(server string) {
 
 	/* 进入前净屏（含滚动区）：部分终端切备用屏不擦已滚出的旧内容 */
 	fmt.Print("\x1b[2J\x1b[3J\x1b[H")
-	p := tea.NewProgram(m, tea.WithAltScreen())
+	p := tea.NewProgram(m, tea.WithAltScreen(), tea.WithOutput(out))
 	final, err := p.Run()
 	if mm, ok := final.(*tuiModel); ok && mm.stopSse != nil {
 		mm.stopSse()
@@ -160,7 +217,8 @@ func cmdTUI(server string) {
 
 func (m *tuiModel) Init() tea.Cmd {
 	m.subscribe()
-	return tea.Batch(textinput.Blink, m.waitForFrame())
+	// 不开光标闪烁：View 里靠反色光标定位列，闪烁时找不到它
+	return m.waitForFrame()
 }
 
 /* subscribe（重）订阅当前分支的事件流。 */
@@ -859,6 +917,19 @@ func (m *tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		}
+		if sugs := m.suggestions(); len(sugs) > 0 {
+			switch msg.Type {
+			case tea.KeyUp:
+				m.sugSel = (m.sugSel - 1 + len(sugs)) % len(sugs)
+				return m, nil
+			case tea.KeyDown:
+				m.sugSel = (m.sugSel + 1) % len(sugs)
+				return m, nil
+			case tea.KeyTab:
+				m.fillSuggestion()
+				return m, nil
+			}
+		}
 		switch msg.Type {
 		case tea.KeyCtrlC, tea.KeyEsc:
 			return m, tea.Quit
@@ -896,6 +967,13 @@ func (m *tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.applyFrame(msg)
 		return m, m.waitForFrame()
 	}
+	switch msg := msg.(type) {
+	case tea.KeyMsg:
+		switch msg.Type {
+		case tea.KeyRunes, tea.KeyBackspace, tea.KeyDelete:
+			m.sugSel = 0 // 候选变了，回到第一项
+		}
+	}
 	var cmd tea.Cmd
 	m.input, cmd = m.input.Update(msg)
 	return m, cmd
@@ -913,6 +991,16 @@ func (m *tuiModel) submit() tea.Cmd {
 	}
 	if strings.HasPrefix(text, "/") {
 		raw := strings.TrimSpace(strings.TrimPrefix(text, "/"))
+		if sugs := m.suggestions(); len(sugs) > 0 {
+			if m.sugSel < 0 || m.sugSel >= len(sugs) {
+				m.sugSel = 0
+			}
+			if sel := sugs[m.sugSel].name; raw != sel {
+				m.input.SetValue("/" + sel) // 先填入，再回车执行
+				m.input.CursorEnd()
+				return nil
+			}
+		}
 		name, hits := resolveCommand(raw)
 		if name == "" {
 			if len(hits) == 0 {
@@ -993,26 +1081,40 @@ func (m *tuiModel) View() string {
 		return "启动中…"
 	}
 	head := titleStyle.Render(" ezharness tui") + dimStyle.Render(" · "+m.addr+" · "+m.version)
-	sugs := m.suggestRows()
-	for len(sugs) > 0 && m.height-len(sugs) < 5 { // 太矮时少给几行提示
-		sugs = sugs[:len(sugs)-1]
+
+	// 命令提示按高度开窗，保证选中项始终可见
+	sugs := m.suggestionRows()
+	if max := m.height - 5; len(sugs) > max {
+		if max < 1 {
+			sugs = nil
+		} else {
+			start := m.sugSel - max + 1
+			if start < 0 {
+				start = 0
+			}
+			if start > len(sugs)-max {
+				start = len(sugs) - max
+			}
+			sugs = sugs[start : start+max]
+		}
 	}
-	bodyH := m.height - 3 - len(sugs) // 标题 / 提示 / 输入
+	bodyH := m.height - 3 // 标题 / 提示 / 输入
 	if bodyH < 1 {
 		bodyH = 1
 	}
 
-	var body []string
-	if m.picker != nil {
-		body = m.pickerRows(bodyH)
-	} else {
-		rows := m.chatRows(m.width)
-		if len(rows) > bodyH {
-			rows = rows[len(rows)-bodyH:]
-		} else if len(rows) < bodyH {
-			rows = append(rows, make([]string, bodyH-len(rows))...)
-		}
-		body = rows
+	// 会话贴底：内容紧挨输入区，空白留在上方；选择栏/命令提示压在会话底部
+	panel := m.pickerPanel(bodyH)
+	keep := bodyH - len(panel)
+	chat := m.chatRows(m.width)
+	if len(chat) > keep {
+		chat = chat[len(chat)-keep:]
+	} else if len(chat) < keep {
+		chat = append(make([]string, keep-len(chat)), chat...)
+	}
+	body := append(chat, panel...)
+	if len(sugs) > 0 {
+		body = append(body[:bodyH-len(sugs)], sugs...)
 	}
 
 	hintStyle := dimStyle
@@ -1026,14 +1128,18 @@ func (m *tuiModel) View() string {
 
 	out := []string{head}
 	out = append(out, body...)
-	out = append(out, sugs...)
 	out = append(out, hintRow, m.inputRow())
 	return strings.Join(out, "\n")
 }
 
-/* inputRow 输入行：左边输入框，右边工作目录。 */
+/* inputRow 输入行：左边输入框，右边工作目录；顺手记下真实光标该停的列。 */
 func (m *tuiModel) inputRow() string {
 	row := " ❯ " + m.input.View()
+	if m.cursor != nil {
+		if i := strings.LastIndex(row, "\x1b[7m"); i >= 0 { // textinput 的反色光标
+			m.cursor.col.Store(int64(lipgloss.Width(row[:i]) + 1))
+		}
+	}
 	dir := m.dirLabel()
 	if dir == "" {
 		return row
@@ -1046,8 +1152,8 @@ func (m *tuiModel) inputRow() string {
 	return row + strings.Repeat(" ", pad) + right
 }
 
-/* suggestRows 输入 / 时的命令提示（按前缀过滤）。 */
-func (m *tuiModel) suggestRows() []string {
+/* suggestions 输入 / 时的候选命令（按前缀过滤）。 */
+func (m *tuiModel) suggestions() []slashCmd {
 	if m.picker != nil {
 		return nil
 	}
@@ -1056,15 +1162,51 @@ func (m *tuiModel) suggestRows() []string {
 		return nil
 	}
 	prefix := strings.TrimPrefix(v, "/")
-	var out []string
+	var out []slashCmd
 	for _, c := range slashCommands {
-		if !strings.HasPrefix(c.name, prefix) {
-			continue
+		if strings.HasPrefix(c.name, prefix) {
+			out = append(out, c)
 		}
-		row := fmt.Sprintf(" /%-10s %s", c.name, c.desc)
-		out = append(out, dimStyle.Render(runewidth.Truncate(row, m.width-1, "…")))
 	}
 	return out
+}
+
+/* suggestionRows 候选行：选中项高亮，↑↓ 选择、Enter/Tab 填入。 */
+func (m *tuiModel) suggestionRows() []string {
+	sugs := m.suggestions()
+	if len(sugs) == 0 {
+		return nil
+	}
+	if m.sugSel < 0 || m.sugSel >= len(sugs) {
+		m.sugSel = 0
+	}
+	rows := make([]string, 0, len(sugs))
+	for i, c := range sugs {
+		mark := "  "
+		if i == m.sugSel {
+			mark = "▸ "
+		}
+		row := runewidth.Truncate(fmt.Sprintf("%s/%-10s %s", mark, c.name, c.desc), m.width-1, "…")
+		if i == m.sugSel {
+			rows = append(rows, selStyle.Render(row))
+		} else {
+			rows = append(rows, dimStyle.Render(row))
+		}
+	}
+	return rows
+}
+
+/* fillSuggestion 把选中命令填进输入框（再回车执行）。 */
+func (m *tuiModel) fillSuggestion() {
+	sugs := m.suggestions()
+	if len(sugs) == 0 {
+		return
+	}
+	if m.sugSel < 0 || m.sugSel >= len(sugs) {
+		m.sugSel = 0
+	}
+	m.input.SetValue("/" + sugs[m.sugSel].name)
+	m.input.CursorEnd()
 }
 
 /* statusHint 底栏左侧：当前状态或待回答的请求。 */
@@ -1092,7 +1234,7 @@ func (m *tuiModel) statusHint(hasSug bool) string {
 	case m.err != "":
 		return m.err
 	case hasSug:
-		return "Enter 执行命令"
+		return "↑↓ 选择 · Enter/Tab 填入"
 	}
 	return "输入消息，/ 开头是命令"
 }
@@ -1197,23 +1339,46 @@ func appendMessageRows(out []string, l line, width int) []string {
 	return out
 }
 
-/* pickerRows 渲染选择列表（超出高度时窗口跟随选中项）。 */
-func (m *tuiModel) pickerRows(height int) []string {
+/* pickerPanel 底部选择栏：分隔线 + 当前窗口内的选项，压在会话底部。 */
+func (m *tuiModel) pickerPanel(maxH int) []string {
 	p := m.picker
-	rows := []string{titleStyle.Render(" " + p.title)}
+	if p == nil || maxH < 1 {
+		return nil
+	}
+	if maxH > 10 { // 选择栏最多占 10 行，上面留出会话
+		maxH = 10
+	}
+	head := " " + p.title + " "
+	w := m.width - 1
+	if w < 1 {
+		w = 1
+	}
+	var title string
+	if hw := runewidth.StringWidth(head); hw < w {
+		title = dimStyle.Render("─") + titleStyle.Render(head) + dimStyle.Render(strings.Repeat("─", w-hw-1))
+	} else {
+		title = titleStyle.Render(runewidth.Truncate(head, w, "…"))
+	}
+	rows := []string{title}
+	itemH := maxH - 1
+	if itemH < 1 {
+		return rows
+	}
 	start := 0
-	if p.sel >= height-2 && height > 2 {
-		start = p.sel - height + 3
+	if p.sel >= itemH {
+		start = p.sel - itemH + 1 // 选中项始终留在窗口内
 	}
-	for i := start; i < len(p.items) && len(rows) < height; i++ {
-		mark := "  "
+	labelW := m.width - 3
+	if labelW < 4 {
+		labelW = 4
+	}
+	for i := start; i < len(p.items) && len(rows) < maxH; i++ {
+		label := runewidth.Truncate(p.items[i].label, labelW, "…")
 		if i == p.sel {
-			mark = selStyle.Render("▸ ")
+			rows = append(rows, selStyle.Render("▸ "+label))
+		} else {
+			rows = append(rows, "  "+label)
 		}
-		rows = append(rows, mark+p.items[i].label)
-	}
-	for len(rows) < height {
-		rows = append(rows, "")
 	}
 	return rows
 }
