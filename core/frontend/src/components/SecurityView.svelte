@@ -148,6 +148,9 @@
   let oaTokens = $state<OpenapiToken[]>([])
   let sessions = $state<AuthSession[]>([])
   let audit = $state<OpenapiAuditEntry[]>([])
+  const SESSION_PREVIEW = 5
+  let sessionsExpanded = $state(false)
+  const visibleSessions = $derived(sessionsExpanded ? sessions : sessions.slice(0, SESSION_PREVIEW))
   let newOaName = $state('')
   let creatingOa = $state(false)
   let copiedOa = $state('')
@@ -472,7 +475,7 @@
     <div class="panel">
       {#if sessions.length}
         <ul class="rows">
-          {#each sessions as s (s.id)}
+          {#each visibleSessions as s (s.id)}
             <li class="row">
               <div class="row-main">
                 <span class="badge">{clientLabel(s.name)}</span>
@@ -489,6 +492,11 @@
             </li>
           {/each}
         </ul>
+        {#if sessions.length > SESSION_PREVIEW}
+          <button class="more" onclick={() => (sessionsExpanded = !sessionsExpanded)}>
+            {sessionsExpanded ? '收起' : `展开全部 ${sessions.length} 条`}
+          </button>
+        {/if}
       {:else}
         <p class="empty">暂无登录会话。</p>
       {/if}
@@ -884,6 +892,23 @@
   }
   .row + .row {
     border-top: 1px solid var(--line);
+  }
+  /* 会话折叠：默认只留最近 5 条，底部整行按钮展开/收起 */
+  .more {
+    width: 100%;
+    border: none;
+    border-top: 1px solid var(--line);
+    background: transparent;
+    padding: 9px 12px;
+    font-size: var(--font-size-small);
+    color: var(--muted);
+    transition:
+      background var(--dur-fast) var(--ease-out),
+      color var(--dur-fast) var(--ease-out);
+  }
+  .more:hover {
+    background: var(--bg-soft);
+    color: var(--fg);
   }
   .row-main {
     display: flex;
