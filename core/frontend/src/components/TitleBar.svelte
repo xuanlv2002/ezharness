@@ -119,6 +119,11 @@
           <input type="checkbox" bind:checked={trayChoice} />
           最小化到托盘（以后不再询问）
         </label>
+        <p class="close-sub">
+          {trayChoice
+            ? '窗口收进托盘，本机 core 服务继续运行。'
+            : '退出桌面端并停止本机 core 服务。'}
+        </p>
         <div class="close-btns">
           <button class="cb cancel" onclick={() => cancelClose()}>取消</button>
           <button class="cb ok" onclick={() => decideClose()}>关闭</button>
@@ -218,6 +223,12 @@
   }
   .close-opt input {
     accent-color: var(--accent);
+  }
+  .close-sub {
+    margin: -4px 0 0;
+    font-size: var(--font-size-small);
+    color: var(--faint);
+    line-height: 1.5;
   }
   .close-btns {
     display: flex;

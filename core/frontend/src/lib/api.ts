@@ -258,11 +258,39 @@ export interface PathEntry {
 
 export interface AppConfig {
   port: number
-  listen: string
   dataDir: string
+  version: string
+  pid: number
+  startedAt: string
   boot: number
   paths: PathEntry[]
   memory: { longterm: string; skills: string; topics: string }
+}
+
+/* 会话（安全页列表，不含 token 值） */
+export interface AuthSession {
+  id: string
+  name: string
+  ip: string
+  created_at: string
+}
+
+/* OpenAPI 命名令牌（安全页生成/吊销） */
+export interface OpenapiToken {
+  id: string
+  name: string
+  token: string
+  created_at: string
+}
+
+/* /api/open/* 调用审计 */
+export interface OpenapiAuditEntry {
+  time: string
+  method: string
+  path: string
+  token_id: string
+  token_name: string
+  status: number
 }
 
 /* ReasoningEffort 是思考档位（Claude Code / Codex 分档；请求侧归一为 low/high/max）。 */
@@ -822,10 +850,11 @@ export const api = {
 
   disconnectMcp: (name: string) => post<{ ok: boolean }>('/api/mcp/disconnect', { name }),
 
-  /* callMcp 调用 MCP 工具（OpenAPI 面）；需要 OAuth 时后端回 401 + needs_auth，
-     这里抛出携带 server/auth_url/metadata_url 的 McpAuthError 供调用方引导认证。 */
+  /* callMcp 调用 MCP 工具（会话面，界面专用）；需要 OAuth 时后端回 401 + needs_auth，
+     这里抛出携带 server/auth_url/metadata_url 的 McpAuthError 供调用方引导认证。
+     外部脚本走 /api/open/mcp/call，与登录态无关。 */
   callMcp: async (server: string, tool: string, args: unknown) => {
-    const res = await fetch('/api/open/mcp/call', {
+    const res = await fetch('/api/mcp/call', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ server, tool, args }),
@@ -837,17 +866,16 @@ export const api = {
     return json<{ result: string }>(res)
   },
 
-  /* MCP OAuth：取授权 URL（前端用系统浏览器打开）/ 探测是否需 OAuth / 轮询状态 / 取消 / 注销。
-     start/status/cancel 在 OpenAPI 面（会话凭证同样可过），probe/logout 在会话面。 */
+  /* MCP OAuth：界面走会话面；外部 SDK/脚本走 /api/open/mcp/oauth/*。 */
   oauthStart: (name: string, metadataUrl = '') =>
-    post<{ url: string }>('/api/open/mcp/oauth/start', metadataUrl ? { name, metadata_url: metadataUrl } : { name }),
+    post<{ url: string }>('/api/mcp/oauth/start', metadataUrl ? { name, metadata_url: metadataUrl } : { name }),
 
   oauthProbe: (name: string) => post<{ oauth: boolean }>('/api/mcp/oauth/probe', { name }),
 
   oauthStatus: (name: string) =>
-    fetch(`/api/open/mcp/oauth/status?name=${encodeURIComponent(name)}`).then(json<{ authorized: boolean; pending: boolean }>),
+    fetch(`/api/mcp/oauth/status?name=${encodeURIComponent(name)}`).then(json<{ authorized: boolean; pending: boolean }>),
 
-  oauthCancel: (name: string) => post<{ ok: boolean }>('/api/open/mcp/oauth/cancel', { name }),
+  oauthCancel: (name: string) => post<{ ok: boolean }>('/api/mcp/oauth/cancel', { name }),
 
   oauthLogout: (name: string) => post<{ ok: boolean }>('/api/mcp/oauth/logout', { name }),
 
@@ -872,16 +900,16 @@ export const api = {
   /* 生成类模型（异步任务：wait_seconds 短等待，未完成持 job.id 轮询；
      贵价：每日配额统一计数，超限 429；model 省略 = 对应类生效条目） */
   genImage: (prompt: string, opts: { model?: string; negative_prompt?: string; image_size?: string; batch_size?: number; seed?: number; wait_seconds?: number } = {}) =>
-    post<GenResult>('/api/open/image/call', { prompt, ...opts }),
+    post<GenResult>('/api/media/image/call', { prompt, ...opts }),
 
   genSpeech: (input: string, opts: { model?: string; voice?: string; response_format?: string; speed?: number; wait_seconds?: number } = {}) =>
-    post<GenResult>('/api/open/audio/call', { input, ...opts }),
+    post<GenResult>('/api/media/audio/call', { input, ...opts }),
 
   /* 视频生成需数分钟：响应基本是执行中的 job，之后 mediaJob 轮询 */
   genVideo: (prompt: string, opts: { model?: string; duration?: number; resolution?: string; first_frame?: string; last_frame?: string; wait_seconds?: number } = {}) =>
-    post<GenResult>('/api/open/video/call', { prompt, ...opts }),
+    post<GenResult>('/api/media/video/call', { prompt, ...opts }),
 
-  mediaJobs: (limit = 20) => fetch(`/api/open/media/jobs?limit=${limit}`).then(json<{ jobs: MediaJob[] }>),
+  mediaJobs: (limit = 20) => fetch(`/api/media/jobs?limit=${limit}`).then(json<{ jobs: MediaJob[] }>),
 
   getMemoryConfig: () => fetch('/api/memory/config').then(json<MemoryConfig>),
 
@@ -954,17 +982,26 @@ export const api = {
 
   appConfig: () => fetch('/api/app/config').then(json<AppConfig>),
 
-  appToken: () => fetch('/api/app/token').then(json<{ token: string }>),
+  /* 登录在 main.ts 启动时静默完成；这里只留安全页的会话管理 */
+  authSessions: () => fetch('/api/auth/sessions').then(json<{ sessions: AuthSession[] }>),
 
-  /* OpenAPI 令牌：脚本/快应用/外部程序调 /api/open/* 用的持久令牌（设置页展示/重置） */
-  openapiToken: () => fetch('/api/app/openapi-token').then(json<{ token: string }>),
+  revokeSession: (id: string) => fetch(`/api/auth/sessions/${id}`, { method: 'DELETE' }).then(() => undefined),
 
-  resetOpenapiToken: () => post<{ token: string }>('/api/app/openapi-token/reset', {}),
+  /* OpenAPI 令牌与审计（安全页） */
+  openapiTokens: () => fetch('/api/security/openapi-tokens').then(json<{ tokens: OpenapiToken[] }>),
+
+  createOpenapiToken: (name: string) => post<{ token: OpenapiToken }>('/api/security/openapi-tokens', { name }),
+
+  revokeOpenapiToken: (id: string) =>
+    fetch(`/api/security/openapi-tokens/${id}`, { method: 'DELETE' }).then(() => undefined),
+
+  openapiAudit: (limit = 100) =>
+    fetch(`/api/security/openapi-audit?limit=${limit}`).then(json<{ entries: OpenapiAuditEntry[] }>),
 
   /* 格式化：清空全部配置、会话与数据并恢复首次运行（不可恢复），返回新代地址供轮询 */
   formatAll: () => post<{ url: string; boot: number }>('/api/app/format', {}),
 
-  appRestart: (req: { port?: number; listen?: string }) =>
+  appRestart: (req: { port?: number }) =>
     post<{ url: string; boot: number }>('/api/app/restart', req),
 
   appHealth: (base = '') => fetch(`${base}/api/app/health`).then(json<{ ok: boolean; boot: number }>),
@@ -976,14 +1013,14 @@ class SseFatalError extends Error {}
 /* subscribe 建立 SSE 订阅，返回断开函数。
 window 级单连接：HMR/重复订阅先关旧连接，防泄漏挤占同域连接池。
 用 fetch-event-source 而不是原生 EventSource：EventSource 不能设置请求头，
-过去只能把 token 拼进 URL；现在走 X-EZ-Token 头。 */
+令牌只能进 URL；现在走 EzHarnessToken 头。 */
 export function subscribe(id: string, onEvent: (ev: SseEvent) => void): () => void {
   const w = window as unknown as { __ezSSE?: AbortController }
   w.__ezSSE?.abort()
   const ac = new AbortController()
   w.__ezSSE = ac
   const url = `/api/sessions/${id}/events`
-  const headers = { 'X-EZ-Token': getToken() }
+  const headers = { EzHarnessToken: getToken() }
 
   const connect = () => {
     void fetchEventSource(url, {

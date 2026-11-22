@@ -45,8 +45,8 @@ func (c *ChatService) resolve(rootID string) *domain.Session {
 <reference_file> 记录告知模型。事件流扇出 SSE，结束更新历史并发
 turn_end。目标正在跑轮时先取消并在 8 秒内等收尾，再启动新轮。
 */
-func (c *ChatService) Send(rootID, text string, refs []hooks.RefFile) error {
-	return c.send(rootID, "", text, refs)
+func (c *ChatService) Send(rootID, text string, refs []hooks.RefFile, dir string) error {
+	return c.send(rootID, "", text, refs, dir)
 }
 
 /*
@@ -55,10 +55,10 @@ SendSession 按创建任务时保存的叶 session ID 投递：除了 Send 的�
 把消息写到新会话。
 */
 func (c *ChatService) SendSession(rootID, sessionID, text string, refs []hooks.RefFile) error {
-	return c.send(rootID, sessionID, text, refs)
+	return c.send(rootID, sessionID, text, refs, "")
 }
 
-func (c *ChatService) send(rootID, expectedID, text string, refs []hooks.RefFile) error {
+func (c *ChatService) send(rootID, expectedID, text string, refs []hooks.RefFile, dir string) error {
 	s := c.resolve(rootID)
 	if s == nil {
 		return ErrTopicNotFound
@@ -79,7 +79,7 @@ func (c *ChatService) send(rootID, expectedID, text string, refs []hooks.RefFile
 			return fmt.Errorf("%w: 当前轮未能在 %s 内终止", domain.ErrBusy, sendInterruptWait)
 		}
 	}
-	h, cancel, err := s.StartRunFor(expectedID, context.Background(), text, refs)
+	h, cancel, err := s.StartRunFor(expectedID, hooks.WithTurnDir(context.Background(), dir), text, refs)
 	if err != nil {
 		return err
 	}

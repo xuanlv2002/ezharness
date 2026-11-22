@@ -24,6 +24,7 @@
   import BrowserPane from './components/board/BrowserPane.svelte'
   import AssistantPet from './components/AssistantPet.svelte'
   import NoticeWindow from './components/NoticeWindow.svelte'
+  import { ensureAuth } from './lib/auth'
 
   let view = $state<'chat' | 'pinboard' | 'models' | 'media' | 'memory' | 'tools' | 'app' | 'callbacks' | 'mcp' | 'security' | 'settings'>('chat')
   let expanded = $state(false)
@@ -83,6 +84,20 @@
       store.jumpView = 'pinboard'
       if (!cardId && !pinboardBusy()) void reloadPinboard()
     })
+    /* 会话凭证失效（别处吊销/格式化）：静默换一枚令牌后刷新页面。
+       并发轮询会同时 401，只让第一个请求触发重登 */
+    let relogging = false
+    const onAuthExpired = () => {
+      if (relogging) return
+      relogging = true
+      void ensureAuth()
+        .then(() => location.reload())
+        .catch((e) => {
+          relogging = false
+          console.error('自动登录失败', e)
+        })
+    }
+    window.addEventListener('ez-auth-expired', onAuthExpired)
     void store.bootstrap().catch((e) => {
       console.error('bootstrap 失败', e)
       store.lastStatus = `启动失败：${(e as Error).message}`
@@ -96,7 +111,10 @@
       }
     }
     window.addEventListener('focus', onFocus)
-    return () => window.removeEventListener('focus', onFocus)
+    return () => {
+      window.removeEventListener('focus', onFocus)
+      window.removeEventListener('ez-auth-expired', onAuthExpired)
+    }
   })
 
   /* 便签落盘级撤销/重做（Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y）：焦点不在

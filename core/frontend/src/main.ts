@@ -2,16 +2,20 @@ import { mount } from 'svelte'
 import './app.css'
 import App from './App.svelte'
 import { isDesktop } from './lib/desktop'
-import { initToken } from './lib/auth'
+import { ensureAuth, loadToken } from './lib/auth'
 
-/* 令牌/cookie 就绪后再挂载：首屏接口与资源请求都要用到鉴权 */
+/* 令牌就绪后再挂载：首屏接口就要带 EzHarnessToken 头；没有登录页面，
+   缺令牌/令牌失效都在这里用默认密码静默换一枚 */
 void (async () => {
+  const target = document.getElementById('app')!
+  loadToken()
   try {
-    await initToken()
-  } catch {
-    /* 鉴权初始化失败也挂载：页面会以未授权状态提示 */
+    await ensureAuth()
+  } catch (e) {
+    target.textContent = `连接 core 失败：${(e as Error).message}`
+    return
   }
-  mount(App, { target: document.getElementById('app')! })
+  mount(App, { target })
 })()
 
 /* 启动横幅：isometric1 等轴测 3D 字体，逐行青→紫渐变（ez 系列 logo 同款色系） */

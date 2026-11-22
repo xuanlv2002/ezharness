@@ -9,10 +9,10 @@
 
 **Simplicity, delivered to the user.**
 
-One exe · Three roles · Zero config — a desktop agent harness built for the simplest possible user experience
+Three executables · One resident core · Zero config — a desktop agent harness built for the simplest possible user experience
 
-[![Release](https://img.shields.io/badge/release-v1.1.0-blue?logo=github)](https://github.com/xuanlv2002/ezharness/releases)
-[![Platform](https://img.shields.io/badge/platform-Windows-0078D6?logo=windows)](https://github.com/xuanlv2002/ezharness/releases)
+[![Release](https://img.shields.io/github/v/release/xuanlv2002/ezharness?logo=github)](https://github.com/xuanlv2002/ezharness/releases)
+[![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-0078D6)](https://github.com/xuanlv2002/ezharness/releases)
 [![License](https://img.shields.io/badge/license-Apache--2.0-green)](LICENSE)
 [![Docs](https://img.shields.io/badge/docs-online-38bdf8?logo=readthedocs)](https://xuanlv2002.github.io/ezharness/)
 [![Go Version](https://img.shields.io/badge/go-1.25%2B-00ADD8?logo=go)](https://go.dev)
@@ -47,26 +47,30 @@ ezharness is an AI assistant that runs on your computer: it can read and write f
 - **MCP** — External tool servers (http / stdio): health checks, start/stop, hot reload
 - **Triple memory** — Long-term memory (indexed into context, retrieved on demand) / capability memory (skills) / topic memory (session archives)
 - **Three model slots** — main / image / audio, each with usage stats; image recognition relies on the main model's multimodal vision (no vision, no image input)
-- **Security** — Token-authenticated API + same-origin pass; four approval levels; terminal commands blocked by substring match (better safe than sorry)
+- **Security** — Password on first use, persistent per-client session tokens, separately revocable OpenAPI tokens; four approval levels; terminal commands blocked by substring match (better safe than sorry)
 
 ## Install
 
-Grab a build from [Releases](https://github.com/xuanlv2002/ezharness/releases) (**wherever the exe runs, config and data live next to it**):
+Grab a build from [Releases](https://github.com/xuanlv2002/ezharness/releases):
 
-**Option 1: Portable (no install)**
+**Option 1: Windows installer**
 
-1. Download `ezharness-v<version>.exe` (rename to `ezharness.exe` if you like), put it in any folder (e.g. `D:\ezharness`);
-2. Add that folder to your PATH;
-3. Run `ezharness` — first launch creates `ezharness.json` and `data\` next to it.
+1. Download `ezharness-desktop-v<version>-setup.exe` and run it;
+2. It installs the desktop app, `ezharness.exe` (CLI/TUI) and `ezharness-core.exe` side by side and adds the install dir to your user PATH. Config and data live under `%APPDATA%\ezharness` and survive upgrades.
 
-**Option 2: Installer**
+**Option 2: Windows portable**
 
-1. Download and run the installer;
-2. Pick an install directory; start-menu and desktop shortcuts are created, with an optional "add to PATH".
+Download `ezharness-desktop-v<version>.exe`, put it in any folder — config and data live next to it.
 
-**Option 3: Plain server (no desktop shell)**
+**Option 3: CLI + core (Windows / macOS / Linux)**
 
-Run `ezharness-core.exe` directly and open `http://127.0.0.1:<port>` in a browser — same page as the desktop app (desktop-only capabilities such as browser control degrade gracefully).
+Download `ezharness` and `ezharness-core` (`.exe` on Windows) into the same folder. `ezharness server` starts the core, `ezharness tui` opens the terminal UI, `ezharness web` opens the browser UI. `ezharness --server <host:port> tui` connects to another core. On macOS/Linux you can also use the dmg / AppImage, which bundles all three.
+
+**Plain server (no desktop shell)**
+
+Run `ezharness-core.exe` directly and open `http://127.0.0.1:<port>` in a browser — same page as the desktop app. Browser tools fall back to a headless local Chrome/Edge when the desktop shell is not around.
+
+All three clients sign in silently with the default password `ezharness` — there is no login page; tokens persist and are renewed automatically. OpenAPI is fully independent of login and has no default token: the agent creates one with the `create_openapi_token` tool when needed, and scripts or quick apps pass it explicitly; the core never injects it into the environment.
 
 ## Up and running in 30 seconds
 
@@ -96,18 +100,23 @@ Run `ezharness-core.exe` directly and open `http://127.0.0.1:<port>` in a browse
 
 ## Architecture at a glance
 
-Three tiers; all business logic lives in one Go sidecar, the desktop shell stays a shell:
+Three executables, one resident core: the CLI and the desktop app are both clients of the same core. Quitting the CLI leaves the core running; closing the desktop app (instead of minimizing it to the tray) stops the core, while minimizing to the tray keeps it running. The desktop settings page can also explicitly restart or stop the core process:
 
 ```mermaid
 flowchart TB
-    DESK["desktop · Electron shell<br/>windows / tray / embedded browser"] -- "spawn + health" --> CORE
-    CORE["core · ezharness-core.exe · Go + gin<br/>REST / SSE / WS · agent engine (ezloop)"]
-    FE["frontend · Svelte 5 single-entry SPA<br/>same page on desktop and in the browser"]
-    WEB["🌐 Browser (plain-server mode)"]
-    DESK -- "loadURL" --> FE
-    WEB --> FE
-    FE -- "same-origin REST / SSE / WS (token auth)" --> CORE
+    CLI["ezharness.exe · CLI / TUI<br/>server / status / stop / logs / web / desktop / chat / tui"]
+    DESK["ezharness-desktop.exe · Electron shell<br/>windows / tray / drawer / real browser"]
+    WEB["🌐 Browser (web mode)"]
+    CORE["ezharness-core.exe · Go + gin · resident single instance<br/>REST / SSE / WS · agent engine (ezloop) · embedded SPA"]
+    HE["Headless browser<br/>chromedp → local Chrome/Edge"]
+    CLI -- "ensureCore: attach or spawn" --> CORE
+    DESK -- "ensureCore: attach or spawn; closing the desktop stops core" --> CORE
+    WEB -- "silent default-password login" --> CORE
+    CORE -. "browser bridge (preferred when desktop is present)" .-> DESK
+    CORE -. "fallback when bridge absent" .-> HE
 ```
+
+The core prepares a default password at startup and all clients log in silently; API auth uses the `EzHarnessToken` header (scripts and quick apps call `/api/open/*` with `EzHarnessOpenToken`). See [three-part architecture](docs/md/三分架构.md) (Chinese).
 
 Division of labor with the sister repo [ezloop](https://github.com/xuanlv2002/ezloop): ezloop is a lean agent loop engine (model↔tool loop, hook / warp extension points, fork sub-agents); ezharness builds session management, context engineering, tool wrapping and interaction design on top.
 
@@ -124,14 +133,17 @@ The **[docs site](https://xuanlv2002.github.io/ezharness/)** supports Chinese/En
 
 ## Building from source
 
-Prerequisites: [Go](https://go.dev/dl/), [Node.js](https://nodejs.org/). To hack on [ezloop](https://github.com/xuanlv2002/ezloop) itself (release builds pull it from the module proxy — clone only if needed), point the `replace` in `core/go.mod` at your local ezloop checkout. Electron downloads are mirrored via npmmirror (`desktop/.npmrc`).
+Prerequisites: [Go 1.26+](https://go.dev/dl/), [Node.js](https://nodejs.org/). To hack on [ezloop](https://github.com/xuanlv2002/ezloop) itself (release builds pull it from the module proxy — clone only if needed), point the `replace` in `core/go.mod` at your local ezloop checkout. Electron downloads are mirrored via npmmirror (`desktop/.npmrc`).
 
 The version has a single source of truth in `script/version.yaml`. Scripts run from any directory:
 
 ```sh
-script\dev.bat           # debug: build frontend + core (bin\) -> run Electron in the foreground
-script\release.bat       # release: installer + portable into release\v<version>\
+script\dev.bat           # debug: build frontend + core/cli -> run Electron in the foreground
+script\build.bat         # release: installer + portable into release\v<version>\
+script/dev.sh            # macOS / Linux equivalent of dev.bat
 ```
+
+`release\dev\` ends up with the three executables side by side: `ezharness-core.exe` (can also run standalone), `ezharness.exe` (`ezharness tui` / `status` / `stop`), and `ezharness-desktop.exe`.
 
 ## Contributing
 

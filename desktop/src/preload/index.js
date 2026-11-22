@@ -35,6 +35,17 @@ contextBridge.exposeInMainWorld('ez', {
     get: () => ipcRenderer.invoke('ez:get-autolaunch'),
     set: (on) => ipcRenderer.invoke('ez:set-autolaunch', !!on),
   },
+  /* 会话令牌同步：页面静默登录后把令牌交给主进程（浏览器桥/coreFetch 用，
+     存应用根 session.json） */
+  auth: {
+    save: (token) => ipcRenderer.send('ez:auth-token', token),
+  },
+  /* core 进程启停（设置页）：网页端无此组能力，只能看状态 */
+  core: {
+    stop: () => ipcRenderer.invoke('ez:core-stop'),
+    start: () => ipcRenderer.invoke('ez:core-start'),
+    restart: () => ipcRenderer.invoke('ez:core-restart'),
+  },
   /* 抽屉工具弹出窗口（view: term/file/browser） */
   popout: {
     /* 弹出（已弹出则聚焦）；state 是资源页初始状态快照；

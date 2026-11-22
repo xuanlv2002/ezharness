@@ -327,8 +327,9 @@ localAPISection 本机 API 段：只保留动态事实（基址，端口来自�
 */
 func localAPISection() string {
 	s := "<local_api>\n（core 本机 OpenAPI：脚本/快应用/外部程序直调大模型与 MCP 工具的通道。" +
-		"写调用代码前先 load_skill 加载 open-api 技能拿端点、鉴权与示例；" +
-		"令牌不进对话——用户要贴就指引去设置页重取。）"
+		"写调用代码前先 load_skill 加载 open-api 技能拿端点与示例。" +
+		"需要调用时先用 create_openapi_token 工具生成令牌，显式放进请求头；" +
+		"不调用就不用生成。core 不注入环境变量。）"
 	if base := localAPIBase(); base != "" {
 		s += "\n基址：" + base + "/api/open/<路径>"
 	}

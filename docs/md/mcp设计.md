@@ -64,7 +64,7 @@ MCP 让 agent 接入外部工具服务器。ezharness 除了把 MCP 工具交给
 
 ## 四、对外暴露的 API
 
-直调 MCP、模型与多媒体生成的能力在 OpenAPI 面 `/api/open/*`：跨源放行，鉴权用 `X-EZ-Open-Token: <openapi 令牌>`（或会话凭证）。令牌怎么取、CORS 细节、路由两面模型见[认证与 OpenAPI](认证与openapi.md)。
+直调 MCP、模型与多媒体生成的能力在 OpenAPI 面 `/api/open/*`：跨源放行，只认 `EzHarnessOpenToken: <openapi 令牌>`，不认会话凭证。令牌怎么取、CORS 细节、路由两面模型见[认证与 OpenAPI](认证与openapi.md)。
 
 ### 4.1 直调 MCP 工具
 
@@ -92,7 +92,7 @@ Content-Type: application/json
 
 ### 4.2 其他端点
 
-OpenAPI 面（openapi 令牌或会话凭证）：
+OpenAPI 面（只认 openapi 令牌，不认会话凭证）：
 
 | 方法 | 路径 | 用途 |
 | --- | --- | --- |
@@ -100,6 +100,8 @@ OpenAPI 面（openapi 令牌或会话凭证）：
 | POST | `/api/open/mcp/oauth/start` | 发起授权 |
 | GET | `/api/open/mcp/oauth/status` | 查询授权状态 |
 | POST | `/api/open/mcp/oauth/cancel` | 取消授权流程 |
+
+界面里的同名能力走会话面 `/api/mcp/call`、`/api/mcp/oauth/*`，与上面的 OpenAPI 面认证互不相通。
 
 会话面（MCP 管理与配置，仅会话凭证）：
 
@@ -134,7 +136,9 @@ POST /api/open/model/call
 ## 五、一个最小调用示例
 
 ```bash
-curl -s -H "X-EZ-Open-Token: $EZHARNESS_OPENAPI_TOKEN" \
+# 令牌由 agent 用 create_openapi_token 生成后填到这里；core 不注入 env
+TOKEN='<令牌>'
+curl -s -H "EzHarnessOpenToken: $TOKEN" \
   -H 'Content-Type: application/json' \
   -d '{"server":"filesystem","tool":"read_text_file","args":{"path":"D:/work/README.md"}}' \
   http://127.0.0.1:5260/api/open/mcp/call

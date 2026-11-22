@@ -10,10 +10,9 @@ ezharness OpenAPI 浏览器 SDK。
       const data = await ez.mcp.call('notion', 'search', { q: 'hi' })
     </script>
 
-基址从本脚本的加载地址推导，file:// 页面同样可用。令牌恒随请求发送；
-在 ezharness 同源页面里浏览器还会自动附 cookie——两通道任一命中即通过，
-所以硬编码的令牌即使已被重置，同源下凭 cookie 仍可调用。MCP 服务需要
-OAuth 时自动弹出授权框，用户在浏览器完成授权后自动重试本次调用。
+基址从本脚本的加载地址推导，file:// 页面同样可用。OpenAPI 面只认这里
+显式传入的令牌，不依赖登录态或 cookie。MCP 服务需要 OAuth 时自动弹出
+授权框，用户在浏览器完成授权后自动重试本次调用。
 */
 ;(function () {
   'use strict'
@@ -31,19 +30,24 @@ OAuth 时自动弹出授权框，用户在浏览器完成授权后自动重试�
   var token = ''
 
   function headers() {
-    return token ? { 'X-EZ-Open-Token': token } : {}
+    return token ? { 'EzHarnessOpenToken': token } : {}
   }
 
   /* post POST /api/open/<path>（JSON 载荷）。 */
   function post(path, body) {
     var h = headers()
     h['Content-Type'] = 'application/json'
-    return fetch(BASE + path, { method: 'POST', headers: h, body: JSON.stringify(body || {}) })
+    return fetch(BASE + path, {
+      method: 'POST',
+      headers: h,
+      body: JSON.stringify(body || {}),
+      credentials: 'omit', // OpenAPI 只认显式令牌，不带任何会话 cookie
+    })
   }
 
   /* get GET /api/open/<path>。 */
   function get(path) {
-    return fetch(BASE + path, { headers: headers() })
+    return fetch(BASE + path, { headers: headers(), credentials: 'omit' })
   }
 
   /* asError 把非 2xx 响应抛成 Error（message 取后端 error 字段）。 */

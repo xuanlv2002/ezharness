@@ -1,94 +1,132 @@
 /*
-OpenAPI 令牌：/api/open/* 面的访问凭证，持久于数据目录 openapi.json
-（0600）。与前端会话令牌分开——那枚每次启动换、只活在进程内；这枚给
-agent 产物用（脚本、快应用后端、硬编码进页面的场景），长期有效，
-设置页手动重置换新。
+OpenAPI 令牌：/api/open/* 面的访问凭证，多枚、可命名、可吊销，持久于
+数据目录 openapi.json（0600）。与登录会话（auth.json）完全分开：会话给
+用户界面，令牌给 agent 产物（脚本、快应用、外部程序）。没有默认令牌，
+需要时由 agent 工具或用户安全页生成，调用方显式放进 EzHarnessOpenToken
+请求头；core 不注入进程环境。
 */
 package service
 
 import (
 	"context"
 	"crypto/rand"
+	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"log"
-	"os"
 	"sync"
 	"time"
 
 	"ezharness/core/internal/osfs"
 )
 
-/* OpenapiTokenEnv 终端与快应用后端等子进程继承 openapi 令牌的环境变量名。 */
-const OpenapiTokenEnv = "EZHARNESS_OPENAPI_TOKEN"
-
 /* openapiTokenFile 令牌落盘文件（数据目录内，相对路径）。 */
 const openapiTokenFile = "openapi.json"
 
-type openapiTokenDoc struct {
+/* OpenapiToken 是一枚命名令牌。 */
+type OpenapiToken struct {
+	ID        string `json:"id"`
+	Name      string `json:"name"`
 	Token     string `json:"token"`
 	CreatedAt string `json:"created_at"`
 }
 
-var openapiMu sync.Mutex
+/* OpenapiStore 持有全部 openapi 令牌，中间件实时读取。 */
+type OpenapiStore struct {
+	mu     sync.Mutex
+	tokens []OpenapiToken
+}
 
-/*
-LoadOrCreateOpenapiToken 读取 openapi 令牌；缺失或损坏则生成新令牌落盘，
-并把 Unix 权限收敛为 0600。启动与换代（切数据目录）时各调一次。
-*/
-func LoadOrCreateOpenapiToken() string {
-	openapiMu.Lock()
-	defer openapiMu.Unlock()
+/* LoadOpenapiStore 读取令牌清单；缺失/损坏/旧单令牌格式一律从空清单开始。 */
+func LoadOpenapiStore() *OpenapiStore {
+	o := &OpenapiStore{}
 	fsys := osfs.OS{}
-	ctx := context.Background()
-	if data, err := fsys.Read(ctx, openapiTokenFile); err == nil {
-		var doc openapiTokenDoc
-		if json.Unmarshal(data, &doc) == nil && doc.Token != "" {
-			fsys.Restrict(openapiTokenFile)
-			return doc.Token
+	if data, err := fsys.Read(context.Background(), openapiTokenFile); err == nil {
+		var doc struct {
+			Tokens []OpenapiToken `json:"tokens"`
 		}
-		log.Printf("openapi 令牌文件不可用，重新生成（%s）", openapiTokenFile)
+		if json.Unmarshal(data, &doc) == nil {
+			o.tokens = doc.Tokens
+		}
 	}
-	token := newOpenapiToken()
-	if err := saveOpenapiToken(fsys, token); err != nil {
-		log.Printf("openapi 令牌落盘失败（重启后将更换）: %v", err)
-	}
-	ApplyOpenapiTokenEnv(token)
-	return token
+	return o
 }
 
-/*
-ResetOpenapiToken 换新令牌：落盘并更新子进程环境。旧令牌即时作废，
-硬编码它的产物需要重新生成。
-*/
-func ResetOpenapiToken() string {
-	openapiMu.Lock()
-	defer openapiMu.Unlock()
-	token := newOpenapiToken()
-	if err := saveOpenapiToken(osfs.OS{}, token); err != nil {
-		log.Printf("openapi 令牌落盘失败: %v", err)
+/* Create 生成新令牌并落盘。 */
+func (o *OpenapiStore) Create(name string) OpenapiToken {
+	if name == "" {
+		name = "未命名"
 	}
-	ApplyOpenapiTokenEnv(token)
-	return token
-}
-
-/* ApplyOpenapiTokenEnv 把令牌写进进程环境（子进程继承）。 */
-func ApplyOpenapiTokenEnv(token string) { _ = os.Setenv(OpenapiTokenEnv, token) }
-
-/* newOpenapiToken 生成 18 字节 hex 令牌。 */
-func newOpenapiToken() string {
-	b := make([]byte, 18)
-	if _, err := rand.Read(b); err != nil {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	tok := make([]byte, 18)
+	id := make([]byte, 4)
+	if _, err := rand.Read(tok); err != nil {
 		log.Fatal(err)
 	}
-	return hex.EncodeToString(b)
+	if _, err := rand.Read(id); err != nil {
+		log.Fatal(err)
+	}
+	t := OpenapiToken{
+		ID:        hex.EncodeToString(id),
+		Name:      name,
+		Token:     hex.EncodeToString(tok),
+		CreatedAt: time.Now().UTC().Format(time.RFC3339),
+	}
+	o.tokens = append(o.tokens, t)
+	o.save()
+	return t
 }
 
-func saveOpenapiToken(fsys osfs.OS, token string) error {
-	doc := openapiTokenDoc{Token: token, CreatedAt: time.Now().UTC().Format(time.RFC3339)}
+/* Revoke 按 id 吊销令牌。 */
+func (o *OpenapiStore) Revoke(id string) error {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	for i, t := range o.tokens {
+		if t.ID == id {
+			o.tokens = append(o.tokens[:i], o.tokens[i+1:]...)
+			o.save()
+			return nil
+		}
+	}
+	return fmt.Errorf("令牌不存在: %s", id)
+}
+
+/* List 令牌清单（安全页展示，token 值可见便于复制进快应用）。 */
+func (o *OpenapiStore) List() []OpenapiToken {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	out := make([]OpenapiToken, len(o.tokens))
+	copy(out, o.tokens)
+	return out
+}
+
+/* Verify 恒定时间校验令牌，命中返回该令牌（审计要记 id/name）。 */
+func (o *OpenapiStore) Verify(token string) (OpenapiToken, bool) {
+	if token == "" {
+		return OpenapiToken{}, false
+	}
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	for _, t := range o.tokens {
+		if subtle.ConstantTimeCompare([]byte(t.Token), []byte(token)) == 1 {
+			return t, true
+		}
+	}
+	return OpenapiToken{}, false
+}
+
+func (o *OpenapiStore) save() {
+	doc := struct {
+		Tokens []OpenapiToken `json:"tokens"`
+	}{Tokens: o.tokens}
 	data, err := json.MarshalIndent(doc, "", "  ")
 	if err != nil {
-		return err
+		return
 	}
-	return fsys.WritePrivate(context.Background(), openapiTokenFile, data)
+	fsys := osfs.OS{}
+	if err := fsys.WritePrivate(context.Background(), openapiTokenFile, data); err != nil {
+		log.Printf("openapi 令牌落盘失败: %v", err)
+	}
 }

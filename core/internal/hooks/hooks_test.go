@@ -255,6 +255,19 @@ func TestRemindStatusTermTabs(t *testing.T) {
 	}
 }
 
+/* remind 快照段：TUI 发起目录随轮 ctx 进 <agent_status>（只做提示）。 */
+func TestRemindStatusTurnDir(t *testing.T) {
+	h := NewRemind(memFS{}, NewStore(memFS{}, "t1"), func() int { return 0 }, 1000, nil, nil, nil, nil)
+	state := newTestState([]types.Message{{Role: types.RoleUser, Content: "q"}})
+	ctx := WithTurnDir(context.Background(), "/tmp/ez-work")
+	if err := h.OnStart(ctx, state); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(state.Messages[0].Content, "终端工作目录：/tmp/ez-work") {
+		t.Fatalf("missing turn dir in %q", state.Messages[0].Content)
+	}
+}
+
 /* OnEnd：fork 不记收尾但 LastOutputAt 仍更新。 */
 func TestRemindOnEndForkSkip(t *testing.T) {
 	store := NewStore(memFS{}, "t1")

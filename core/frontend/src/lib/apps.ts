@@ -1,7 +1,8 @@
 /*
-快应用启动：入口 URL 不再带令牌，页面与其 API 请求靠同源 cookie 鉴权。
-两种承载：左侧钉住菜单在主窗口内嵌展示（quickApp 状态 + app 视图）；
-快应用页「启动」、对话 app:// chip、桌面宠物窗都开独立窗口。
+快应用启动：入口 URL 不带令牌；页面调 OpenAPI 只用自己的 ez.config 令牌，
+登录 cookie 在 OpenAPI 面不生效。两种承载：左侧钉住菜单在主窗口内嵌
+展示（quickApp 状态 + app 视图）；快应用页「启动」、对话 app:// chip、
+桌面宠物窗都开独立窗口。
 */
 import { api } from './api'
 import { quickApp } from './quickApp.svelte'

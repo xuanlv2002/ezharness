@@ -8,7 +8,7 @@
 
 通用桌面智能体工作台：办公，创作，学习 -- 一站式Agent应用。
 
-[![Release](https://img.shields.io/badge/release-v1.3.0-blue?logo=github)](https://github.com/xuanlv2002/ezharness/releases)
+[![Release](https://img.shields.io/github/v/release/xuanlv2002/ezharness?logo=github)](https://github.com/xuanlv2002/ezharness/releases)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-0078D6)](https://github.com/xuanlv2002/ezharness/releases)
 [![License](https://img.shields.io/badge/license-Apache--2.0-green)](LICENSE)
 [![Docs](https://img.shields.io/badge/docs-online-38bdf8?logo=readthedocs)](https://xuanlv2002.github.io/ezharness/)
@@ -56,14 +56,20 @@ ezharness 把模型放进你的真实工作环境：文件、终端、浏览器�
 
 ## 快速开始
 
-从 [Releases](https://github.com/xuanlv2002/ezharness/releases) 下载。**exe 在哪运行，配置与数据就在哪生成。**
+从 [Releases](https://github.com/xuanlv2002/ezharness/releases) 下载：
 
-1. 下载 `ezharness-v<版本>.exe`（绿色版，可改名放入任意文件夹并加入 PATH），或使用安装包；
-2. 打开「模型」页填入语言模型 apiKey，并点亮新会话的默认模型；需要生成图片/语音/视频时，到「多媒体 · 模型与限额」配置对应模型；
-3. 回到对话页，把任务交给它——文件整理、脚本编写、报错排查、网页操作、生成素材都行；输入框上方可随时切换本会话的模型 / 思考强度 / 审批档位；
-4. 它需要你时（审批 / 提问），决策卡会出现在时间线与顶栏通知里。
+- **Windows 安装包** `ezharness-desktop-v<版本>-setup.exe`：一次装好桌面端、CLI（`ezharness`）与 core（`ezharness-core.exe`），安装目录写入用户 PATH；配置与数据在用户数据目录（`%APPDATA%\ezharness`），升级不丢。
+- **Windows 绿色版** `ezharness-desktop-v<版本>.exe`：放哪都行，配置与数据就在它旁边。
+- **macOS / Linux**：`.dmg` / `.AppImage` 里带齐三件；也可以只下载 `ezharness` 与 `ezharness-core` 放同一目录，走命令行。
+- **纯 server**：`ezharness-core.exe`（或 `ezharness server [--detach]`）起后端，浏览器访问 `http://127.0.0.1:<port>`，与桌面端同一份页面；`ezharness` 无参直接进终端界面（tui），`ezharness --server <主机:端口> tui` 可连另一台 core。
 
-每个平台附 `SHA256SUMS` 校验文件；产物为 ad-hoc 签名，被系统拦截时（SmartScreen「更多信息 → 仍要运行」；macOS 右键「打开」）属正常现象。纯 server 形态：直接运行 `ezharness-core`，浏览器访问 `http://127.0.0.1:<port>`，与桌面端同一份页面。
+三端用默认密码 `ezharness` 隐式登录，不显示登录页；会话令牌各自保存，失效自动重登。OpenAPI 与登录完全独立，没有默认令牌：agent 需要调用时用 `create_openapi_token` 工具生成，脚本/快应用显式带上，core 不做环境注入。
+
+1. 打开「模型」页填入语言模型 apiKey，并点亮新会话的默认模型；需要生成图片/语音/视频时，到「多媒体 · 模型与限额」配置对应模型；
+2. 回到对话页，把任务交给它——文件整理、脚本编写、报错排查、网页操作、生成素材都行；输入框上方可随时切换本会话的模型 / 思考强度 / 审批档位；
+3. 它需要你时（审批 / 提问），决策卡会出现在时间线与顶栏通知里。
+
+每个平台附 `SHA256SUMS` 校验文件；产物为 ad-hoc 签名，被系统拦截时（SmartScreen「更多信息 → 仍要运行」；macOS 右键「打开」）属正常现象。
 
 ## 核心玩法
 
@@ -81,35 +87,42 @@ ezharness 把模型放进你的真实工作环境：文件、终端、浏览器�
 
 ## 它由什么组成
 
-三层结构，业务全在一个 Go sidecar 里，桌面壳只做壳：
+三个 exe、一个常驻 core：CLI 与桌面端都是 core 的入口；CLI 退出不停 core，桌面端关闭（不最小化到托盘）会一并停掉 core，最小化到托盘则 core 继续常驻。桌面端设置页也可显式重启/停止 core：
 
 ```mermaid
 flowchart TB
-    DESK["desktop · Electron 壳<br/>窗口 / 托盘 / 内嵌浏览器"] -- "spawn + health" --> CORE
-    CORE["core · ezharness-core.exe · Go + gin<br/>REST / SSE / WS · agent 引擎（ezloop）"]
-    FE["frontend · Svelte 5 单入口 SPA<br/>桌面与浏览器同一份页面"]
+    CLI["ezharness.exe · CLI / TUI<br/>server / status / stop / logs / web / desktop / chat / tui"]
+    DESK["ezharness-desktop.exe · Electron 壳<br/>窗口 / 托盘 / 抽屉 / 真实浏览器"]
     WEB["浏览器（web 端形态）"]
-    DESK -- "loadURL" --> FE
-    WEB --> FE
-    FE -- "同源 REST / SSE / WS（token 鉴权）" --> CORE
+    CORE["ezharness-core.exe · Go + gin · 常驻单实例<br/>REST / SSE / WS · agent 引擎（ezloop）· 内嵌 SPA"]
+    HE["无头浏览器<br/>chromedp → 本机 Chrome/Edge"]
+    CLI -- "ensureCore：附着或拉起" --> CORE
+    DESK -- "ensureCore：附着或拉起，关桌面停 core" --> CORE
+    WEB -- "默认密码隐式登录" --> CORE
+    CORE -. "浏览器桥（桌面端在场时优先）" .-> DESK
+    CORE -. "桥未连接时兜底" .-> HE
 ```
+
+core 启动时备好默认密码，三端静默登录；接口鉴权用请求头 `EzHarnessToken`（脚本/快应用用 `EzHarnessOpenToken` 调 `/api/open/*`）。详见[三分架构](docs/md/三分架构.md)。
 
 与姊妹仓库 [ezloop](https://github.com/xuanlv2002/ezloop) 的分工：ezloop 是精简的 agent loop 引擎；ezharness 在其上做会话管理、上下文工程、工具封装与人机交互设计。
 
 ## 文档
 
-**[在线文档](https://xuanlv2002.github.io/ezharness/)**（支持中英文切换，按由浅入深组织）：[模型配置](docs/md/模型配置.md) · [多媒体](docs/md/多媒体.md) · [session 管理](docs/md/session设计.md) · [上下文管理](docs/md/上下文设计.md) · [协同工具](docs/md/协同设计.md) · [快应用](docs/md/快应用.md) · [定时回调](docs/md/定时回调.md) · [skill 设计](docs/md/skill设计.md) · [MCP 设计](docs/md/mcp设计.md) · [认证与 OpenAPI](docs/md/认证与openapi.md) · [计划工具](docs/md/plan设计.md) · [设计理念](docs/md/设计理念.md)
+**[在线文档](https://xuanlv2002.github.io/ezharness/)**（支持中英文切换，按由浅入深组织）：[三分架构](docs/md/三分架构.md) · [模型配置](docs/md/模型配置.md) · [多媒体](docs/md/多媒体.md) · [session 管理](docs/md/session设计.md) · [上下文管理](docs/md/上下文设计.md) · [协同工具](docs/md/协同设计.md) · [快应用](docs/md/快应用.md) · [定时回调](docs/md/定时回调.md) · [skill 设计](docs/md/skill设计.md) · [MCP 设计](docs/md/mcp设计.md) · [认证与 OpenAPI](docs/md/认证与openapi.md) · [计划工具](docs/md/plan设计.md) · [设计理念](docs/md/设计理念.md)
 
 ## 从源码构建
 
-前置：[Go](https://go.dev/dl/)、[Node.js](https://nodejs.org/)。版本单源为 `script/version.yaml`，脚本可从任意目录调用：
+前置：[Go 1.26+](https://go.dev/dl/)、[Node.js](https://nodejs.org/)。版本单源为 `script/version.yaml`，脚本可从任意目录调用：
 
 ```sh
-script\dev.bat      # 调试：前端构建 + core 编译，前台启动 Electron
+script\dev.bat      # 调试：前端构建 + core/cli 编译，前台启动 Electron
 script\build.bat    # 发布打包 -> release\v<版本>\
 
 script/dev.sh       # macOS / Linux 同 dev.bat
 ```
+
+产物 `release\dev\` 下三件并排：`ezharness-core.exe`（也可单独前台运行）、`ezharness.exe`（无参进 tui，另有 `status` / `stop` / `chat`）、`ezharness-desktop.exe`。
 
 需要修改 [ezloop](https://github.com/xuanlv2002/ezloop) 本身时，在 `core/go.mod` 用 `replace` 指向本地仓库。
 

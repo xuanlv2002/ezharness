@@ -113,14 +113,15 @@ type TermSession struct {
 	Desc   string
 	Origin string
 
-	mu      sync.Mutex
-	pty     pty.Pty
-	cmd     *pty.Cmd
-	ring    *ringBuffer   // 原始字节(WS 重连 hello 回放用)
-	screen  *termScreen   // 按终端语义重放的屏幕(AI 的 send/read 用)
-	lastOut time.Time     // 最近一次输出的时刻(send 的静默判定)
-	condCh  chan struct{} // 有输出即 close 广播(读泵唤醒等待者)
-	exited  bool
+	mu        sync.Mutex
+	pty       pty.Pty
+	cmd       *pty.Cmd
+	ring      *ringBuffer   // 原始字节(WS 重连 hello 回放用)
+	screen    *termScreen   // 按终端语义重放的屏幕(AI 的 send/read 用)
+	lastOut   time.Time     // 最近一次输出的时刻(send 的静默判定)
+	gotOutput bool          // 是否收到过 shell 输出（Launch 等提示符用）
+	condCh    chan struct{} // 有输出即 close 广播(读泵唤醒等待者)
+	exited    bool
 }
 
 /* ── 服务 ── */
@@ -252,6 +253,7 @@ func (sess *TermSession) readPump(s *TerminalService) {
 			sess.ring.append(data)
 			sess.screen.write(data)
 			sess.lastOut = time.Now()
+			sess.gotOutput = true
 			close(sess.condCh) // 唤醒 send 的静默等待
 			sess.condCh = make(chan struct{})
 			sess.mu.Unlock()
@@ -355,6 +357,23 @@ func (s *TerminalService) Launch(dir, name, desc, origin, command string) (*Term
 	if !ok {
 		return nil, fmt.Errorf("终端 %q 创建后即失效", info.ID)
 	}
+	// 等提示符画完再写命令：zsh 起手先打 PROMPT_SP 标记（% + 一屏空格），紧跟着
+	// 才是提示符；卡在两者之间写，命令会留在标记行上，看起来多一行。首屏输出
+	// 静默一小段即视为提示符已就绪。
+	deadline := time.Now().Add(1500 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		sess.mu.Lock()
+		got, last := sess.gotOutput, sess.lastOut
+		sess.mu.Unlock()
+		if got && time.Since(last) > 50*time.Millisecond {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	// 起手清屏：把 shell 的 PROMPT_SP 标记行（% + 一屏空格）抹掉。该行按创建时
+	// 的列宽打印，观看端随后按自己的宽度重排会把标记露出来——先清掉再写命令。
+	s.writeAI(sess, []byte{0x0c})
+	time.Sleep(60 * time.Millisecond)
 	s.writeAI(sess, termPayload(command))
 	return info, nil
 }

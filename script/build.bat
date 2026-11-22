@@ -1,9 +1,9 @@
 @echo off
 rem build: versioned full build (version source: script/version.yaml), windows local build
-rem chain: frontend build -> copy dist to core/web/dist -> go build (release/dev/) -> electron-builder
+rem chain: frontend build -> copy dist to core/web/dist -> core/cli go build (release/dev/) -> electron-builder
 rem output:
-rem   release\v<version>\ezharness-v<version>-setup.exe   NSIS installer
-rem   release\v<version>\ezharness-v<version>.exe         portable exe
+rem   release\v<version>\ezharness-desktop-v<version>-setup.exe   NSIS installer (desktop + core + cli)
+rem   release\v<version>\ezharness-desktop-v<version>.exe         portable exe
 rem cross-platform builds (win/linux/macos) run in CI: .github/workflows/build.yml
 rem NOTE: keep this file PURE ASCII -- cmd parses .bat in the OEM codepage, so a UTF-8
 rem comment is decoded into bytes that can swallow the line end and run as a command
@@ -18,12 +18,12 @@ node script\sync-version.js
 if errorlevel 1 exit /b 1
 
 echo [build] building frontend...
-cd frontend
+cd core\frontend
 call npm run build
 if errorlevel 1 exit /b 1
-cd ..
+cd ..\..
 
-powershell -NoProfile -Command "Remove-Item -Recurse -Force core/web/dist -ErrorAction SilentlyContinue; Copy-Item -Recurse frontend/dist core/web/dist"
+powershell -NoProfile -Command "Remove-Item -Recurse -Force core/web/dist -ErrorAction SilentlyContinue; Copy-Item -Recurse core/frontend/dist core/web/dist"
 
 echo [build] building core...
 if not exist release\dev mkdir release\dev
@@ -32,7 +32,13 @@ rem build core as a console-subsystem app: do NOT add -H windowsgui. A GUI-subsy
 rem has no console, so each console child it spawns (terminal's cmd.exe, taskkill, MCP
 rem server) gets its own visible console window and flashes a black box. The desktop shell
 rem instead spawns core with windowsHide, so core holds one hidden console that children inherit
-go build -trimpath -ldflags "-s -w" -o ..\release\dev\ezharness-core.exe .
+go build -trimpath -ldflags "-s -w -X ezharness/core/internal/config.Version=%VERSION%" -o ..\release\dev\ezharness-core.exe .
+if errorlevel 1 exit /b 1
+cd ..
+
+echo [build] building cli...
+cd cli
+go build -trimpath -ldflags "-s -w -X main.version=%VERSION%" -o ..\release\dev\ezharness.exe .
 if errorlevel 1 exit /b 1
 cd ..
 
@@ -44,5 +50,5 @@ cd ..
 
 echo.
 echo build done:
-echo   release\v%VERSION%\ezharness-v%VERSION%-setup.exe
-echo   release\v%VERSION%\ezharness-v%VERSION%.exe
+echo   release\v%VERSION%\ezharness-desktop-v%VERSION%-setup.exe
+echo   release\v%VERSION%\ezharness-desktop-v%VERSION%.exe

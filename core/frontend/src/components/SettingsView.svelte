@@ -2,7 +2,6 @@
   import { onMount } from 'svelte'
   import pkg from '../../package.json'
   import { api, type AppConfig } from '../lib/api'
-  import { getToken } from '../lib/auth'
   import { store } from '../lib/store.svelte'
 
   const ez = (window as any).ez
@@ -10,13 +9,18 @@
   /* 设置页 = 应用结构配置（服务端）+ 上下文管理 + 数据/配置文件路径。 */
   let cfg = $state<AppConfig | null>(null)
   let port = $state<number | ''>('')
-  let listen = $state('')
   /* 数据目录不可改（挪盘走 ezharness.json 手改）：仅供 resolveWorkDir 解析相对工作目录 */
   let dataDir = $state('')
   let restarting = $state(false)
   let restartErr = $state('')
   let appChanged = $state(false)
   let showPaths = $state(false)
+
+  /* core 进程状态：网页端只能看；桌面端经 IPC 停/启整个进程 */
+  let coreStopped = $state(false)
+  let coreOffline = $state(false)
+  let coreBusy = $state(false)
+  let coreMsg = $state('')
 
   /* 上下文整理水位（模型窗口百分比；0 = 关闭自动整理，模型仍可主动调 trim_context 工具） */
   let percent = $state<number | ''>('')
@@ -69,12 +73,6 @@
     checking = false
   }
 
-  /* 会话令牌（前端↔core；展示 + 复制）与 OpenAPI 令牌（脚本/快应用用；展示 + 复制 + 重置） */
-  let apiToken = $state('')
-  let oaToken = $state('')
-  let copied = $state<'' | 'api' | 'oa'>('')
-  let oaResetting = $state(false)
-
   /* 单轮最大迭代次数（模型工具循环上限；0 = 默认 64，上限 128，随 Reassemble 生效） */
   let iters = $state<number | ''>('')
   let origIters = $state<number | null>(null)
@@ -113,11 +111,12 @@
     try {
       cfg = await api.appConfig()
       port = cfg.port
-      listen = cfg.listen
       dataDir = cfg.dataDir
       appChanged = false
+      coreOffline = false
     } catch {
       restartErr = '配置加载失败（后端不可达）'
+      coreOffline = true
     }
     try {
       const st = await api.getSettings()
@@ -140,8 +139,6 @@
     } catch {
       /* 上下文配置加载失败不阻塞页面 */
     }
-    api.appToken().then((r) => (apiToken = r.token)).catch(() => {})
-    api.openapiToken().then((r) => (oaToken = r.token)).catch(() => {})
     ez?.autolaunch
       ?.get?.()
       .then((r: any) => {
@@ -150,32 +147,6 @@
       })
       .catch(() => {})
   })
-
-  /* 复制令牌：clipboard 失败（非安全上下文等）时选中文本让用户 Ctrl+C。 */
-  async function copyToken(input: HTMLInputElement, kind: 'api' | 'oa') {
-    const val = kind === 'api' ? apiToken : oaToken
-    if (!val) return
-    try {
-      await navigator.clipboard.writeText(val)
-      copied = kind
-      setTimeout(() => (copied = ''), 1500)
-    } catch {
-      input.select()
-    }
-  }
-
-  /* 重置 OpenAPI 令牌：旧令牌即时作废，硬编码它的快应用/脚本需重新生成 */
-  async function resetOaToken() {
-    oaResetting = true
-    try {
-      const r = await api.resetOpenapiToken()
-      oaToken = r.token
-    } catch {
-      /* 失败保持现状，下次进页面重查 */
-    } finally {
-      oaResetting = false
-    }
-  }
 
   async function saveTray(v: boolean) {
     savingTray = true
@@ -258,7 +229,7 @@
   }
 
   function checkChanged() {
-    appChanged = !!cfg && (String(port) !== String(cfg.port) || listen.trim() !== cfg.listen)
+    appChanged = !!cfg && String(port) !== String(cfg.port)
   }
 
   async function saveThreshold() {
@@ -335,14 +306,11 @@
         if (h.boot !== res.boot) continue
         if (res.url === location.origin) location.reload()
         else {
-          /* 换端口跳转：cookie 按 host 生效（不看端口），同 host 无需再带令牌；
-             跨 host（如 Vite dev 的 localhost 页面跳到 127.0.0.1）才带一次引导令牌 */
+          /* 换端口 = 换 origin：localStorage 里的令牌不复用（令牌只在请求头
+             里走，不进 URL）。cookie 按 host 生效，同 host 的只读请求仍通；
+             写接口会 401，登录门随即让用户重新登录 */
           const q = new URLSearchParams()
           if (new URLSearchParams(location.search).has('desktop')) q.set('desktop', '1')
-          if (new URL(res.url).hostname !== location.hostname) {
-            const t = getToken()
-            if (t) q.set('token', t)
-          }
           const qs = q.toString()
           location.assign(`${res.url}/${qs ? `?${qs}` : ''}`)
         }
@@ -358,9 +326,8 @@
     restarting = true
     restartErr = ''
     try {
-      const req: { port?: number; listen?: string } = {}
+      const req: { port?: number } = {}
       if (String(port) !== String(cfg?.port)) req.port = Number(port)
-      if (listen.trim() !== cfg?.listen) req.listen = listen.trim()
       const res = await api.appRestart(req)
       if (!(await followNewGeneration(res))) restartErr = '等待新服务超时，请手动刷新页面'
     } catch (e) {
@@ -369,18 +336,102 @@
       restarting = false
     }
   }
+
+  /* 运行时长只做展示，页面停留久了会偏旧；进程状态以每次进入设置页为准 */
+  function fmtUptime(iso: string): string {
+    const ms = Date.now() - Date.parse(iso)
+    if (!Number.isFinite(ms) || ms < 0) return '—'
+    const min = Math.floor(ms / 60000)
+    if (min < 1) return '刚刚'
+    if (min < 60) return `${min} 分钟`
+    const h = Math.floor(min / 60)
+    if (h < 24) return `${h} 小时 ${min % 60} 分`
+    return `${Math.floor(h / 24)} 天 ${h % 24} 小时`
+  }
+
+  async function restartCore() {
+    if (!ez?.core) return
+    coreBusy = true
+    coreMsg = ''
+    const r = await ez.core.restart()
+    if (r?.ok) location.reload()
+    else {
+      coreBusy = false
+      coreMsg = `重启失败：${r?.error || '未知错误'}`
+    }
+  }
+
+  async function stopCore() {
+    if (!ez?.core) return
+    if (!confirm('停止后本页立即失去连接；需要点击「启动 core」或重开桌面端才能恢复。确定停止？')) return
+    coreBusy = true
+    coreMsg = ''
+    const r = await ez.core.stop()
+    coreBusy = false
+    if (r?.ok) {
+      coreStopped = true
+      coreMsg = 'core 已停止'
+    } else {
+      coreMsg = `停止失败：${r?.error || '未知错误'}`
+    }
+  }
+
+  async function startCore() {
+    if (!ez?.core) return
+    coreBusy = true
+    coreMsg = ''
+    const r = await ez.core.start()
+    if (r?.ok) location.reload()
+    else {
+      coreBusy = false
+      coreMsg = `启动失败：${r?.error || '未知错误'}`
+    }
+  }
 </script>
 
 <div class="page">
   <h1>设置</h1>
 
+  <section id="set-core">
+    <h2 title="core 是本机常驻服务：重启/停止作用于整个进程，会断开当前页面；网页端没有拉起进程的能力，只能用桌面端或命令行启停。">core 运行状态</h2>
+    <div class="corerow">
+      <span class="corestate" class:down={coreStopped || coreOffline}>
+        <i></i>
+        {coreStopped ? '已停止' : coreOffline ? '未连接' : '运行中'}
+      </span>
+      {#if cfg && !coreStopped && !coreOffline}
+        <span class="coredetail">
+          {cfg.version} · 127.0.0.1:{cfg.port} · PID {cfg.pid} · 已运行
+          {fmtUptime(cfg.startedAt)}
+        </span>
+      {/if}
+    </div>
+    {#if coreStopped || coreOffline}
+      {#if ez?.core}
+        <button class="primary" disabled={coreBusy} onclick={startCore}>
+          {coreBusy ? '启动中…' : coreStopped ? '启动 core' : '重新连接'}
+        </button>
+      {/if}
+    {:else if ez?.core}
+      <div class="coreacts">
+        <button class="ghost" disabled={coreBusy} onclick={restartCore} title="重启整个 core 进程（会加载新构建的二进制），页面短暂断开后自动刷新">
+          {coreBusy ? '处理中…' : '重启 core'}
+        </button>
+        <button class="ghost danger" disabled={coreBusy} onclick={stopCore}>停止 core</button>
+      </div>
+    {:else}
+      <button class="ghost" disabled={restarting} onclick={restartApp}>
+        {restarting ? '重启中…' : '重启服务'}
+      </button>
+    {/if}
+    {#if coreMsg}
+      <p class="msg">{coreMsg}</p>
+    {/if}
+  </section>
+
   <section id="set-server">
-    <h2 title="监听与端口是启动期配置，修改后需点「应用并重启」换代（进程内完成）；其余设置保存即生效，无需重启。监听 127.0.0.1 = 仅本机访问（默认，无防火墙弹窗），0.0.0.0 = 局域网可达（会触发防火墙授权）。数据目录挪盘：手改 ezharness.json 的 dataDir 后重启应用。">服务端配置</h2>
+    <h2 title="端口是启动期配置，修改后需点「应用并重启」换代（进程内完成）；其余设置保存即生效，无需重启。监听一律 127.0.0.1 仅本机。数据目录挪盘：手改 ezharness.json 的 dataDir 后重启应用。">服务端配置</h2>
     <div class="grid2">
-      <label class="field">
-        <span>监听地址</span>
-        <input type="text" bind:value={listen} oninput={checkChanged} placeholder={cfg?.listen ?? '127.0.0.1'} />
-      </label>
       <label class="field">
         <span>端口</span>
         <input type="number" bind:value={port} oninput={checkChanged} min="1" max="65535" />
@@ -392,31 +443,12 @@
     {#if restartErr}
       <p class="err">{restartErr}</p>
     {/if}
-    <label class="field">
-      <span>会话令牌（本次启动内有效；REST/SSE 用 X-EZ-Token 头，浏览器自动发起的导航、图片、PDF 请求用 ez_token cookie）</span>
-      <span class="tokenRow">
-        <input type="text" bind:value={apiToken} readonly placeholder="加载中…" />
-        <button onclick={(e) => copyToken((e.currentTarget as HTMLButtonElement).previousElementSibling as HTMLInputElement, 'api')}>
-          {copied === 'api' ? '已复制' : '复制'}
-        </button>
-      </span>
-    </label>
-    <label class="field">
-      <span>OpenAPI 令牌（脚本/快应用/外部程序调 /api/open/* 用；持久有效，重置后旧令牌立即作废）</span>
-      <span class="tokenRow">
-        <input type="text" bind:value={oaToken} readonly placeholder="加载中…" />
-        <button onclick={(e) => copyToken((e.currentTarget as HTMLButtonElement).previousElementSibling as HTMLInputElement, 'oa')}>
-          {copied === 'oa' ? '已复制' : '复制'}
-        </button>
-        <button onclick={resetOaToken} disabled={oaResetting || !oaToken}>{oaResetting ? '重置中…' : '重置'}</button>
-      </span>
-    </label>
   </section>
 
   <section id="set-context">
     <h2 title="上下文整理水位 = 模型上下文窗口 × 百分比：模型调用的 prompt tokens 超过即自动整理（早期对话就地折叠为摘要，立即生效，会话不变），换模型自动适配 （如 128K 窗口 × 75% = 96000）；0 表示关闭自动整理（模型仍可主动调用 trim_context 工具）。话题归档（总结归档开新会话）请用分支面板的「归档」按钮。">上下文管理</h2>
     <label class="field">
-      <span>整理水位（窗口百分比）</span>
+      <span>整理水位（%）</span>
       <input type="number" bind:value={percent} min="0" max="100" />
     </label>
     <button
@@ -430,7 +462,7 @@
       <p class="msg">{thresholdMsg}</p>
     {/if}
     <label class="field">
-      <span>单轮最大迭代次数（0 = 默认 64，上限 128）</span>
+      <span title="0 = 默认 64，上限 128">单轮最大迭代次数</span>
       <input type="number" bind:value={iters} min="0" max="128" />
     </label>
     <button
@@ -444,7 +476,7 @@
       <p class="msg">{itersMsg}</p>
     {/if}
     <label class="field">
-      <span>工具结果卸载阈值/字节（超过即卸载到文件、上下文只留摘要头；0 = 默认 4096，上限 1MB；摘要头默认 512 字节、随阈值放宽但封顶 1KB）</span>
+      <span title="超过即卸载到文件、上下文只留摘要头；0 = 默认 4096，上限 1MB；摘要头默认 512 字节、随阈值放宽但封顶 1KB">工具结果卸载阈值/字节</span>
       <input type="number" bind:value={offload} min="0" max="1048576" />
     </label>
     <button
@@ -520,7 +552,7 @@
   <section id="set-debug">
     <h2 title="调试模式：把每次发给模型的完整输入（消息 + 工具清单）写进 data/logs/core-日期.log，排查上下文问题用；关闭时日志不记模型输入。dev.bat 启动时默认开启。">调试</h2>
     <label class="switch-row">
-      <span>模型输入进日志（调试模式）</span>
+      <span>模型输入进日志</span>
       <input
         type="checkbox"
         checked={debugMode}
@@ -748,6 +780,45 @@
     background: var(--bg-invert);
     color: var(--fg-invert);
     text-decoration: none;
+  }
+  /* core 状态行：状态点 + 进程信息，操作按钮在下一行 */
+  .corerow {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px 14px;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 10px 14px;
+  }
+  .corestate {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    flex: none;
+    font-size: var(--font-size-section);
+    font-weight: 600;
+  }
+  .corestate i {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: #3fb950;
+  }
+  .corestate.down i {
+    background: var(--danger);
+  }
+  .coredetail {
+    min-width: 0;
+    font-family: var(--font-mono);
+    font-size: var(--font-size-ui);
+    color: var(--muted);
+    overflow-wrap: anywhere;
+  }
+  .coreacts {
+    display: flex;
+    align-items: center;
+    gap: 8px;
   }
   .grid2 {
     display: grid;

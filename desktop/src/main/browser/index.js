@@ -8,8 +8,8 @@ const { attachInspectMenu } = require('../inspect')
 const devtools = require('./devtools')
 const acorn = require('../../vendor/acorn')
 
-let corePort = 5260
-let coreToken = ''
+let getBase = () => 'http://127.0.0.1:5260'
+let getToken = () => ''
 let getParentWindow = null
 let bridge = null          // WebSocket → core
 let bridgeReconnectTimer = null
@@ -894,10 +894,27 @@ function delay(ms) {
 
 /* ── core 桥客户端 ── */
 
+/* bridgeURL 由本机 core 地址推出（跟随 server.json，重连即生效）。 */
+function bridgeURL() {
+  const u = new URL(getBase())
+  return `${u.protocol === 'https:' ? 'wss:' : 'ws:'}//${u.host}/api/browser/bridge`
+}
+
 function connectBridge() {
   if (bridge) return
-  const ws = new WebSocket(`ws://127.0.0.1:${corePort}/api/browser/bridge`, {
-    headers: { 'X-EZ-Token': coreToken },
+  const token = getToken()
+  if (!token) {
+    /* 未登录：等页面登录后令牌就位再试（保持轮询，登录完成即连上） */
+    if (!bridgeReconnectTimer) {
+      bridgeReconnectTimer = setTimeout(() => {
+        bridgeReconnectTimer = null
+        connectBridge()
+      }, 3000)
+    }
+    return
+  }
+  const ws = new WebSocket(bridgeURL(), {
+    headers: { EzHarnessToken: token },
   })
   bridge = ws
   ws.onmessage = async (ev) => {
@@ -1003,10 +1020,11 @@ function registerIpc() {
   })
 }
 
-/* startBrowserModule 壳装配入口。 */
-function startBrowserModule({ corePort: port, token, getParentWindow: parent, findBrowserOwner }) {
-  corePort = port
-  coreToken = token || ''
+/* startBrowserModule 壳装配入口。getBase 取值器：core 换端口或切服务器后
+重连即跟随。 */
+function startBrowserModule({ getBase: baseGetter, getToken: tokenGetter, getParentWindow: parent, findBrowserOwner }) {
+  getBase = baseGetter || (() => 'http://127.0.0.1:5260')
+  getToken = tokenGetter || (() => '')
   getParentWindow = parent
   findOwner = findBrowserOwner || (() => null)
   registerIpc()

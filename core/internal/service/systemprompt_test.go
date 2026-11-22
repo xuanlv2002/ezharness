@@ -41,9 +41,15 @@ func TestBuildSystemBaseStructure(t *testing.T) {
 		t.Error("base 存在连续空行（段分隔应恰好一个空行）")
 	}
 	// 分层契约：机制文本不回 base——工具动作清单与 API 端点住在工具描述/技能里
-	for _, dup := range []string{"browser_action 只有", "/api/open/model/call", "X-EZ-Open-Token"} {
+	for _, dup := range []string{"browser_action 只有", "/api/open/model/call", "EzHarnessOpenToken"} {
 		if strings.Contains(base, dup) {
 			t.Errorf("base 出现机制文本 %q（应唯一归属在工具描述或技能）", dup)
+		}
+	}
+	// 会话认证是用户的界面能力，agent 的提示词里完全不出现
+	for _, hidden := range []string{"EzHarnessToken", "auth.json", "/api/auth"} {
+		if strings.Contains(base, hidden) {
+			t.Errorf("base 泄漏会话认证 %q", hidden)
 		}
 	}
 }

@@ -61,6 +61,7 @@ type AgentService struct {
 	McpAuth   *McpAuthManager  // MCP OAuth 管理器（组 OAuth 配置用），可空
 	Callbacks *CallbackService // 定时回调中心，可空：不装配 callback 工具
 	Media     *MediaService    // 生成类模型（image/audio/video），可空：不装配生成工具
+	Openapi   *OpenapiStore    // OpenAPI 令牌（agent 自建令牌调 /api/open/*），可空
 }
 
 /*
@@ -340,6 +341,12 @@ func (a *AgentService) Assemble(s *domain.Session, st domain.Settings) {
 	agentTools = append(agentTools, tools.Memory(s.Fsys))
 	// 快应用：清单随 <apps> 段、增删改进 <resource_change>（与技能同构）；工具只读调用文档
 	agentTools = append(agentTools, tools.LoadApp(s.Fsys))
+	// OpenAPI：需要调 /api/open/* 时由 agent 自己生成令牌，明文交给脚本/快应用
+	if a.Openapi != nil {
+		agentTools = append(agentTools, tools.OpenapiToken(func(name string) string {
+			return a.Openapi.Create(name).Token
+		}))
+	}
 	// 定时回调：清单随 <callbacks> 段、增删改进 <resource_change>；工具是唯一配置入口
 	if a.Callbacks != nil {
 		agentTools = append(agentTools, tools.Callback(a.Callbacks, s.CurrentID))
@@ -366,6 +373,9 @@ func (a *AgentService) Assemble(s *domain.Session, st domain.Settings) {
 		"mcp_router", hooks.TrimTool, skilltool.ToolName,
 		"model_call", "memory", "plan", "load_app", "term_tab", "term_action",
 		"browser_tab", "browser_action",
+	}
+	if a.Openapi != nil {
+		toolNames = append(toolNames, "create_openapi_token")
 	}
 	// 多媒体统一工具（media）：图片/语音/视频按 action 分派，任务查询同一
 	// 工具。能力未配置/已关闭时工具仍在——调用返回「当前无 xxx 能力」，

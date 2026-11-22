@@ -2,6 +2,7 @@
 # dev: 调试脚本（macOS / Linux 版，对应 dev.bat）
 # 链路：frontend build -> 复制 dist 到 core/web/dist -> go build（release/dev/）-> npm run start
 # release/dev 是本地调试目录：构建产物与运行时数据都在这里
+# dev core 由本脚本管理：启动前停掉上一轮实例，脚本退出时一并停止
 #
 # 用法：
 #   script/dev.sh              自动选端口（5260 被占用则递增）
@@ -39,41 +40,42 @@ fi
 command -v go >/dev/null 2>&1 || { echo "[dev] 找不到 go，请先安装或加入 PATH" >&2; exit 1; }
 command -v npm >/dev/null 2>&1 || { echo "[dev] 找不到 npm，请先安装 Node.js" >&2; exit 1; }
 
-# 端口选择：显式指定优先；否则从 5260 起找第一个空闲端口，
-# 避免与已在运行的 ezharness 正式版（同样默认 5260）撞车
-if [ -z "$PORT" ]; then
-  PORT=5260
-  while lsof -nP -iTCP:"$PORT" -sTCP:LISTEN >/dev/null 2>&1; do
-    PORT=$((PORT + 1))
-  done
-fi
-
 DEV_DIR="$ROOT/release/dev"
 CORE_EXE="$DEV_DIR/ezharness-core.exe"   # 内核按该文件名查找 core，macOS 下沿用
 
+# 只停本轮 dev 根的 core：旧进程占着端口时，桌面壳会按 server.json 附着旧实例，
+# 本轮构建就不会生效；--no-build 也靠这一步做到重启
+stop_dev_core() {
+  if [ -x "$DEV_DIR/ezharness.exe" ]; then
+    EZHARNESS_ROOT="$DEV_DIR" "$DEV_DIR/ezharness.exe" stop >/dev/null 2>&1 || true
+  fi
+}
+
 if [ "$DO_BUILD" = 1 ]; then
-  # 版本覆盖：临时改 frontend/package.json 让 Vite 把指定版本打进产物，
+  # 版本覆盖：临时改 core/frontend/package.json 让 Vite 把指定版本打进产物，
   # 构建后立即还原（构建失败也还原——RC 延迟退出兜在还原之后）
   VER_PATCHED=0
   if [ -n "$DEV_VERSION" ]; then
     echo "[dev] 版本覆盖：v${DEV_VERSION}（仅本次构建产物，version.yaml 不动）"
-    cp frontend/package.json frontend/package.json.devbak
+    cp core/frontend/package.json core/frontend/package.json.devbak
     VER_PATCHED=1
-    node -e 'const fs=require("fs");const p="frontend/package.json";const j=JSON.parse(fs.readFileSync(p,"utf8"));j.version="v"+process.argv[1];fs.writeFileSync(p,JSON.stringify(j,null,2)+"\n")' "$DEV_VERSION"
+    node -e 'const fs=require("fs");const p="core/frontend/package.json";const j=JSON.parse(fs.readFileSync(p,"utf8"));j.version="v"+process.argv[1];fs.writeFileSync(p,JSON.stringify(j,null,2)+"\n")' "$DEV_VERSION"
   fi
   echo "[dev] building frontend..."
   RC=0
-  ( cd frontend && npm run build ) || RC=$?
-  if [ "$VER_PATCHED" = 1 ]; then mv frontend/package.json.devbak frontend/package.json; fi
+  ( cd core/frontend && npm run build ) || RC=$?
+  if [ "$VER_PATCHED" = 1 ]; then mv core/frontend/package.json.devbak core/frontend/package.json; fi
   if [ "$RC" != 0 ]; then exit "$RC"; fi
 
   echo "[dev] copying dist -> core/web/dist..."
   rm -rf core/web/dist
-  cp -R frontend/dist core/web/dist
+  cp -R core/frontend/dist core/web/dist
 
   echo "[dev] building core..."
   mkdir -p "$DEV_DIR"
   ( cd core && go build -o "$CORE_EXE" . )
+  echo "[dev] building cli..."
+  ( cd cli && go build -o "$DEV_DIR/ezharness.exe" . )
 else
   if [ -n "$DEV_VERSION" ]; then
     echo "[dev] --version 只在构建时生效（--no-build 跳过了构建，忽略）"
@@ -83,12 +85,22 @@ fi
 [ -x "$CORE_EXE" ] || { echo "[dev] core 不存在: ${CORE_EXE}（去掉 --no-build 重新构建）" >&2; exit 1; }
 chmod +x "$CORE_EXE"
 
+stop_dev_core
+
+# 端口选择：显式指定优先；否则从 5260 起找第一个空闲端口，
+# 避免与已在运行的 ezharness 正式版（同样默认 5260）撞车
+if [ -z "$PORT" ]; then
+  PORT=5260
+  while lsof -nP -iTCP:"$PORT" -sTCP:LISTEN >/dev/null 2>&1; do
+    PORT=$((PORT + 1))
+  done
+fi
+
 # 应用根配置：端口与数据目录。data 控制在 release/dev 下，与正式版数据隔离
 mkdir -p "$DEV_DIR/data"
 cat > "$DEV_DIR/ezharness.json" <<EOF
 {
   "port": $PORT,
-  "listen": "127.0.0.1",
   "dataDir": "$DEV_DIR/data"
 }
 EOF
@@ -100,5 +112,6 @@ if [ ! -d desktop/node_modules ]; then
 fi
 
 echo "[dev] starting desktop..."
+trap stop_dev_core EXIT
 cd desktop
 npm run start

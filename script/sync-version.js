@@ -4,7 +4,7 @@ const fs = require('fs')
 
 const version = /^version:\s*(\S+)/m.exec(fs.readFileSync('script/version.yaml', 'utf8'))[1]
 for (const [file, prefix] of [
-  ['frontend/package.json', 'v'],
+  ['core/frontend/package.json', 'v'],
   ['desktop/package.json', ''],
 ]) {
   const text = fs.readFileSync(file, 'utf8')

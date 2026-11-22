@@ -1,18 +1,100 @@
-# 三平台自动构建：推 v* 标签即出 win/linux/macos 安装包并附到 GitHub Release；
-# 也可手动触发（workflow_dispatch），产物进 Artifacts。
+# CI：普通 push / PR 只跑测试与默认登录冒烟；推 v* 标签或手动触发时再出
+# win/linux/macos 安装包并附到 GitHub Release。
 # 版本单源 script/version.yaml；win 本地构建走 script/build.bat。
 name: build
 
 on:
   push:
+    branches: ['**']
     tags: ['v*']
+  pull_request:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
+  # 先跑测试与默认登录冒烟；失败时三平台安装包不再构建/发布
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - uses: actions/setup-go@v5
+        with:
+          # core 是 1.25.5，cli 是 1.26.0；取较高者
+          go-version: '1.26'
+
+      - name: Build frontend
+        run: cd core/frontend && npm ci && npm run build
+
+      - name: Embed dist into core
+        run: rm -rf core/web/dist && cp -r core/frontend/dist core/web/dist
+
+      - name: Test core
+        run: cd core && go test ./... && go vet ./...
+
+      - name: Test cli
+        run: cd cli && go test ./... && go vet ./...
+
+      - name: Build core for smoke
+        run: cd core && mkdir -p ../release/dev && go build -o ../release/dev/ezharness-core.exe .
+
+      - name: Smoke default login
+        shell: bash
+        run: |
+          root="$RUNNER_TEMP/ezh-smoke"
+          mkdir -p "$root"
+          printf '{"port": 5391}\n' > "$root/ezharness.json"
+          ./release/dev/ezharness-core.exe --root "$root" &
+          core_pid=$!
+          trap 'kill "$core_pid" 2>/dev/null || true' EXIT
+
+          curl -sf --retry 30 --retry-delay 1 --retry-connrefused \
+            http://127.0.0.1:5391/api/app/health > /dev/null
+
+          # 初始化端点已删除；默认密码是三端唯一入口，错密码必须 401
+          test "$(curl -s -o /dev/null -w '%{http_code}' -X POST \
+            http://127.0.0.1:5391/api/auth/init)" = "404"
+          test "$(curl -s -o /dev/null -w '%{http_code}' -X POST \
+            -H 'Content-Type: application/json' \
+            -d '{"password":"wrong","client":"ci"}' \
+            http://127.0.0.1:5391/api/auth/login)" = "401"
+
+          token=$(curl -sf -X POST -H 'Content-Type: application/json' \
+            -d '{"password":"ezharness","client":"ci"}' \
+            http://127.0.0.1:5391/api/auth/login \
+            | python3 -c 'import json,sys; print(json.load(sys.stdin)["token"])')
+          curl -sf -H "EzHarnessToken: $token" \
+            http://127.0.0.1:5391/api/auth/sessions \
+            | grep -q '"name":"ci"'
+
+          # 没有默认令牌；需要时在会话面生成一枚
+          test ! -e "$root/data/openapi.json"
+          openapi_token=$(curl -sf -X POST \
+            -H "EzHarnessToken: $token" -H 'Content-Type: application/json' \
+            -d '{"name":"ci"}' \
+            http://127.0.0.1:5391/api/security/openapi-tokens \
+            | python3 -c 'import json,sys; print(json.load(sys.stdin)["token"]["token"])')
+          curl -sf -H "EzHarnessOpenToken: $openapi_token" \
+            http://127.0.0.1:5391/api/open/mcp > /dev/null
+          # OpenAPI 与登录态独立：会话头调 open 面必须 401，会话面正常
+          test "$(curl -s -o /dev/null -w '%{http_code}' \
+            -H "EzHarnessToken: $token" \
+            http://127.0.0.1:5391/api/open/mcp)" = "401"
+          curl -sf -H "EzHarnessToken: $token" \
+            http://127.0.0.1:5391/api/media/jobs > /dev/null
+
   build:
+    needs: test
+    # 安装包只在发版标签/手动触发时构建；普通 push 与 PR 停在 test
+    if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
+    permissions:
+      contents: write
     strategy:
       fail-fast: false
       matrix:
@@ -33,7 +115,8 @@ jobs:
 
       - uses: actions/setup-go@v5
         with:
-          go-version-file: core/go.mod
+          # core 是 1.25.5，cli 是 1.26.0；取较高者
+          go-version: '1.26'
 
       - name: Read version
         id: ver
@@ -44,18 +127,32 @@ jobs:
         run: node script/sync-version.js
 
       - name: Build frontend
-        run: cd frontend && npm ci && npm audit --audit-level=high --registry=https://registry.npmjs.org && npm run build
+        run: cd core/frontend && npm ci && npm audit --audit-level=high --registry=https://registry.npmjs.org && npm run build
 
       - name: Embed dist into core
         shell: bash
-        run: rm -rf core/web/dist && cp -r frontend/dist core/web/dist
+        run: rm -rf core/web/dist && cp -r core/frontend/dist core/web/dist
 
       - name: Build core
         shell: bash
         run: |
           cd core
           mkdir -p ../release/dev
-          go build -trimpath -ldflags "-s -w" -o ../release/dev/ezharness-core.exe .
+          go build -trimpath -ldflags "-s -w -X ezharness/core/internal/config.Version=${{ steps.ver.outputs.version }}" -o ../release/dev/ezharness-core.exe .
+
+      - name: Build cli
+        shell: bash
+        run: |
+          cd cli
+          # 打包用产物三平台同名 ezharness.exe（desktop 的 extraFiles 按名取）；
+          # 另拷一份平台原生名的直接下载入口。core 也拷一份同目录发布——
+          # linux/mac 没有安装包时，CLI 靠 exe 同目录的 core 才能自己拉起实例。
+          go build -trimpath -ldflags "-s -w -X main.version=${{ steps.ver.outputs.version }}" -o ../release/dev/ezharness.exe .
+          mkdir -p "../release/v${{ steps.ver.outputs.version }}"
+          ext=""
+          [ "${{ runner.os }}" = "Windows" ] && ext=".exe"
+          cp ../release/dev/ezharness.exe "../release/v${{ steps.ver.outputs.version }}/ezharness${ext}"
+          cp ../release/dev/ezharness-core.exe "../release/v${{ steps.ver.outputs.version }}/ezharness-core${ext}"
 
       - name: Package desktop
         run: |
@@ -77,10 +174,14 @@ jobs:
           # 只传安装包与校验和：electron-builder 输出目录里还有 win-unpacked/、
           # mac/、linux-unpacked/ 等未打包目录（数百 MB），不能用 /* 通配
           path: |
-            release/v${{ steps.ver.outputs.version }}/ezharness-v*-setup.exe
-            release/v${{ steps.ver.outputs.version }}/ezharness-v*.exe
+            release/v${{ steps.ver.outputs.version }}/ezharness-desktop-v*-setup.exe
+            release/v${{ steps.ver.outputs.version }}/ezharness-desktop-v*.exe
             release/v${{ steps.ver.outputs.version }}/ezharness-*.dmg
-            release/v${{ steps.ver.outputs.version }}/ezharness-v*.AppImage
+            release/v${{ steps.ver.outputs.version }}/ezharness-desktop-v*.AppImage
+            release/v${{ steps.ver.outputs.version }}/ezharness
+            release/v${{ steps.ver.outputs.version }}/ezharness.exe
+            release/v${{ steps.ver.outputs.version }}/ezharness-core
+            release/v${{ steps.ver.outputs.version }}/ezharness-core.exe
             release/v${{ steps.ver.outputs.version }}/SHA256SUMS-*.txt
           compression-level: 0
 
@@ -89,10 +190,14 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            release/v${{ steps.ver.outputs.version }}/ezharness-v*-setup.exe
-            release/v${{ steps.ver.outputs.version }}/ezharness-v*.exe
+            release/v${{ steps.ver.outputs.version }}/ezharness-desktop-v*-setup.exe
+            release/v${{ steps.ver.outputs.version }}/ezharness-desktop-v*.exe
             release/v${{ steps.ver.outputs.version }}/ezharness-*.dmg
-            release/v${{ steps.ver.outputs.version }}/ezharness-v*.AppImage
+            release/v${{ steps.ver.outputs.version }}/ezharness-desktop-v*.AppImage
+            release/v${{ steps.ver.outputs.version }}/ezharness
+            release/v${{ steps.ver.outputs.version }}/ezharness.exe
+            release/v${{ steps.ver.outputs.version }}/ezharness-core
+            release/v${{ steps.ver.outputs.version }}/ezharness-core.exe
             release/v${{ steps.ver.outputs.version }}/SHA256SUMS-*.txt
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

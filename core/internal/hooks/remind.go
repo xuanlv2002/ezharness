@@ -46,8 +46,26 @@ type StatusData struct {
 	CtxWindow          int      `json:"ctxWindow"`
 	SuggestCompact     bool     `json:"suggestCompact"`
 	Model              string   `json:"model,omitempty"` // 当前主模型摘要（名称+视觉能力）
+	Dir                string   `json:"dir,omitempty"`   // TUI 发起轮的工作目录（仅提示）
 	Terms              []string `json:"terms,omitempty"` // 运行中终端名（非持久状态，每轮现查）
 	Tabs               []string `json:"tabs,omitempty"`  // 开启中的浏览器标签（同上）
+}
+
+/* turnDirKey 携带发起一轮的工作目录（TUI 启动目录），只用于提示，不做访问限制。 */
+type turnDirKey struct{}
+
+/* WithTurnDir 把发起端目录放进轮 ctx（空串原样返回）。 */
+func WithTurnDir(ctx context.Context, dir string) context.Context {
+	if dir == "" {
+		return ctx
+	}
+	return context.WithValue(ctx, turnDirKey{}, dir)
+}
+
+/* TurnDir 取本轮发起端目录（空 = 未提供）。 */
+func TurnDir(ctx context.Context) string {
+	dir, _ := ctx.Value(turnDirKey{}).(string)
+	return dir
 }
 
 /* Remind 实现系统提醒（快照段 + 收尾段；变更段见 reschange.go）。 */
@@ -116,7 +134,7 @@ func (h *Remind) OnStart(ctx context.Context, state *types.LoopState) error {
 			Content: renderResChange(items, skills, mcps, models, media, apps, callbacks)})
 		state.EmitEvent(EventResChange, items)
 	}
-	data := h.buildSnapshot()
+	data := h.buildSnapshot(ctx)
 	plan, _ := LoadPlan(ctx, h.fsys, h.planRoot)
 	h.insertBeforeLastUser(state, types.Message{Role: types.RoleUser,
 		Content: "<" + StatusTag + ">\n" + renderStatus(data, plan) + "\n</" + StatusTag + ">"})
@@ -140,7 +158,7 @@ func (h *Remind) insertBeforeLastUser(state *types.LoopState, msg types.Message)
 /*
 buildSnapshot 组装水位快照数据（时间/距上次输出/水位/压缩建议）。
 */
-func (h *Remind) buildSnapshot() StatusData {
+func (h *Remind) buildSnapshot(ctx context.Context) StatusData {
 	now := time.Now()
 	data := StatusData{
 		Now:       now.Format("2006-01-02 15:04"),
@@ -162,6 +180,7 @@ func (h *Remind) buildSnapshot() StatusData {
 	if h.tabs != nil {
 		data.Tabs = h.tabs()
 	}
+	data.Dir = TurnDir(ctx)
 	return data
 }
 
@@ -173,6 +192,9 @@ renderStatus 把快照数据渲染成模型可读的中文文本（行格式是�
 func renderStatus(d StatusData, plan *SessionPlan) string {
 	var b strings.Builder
 	b.WriteString("当前时间：" + d.Now)
+	if d.Dir != "" {
+		b.WriteString("\n终端工作目录：" + d.Dir + "（仅提示：优先在此目录内操作，越界先确认）")
+	}
 	if d.CtxWindow > 0 {
 		fmt.Fprintf(&b, "\n上下文水位：%d / %d tokens", d.CtxTokens, d.CtxWindow)
 		if d.SuggestCompact {
