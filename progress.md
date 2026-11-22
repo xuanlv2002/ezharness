@@ -248,6 +248,8 @@ desktop 三个 JS `node --check` ✓。临时端口冒烟：init/status 404、�
   （`create_openapi_token`、显式请求头），不再出现 `EzHarnessToken`、
   `auth.json`、`/api/auth`；systemprompt 测试新增泄漏断言。
 - **MCP OAuth**：`401 + needs_auth` 按授权流程处理，不与 OpenAPI 令牌失效混用。
+- **技能归位**：open-api 统一承载认证写法、各端点/数据结构、MCP OAuth 流程与 SDK；
+  quick-app 只保留应用协议与构建，不再重复令牌/调用细节。
 
 验证：core 全量测试与 vet 全绿；临时端口冒烟 open 面带会话头/cookie 均 401、
 带 OpenAPI 令牌 200，会话面 `/api/media/jobs`、`/api/mcp/call` 正常；进程
