@@ -371,16 +371,34 @@ func cmdDesktop() {
 		name += ".exe"
 	}
 	desktop := filepath.Join(filepath.Dir(exe), name)
-	if _, err := os.Stat(desktop); err != nil {
-		fatalf("找不到桌面端: %s", desktop)
+	if !fileExists(desktop) {
+		// dev 布局没有打包桌面端：源码在仓库 desktop/，直接用 Electron 跑
+		devDir := filepath.Join(filepath.Dir(exe), "..", "..", "desktop")
+		if !fileExists(filepath.Join(devDir, "node_modules", "electron")) {
+			fatalf("找不到桌面端: %s（dev 下先在 desktop 里 npm install）", desktop)
+		}
+		var cmd *exec.Cmd
+		if runtime.GOOS == "windows" {
+			cmd = exec.Command("cmd", "/c", "npm", "run", "start")
+		} else {
+			cmd = exec.Command("npm", "run", "start")
+		}
+		cmd.Dir = devDir
+		startDesktop(cmd)
+		fmt.Println("桌面端已启动（开发布局）")
+		return
 	}
-	cmd := exec.Command(desktop)
+	startDesktop(exec.Command(desktop))
+	fmt.Println("桌面端已启动")
+}
+
+/* startDesktop 脱离本进程后台拉起桌面端。 */
+func startDesktop(cmd *exec.Cmd) {
 	cmd.SysProcAttr = detachAttr()
 	if err := cmd.Start(); err != nil {
 		fatalf("桌面端启动失败: %v", err)
 	}
 	_ = cmd.Process.Release()
-	fmt.Println("桌面端已启动")
 }
 
 /* openURL 用系统默认浏览器打开。 */

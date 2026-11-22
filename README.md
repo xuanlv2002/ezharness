@@ -87,7 +87,7 @@ ezharness 把模型放进你的真实工作环境：文件、终端、浏览器�
 
 ## 它由什么组成
 
-三个 exe、一个常驻 core：CLI 与桌面端都是 core 的入口，退出它们都不停 core；桌面端设置页可显式重启/停止 core 进程：
+三个 exe、一个常驻 core：CLI 与桌面端都是 core 的入口；CLI 退出不停 core，桌面端关闭（不最小化到托盘）会一并停掉 core，最小化到托盘则 core 继续常驻。桌面端设置页也可显式重启/停止 core：
 
 ```mermaid
 flowchart TB
@@ -97,7 +97,7 @@ flowchart TB
     CORE["ezharness-core.exe · Go + gin · 常驻单实例<br/>REST / SSE / WS · agent 引擎（ezloop）· 内嵌 SPA"]
     HE["无头浏览器<br/>chromedp → 本机 Chrome/Edge"]
     CLI -- "ensureCore：附着或拉起" --> CORE
-    DESK -- "ensureCore：附着，壳退 core 不退" --> CORE
+    DESK -- "ensureCore：附着或拉起，关桌面停 core" --> CORE
     WEB -- "默认密码隐式登录" --> CORE
     CORE -. "浏览器桥（桌面端在场时优先）" .-> DESK
     CORE -. "桥未连接时兜底" .-> HE

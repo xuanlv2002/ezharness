@@ -21,6 +21,7 @@ let tray = null
 let coreProc = null
 let quitting = false
 let coreReady = false
+let desktopStarted = false // ensureCore 完成：退出时由桌面负责停 core
 let corePort = 5260
 let activeBase = 'http://127.0.0.1:5260' // 本机 core origin（跟随 server.json）
 /* 桌面宠物：透明置顶小窗，固定 288×288 一次到位（不动态扩缩）。默认
@@ -318,9 +319,9 @@ function refreshPort() {
 
 /*
 ensureCore 附着或拉起本机 core 并等健康就绪（30s 超时）：已在跑（可能是
-ezharness server / cli 拉起的）直接附着，没跑则 detached 拉起。core 不
-属于桌面壳，三端退出都不杀它（停止走 ezharness stop）。仅当本进程是
-拉起者时保留子进程句柄用于崩溃检测。
+ezharness server / cli 拉起的）直接附着，没跑则 detached 拉起。core 是
+独立常驻进程：CLI 退出不碰它，桌面退出由 before-quit 显式停掉。仅当本
+进程是拉起者时保留子进程句柄用于崩溃检测。
 */
 async function ensureCore() {
   refreshActiveBase()
@@ -355,7 +356,7 @@ function spawnCore(root) {
       /* 只读挂载或权限不足：交给 spawn 报错 */
     }
   }
-  /* detached + windowsHide：core 常驻（本进程退出不杀），并拿到隐藏控制台
+  /* detached + windowsHide：core 独立常驻（退出由 before-quit 显式停），并拿到隐藏控制台
      （非 Windows 忽略）——它 spawn 的控制台程序继承该控制台，否则 Windows
      会给每个子进程新开可见控制台，黑框一闪。日志走 core 自己的文件 */
   const proc = spawn(exe, ['--root', root], {
@@ -651,7 +652,7 @@ async function handleCloseRequest() {
   return { prompt: true }
 }
 
-/* quitApp 退出桌面壳。core 常驻单实例，不随壳退出——停止走 ezharness stop。 */
+/* quitApp 退出桌面壳：core 由 before-quit 一并停掉（最小化到托盘不退出）。 */
 function quitApp() {
   quitting = true
   app.quit()
@@ -986,6 +987,7 @@ app.whenReady().then(async () => {
   migrateLegacyRoot()
   loadSessionToken()
   await ensureCore()
+  desktopStarted = true
   startPreviewModule()
   registerIpc()
   createMainWindow()
@@ -1013,6 +1015,13 @@ app.on('activate', () => {
   if (mainWindow && !mainWindow.isDestroyed()) showMain()
 })
 
-app.on('before-quit', () => {
+/* 桌面是服务入口：退出（不最小化到托盘）即停本机 core，桌面自启动拉起
+   core 也走这条链；tui/server 只是客户端，退出不碰 core。 */
+let coreStopTried = false
+app.on('before-quit', (e) => {
   quitting = true
+  if (coreStopTried || !desktopStarted) return
+  coreStopTried = true
+  e.preventDefault()
+  void stopCore().finally(() => app.quit())
 })

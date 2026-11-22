@@ -100,7 +100,7 @@ All three clients sign in silently with the default password `ezharness` — the
 
 ## Architecture at a glance
 
-Three executables, one resident core: the CLI and the desktop app are both clients of the same core, and quitting either leaves the core running. The desktop settings page can explicitly restart or stop the core process:
+Three executables, one resident core: the CLI and the desktop app are both clients of the same core. Quitting the CLI leaves the core running; closing the desktop app (instead of minimizing it to the tray) stops the core, while minimizing to the tray keeps it running. The desktop settings page can also explicitly restart or stop the core process:
 
 ```mermaid
 flowchart TB
@@ -110,7 +110,7 @@ flowchart TB
     CORE["ezharness-core.exe · Go + gin · resident single instance<br/>REST / SSE / WS · agent engine (ezloop) · embedded SPA"]
     HE["Headless browser<br/>chromedp → local Chrome/Edge"]
     CLI -- "ensureCore: attach or spawn" --> CORE
-    DESK -- "ensureCore: attach; shell quit keeps core" --> CORE
+    DESK -- "ensureCore: attach or spawn; closing the desktop stops core" --> CORE
     WEB -- "silent default-password login" --> CORE
     CORE -. "browser bridge (preferred when desktop is present)" .-> DESK
     CORE -. "fallback when bridge absent" .-> HE
