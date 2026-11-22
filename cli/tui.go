@@ -22,6 +22,7 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/mattn/go-runewidth"
 )
 
@@ -472,6 +473,7 @@ func countNames(names []string) string {
 	var order []string
 	counts := map[string]int{}
 	for _, n := range names {
+		n = oneLine(n)
 		if counts[n] == 0 {
 			order = append(order, n)
 		}
@@ -1136,7 +1138,7 @@ func (m *tuiModel) dirLabel() string {
 	if max < 16 {
 		return ""
 	}
-	return runewidth.Truncate("工作中 "+m.cwd, max, "…")
+	return runewidth.Truncate(oneLine("工作中 "+m.cwd), max, "…")
 }
 
 func (m *tuiModel) View() string {
@@ -1190,11 +1192,19 @@ func (m *tuiModel) View() string {
 	case m.err != "" && !m.streaming:
 		hintStyle = errStyle
 	}
-	hintRow := hintStyle.Render(" " + fitHint(m.statusHint(len(sugs) > 0), m.width-2))
+	hintRow := hintStyle.Render(" " + fitHint(oneLine(m.statusHint(len(sugs) > 0)), m.width-2))
 
 	out := []string{head}
 	out = append(out, body...)
 	out = append(out, hintRow, m.inputRow())
+	/* 最后一道保险：任何一行都不许写满终端宽度，避免自动换行把整屏
+	   行序冲乱（markdown 的内边距、宽字符宽度差异都可能超一格）。 */
+	for i := range out {
+		line := strings.ReplaceAll(out[i], "\t", "    ")
+		line = strings.ReplaceAll(line, "\r", "")
+		line = strings.ReplaceAll(line, "\n", " ")
+		out[i] = ansi.Truncate(line, m.width-2, "")
+	}
 	return strings.Join(out, "\n")
 }
 
@@ -1314,9 +1324,9 @@ func (m *tuiModel) pendingHint() string {
 	}
 	switch d.kind {
 	case "approve":
-		head := "审批" + pos + " · " + d.name
+		head := "审批" + pos + " · " + oneLine(d.name)
 		if d.detail != "" {
-			head += " · " + d.detail
+			head += " · " + oneLine(d.detail)
 		}
 		return head + "：y 允许 · n 拒绝"
 	case "ask":
@@ -1331,9 +1341,9 @@ func (m *tuiModel) pendingHint() string {
 		return "计划" + pos + "：Enter 确认 · 输入反馈后 Enter 提交"
 	case "mcp":
 		if d.busy {
-			return "等待浏览器授权：" + d.name
+			return "等待浏览器授权：" + oneLine(d.name)
 		}
-		return "授权" + pos + " · " + d.name + "：y 打开浏览器 · n 取消"
+		return "授权" + pos + " · " + oneLine(d.name) + "：y 打开浏览器 · n 取消"
 	}
 	return ""
 }
@@ -1355,6 +1365,35 @@ func fitHint(s string, w int) string {
 	return runewidth.Truncate(s, w, "…")
 }
 
+/* oneLine 把文本压成单行：选择栏、底栏提示里出现换行会把整帧行数冲乱。 */
+func oneLine(s string) string {
+	return strings.ReplaceAll(cleanText(s), "\n", " ")
+}
+
+/*
+cleanText 清掉会破坏终端行布局的控制字符：回车按换行、制表按四空格，
+
+	其余 C0 控制符（含 ESC）丢弃——模型/工具内容不能直接当终端转义用。
+*/
+func cleanText(s string) string {
+	s = strings.ReplaceAll(s, "\r\n", "\n")
+	s = strings.ReplaceAll(s, "\r", "\n")
+	var b strings.Builder
+	b.Grow(len(s))
+	for _, r := range s {
+		switch {
+		case r == '\n':
+			b.WriteByte('\n')
+		case r == '\t':
+			b.WriteString("    ")
+		case r < 0x20 || r == 0x7f:
+		default:
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
+
 /* chatRows 把消息展开成终端行（按显示宽度折行），末尾接流式正文/思考。 */
 func (m *tuiModel) chatRows(width int) []string {
 	var out []string
@@ -1368,7 +1407,7 @@ func (m *tuiModel) chatRows(width int) []string {
 				l.md, l.mdW = renderMarkdown(l.text, width-5), width
 			}
 			if l.md != "" {
-				out = append(out, markdownLines(l.md)...)
+				out = append(out, markdownLines(l.md, width)...)
 				continue
 			}
 		}
@@ -1407,7 +1446,7 @@ func appendMessageRows(out []string, l line, width int) []string {
 	if w < 10 {
 		w = 10
 	}
-	text := l.text
+	text := cleanText(l.text)
 	if l.kind == "tools" {
 		text = runewidth.Truncate(text, w, "…") // 工具组固定一行，不折行刷屏
 	}
@@ -1457,7 +1496,7 @@ func (m *tuiModel) panelRows(titleText string, labels []string, sel, maxH int) [
 		labelW = 4
 	}
 	for i := start; i < len(labels) && len(rows) < maxH; i++ {
-		label := runewidth.Truncate(labels[i], labelW, "…")
+		label := runewidth.Truncate(oneLine(labels[i]), labelW, "…")
 		if i == sel {
 			rows = append(rows, selStyle.Render("▸ "+label))
 		} else {

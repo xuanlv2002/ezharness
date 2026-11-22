@@ -9,6 +9,7 @@ import (
 
 	"github.com/charmbracelet/glamour"
 	"github.com/charmbracelet/glamour/styles"
+	"github.com/charmbracelet/x/ansi"
 )
 
 var (
@@ -21,6 +22,7 @@ func renderMarkdown(src string, width int) string {
 	if width < 20 {
 		return ""
 	}
+	src = cleanText(src)
 	if mdRender == nil || mdWidth != width {
 		cfg := styles.DarkStyleConfig
 		zero := uint(0)
@@ -36,19 +38,20 @@ func renderMarkdown(src string, width int) string {
 	if err != nil {
 		return ""
 	}
-	return strings.Trim(out, "\n")
+	return strings.ReplaceAll(strings.Trim(out, "\n"), "\t", "    ")
 }
 
-/* markdownLines 给渲染结果加上 AI 前缀与续行缩进。 */
-func markdownLines(md string) []string {
+/* markdownLines 给渲染结果加上 AI 前缀与续行缩进，并硬截到行宽内。 */
+func markdownLines(md string, width int) []string {
 	lines := strings.Split(strings.Trim(md, "\n"), "\n")
 	out := make([]string, 0, len(lines))
 	for i, ln := range lines {
 		if i == 0 {
-			out = append(out, "AI  "+ln)
+			ln = "AI  " + ln
 		} else {
-			out = append(out, "    "+ln)
+			ln = "    " + ln
 		}
+		out = append(out, ansi.Truncate(ln, width-1, ""))
 	}
 	return out
 }
