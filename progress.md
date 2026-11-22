@@ -212,3 +212,14 @@ cli `go test -count=1 ./...`、`go vet`、三平台交叉编译 ✓；前端 `np
 desktop 三个 JS `node --check` ✓。临时端口冒烟：init/status 404、默认密码登录 ✓、
 错密码 401、auth.json 0600；headless Chrome 打开 web 端无登录页并自动生成 web
 会话；cli `--server` 自动生成 cli 会话 ✓。
+
+## Phase 10 · 安全页审批列表精修 — 已完成
+
+- **行信息**：每条工具行显示一句用途说明；合并式工具（plan / callback / mcp 等）
+  整行浅底作组头，展开后的逐 action 行缩进回白底。
+- **控件**：分段控件从“大黑块”改为浅槽 + 淡蓝活动块；合并行和普通行统一显示
+  「审批 / 免审」，不再一个宽一个窄，一键全审语义留在 tooltip 里。
+- **修正**：`grep` 归回文件工具；`memory` / `model_call` 补说明并纳入稳定排序，
+  不再缺描述且跑到系统自带组开头。
+
+验证：前端 `npm run build` ✓；CDP 截图亮/暗主题、折叠/展开态 ✓。

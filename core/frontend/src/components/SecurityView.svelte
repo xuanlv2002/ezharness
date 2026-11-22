@@ -59,6 +59,8 @@
     'plan:clear': '清除当前计划',
     save_app: '保存快应用清单与前端',
     load_app: '读取快应用调用文档（只读）',
+    memory: '提交长期记忆 / 项目记忆变更（提案在记忆页审阅）',
+    model_call: '一次性调用指定模型（识别 / 翻译 / 改写）',
     'media:image': '文生图（贵价：默认每次审批 + 每日配额；异步任务）',
     'media:audio': '文本转语音（贵价：默认每次审批 + 每日配额；异步任务）',
     'media:video': '文生视频（最贵：默认每次审批 + 每日配额最低；异步任务）',
@@ -96,7 +98,7 @@
 
   function groupOf(key: string): string {
     const base = baseOf(key)
-    if (/^(read|write|edit)_file$/.test(base)) return 'file'
+    if (base === 'grep' || /^(read|write|edit)_file$/.test(base)) return 'file'
     if (base === 'terminal' || base.startsWith('term_')) return 'term'
     if (base.startsWith('browser_')) return 'browser'
     if (base === 'media') return 'media'
@@ -105,7 +107,7 @@
   }
 
   /* 稳定排序：先按工具、再按 action，避免后端返回顺序抖动导致行乱跳 */
-  const BASE_ORDER = ['read_file', 'grep', 'write_file', 'edit_file', 'terminal', 'term_tab', 'term_action', 'browser_tab', 'browser_action', 'media', 'task', 'plan', 'save_app', 'load_app', 'callback', 'sleep', 'ask_user', 'trim_context', 'load_skill', 'mcp.*']
+  const BASE_ORDER = ['read_file', 'grep', 'write_file', 'edit_file', 'terminal', 'term_tab', 'term_action', 'browser_tab', 'browser_action', 'media', 'task', 'plan', 'save_app', 'load_app', 'memory', 'model_call', 'callback', 'sleep', 'ask_user', 'trim_context', 'load_skill', 'mcp.*']
   const ACTION_ORDER: Record<string, string[]> = {
     term_action: ['send', 'read'],
     browser_action: ['navigate', 'read', 'eval', 'console', 'network', 'screenshot', 'upload'],
@@ -322,8 +324,11 @@
 {#snippet ruleRow(r: RuleRow, label: string, sub: boolean)}
   <div class="rule-wrap" class:sub>
     <div class="rule">
-      <div class="info" title={r.desc}>
+      <div class="info">
         <span class="name">{label}</span>
+        {#if r.desc}
+          <span class="desc">{r.desc}</span>
+        {/if}
       </div>
       <div class="seg" role="radiogroup" aria-label={r.key}>
         {#each levelsOf(r.key) as lv (lv)}
@@ -377,19 +382,21 @@
                 {:else}
                   {@const rows = sec.rows!}
                   {@const shared = sharedLevel(rows)}
-                  <div class="rule-wrap">
+                  <div class="rule-wrap tool">
                     <div class="rule">
                       <div class="info tool">
                         <button class="expander" onclick={() => toggleSection(sec.base)} title="展开 / 收起逐 action">
                           {expanded[sec.base] ? '▾' : '▸'}
                         </button>
-                        <span class="name">{sec.base}</span>
-                        <span class="desc">{rows.length} 个动作{shared === 'ask' ? ' · 全部审批' : shared === 'auto' ? ' · 全部免审' : ' · 逐项'}</span>
+                        <div class="labels">
+                          <span class="name">{sec.base}</span>
+                          <span class="desc">{rows.length} 个动作{shared === 'ask' ? ' · 全部审批' : shared === 'auto' ? ' · 全部免审' : ' · 逐项'}</span>
+                        </div>
                       </div>
-                      <div class="seg" role="radiogroup" aria-label={sec.base}>
+                      <div class="seg" role="radiogroup" aria-label={`${sec.base} 全部动作`}>
                         {#each TOOL_LEVELS as lv (lv)}
-                          <button class="seg-btn" class:active={shared === lv} onclick={() => setAll(rows, lv)} title={FULL[lv]}>
-                            全部{LABELS[lv]}
+                          <button class="seg-btn" class:active={shared === lv} onclick={() => setAll(rows, lv)} title={`全部${LABELS[lv]}`}>
+                            {LABELS[lv]}
                           </button>
                         {/each}
                       </div>
@@ -624,15 +631,25 @@
     border: 1px solid var(--line);
     border-radius: 12px;
     overflow: hidden;
+    background: var(--bg);
   }
   .rule-wrap + .rule-wrap {
     border-top: 1px solid var(--line);
   }
-  /* 工具行（合并式工具）：展开钮 + 工具名 + 动作数，右侧一键全审/全免 */
+  /* 合并式工具行：整行浅底作组头，展开后逐 action 行回到普通白底 */
+  .rule-wrap.tool {
+    background: var(--bg-soft);
+  }
   .info.tool {
     flex-direction: row;
-    align-items: baseline;
-    gap: 8px;
+    align-items: flex-start;
+    gap: 7px;
+  }
+  .labels {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
   }
   .expander {
     width: 16px;
@@ -641,9 +658,8 @@
     background: transparent;
     color: var(--faint);
     font-size: var(--font-size-small);
-    line-height: 1;
+    line-height: 1.5;
     flex: none;
-    align-self: center;
   }
   .expander:hover {
     color: var(--fg);
@@ -653,57 +669,68 @@
     align-items: center;
     justify-content: space-between;
     gap: 16px;
-    padding: 10px 14px;
+    padding: 9px 14px;
     transition: background var(--dur-fast) var(--ease-out);
   }
   .rule:hover {
-    background: var(--bg-soft);
+    background: color-mix(in srgb, var(--bg-soft) 55%, transparent);
+  }
+  .rule-wrap.tool .rule:hover {
+    background: color-mix(in srgb, var(--bg-soft) 55%, var(--line));
+  }
+  .rule-wrap.tool .seg {
+    background: color-mix(in srgb, var(--bg-soft) 55%, var(--line));
   }
   .rule-wrap.sub .rule {
-    padding-left: 26px;
+    padding-left: 32px;
   }
   .info {
     display: flex;
     flex-direction: column;
-    gap: 1px;
+    gap: 2px;
     min-width: 0;
   }
   .name {
     font-family: var(--font-mono);
     font-size: var(--font-size-section);
     color: var(--fg);
+    line-height: 1.5;
   }
   .desc {
     font-size: var(--font-size-small);
     color: var(--faint);
+    line-height: 1.5;
   }
+  /* 分段控件：浅槽 + 淡蓝活动块，避免一排大黑块抢视线 */
   .seg {
     flex: none;
     display: flex;
+    align-items: center;
+    gap: 2px;
+    padding: 2px;
     border: 1px solid var(--line);
-    border-radius: 9px;
-    overflow: hidden;
+    border-radius: 8px;
+    background: var(--bg-soft);
   }
   .seg-btn {
     border: none;
     background: transparent;
-    padding: 5px 11px;
+    border-radius: 6px;
+    padding: 4px 9px;
     font-size: var(--font-size-small);
+    font-weight: 500;
     color: var(--muted);
+    white-space: nowrap;
     transition:
       background var(--dur-fast) var(--ease-out),
       color var(--dur-fast) var(--ease-out);
   }
-  .seg-btn + .seg-btn {
-    border-left: 1px solid var(--line);
-  }
   .seg-btn:hover {
     color: var(--fg);
-    background: var(--bg-soft);
   }
   .seg-btn.active {
-    background: var(--bg-invert);
-    color: var(--fg-invert);
+    background: var(--accent-soft);
+    color: var(--accent);
   }
   .list-edit {
     padding: 0 14px 12px 34px;
