@@ -357,18 +357,23 @@ func (s *TerminalService) Launch(dir, name, desc, origin, command string) (*Term
 	if !ok {
 		return nil, fmt.Errorf("终端 %q 创建后即失效", info.ID)
 	}
-	// 等 shell 打出提示符再写命令：抢在提示符前写，内核会先把命令回显到空屏，
-	// 随后 shell 再重绘提示符，首行就多出一条孤零零的命令。
+	// 等提示符画完再写命令：zsh 起手先打 PROMPT_SP 标记（% + 一屏空格），紧跟着
+	// 才是提示符；卡在两者之间写，命令会留在标记行上，看起来多一行。首屏输出
+	// 静默一小段即视为提示符已就绪。
 	deadline := time.Now().Add(1500 * time.Millisecond)
 	for time.Now().Before(deadline) {
 		sess.mu.Lock()
-		ready := sess.gotOutput
+		got, last := sess.gotOutput, sess.lastOut
 		sess.mu.Unlock()
-		if ready {
+		if got && time.Since(last) > 50*time.Millisecond {
 			break
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
+	// 起手清屏：把 shell 的 PROMPT_SP 标记行（% + 一屏空格）抹掉。该行按创建时
+	// 的列宽打印，观看端随后按自己的宽度重排会把标记露出来——先清掉再写命令。
+	s.writeAI(sess, []byte{0x0c})
+	time.Sleep(60 * time.Millisecond)
 	s.writeAI(sess, termPayload(command))
 	return info, nil
 }
