@@ -443,6 +443,9 @@ func (m *tuiModel) applyFrame(f frame) {
 		m.streaming = false
 		m.resetTurn()
 		m.stopMcp()
+		if len(m.pending) > 0 {
+			m.input.SetValue("") // 待办已随轮作废，草稿也别留成消息
+		}
 		m.pending = nil // 轮结束：没答完的请求已随轮作废，别留着挡住输入
 		m.askSel = 0
 		m.echoUser = ""
@@ -455,8 +458,11 @@ func (m *tuiModel) applyFrame(f frame) {
 			ID string `json:"id"`
 		}
 		if json.Unmarshal(f.Data, &d) == nil && d.ID != "" {
-			if len(m.pending) > 0 && m.pending[0].id == d.ID && m.pending[0].kind == "mcp" {
-				m.stopMcp()
+			if len(m.pending) > 0 && m.pending[0].id == d.ID {
+				if m.pending[0].kind == "mcp" {
+					m.stopMcp()
+				}
+				m.input.SetValue("") // 该待办已由别处作答，清掉理由/答案草稿
 			}
 			m.pending = slices.DeleteFunc(m.pending, func(x decision) bool { return x.id == d.ID })
 			m.askSel = 0
@@ -638,14 +644,18 @@ func (m *tuiModel) dropPending() decision {
 	return d
 }
 
-func (m *tuiModel) decideApprove(ok bool) {
+func (m *tuiModel) decideApprove(ok bool, reason string) {
 	d := m.pending[0]
-	if err := m.cl.decideApprove(m.rootID, d.id, ok, ""); err != nil {
+	if err := m.cl.decideApprove(m.rootID, d.id, ok, reason); err != nil {
 		m.lines = append(m.lines, line{kind: "err", text: "审批回传失败: " + err.Error()})
 		return
 	}
 	m.pending = m.pending[1:]
 	m.askSel = 0
+	m.input.SetValue("")
+	if !ok && strings.TrimSpace(reason) != "" {
+		m.lines = append(m.lines, line{kind: "info", text: "已拒绝 " + oneLine(d.name) + "：" + oneLine(reason)})
+	}
 }
 
 func (m *tuiModel) resolvePlan(action, feedback string) {
@@ -1046,8 +1056,10 @@ func (m *tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case "y":
 				switch d.kind {
 				case "approve":
-					m.decideApprove(true)
-					handled = true
+					if strings.TrimSpace(m.input.Value()) == "" {
+						m.decideApprove(true, "")
+						handled = true
+					}
 				case "mcp":
 					if !d.busy {
 						ctx, cancel := context.WithCancel(context.Background())
@@ -1059,8 +1071,10 @@ func (m *tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case "n":
 				switch d.kind {
 				case "approve":
-					m.decideApprove(false)
-					handled = true
+					if strings.TrimSpace(m.input.Value()) == "" {
+						m.decideApprove(false, "")
+						handled = true
+					}
 				case "mcp":
 					if d.busy {
 						m.stopMcp() // 轮询会回来按「已取消」结算
@@ -1077,11 +1091,8 @@ func (m *tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 		}
-		if len(m.pending) > 0 {
-			switch m.pending[0].kind {
-			case "approve", "mcp":
-				return m, nil // 审批期间只认 y/n，避免误发消息打断本轮
-			}
+		if len(m.pending) > 0 && m.pending[0].kind == "mcp" {
+			return m, nil // 授权期间只认 y/n，避免误发消息打断本轮
 		}
 	case frame:
 		m.applyFrame(msg)
@@ -1099,31 +1110,47 @@ func (m *tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
-/* submit 处理回车：斜杠命令 / 决策回答 / 发消息。 */
+/* submit 处理回车：待办回答优先（模态），空闲时才是斜杠命令/发消息。 */
 func (m *tuiModel) submit() tea.Cmd {
-	if len(m.pending) > 0 {
-		switch m.pending[0].kind {
-		case "approve", "mcp":
-			return nil // 审批没答完，输入不发送
-		}
-	}
 	text := strings.TrimSpace(m.input.Value())
-	if text == "" {
-		if len(m.pending) > 0 {
-			d := m.pending[0]
-			switch d.kind {
-			case "ask":
+	if len(m.pending) > 0 {
+		d := m.pending[0]
+		switch d.kind {
+		case "approve":
+			if text != "" {
+				m.decideApprove(false, text) // 填了理由 = 带理由拒绝
+			}
+			return nil
+		case "mcp":
+			return nil
+		case "ask":
+			if text == "" {
 				if len(d.options) > 0 {
 					if m.askSel < 0 || m.askSel >= len(d.options) {
 						m.askSel = 0
 					}
 					m.answerAsk(d, d.options[m.askSel])
 				}
-			case "plan":
-				m.resolvePlan("confirm", "")
+				return nil
 			}
+			answer := text
+			if n, err := strconv.Atoi(text); err == nil && n >= 1 && n <= len(d.options) {
+				answer = d.options[n-1]
+			}
+			m.answerAsk(d, answer)
+			m.input.SetValue("")
+			return nil
+		case "plan":
+			if text == "" {
+				m.resolvePlan("confirm", "")
+			} else {
+				m.resolvePlan("feedback", text)
+			}
+			m.input.SetValue("")
+			return nil
 		}
-		m.input.SetValue("")
+	}
+	if text == "" {
 		return nil
 	}
 	if strings.HasPrefix(text, "/") {
@@ -1149,24 +1176,6 @@ func (m *tuiModel) submit() tea.Cmd {
 		}
 		m.input.SetValue("")
 		return m.runCommand(name)
-	}
-	if len(m.pending) > 0 {
-		d := m.pending[0]
-		switch d.kind {
-		case "ask":
-			answer := text
-			if n, err := strconv.Atoi(text); err == nil && n >= 1 && n <= len(d.options) {
-				answer = d.options[n-1]
-			}
-			m.answerAsk(d, answer)
-		case "plan":
-			m.resolvePlan("feedback", text)
-		default:
-			m.lines = append(m.lines, line{kind: "info", text: "这一项请按 y / n 选择"})
-			return nil
-		}
-		m.input.SetValue("")
-		return nil
 	}
 	wasRunning := m.streaming
 	if err := m.cl.send(m.rootID, text, m.cwd); err != nil {
@@ -1279,27 +1288,22 @@ func (m *tuiModel) View() string {
 
 /* inputRow 输入行：左边输入框，右边工作目录；审批时整行换成 y/n 操作。 */
 func (m *tuiModel) inputRow() string {
-	if len(m.pending) > 0 {
+	if len(m.pending) > 0 && m.pending[0].kind == "mcp" {
 		d := m.pending[0]
-		var prompt string
-		switch d.kind {
-		case "approve":
-			prompt = "y 允许 · n 拒绝"
-		case "mcp":
-			if d.busy {
-				prompt = "等待浏览器授权…（n 取消）"
-			} else {
-				prompt = "y 打开浏览器 · n 取消"
-			}
+		prompt := "y 打开浏览器 · n 取消"
+		if d.busy {
+			prompt = "等待浏览器授权…（n 取消）"
 		}
-		if prompt != "" {
-			if m.cursor != nil {
-				m.cursor.col.Store(0) // 不画输入框，真实光标留在行首
-			}
-			return m.withDir(askStyle.Render(" ❯ " + prompt))
+		if m.cursor != nil {
+			m.cursor.col.Store(0) // 不画输入框，真实光标留在行首
 		}
+		return m.withDir(askStyle.Render(" ❯ " + prompt))
 	}
-	row := " ❯ " + m.input.View()
+	prefix := " ❯ "
+	if len(m.pending) > 0 {
+		prefix = askStyle.Render(" ❯ ") // 这行现在是给待办的回答/理由
+	}
+	row := prefix + m.input.View()
 	if m.cursor != nil {
 		if i := strings.LastIndex(row, "\x1b[7m"); i >= 0 { // textinput 的反色光标
 			m.cursor.col.Store(int64(lipgloss.Width(row[:i]) + 1))
@@ -1322,9 +1326,9 @@ func (m *tuiModel) withDir(left string) string {
 	return left + strings.Repeat(" ", pad) + right
 }
 
-/* suggestions 输入 / 时的候选命令（按前缀过滤）。 */
+/* suggestions 输入 / 时的候选命令（按前缀过滤）；待办回答期间不出命令。 */
 func (m *tuiModel) suggestions() []slashCmd {
-	if m.picker != nil {
+	if m.picker != nil || len(m.pending) > 0 {
 		return nil
 	}
 	v := m.input.Value()
@@ -1422,7 +1426,7 @@ func (m *tuiModel) pendingHint() string {
 		if d.detail != "" {
 			head += " · " + oneLine(d.detail)
 		}
-		return head
+		return head + "：空输入 y 允许 / n 拒绝 · 填理由 Enter 拒绝（Ctrl+U 清空）"
 	case "ask":
 		if len(d.options) > 0 {
 			if strings.TrimSpace(m.input.Value()) != "" {
