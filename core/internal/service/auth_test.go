@@ -85,7 +85,7 @@ func TestAuditEmpty(t *testing.T) {
 	}
 }
 
-/* 启动保证有默认令牌：空清单补一枚，已有令牌不重复补，env 跟着最新一枚。 */
+/* 启动保证有默认令牌：空清单补一枚，已有令牌不重复补。 */
 func TestEnsureDefaultOpenapiToken(t *testing.T) {
 	t.Chdir(t.TempDir())
 	o := LoadOpenapiStore()
@@ -93,9 +93,6 @@ func TestEnsureDefaultOpenapiToken(t *testing.T) {
 	list := o.List()
 	if len(list) != 1 || list[0].Name != "默认" {
 		t.Fatalf("default token = %+v", list)
-	}
-	if got := os.Getenv(OpenapiTokenEnv); got != list[0].Token {
-		t.Fatalf("env token = %q, want %q", got, list[0].Token)
 	}
 	o.EnsureDefaultToken()
 	re := LoadOpenapiStore()
@@ -129,8 +126,5 @@ func TestOpenapiStore(t *testing.T) {
 	re := LoadOpenapiStore()
 	if _, ok := re.Verify(b.Token); !ok {
 		t.Fatal("token should survive reload")
-	}
-	if got := os.Getenv(OpenapiTokenEnv); got != b.Token {
-		t.Fatalf("env should carry newest token: %q", got)
 	}
 }

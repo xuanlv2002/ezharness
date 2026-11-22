@@ -34,7 +34,7 @@ description: 从零造一个 MCP 服务端——stdio（本机自用，即配即
 - 握手超时 10 秒：启动期不要做慢初始化（预下载、大盘扫描），挪到首次调用
 - 进程随连接生命周期由 core 管理，正常退出即可，不要 daemonize
 
-环境继承：stdio 服务继承 core 进程环境（会话令牌从未进过 env），**能拿到 `EZHARNESS_OPENAPI_TOKEN`**——工具实现内部可直接调 `POST /api/open/model/call` 让"工具+大模型"组合干活（用法见 open-api 技能）。
+令牌：core 不往 stdio 进程注入 OpenAPI 令牌。工具实现内部要调 `POST /api/open/model/call` 时，自己读 `<数据目录>/openapi.json` 的 `tokens[].token`，显式放进 `EzHarnessOpenToken` 请求头（用法见 open-api 技能）。
 
 ## 模板 · stdio 最小服务（零依赖 python）
 

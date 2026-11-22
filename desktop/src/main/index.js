@@ -707,7 +707,8 @@ function registerIpc() {
     }
   })
   /* 快应用子窗口：加载 core 同源页面，独立标题；右键可检查元素。
-     页面本身免鉴权，其 /api/open/* 调用带页面自己的 openapi 令牌或同源 cookie。 */
+     页面本身免鉴权，其 /api/open/* 调用只带页面自己的 ez.config 令牌，
+     不依赖登录 cookie。 */
   ipcMain.on('ez:open-app', (_e, url, title) => {
     if (typeof url !== 'string' || !url.startsWith('/')) return
     const win = new BrowserWindow({

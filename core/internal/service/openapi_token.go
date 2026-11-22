@@ -1,10 +1,9 @@
 /*
 OpenAPI 令牌：/api/open/* 面的访问凭证，多枚、可命名、可吊销，持久于
-数据目录 openapi.json（0600）。与登录会话（auth.json）分开——会话给人驾
-的端，令牌给 agent 产物（脚本、快应用、外部程序）。启动时若一枚都没有
-自动补「默认」令牌，脚本开箱即用；最新一枚写进子进程环境
-EZHARNESS_OPENAPI_TOKEN（终端里的脚本随手可用，正式做法是读
-openapi.json 拿实时清单）。
+数据目录 openapi.json（0600）。与登录会话（auth.json）完全分开：会话给
+用户界面，令牌给 agent 产物（脚本、快应用、外部程序）。令牌只由调用方
+显式放进 EzHarnessOpenToken 请求头，core 不注入进程环境。启动时若一枚
+都没有自动补「默认」令牌，脚本从 openapi.json 读取。
 */
 package service
 
@@ -16,15 +15,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
-	"os"
 	"sync"
 	"time"
 
 	"ezharness/core/internal/osfs"
 )
-
-/* OpenapiTokenEnv 终端与快应用后端等子进程继承最新 openapi 令牌的环境变量名。 */
-const OpenapiTokenEnv = "EZHARNESS_OPENAPI_TOKEN"
 
 /* openapiTokenFile 令牌落盘文件（数据目录内，相对路径）。 */
 const openapiTokenFile = "openapi.json"
@@ -58,7 +53,6 @@ func LoadOpenapiStore() *OpenapiStore {
 			o.tokens = doc.Tokens
 		}
 	}
-	o.applyEnv()
 	return o
 }
 
@@ -95,7 +89,6 @@ func (o *OpenapiStore) Create(name string) OpenapiToken {
 	}
 	o.tokens = append(o.tokens, t)
 	o.save()
-	o.applyEnv()
 	return t
 }
 
@@ -107,7 +100,6 @@ func (o *OpenapiStore) Revoke(id string) error {
 		if t.ID == id {
 			o.tokens = append(o.tokens[:i], o.tokens[i+1:]...)
 			o.save()
-			o.applyEnv()
 			return nil
 		}
 	}
@@ -150,17 +142,4 @@ func (o *OpenapiStore) save() {
 	if err := fsys.WritePrivate(context.Background(), openapiTokenFile, data); err != nil {
 		log.Printf("openapi 令牌落盘失败: %v", err)
 	}
-}
-
-/*
-	applyEnv 把最新一枚令牌写进进程环境（子进程继承；无令牌则清掉）。
-
-调用方持锁或初始化路径。
-*/
-func (o *OpenapiStore) applyEnv() {
-	if len(o.tokens) == 0 {
-		_ = os.Unsetenv(OpenapiTokenEnv)
-		return
-	}
-	_ = os.Setenv(OpenapiTokenEnv, o.tokens[len(o.tokens)-1].Token)
 }

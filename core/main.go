@@ -128,7 +128,8 @@ func (a *app) buildRouter() *gin.Engine {
 		Boot:      &a.boot,
 	}
 	controllers := controller.Controllers{
-		Auth:    &controller.AuthController{Auth: a.auth, Openapi: a.openapi},
+		Auth:    &controller.AuthController{Auth: a.auth},
+		Openapi: &controller.OpenapiController{Store: a.openapi},
 		Session: &controller.SessionController{Svc: &service.SessionService{Hub: hub, Callbacks: agents.Callbacks, Agents: agents}},
 		Chat:    &controller.ChatController{Svc: chatSvc, Memory: &service.MemoryService{Hub: hub}, Callbacks: agents.Callbacks},
 		Settings: &controller.SettingsController{

@@ -419,10 +419,10 @@
   <section>
     <div class="section-head">
       <div>
-        <h2 title="给脚本、快应用、外部程序调 /api/open/* 用的令牌（请求头 EzHarnessOpenToken）。core 启动时若没有令牌会自动生成一枚「默认」；多枚可命名，吊销即失效。终端脚本也可读环境变量 EZHARNESS_OPENAPI_TOKEN（最新一枚）。"
+        <h2 title="给脚本、快应用、外部程序调 /api/open/* 用的令牌（请求头 EzHarnessOpenToken）。OpenAPI 与登录会话完全独立，只认这枚令牌；core 启动时若没有令牌会自动生成一枚「默认」，多枚可命名、吊销即失效。"
           >OpenAPI 令牌<span class="count">{oaTokens.length}</span></h2
         >
-        <p class="section-desc">core 启动自动准备一枚「默认」令牌，脚本与终端开箱即用；也可按用途生成多枚，吊销即失效。</p>
+        <p class="section-desc">OpenAPI 是独立模块，只认这里的令牌、不弹登录；core 启动自动准备一枚「默认」，脚本与终端读 openapi.json 显式传入即可，也可另生成多枚。</p>
       </div>
     </div>
     {#if credMsg}

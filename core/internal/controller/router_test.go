@@ -82,13 +82,14 @@ func TestSessionAuthChannels(t *testing.T) {
 	}
 }
 
+/* OpenAPI 面只认自己的令牌：会话头/cookie 即使有效也不放行。 */
 func TestOpenGuardChannels(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	auth, session := newTestAuth(t)
+	_, session := newTestAuth(t)
 	openapi := service.LoadOpenapiStore()
 	op := openapi.Create("脚本")
 	r := gin.New()
-	r.GET("/api/open/x", openGuard(auth, openapi), func(g *gin.Context) { g.Status(http.StatusNoContent) })
+	r.GET("/api/open/x", openGuard(openapi), func(g *gin.Context) { g.Status(http.StatusNoContent) })
 
 	cases := []struct {
 		name    string
@@ -96,9 +97,9 @@ func TestOpenGuardChannels(t *testing.T) {
 		want    int
 	}{
 		{"openapi token", map[string]string{openapiTokenHeader: op.Token}, http.StatusNoContent},
-		{"session header", map[string]string{sessionTokenHeader: session}, http.StatusNoContent},
-		{"session cookie", map[string]string{"Cookie": authCookieName + "=" + session}, http.StatusNoContent},
-		{"stale openapi with valid session", map[string]string{openapiTokenHeader: "stale", sessionTokenHeader: session}, http.StatusNoContent},
+		{"session header rejected", map[string]string{sessionTokenHeader: session}, http.StatusUnauthorized},
+		{"session cookie rejected", map[string]string{"Cookie": authCookieName + "=" + session}, http.StatusUnauthorized},
+		{"stale openapi with valid session", map[string]string{openapiTokenHeader: "stale", sessionTokenHeader: session}, http.StatusUnauthorized},
 		{"stale openapi only", map[string]string{openapiTokenHeader: "stale"}, http.StatusUnauthorized},
 		{"missing", nil, http.StatusUnauthorized},
 		{"revoked openapi", map[string]string{openapiTokenHeader: revokedToken(t, openapi)}, http.StatusUnauthorized},
@@ -123,8 +124,11 @@ func TestOpenGuardChannels(t *testing.T) {
 		if e.Status != http.StatusNoContent && e.Status != http.StatusUnauthorized {
 			t.Fatalf("audit status = %d（被拒的调用应记 401）: %+v", e.Status, e)
 		}
-		if e.Status == http.StatusUnauthorized && e.TokenName != "" && e.TokenName != "会话" {
+		if e.Status == http.StatusUnauthorized && e.TokenName != "" {
 			t.Fatalf("被拒调用不该带令牌名: %+v", e)
+		}
+		if e.Status == http.StatusNoContent && e.TokenName != "脚本" {
+			t.Fatalf("通过调用应记令牌名: %+v", e)
 		}
 	}
 }
@@ -224,6 +228,9 @@ func TestCorsOpenPreflight(t *testing.T) {
 	}
 	if allow := w.Header().Get("Access-Control-Allow-Headers"); !strings.Contains(allow, openapiTokenHeader) {
 		t.Fatalf("Allow-Headers misses %s: %q", openapiTokenHeader, allow)
+	}
+	if allow := w.Header().Get("Access-Control-Allow-Headers"); strings.Contains(allow, sessionTokenHeader) {
+		t.Fatalf("OpenAPI preflight should not allow session header: %q", allow)
 	}
 
 	req2 := httptest.NewRequest(http.MethodGet, "/api/open/x", nil)

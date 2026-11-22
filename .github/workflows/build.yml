@@ -79,6 +79,12 @@ jobs:
             "$root/data/openapi.json")
           curl -sf -H "EzHarnessOpenToken: $openapi_token" \
             http://127.0.0.1:5391/api/open/mcp > /dev/null
+          # OpenAPI 与登录态独立：会话头调 open 面必须 401，会话面正常
+          test "$(curl -s -o /dev/null -w '%{http_code}' \
+            -H "EzHarnessToken: $token" \
+            http://127.0.0.1:5391/api/open/mcp)" = "401"
+          curl -sf -H "EzHarnessToken: $token" \
+            http://127.0.0.1:5391/api/media/jobs > /dev/null
 
   build:
     needs: test

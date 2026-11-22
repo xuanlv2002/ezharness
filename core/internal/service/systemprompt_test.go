@@ -46,6 +46,12 @@ func TestBuildSystemBaseStructure(t *testing.T) {
 			t.Errorf("base 出现机制文本 %q（应唯一归属在工具描述或技能）", dup)
 		}
 	}
+	// 会话认证是用户的界面能力，agent 的提示词里完全不出现
+	for _, hidden := range []string{"EzHarnessToken", "auth.json", "/api/auth"} {
+		if strings.Contains(base, hidden) {
+			t.Errorf("base 泄漏会话认证 %q", hidden)
+		}
+	}
 }
 
 /* 回调清单按会话标注：只有绑定当前叶的任务打「本会话」。 */

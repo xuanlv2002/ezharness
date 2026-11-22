@@ -1,7 +1,8 @@
 /*
 controller 包是表现层：gin handler 只做绑定、校验与响应，业务在 service。
-路由分两面：会话面 /api/*（EzHarnessToken，人驾全量能力）与 OpenAPI 面
-/api/open/*（EzHarnessOpenToken，agent 产物）。中间件与认证端点见 auth.go。
+路由分两面：会话面 /api/*（EzHarnessToken，用户界面）与 OpenAPI 面
+/api/open/*（EzHarnessOpenToken，agent 产物）。两面认证完全独立，见
+auth.go 与 openapi.go。
 */
 package controller
 
@@ -20,6 +21,7 @@ import (
 /* Controllers 是路由依赖集合（main 装配）。 */
 type Controllers struct {
 	Auth      *AuthController
+	Openapi   *OpenapiController
 	Session   *SessionController
 	Chat      *ChatController
 	Settings  *SettingsController
@@ -85,7 +87,7 @@ func NewRouter(c Controllers, dist fs.FS, auth *service.AuthStore, openapi *serv
 	   method 直接 404、中间件不跑，预检必须显式挂通配路由应答。 */
 	r.OPTIONS("/api/open/*path", corsOpen())
 
-	open := r.Group("/api/open", corsOpen(), openGuard(auth, openapi))
+	open := r.Group("/api/open", corsOpen(), openGuard(openapi))
 	{
 		open.POST("/model/call", c.Settings.CallModel) // 直调大模型
 		open.POST("/mcp/call", c.Mcp.Call)             // 调 MCP 工具
@@ -113,11 +115,11 @@ func NewRouter(c Controllers, dist fs.FS, auth *service.AuthStore, openapi *serv
 		api.POST("/app/restart", c.App.Restart)
 		api.POST("/app/format", c.App.Format) // 格式化：清空全部配置/会话/数据并重建（不可恢复）
 
-		/* 凭证管理（安全页） */
-		api.GET("/security/openapi-tokens", c.Auth.OpenapiTokens)
-		api.POST("/security/openapi-tokens", c.Auth.CreateOpenapiToken)
-		api.DELETE("/security/openapi-tokens/:id", c.Auth.RevokeOpenapiToken)
-		api.GET("/security/openapi-audit", c.Auth.OpenapiAudit)
+		/* OpenAPI 令牌管理（安全页，属于用户会话面） */
+		api.GET("/security/openapi-tokens", c.Openapi.Tokens)
+		api.POST("/security/openapi-tokens", c.Openapi.Create)
+		api.DELETE("/security/openapi-tokens/:id", c.Openapi.Revoke)
+		api.GET("/security/openapi-audit", c.Openapi.Audit)
 
 		api.GET("/bootstrap", c.Session.Bootstrap)
 		api.GET("/status", c.Session.Status)
@@ -141,6 +143,12 @@ func NewRouter(c Controllers, dist fs.FS, auth *service.AuthStore, openapi *serv
 		api.GET("/media", c.Media.ConfigGET)      // 多媒体生成模型配置（多媒体页数据源）
 		api.POST("/media", c.Media.ConfigPUT)     // 保存并重建 agent（busy 拒绝）
 		api.GET("/media/quota", c.Media.QuotaGET) // 三类生成任务当日用量/限额（工作台配额条）
+		/* 多媒体调用与任务：界面走会话面；外部脚本走 /api/open/* 的同一 handler */
+		api.POST("/media/image/call", c.Media.ImageCall)
+		api.POST("/media/audio/call", c.Media.AudioCall)
+		api.POST("/media/video/call", c.Media.VideoCall)
+		api.GET("/media/jobs", c.Media.JobsGET)
+		api.GET("/media/jobs/:id", c.Media.JobGET)
 		api.GET("/security", c.Settings.GetSecurity)
 		api.POST("/security", c.Settings.UpdateSecurity)
 		api.GET("/memory/config", c.Settings.GetMemoryConfig)
@@ -167,11 +175,15 @@ func NewRouter(c Controllers, dist fs.FS, auth *service.AuthStore, openapi *serv
 		api.POST("/topics/compact", c.Topics.Compact)       // 归档换代：活动会话总结归档开新篇
 
 		api.GET("/mcp", c.Mcp.List)
+		api.POST("/mcp/call", c.Mcp.Call) // 界面调 MCP（外部脚本走 /api/open/mcp/call）
 		api.POST("/mcp/server", c.Mcp.SaveServer)
 		api.DELETE("/mcp/server/:name", c.Mcp.DeleteServer)
 		api.POST("/mcp/connect", c.Mcp.Connect)
 		api.POST("/mcp/disconnect", c.Mcp.Disconnect)
 		api.POST("/mcp/oauth/probe", c.Mcp.OAuthProbe)
+		api.POST("/mcp/oauth/start", c.Mcp.OAuthStart)   // 界面发起授权；open 面同一 handler
+		api.GET("/mcp/oauth/status", c.Mcp.OAuthStatus)  // 界面轮询授权状态
+		api.POST("/mcp/oauth/cancel", c.Mcp.OAuthCancel) // 界面取消授权
 		api.POST("/mcp/oauth/logout", c.Mcp.OAuthLogout)
 
 		api.GET("/apps", c.Apps.List)
@@ -229,16 +241,15 @@ func NewRouter(c Controllers, dist fs.FS, auth *service.AuthStore, openapi *serv
 }
 
 /*
-corsOpen 放行 OpenAPI 面跨源：file:// 页面与外部脚本直调 core。鉴权只认
-令牌头，不放开凭证（ACAO * 与 cookie 凭证互斥；同源页面的 cookie 不受
-跨源配置影响）。
+corsOpen 放行 OpenAPI 面跨源：file:// 页面与外部脚本直调 core。只认
+EzHarnessOpenToken，不涉及任何会话凭证或 cookie。
 */
 func corsOpen() gin.HandlerFunc {
 	return func(g *gin.Context) {
 		h := g.Writer.Header()
 		h.Set("Access-Control-Allow-Origin", "*")
 		h.Set("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
-		h.Set("Access-Control-Allow-Headers", "Content-Type, "+openapiTokenHeader+", "+sessionTokenHeader)
+		h.Set("Access-Control-Allow-Headers", "Content-Type, "+openapiTokenHeader)
 		h.Set("Access-Control-Max-Age", "86400")
 		if g.Request.Method == http.MethodOptions {
 			g.AbortWithStatus(http.StatusNoContent)

@@ -1,7 +1,8 @@
 /* 会话令牌：REST/SSE 走 EzHarnessToken 请求头（fetch 补丁统一注入），WebSocket
    走子协议 ["agent-auth", token]，浏览器自动请求（img/video/PDF）走登录时下发
    的 HttpOnly cookie。令牌持久（core 重启不换），存 localStorage 跨标签页共享。
-   当前阶段三端都用默认密码静默登录，不向用户展示登录界面。 */
+   当前阶段三端都用默认密码静默登录，不向用户展示登录界面。OpenAPI 面与
+   会话认证完全分开，不在这里补任何头。 */
 
 const DEFAULT_PASSWORD = 'ezharness'
 
@@ -18,19 +19,24 @@ function installFetchPatch(): void {
     } catch {
       return orig(input, init)
     }
-    /* 只给本机 API 补令牌：data:/跨域请求不塞自定义头（会触发无谓的 CORS 预检） */
-    if (!token || u.origin !== location.origin || !u.pathname.startsWith('/api/')) return orig(input, init)
+    /* 只给本机会话面补令牌：OpenAPI 面只认自己的 EzHarnessOpenToken；
+       data:/跨域请求不塞自定义头（会触发无谓的 CORS 预检） */
+    if (!token || u.origin !== location.origin || !u.pathname.startsWith('/api/') || u.pathname.startsWith('/api/open/')) {
+      return orig(input, init)
+    }
     const headers = new Headers(init?.headers)
     headers.set('EzHarnessToken', token)
-    return orig(input, { ...init, headers }).then((res) => {
-      /* 会话凭证失效（被吊销/格式化）：广播跳登录。auth 端点自身的 401 是
-         密码错误，open 面 401 是令牌问题，都不算会话失效 */
+    return orig(input, { ...init, headers }).then(async (res) => {
+      /* 会话凭证失效（被吊销/格式化）：广播重登。auth 端点自身的 401 是
+         密码错误，open 面 401 是令牌问题；MCP 的 401 + needs_auth 是 OAuth
+         授权问题——都不是会话失效 */
       if (
         res.status === 401 &&
         !u.pathname.startsWith('/api/auth/') &&
         !u.pathname.startsWith('/api/open/')
       ) {
-        window.dispatchEvent(new CustomEvent('ez-auth-expired'))
+        const body = (await res.clone().json().catch(() => null)) as { needs_auth?: boolean } | null
+        if (!body?.needs_auth) window.dispatchEvent(new CustomEvent('ez-auth-expired'))
       }
       return res
     })

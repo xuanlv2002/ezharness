@@ -70,7 +70,7 @@ Download `ezharness` and `ezharness-core` (`.exe` on Windows) into the same fold
 
 Run `ezharness-core.exe` directly and open `http://127.0.0.1:<port>` in a browser — same page as the desktop app. Browser tools fall back to a headless local Chrome/Edge when the desktop shell is not around.
 
-All three clients sign in silently with the default password `ezharness` — there is no login page; tokens persist and are renewed automatically. At startup the core also provides a default OpenAPI token named "默认" so scripts, terminals and quick apps work out of the box.
+All three clients sign in silently with the default password `ezharness` — there is no login page; tokens persist and are renewed automatically. At startup the core also provides a default OpenAPI token named "默认". OpenAPI is fully independent of login: scripts and quick apps pass that token explicitly; the core never injects it into the environment.
 
 ## Up and running in 30 seconds
 
