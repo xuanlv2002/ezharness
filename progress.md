@@ -255,3 +255,16 @@ desktop 三个 JS `node --check` ✓。临时端口冒烟：init/status 404、�
 带 OpenAPI 令牌 200，会话面 `/api/media/jobs`、`/api/mcp/call` 正常；进程
 env 无 `EZHARNESS_OPENAPI_TOKEN`；前端 build ✓；headless 安全页正常显示
 OpenAPI 令牌与登录会话、无控制台错误 ✓。
+
+## 修复 · dev.sh 的 core 生命周期 — 已完成
+
+- **原因**：core 由桌面壳 detached 拉起（三端退出都不杀，设计如此），dev.sh
+  也不管理它。旧 core 占着 5260 时端口选择递增到 5261，但桌面壳会按旧
+  `server.json` 附着 5260 的旧实例，导致重新构建的 core/前端根本不生效。
+- **改法**：dev.sh 构建后先 `ezharness stop`（`EZHARNESS_ROOT=release/dev`，
+  只动 dev 根），再做端口选择并写配置；`trap ... EXIT` 在脚本退出（含
+  Ctrl+C、关闭终端）时停掉 core。`--no-build` 也因此成为真正的快速重启。
+- **未改**：桌面壳仍按“core 常驻”设计 detached 启动，正式使用退出 GUI 不杀 core。
+
+验证：用假 npm 拉起 core 后退出，dev.sh 的 EXIT trap 停掉 core 并移除
+`server.json`；`bash -n` ✓；重启后默认密码登录 200 ✓。

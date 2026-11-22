@@ -2,6 +2,7 @@
 # dev: 调试脚本（macOS / Linux 版，对应 dev.bat）
 # 链路：frontend build -> 复制 dist 到 core/web/dist -> go build（release/dev/）-> npm run start
 # release/dev 是本地调试目录：构建产物与运行时数据都在这里
+# dev core 由本脚本管理：启动前停掉上一轮实例，脚本退出时一并停止
 #
 # 用法：
 #   script/dev.sh              自动选端口（5260 被占用则递增）
@@ -39,17 +40,16 @@ fi
 command -v go >/dev/null 2>&1 || { echo "[dev] 找不到 go，请先安装或加入 PATH" >&2; exit 1; }
 command -v npm >/dev/null 2>&1 || { echo "[dev] 找不到 npm，请先安装 Node.js" >&2; exit 1; }
 
-# 端口选择：显式指定优先；否则从 5260 起找第一个空闲端口，
-# 避免与已在运行的 ezharness 正式版（同样默认 5260）撞车
-if [ -z "$PORT" ]; then
-  PORT=5260
-  while lsof -nP -iTCP:"$PORT" -sTCP:LISTEN >/dev/null 2>&1; do
-    PORT=$((PORT + 1))
-  done
-fi
-
 DEV_DIR="$ROOT/release/dev"
 CORE_EXE="$DEV_DIR/ezharness-core.exe"   # 内核按该文件名查找 core，macOS 下沿用
+
+# 只停本轮 dev 根的 core：旧进程占着端口时，桌面壳会按 server.json 附着旧实例，
+# 本轮构建就不会生效；--no-build 也靠这一步做到重启
+stop_dev_core() {
+  if [ -x "$DEV_DIR/ezharness.exe" ]; then
+    EZHARNESS_ROOT="$DEV_DIR" "$DEV_DIR/ezharness.exe" stop >/dev/null 2>&1 || true
+  fi
+}
 
 if [ "$DO_BUILD" = 1 ]; then
   # 版本覆盖：临时改 core/frontend/package.json 让 Vite 把指定版本打进产物，
@@ -85,6 +85,17 @@ fi
 [ -x "$CORE_EXE" ] || { echo "[dev] core 不存在: ${CORE_EXE}（去掉 --no-build 重新构建）" >&2; exit 1; }
 chmod +x "$CORE_EXE"
 
+stop_dev_core
+
+# 端口选择：显式指定优先；否则从 5260 起找第一个空闲端口，
+# 避免与已在运行的 ezharness 正式版（同样默认 5260）撞车
+if [ -z "$PORT" ]; then
+  PORT=5260
+  while lsof -nP -iTCP:"$PORT" -sTCP:LISTEN >/dev/null 2>&1; do
+    PORT=$((PORT + 1))
+  done
+fi
+
 # 应用根配置：端口与数据目录。data 控制在 release/dev 下，与正式版数据隔离
 mkdir -p "$DEV_DIR/data"
 cat > "$DEV_DIR/ezharness.json" <<EOF
@@ -101,5 +112,6 @@ if [ ! -d desktop/node_modules ]; then
 fi
 
 echo "[dev] starting desktop..."
+trap stop_dev_core EXIT
 cd desktop
 npm run start
