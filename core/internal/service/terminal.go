@@ -113,14 +113,15 @@ type TermSession struct {
 	Desc   string
 	Origin string
 
-	mu      sync.Mutex
-	pty     pty.Pty
-	cmd     *pty.Cmd
-	ring    *ringBuffer   // 原始字节(WS 重连 hello 回放用)
-	screen  *termScreen   // 按终端语义重放的屏幕(AI 的 send/read 用)
-	lastOut time.Time     // 最近一次输出的时刻(send 的静默判定)
-	condCh  chan struct{} // 有输出即 close 广播(读泵唤醒等待者)
-	exited  bool
+	mu        sync.Mutex
+	pty       pty.Pty
+	cmd       *pty.Cmd
+	ring      *ringBuffer   // 原始字节(WS 重连 hello 回放用)
+	screen    *termScreen   // 按终端语义重放的屏幕(AI 的 send/read 用)
+	lastOut   time.Time     // 最近一次输出的时刻(send 的静默判定)
+	gotOutput bool          // 是否收到过 shell 输出（Launch 等提示符用）
+	condCh    chan struct{} // 有输出即 close 广播(读泵唤醒等待者)
+	exited    bool
 }
 
 /* ── 服务 ── */
@@ -252,6 +253,7 @@ func (sess *TermSession) readPump(s *TerminalService) {
 			sess.ring.append(data)
 			sess.screen.write(data)
 			sess.lastOut = time.Now()
+			sess.gotOutput = true
 			close(sess.condCh) // 唤醒 send 的静默等待
 			sess.condCh = make(chan struct{})
 			sess.mu.Unlock()
@@ -354,6 +356,18 @@ func (s *TerminalService) Launch(dir, name, desc, origin, command string) (*Term
 	sess, ok := s.get(info.ID)
 	if !ok {
 		return nil, fmt.Errorf("终端 %q 创建后即失效", info.ID)
+	}
+	// 等 shell 打出提示符再写命令：抢在提示符前写，内核会先把命令回显到空屏，
+	// 随后 shell 再重绘提示符，首行就多出一条孤零零的命令。
+	deadline := time.Now().Add(1500 * time.Millisecond)
+	for time.Now().Before(deadline) {
+		sess.mu.Lock()
+		ready := sess.gotOutput
+		sess.mu.Unlock()
+		if ready {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 	s.writeAI(sess, termPayload(command))
 	return info, nil
