@@ -148,34 +148,35 @@ func frameRow(p []byte) (int, bool) {
 }
 
 type tuiModel struct {
-	cl        *client
-	addr      string
-	version   string
-	cwd       string
-	rootID    string
-	branches  []branch
-	lines     []line
-	histCount int // 历史消息行数：replay.sync 重建时截回这里
-	input     textinput.Model
-	streaming bool
-	liveText  string    // 当前这次模型调用的流式正文
-	liveThink string    // 当前这次模型调用的流式思考
-	running   []toolRun // 执行中的工具
-	group     []string  // 最近一组工具调用的名字（多个折叠成一行）
-	groupOpen bool
-	echoUser  string
-	frames    chan frame
-	stopSse   func()
-	width     int
-	height    int
-	err       string
-	pending   []decision
-	picker    *picker
-	status    *statusView
-	sugSel    int                // 斜杠提示当前选中项
-	askSel    int                // 提问选项当前选中项
-	cursor    *cursorWriter      // 真实光标定位（输入法合成位置）
-	mcpStop   context.CancelFunc // 取消进行中的 MCP 授权轮询
+	cl           *client
+	addr         string
+	version      string
+	cwd          string
+	rootID       string
+	branches     []branch
+	lines        []line
+	histCount    int // 历史消息行数：replay.sync 重建时截回这里
+	input        textinput.Model
+	streaming    bool
+	liveText     string    // 当前这次模型调用的流式正文
+	liveThink    string    // 当前这次模型调用的流式思考
+	running      []toolRun // 执行中的工具
+	group        []string  // 最近一组工具调用的名字（多个折叠成一行）
+	groupOpen    bool
+	echoUser     string
+	frames       chan frame
+	stopSse      func()
+	width        int
+	height       int
+	err          string
+	pending      []decision
+	picker       *picker
+	status       *statusView
+	sugSel       int                // 斜杠提示当前选中项
+	askSel       int                // 提问选项当前选中项
+	cursor       *cursorWriter      // 真实光标定位（输入法合成位置）
+	mcpStop      context.CancelFunc // 取消进行中的 MCP 授权轮询
+	interrupting bool               // 刚发新消息打断上一轮：忽略其取消错误
 }
 
 var (
@@ -431,11 +432,34 @@ func (m *tuiModel) applyFrame(f frame) {
 	case "turn_end":
 		var d turnEndData
 		_ = json.Unmarshal(f.Data, &d)
+		if m.interrupting {
+			// 用户主动发新消息打断了上一轮：旧轮的 context canceled 不是错误
+			m.interrupting = false
+			m.resetTurn()
+			m.echoUser = ""
+			m.streaming = true // 新消息已在路上，等它的 loop_start
+			return
+		}
 		m.streaming = false
 		m.resetTurn()
+		m.stopMcp()
+		m.pending = nil // 轮结束：没答完的请求已随轮作废，别留着挡住输入
+		m.askSel = 0
 		m.echoUser = ""
 		if d.Err != "" {
 			m.lines = append(m.lines, line{kind: "err", text: d.Err})
+		}
+	case "decision.resolved":
+		// 别的客户端先答了：撤掉本端的待办，避免过期提示挡输入
+		var d struct {
+			ID string `json:"id"`
+		}
+		if json.Unmarshal(f.Data, &d) == nil && d.ID != "" {
+			if len(m.pending) > 0 && m.pending[0].id == d.ID && m.pending[0].kind == "mcp" {
+				m.stopMcp()
+			}
+			m.pending = slices.DeleteFunc(m.pending, func(x decision) bool { return x.id == d.ID })
+			m.askSel = 0
 		}
 	case "approve.request", "askuser.request", "plan.request":
 		m.addDecision(f.Type, f.Data)
@@ -1017,11 +1041,13 @@ func (m *tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if len(m.pending) > 0 && msg.Type == tea.KeyRunes {
 			d := m.pending[0]
-			switch string(msg.Runes) {
+			handled := false
+			switch strings.ToLower(string(msg.Runes)) {
 			case "y":
 				switch d.kind {
 				case "approve":
 					m.decideApprove(true)
+					handled = true
 				case "mcp":
 					if !d.busy {
 						ctx, cancel := context.WithCancel(context.Background())
@@ -1034,6 +1060,7 @@ func (m *tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				switch d.kind {
 				case "approve":
 					m.decideApprove(false)
+					handled = true
 				case "mcp":
 					if d.busy {
 						m.stopMcp() // 轮询会回来按「已取消」结算
@@ -1043,7 +1070,17 @@ func (m *tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						_ = m.cl.decideMcpAuth(m.rootID, d.id, false, "已取消")
 						m.lines = append(m.lines, line{kind: "info", text: "已取消 MCP 授权"})
 					}
+					handled = true
 				}
+			}
+			if handled {
+				return m, nil
+			}
+		}
+		if len(m.pending) > 0 {
+			switch m.pending[0].kind {
+			case "approve", "mcp":
+				return m, nil // 审批期间只认 y/n，避免误发消息打断本轮
 			}
 		}
 	case frame:
@@ -1064,6 +1101,12 @@ func (m *tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 /* submit 处理回车：斜杠命令 / 决策回答 / 发消息。 */
 func (m *tuiModel) submit() tea.Cmd {
+	if len(m.pending) > 0 {
+		switch m.pending[0].kind {
+		case "approve", "mcp":
+			return nil // 审批没答完，输入不发送
+		}
+	}
 	text := strings.TrimSpace(m.input.Value())
 	if text == "" {
 		if len(m.pending) > 0 {
@@ -1125,6 +1168,7 @@ func (m *tuiModel) submit() tea.Cmd {
 		m.input.SetValue("")
 		return nil
 	}
+	wasRunning := m.streaming
 	if err := m.cl.send(m.rootID, text, m.cwd); err != nil {
 		var ae *apiError
 		if errors.As(err, &ae) && ae.Status == http.StatusConflict {
@@ -1137,6 +1181,7 @@ func (m *tuiModel) submit() tea.Cmd {
 	m.lines = append(m.lines, line{kind: "user", text: text})
 	m.echoUser = text
 	m.streaming = true
+	m.interrupting = wasRunning // 旧轮被 core 主动终止，别把它的取消错误打出来
 	m.input.SetValue("")
 	return nil
 }
@@ -1232,24 +1277,49 @@ func (m *tuiModel) View() string {
 	return strings.Join(out, "\n")
 }
 
-/* inputRow 输入行：左边输入框，右边工作目录；顺手记下真实光标该停的列。 */
+/* inputRow 输入行：左边输入框，右边工作目录；审批时整行换成 y/n 操作。 */
 func (m *tuiModel) inputRow() string {
+	if len(m.pending) > 0 {
+		d := m.pending[0]
+		var prompt string
+		switch d.kind {
+		case "approve":
+			prompt = "y 允许 · n 拒绝"
+		case "mcp":
+			if d.busy {
+				prompt = "等待浏览器授权…（n 取消）"
+			} else {
+				prompt = "y 打开浏览器 · n 取消"
+			}
+		}
+		if prompt != "" {
+			if m.cursor != nil {
+				m.cursor.col.Store(0) // 不画输入框，真实光标留在行首
+			}
+			return m.withDir(askStyle.Render(" ❯ " + prompt))
+		}
+	}
 	row := " ❯ " + m.input.View()
 	if m.cursor != nil {
 		if i := strings.LastIndex(row, "\x1b[7m"); i >= 0 { // textinput 的反色光标
 			m.cursor.col.Store(int64(lipgloss.Width(row[:i]) + 1))
 		}
 	}
+	return m.withDir(row)
+}
+
+/* withDir 把工作目录贴到这一行右侧（放不下就不显示）。 */
+func (m *tuiModel) withDir(left string) string {
 	dir := m.dirLabel()
 	if dir == "" {
-		return row
+		return left
 	}
 	right := dimStyle.Render(dir)
-	pad := m.width - 1 - lipgloss.Width(row) - lipgloss.Width(right)
+	pad := m.width - 1 - lipgloss.Width(left) - lipgloss.Width(right)
 	if pad < 1 {
-		return row
+		return left
 	}
-	return row + strings.Repeat(" ", pad) + right
+	return left + strings.Repeat(" ", pad) + right
 }
 
 /* suggestions 输入 / 时的候选命令（按前缀过滤）。 */
@@ -1343,7 +1413,7 @@ func (m *tuiModel) statusHint(hasSug bool) string {
 func (m *tuiModel) pendingHint() string {
 	d := m.pending[0]
 	pos := ""
-	if len(m.pending) > 1 {
+	if len(m.pending) > 1 || d.kind == "approve" || d.kind == "mcp" {
 		pos = fmt.Sprintf(" %d/%d", 1, len(m.pending))
 	}
 	switch d.kind {
@@ -1352,7 +1422,7 @@ func (m *tuiModel) pendingHint() string {
 		if d.detail != "" {
 			head += " · " + oneLine(d.detail)
 		}
-		return head + "：y 允许 · n 拒绝"
+		return head
 	case "ask":
 		if len(d.options) > 0 {
 			if strings.TrimSpace(m.input.Value()) != "" {
@@ -1365,9 +1435,9 @@ func (m *tuiModel) pendingHint() string {
 		return "计划" + pos + "：Enter 确认 · 输入反馈后 Enter 提交"
 	case "mcp":
 		if d.busy {
-			return "等待浏览器授权：" + oneLine(d.name) + "（n 取消）"
+			return "等待浏览器授权" + pos + " · " + oneLine(d.name)
 		}
-		return "授权" + pos + " · " + oneLine(d.name) + "：y 打开浏览器 · n 取消"
+		return "授权" + pos + " · " + oneLine(d.name)
 	}
 	return ""
 }

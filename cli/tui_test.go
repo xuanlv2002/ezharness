@@ -131,7 +131,7 @@ func TestSlashHintsAndDirLine(t *testing.T) {
 	}
 }
 
-/* 审批不进时间线；底栏按顺序点名工具与参数，截断时保留动作。 */
+/* 审批不进时间线；底栏点名工具与队列位置，y/n 动作显示在输入行。 */
 func TestPendingApprovalHint(t *testing.T) {
 	m := &tuiModel{}
 	m.applyFrame(frame{Type: "approve.request", Data: json.RawMessage(`{"id":"a1","name":"write_file","args":{"path":"/tmp/a.ts"}}`)})
@@ -140,16 +140,16 @@ func TestPendingApprovalHint(t *testing.T) {
 		t.Fatalf("审批不该进时间线：%+v", m.lines)
 	}
 	hint := m.pendingHint()
-	for _, want := range []string{"1/2", "write_file", "/tmp/a.ts", "y 允许"} {
+	for _, want := range []string{"1/2", "write_file", "/tmp/a.ts"} {
 		if !strings.Contains(hint, want) {
 			t.Fatalf("提示缺 %q：%q", want, hint)
 		}
 	}
-	if got := fitHint(hint, 48); !strings.Contains(got, "y 允许") || !strings.Contains(got, "write_file") {
-		t.Fatalf("截断后丢了工具名或动作：%q", got)
+	if strings.Contains(hint, "y 允许") {
+		t.Fatalf("动作应在输入行而不是提示里：%q", hint)
 	}
-	if got := fitHint(hint, 24); !strings.Contains(got, "y 允许") {
-		t.Fatalf("极窄屏截断丢了动作：%q", got)
+	if row := m.inputRow(); !strings.Contains(row, "y 允许 · n 拒绝") {
+		t.Fatalf("输入行没有审批动作：%q", row)
 	}
 }
 
