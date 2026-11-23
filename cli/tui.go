@@ -86,7 +86,9 @@ var slashCommands = []slashCmd{
 	{"compact", "归档并开新话题"},
 	{"permissions", "审批档（无审批 / 跟随安全 / 全审批）"},
 	{"models", "切换模型"},
+	{"thinking", "思考强度"},
 	{"status", "会话状态"},
+	{"quit", "退出 tui"},
 	{"help", "命令帮助"},
 }
 
@@ -188,6 +190,8 @@ type tuiModel struct {
 	cursor       *cursorWriter      // 真实光标定位（输入法合成位置）
 	mcpStop      context.CancelFunc // 取消进行中的 MCP 授权轮询
 	interrupting bool               // 刚发新消息打断上一轮：忽略其取消错误
+	stopping     bool               // 已请求停止当前轮：等 turn_end 收尾、忽略取消错误
+	mouseOn      bool               // 鼠标捕获中（Ctrl+G 关掉以便终端原生选中复制）
 }
 
 var (
@@ -233,7 +237,7 @@ func cmdTUI(server string) {
 	m := &tuiModel{
 		cl: cl, addr: displayAddr(base), version: version, cwd: cwd,
 		rootID: b.SessionID, branches: b.Branches, input: in,
-		frames: make(chan frame, 256), status: b.Status, cursor: out,
+		frames: make(chan frame, 256), status: b.Status, cursor: out, mouseOn: true,
 		width: 80, height: 24, // 无窗口尺寸事件时的兜底（管道/pty 尺寸为 0）
 	}
 	m.applyWidth(m.width)
@@ -449,11 +453,14 @@ func (m *tuiModel) applyFrame(f frame) {
 		if m.interrupting {
 			// 用户主动发新消息打断了上一轮：旧轮的 context canceled 不是错误
 			m.interrupting = false
+			m.stopping = false
 			m.resetTurn()
 			m.echoUser = ""
 			m.streaming = true // 新消息已在路上，等它的 loop_start
 			return
 		}
+		stopped := m.stopping // 用户主动停止：取消错误不算失败
+		m.stopping = false
 		m.streaming = false
 		m.resetTurn()
 		m.stopMcp()
@@ -463,8 +470,11 @@ func (m *tuiModel) applyFrame(f frame) {
 		m.pending = nil // 轮结束：没答完的请求已随轮作废，别留着挡住输入
 		m.resetSel()
 		m.echoUser = ""
-		if d.Err != "" {
+		if d.Err != "" && !stopped {
 			m.lines = append(m.lines, line{kind: "err", text: d.Err})
+		}
+		if stopped {
+			m.lines = append(m.lines, line{kind: "info", text: "已停止"})
 		}
 	case "decision.resolved":
 		// 别的客户端先答了：撤掉本端的待办，避免过期提示挡输入
@@ -748,6 +758,43 @@ func (m *tuiModel) waitForFrame() tea.Cmd {
 	}
 }
 
+/* stopMsg 是停止当前轮的回执。 */
+type stopMsg struct{ err error }
+
+/* statusMsg 是 /api/status 的刷新结果（st=nil 拉取失败，沿用旧值）。 */
+type statusMsg struct{ st *statusView }
+
+func statusCmd(cl *client) tea.Cmd {
+	return func() tea.Msg {
+		st, err := cl.status()
+		if err != nil {
+			return statusMsg{}
+		}
+		return statusMsg{st: st}
+	}
+}
+
+/* stopTurn 停止当前轮（Ctrl+C / Esc）：取消本轮的 context，收尾交给 turn_end；空闲时按键无效果。 */
+func (m *tuiModel) stopTurn() tea.Cmd {
+	if !m.streaming || m.stopping {
+		return nil
+	}
+	m.stopping = true
+	cl, rootID := m.cl, m.rootID
+	return func() tea.Msg {
+		return stopMsg{err: cl.cancelTurn(rootID)}
+	}
+}
+
+/* toggleMouse 释放/恢复鼠标捕获：关掉后终端原生选中复制可用（滚轮改用 PgUp/PgDn）。 */
+func (m *tuiModel) toggleMouse() tea.Cmd {
+	m.mouseOn = !m.mouseOn
+	if m.mouseOn {
+		return func() tea.Msg { return tea.EnableMouseCellMotion() }
+	}
+	return func() tea.Msg { return tea.DisableMouse() }
+}
+
 /* ---- 决策回传 ---- */
 
 func (m *tuiModel) dropPending() decision {
@@ -925,10 +972,11 @@ func (m *tuiModel) runCommand(cmd string) tea.Cmd {
 	switch cmd {
 	case "help":
 		m.lines = append(m.lines,
-			line{kind: "info", text: "命令：/session 分支 · /new 新分支 · /compact 归档 · /permissions 审批档 · /models 模型 · /status 状态"},
+			line{kind: "info", text: "命令：/session 分支 · /new 新分支 · /compact 归档 · /permissions 审批档 · /models 模型 · /thinking 思考强度 · /status 状态 · /quit 退出"},
 			line{kind: "info", text: "审批/提问/计划/授权：↑↓ 选择 · Enter 确认；审批输入文字后 Enter 为拒绝理由"},
 			line{kind: "info", text: "粘贴/拖入文件路径变成 [IMAGE]/[FILE] 附件；空输入退格删除最后一个"},
-			line{kind: "info", text: "PgUp/PgDn 或滚轮翻阅历史；选中文本请按住 Shift 拖拽"},
+			line{kind: "info", text: "Ctrl+C/Esc 停止当前轮 · Shift+Tab 快速切思考强度 · Ctrl+G 释放鼠标（可选中复制）"},
+			line{kind: "info", text: "PgUp/PgDn 或滚轮翻阅历史"},
 		)
 	case "session":
 		m.openSessionPicker()
@@ -946,8 +994,12 @@ func (m *tuiModel) runCommand(cmd string) tea.Cmd {
 		m.openPermissionsPicker()
 	case "models":
 		m.openModelsPicker()
+	case "thinking":
+		m.openThinkingPicker()
 	case "status":
 		m.showStatus()
+	case "quit":
+		return tea.Quit
 	default:
 		m.lines = append(m.lines, line{kind: "err", text: "未知命令 /" + cmd + "，/help 查看"})
 	}
@@ -1026,11 +1078,62 @@ func (m *tuiModel) openModelsPicker() {
 	m.picker = p
 }
 
-/* applyPick 执行选择列表的当前项。 */
-func (m *tuiModel) applyPick() {
+/* effortLevels 思考档位（空 = 不控制，由 core 按模型默认）。 */
+var effortLevels = []pickItem{
+	{id: "", label: "默认（不控制）"},
+	{id: "none", label: "关"},
+	{id: "low", label: "低"},
+	{id: "medium", label: "中"},
+	{id: "high", label: "高"},
+	{id: "xhigh", label: "极高"},
+	{id: "max", label: "最大"},
+}
+
+func (m *tuiModel) openThinkingPicker() {
+	cur := ""
+	if m.status != nil {
+		cur = m.status.ReasoningEffort
+	}
+	p := &picker{kind: "thinking", title: "/thinking · 思考强度"}
+	for i, it := range effortLevels {
+		if it.id == cur {
+			p.sel = i
+		}
+		p.items = append(p.items, it)
+	}
+	m.picker = p
+}
+
+/* cycleEffort Shift+Tab 快速切档：按 effortLevels 顺序循环。 */
+func (m *tuiModel) cycleEffort() {
+	cur := ""
+	if m.status != nil {
+		cur = m.status.ReasoningEffort
+	}
+	idx := 0
+	for i, it := range effortLevels {
+		if it.id == cur {
+			idx = i
+			break
+		}
+	}
+	next := effortLevels[(idx+1)%len(effortLevels)]
+	out, err := m.cl.setPrefs(m.rootID, map[string]any{"reasoningEffort": next.id})
+	if err != nil {
+		m.lines = append(m.lines, line{kind: "err", text: "思考强度切换失败: " + err.Error()})
+		return
+	}
+	if m.status == nil {
+		m.status = &statusView{}
+	}
+	m.status.ReasoningEffort = out.ReasoningEffort
+}
+
+/* applyPick 执行选择列表的当前项；切分支后顺带刷新状态栏。 */
+func (m *tuiModel) applyPick() tea.Cmd {
 	p := m.picker
 	if p == nil || len(p.items) == 0 {
-		return
+		return nil
 	}
 	it := p.items[p.sel]
 	m.picker = nil
@@ -1041,31 +1144,45 @@ func (m *tuiModel) applyPick() {
 		m.resetSel()
 		if err := m.cl.activate(it.id); err != nil {
 			m.lines = append(m.lines, line{kind: "err", text: "切换分支失败: " + err.Error()})
-			return
+			return nil
 		}
 		m.rootID = it.id
 		m.loadHistory()
 		m.subscribe()
 		m.lines = append(m.lines, line{kind: "info", text: "已切换分支：" + it.label})
+		return statusCmd(m.cl)
 	case "permissions":
 		if _, err := m.cl.setPrefs(m.rootID, map[string]any{"approveMode": it.id}); err != nil {
 			m.lines = append(m.lines, line{kind: "err", text: "审批档保存失败: " + err.Error()})
-			return
+			return nil
 		}
 		if m.status != nil {
 			m.status.ApproveMode = it.id
 		}
 		m.lines = append(m.lines, line{kind: "info", text: "审批档：" + it.label})
 	case "models":
-		if _, err := m.cl.setPrefs(m.rootID, map[string]any{"model": it.id}); err != nil {
+		out, err := m.cl.setPrefs(m.rootID, map[string]any{"model": it.id})
+		if err != nil {
 			m.lines = append(m.lines, line{kind: "err", text: "模型切换失败: " + err.Error()})
-			return
+			return nil
 		}
 		if m.status != nil {
 			m.status.Model = it.id
+			m.status.ContextWindow = out.ContextWindow
 		}
 		m.lines = append(m.lines, line{kind: "info", text: "模型已切到：" + it.id})
+	case "thinking":
+		out, err := m.cl.setPrefs(m.rootID, map[string]any{"reasoningEffort": it.id})
+		if err != nil {
+			m.lines = append(m.lines, line{kind: "err", text: "思考强度保存失败: " + err.Error()})
+			return nil
+		}
+		if m.status != nil {
+			m.status.ReasoningEffort = out.ReasoningEffort
+		}
+		m.lines = append(m.lines, line{kind: "info", text: "思考强度：" + it.label})
 	}
+	return nil
 }
 
 /* showStatus 把会话状态写进时间线。 */
@@ -1079,7 +1196,7 @@ func (m *tuiModel) showStatus() {
 	m.lines = append(m.lines,
 		line{kind: "info", text: "地址 " + m.addr + " · 目录 " + m.cwd},
 		line{kind: "info", text: "分支 " + m.branchTitle() + " · " + st.RootID},
-		line{kind: "info", text: "模型 " + st.Model + " · 审批 " + approveLabel(st.ApproveMode)},
+		line{kind: "info", text: "模型 " + st.Model + " · 思考 " + effortLabel(st.ReasoningEffort) + " · 审批 " + approveLabel(st.ApproveMode)},
 		line{kind: "info", text: fmt.Sprintf("消息 %d 条 · 水位 %d/%d tokens", st.SessionMsgs, st.ContextTokens, st.ContextWindow)},
 	)
 }
@@ -1092,6 +1209,16 @@ func approveLabel(mode string) string {
 		return "全审批"
 	}
 	return "跟随安全配置"
+}
+
+/* effortLabel 思考档位的中文短名（状态栏/状态卡共用）。 */
+func effortLabel(e string) string {
+	for _, it := range effortLevels {
+		if it.id == e {
+			return it.label
+		}
+	}
+	return e
 }
 
 func (m *tuiModel) branchTitle() string {
@@ -1127,6 +1254,17 @@ func (m *tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case mcpAuthMsg:
 		m.finishMcpAuth(msg)
 		return m, nil
+	case stopMsg:
+		if msg.err != nil {
+			m.stopping = false
+			m.lines = append(m.lines, line{kind: "err", text: "停止失败: " + msg.err.Error()})
+		}
+		return m, nil
+	case statusMsg:
+		if msg.st != nil {
+			m.status = msg.st
+		}
+		return m, nil
 	case tea.KeyMsg:
 		switch msg.Type {
 		case tea.KeyUp:
@@ -1140,12 +1278,10 @@ func (m *tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if m.picker != nil {
 			switch msg.Type {
-			case tea.KeyCtrlC:
-				return m, tea.Quit
-			case tea.KeyEsc:
+			case tea.KeyCtrlC, tea.KeyEsc:
 				m.picker = nil
 			case tea.KeyEnter:
-				m.applyPick()
+				return m, m.applyPick()
 			}
 			return m, nil
 		}
@@ -1156,9 +1292,15 @@ func (m *tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.fillSuggestion()
 			return m, nil
 		}
+		if msg.Type == tea.KeyShiftTab && len(m.pending) == 0 && len(m.suggestions()) == 0 {
+			m.cycleEffort()
+			return m, nil
+		}
 		switch msg.Type {
 		case tea.KeyCtrlC, tea.KeyEsc:
-			return m, tea.Quit
+			return m, m.stopTurn()
+		case tea.KeyCtrlG:
+			return m, m.toggleMouse()
 		case tea.KeyEnter:
 			return m, m.submit()
 		case tea.KeyPgUp:
@@ -1189,6 +1331,10 @@ func (m *tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case frame:
 		m.applyFrame(msg)
+		if msg.Type == "turn_end" || msg.Type == "model_end" {
+			// 上下文水位随调用增长：轮内每个模型调用落定后刷新状态栏
+			return m, tea.Batch(m.waitForFrame(), statusCmd(m.cl))
+		}
 		return m, m.waitForFrame()
 	}
 	switch msg := msg.(type) {
@@ -1325,25 +1471,107 @@ func (m *tuiModel) submit() tea.Cmd {
 /* ---- 渲染 ---- */
 
 /*
-applyWidth 按终端宽度排输入区：右侧留出「工作中 目录」；空输入时
-textinput 的光标块比 Width 多一格，末尾再留一列不写——写满最后一格
-会触发终端自动换行，部分终端（conhost）会因此滚屏。
+applyWidth 按终端宽度排输入区：空输入时 textinput 的光标块比 Width
+多一格，末尾再留一列不写——写满最后一格会触发终端自动换行，部分
+终端（conhost）会因此滚屏。
 */
 func (m *tuiModel) applyWidth(w int) {
 	m.width = w
-	m.input.Width = w - 6 - lipgloss.Width(m.dirLabel())
+	m.input.Width = w - 6
 	if m.input.Width < 10 {
 		m.input.Width = 10
 	}
 }
 
-/* dirLabel 输入行右侧的工作目录（窄屏截短，太窄就不显示）。 */
-func (m *tuiModel) dirLabel() string {
-	max := m.width / 2
-	if max < 16 {
-		return ""
+/*
+statusRow 输入框下的状态栏：模型 / 思考 / 审批 / 上下文 / 目录，
+前面按需带上工作中/停止中，鼠标释放时提示如何恢复。目录放最后，
+宽度不够时从路径头部截断——保留末尾（项目目录名）更有用。
+*/
+func (m *tuiModel) statusRow() string {
+	model, effort, approve, ctx := "—", "默认", "跟随", "—"
+	if m.status != nil {
+		if m.status.Model != "" {
+			model = m.status.Model
+		}
+		effort = effortLabel(m.status.ReasoningEffort)
+		approve = approveShort(m.status.ApproveMode)
+		if m.status.ContextWindow > 0 {
+			ctx = fmtTokens(m.status.ContextTokens) + "/" + fmtTokens(m.status.ContextWindow)
+		}
 	}
-	return runewidth.Truncate(oneLine("工作中 "+m.cwd), max, "…")
+	segs := []string{
+		field("模型", model), field("思考", effort), field("审批", approve), field("上下文", ctx),
+	}
+	switch {
+	case m.stopping:
+		segs = append([]string{askStyle.Render("停止中…")}, segs...)
+	case m.streaming:
+		segs = append([]string{selStyle.Render("工作中")}, segs...)
+	}
+	if !m.mouseOn {
+		segs = append(segs, askStyle.Render("鼠标已释放 · Ctrl+G 恢复"))
+	}
+	row := " " + strings.Join(segs, dimStyle.Render(" · "))
+	budget := m.width - 2
+	if budget < 1 {
+		return row
+	}
+	lead := dimStyle.Render(" · ") + dimStyle.Render("目录 ")
+	dirW := budget - ansi.StringWidth(row) - ansi.StringWidth(lead)
+	if dirW < 6 {
+		dirW = 6
+	}
+	row += lead + tailTruncate(m.cwd, dirW)
+	if ansi.StringWidth(row) > budget {
+		row = ansi.Truncate(row, budget, "…")
+	}
+	return row
+}
+
+/* tailTruncate 宽度不够时保留字符串末尾、头部换成省略号。 */
+func tailTruncate(s string, w int) string {
+	if runewidth.StringWidth(s) <= w {
+		return s
+	}
+	rs := []rune(s)
+	cur, i := 0, len(rs)
+	for i > 0 {
+		rw := runewidth.RuneWidth(rs[i-1])
+		if cur+rw > w-1 { // 留一格给省略号
+			break
+		}
+		cur += rw
+		i--
+	}
+	return "…" + string(rs[i:])
+}
+
+/* field 状态栏的一段：灰标签 + 原色取值。 */
+func field(label, value string) string {
+	return dimStyle.Render(label+" ") + value
+}
+
+/* approveShort 审批档短名（状态栏窄，不用长文案）。 */
+func approveShort(mode string) string {
+	switch mode {
+	case "off":
+		return "无审批"
+	case "strict":
+		return "全审批"
+	}
+	return "跟随"
+}
+
+/* fmtTokens token 数的紧凑展示（12.3k / 1.2M）。 */
+func fmtTokens(n int) string {
+	switch {
+	case n >= 1_000_000:
+		return fmt.Sprintf("%.1fM", float64(n)/1_000_000)
+	case n >= 1000:
+		return fmt.Sprintf("%.1fk", float64(n)/1000)
+	}
+	return strconv.Itoa(n)
 }
 
 func (m *tuiModel) View() string {
@@ -1371,7 +1599,7 @@ func (m *tuiModel) View() string {
 	if len(m.attaches) > 0 {
 		attachRows = 1
 	}
-	bodyH := m.height - 3 - attachRows // 标题 / 提示 / 附件 / 输入
+	bodyH := m.height - 4 - attachRows // 标题 / 提示 / 附件 / 输入 / 状态栏
 	if bodyH < 1 {
 		bodyH = 1
 	}
@@ -1409,7 +1637,7 @@ func (m *tuiModel) View() string {
 	if len(m.attaches) > 0 {
 		out = append(out, m.attachRow())
 	}
-	out = append(out, m.inputRow())
+	out = append(out, m.inputRow(), m.statusRow())
 	/* 最后一道保险：任何一行都不许写满终端宽度，避免自动换行把整屏
 	   行序冲乱（markdown 的内边距、宽字符宽度差异都可能超一格）。 */
 	for i := range out {
@@ -1421,7 +1649,7 @@ func (m *tuiModel) View() string {
 	return strings.Join(out, "\n")
 }
 
-/* inputRow 输入行：左边输入框，右边工作目录；MCP 授权时整行换成操作提示。 */
+/* inputRow 输入行；MCP 授权时整行换成操作提示。 */
 func (m *tuiModel) inputRow() string {
 	if len(m.pending) > 0 && m.pending[0].kind == "mcp" {
 		prompt := "↑↓ 选择 · Enter 确认"
@@ -1431,7 +1659,7 @@ func (m *tuiModel) inputRow() string {
 		if m.cursor != nil {
 			m.cursor.col.Store(0) // 不画输入框，真实光标留在行首
 		}
-		return m.withDir(askStyle.Render(" ❯ " + prompt))
+		return askStyle.Render(" ❯ " + prompt)
 	}
 	prefix := " ❯ "
 	if len(m.pending) > 0 {
@@ -1443,21 +1671,7 @@ func (m *tuiModel) inputRow() string {
 			m.cursor.col.Store(int64(lipgloss.Width(row[:i]) + 1))
 		}
 	}
-	return m.withDir(row)
-}
-
-/* withDir 把工作目录贴到这一行右侧（放不下就不显示）。 */
-func (m *tuiModel) withDir(left string) string {
-	dir := m.dirLabel()
-	if dir == "" {
-		return left
-	}
-	right := dimStyle.Render(dir)
-	pad := m.width - 1 - lipgloss.Width(left) - lipgloss.Width(right)
-	if pad < 1 {
-		return left
-	}
-	return left + strings.Repeat(" ", pad) + right
+	return row
 }
 
 /* suggestions 输入 / 时的候选命令（按前缀过滤）；待办回答期间不出命令。 */
@@ -1522,6 +1736,8 @@ func (m *tuiModel) statusHint(hasSug bool) string {
 	switch {
 	case m.picker != nil:
 		return "↑↓ 选择 · Enter 确认 · Esc 取消"
+	case m.stopping:
+		return "正在停止…"
 	case len(m.pending) > 0:
 		return m.pendingHint()
 	case m.streaming:
