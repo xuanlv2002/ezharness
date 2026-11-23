@@ -49,9 +49,9 @@ var (
 )
 
 /*
-SetRoot 显式指定应用根（portable 绿色版定位：exe 自解压运行时把配置与
-数据锚定到 exe 所在目录，而非临时解压目录）。必须在首次 Root() 前
-调用（main 解析启动参数后立即设置）。
+SetRoot 显式指定应用根（desktop 与 CLI 以 --root 传入：安装版指向用户
+数据目录，开发态指向 release/dev）。必须在首次 Root() 前调用（main
+解析启动参数后立即设置）。
 */
 func SetRoot(dir string) {
 	if dir = strings.TrimSpace(dir); dir != "" {
