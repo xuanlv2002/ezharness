@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/charmbracelet/bubbles/textinput"
+	"github.com/charmbracelet/bubbles/textarea"
 	tea "github.com/charmbracelet/bubbletea"
 )
 
@@ -107,7 +107,7 @@ func TestApplyFrameStreaming(t *testing.T) {
 
 /* 输入 / 出命令提示；状态栏显示模型/思考/审批/上下文/目录。 */
 func TestSlashHintsAndStatusRow(t *testing.T) {
-	m := &tuiModel{cwd: "/tmp/ez-work", height: 24, input: textinput.New()}
+	m := &tuiModel{cwd: "/tmp/ez-work", height: 24, input: textarea.New()}
 	m.input.Prompt = ""
 	m.input.Focus()
 	m.applyWidth(120)
@@ -133,8 +133,8 @@ func TestSlashHintsAndStatusRow(t *testing.T) {
 			t.Fatalf("状态栏缺 %q：%q", want, row)
 		}
 	}
-	if strings.Contains(m.inputRow(), "/tmp/ez-work") {
-		t.Fatalf("目录不该再贴在输入行：%q", m.inputRow())
+	if strings.Contains(strings.Join(m.inputRows(), "\n"), "/tmp/ez-work") {
+		t.Fatalf("目录不该再贴在输入行：%q", m.inputRows())
 	}
 }
 

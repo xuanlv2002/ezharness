@@ -21,7 +21,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/charmbracelet/bubbles/textinput"
+	"github.com/charmbracelet/bubbles/cursor"
+	"github.com/charmbracelet/bubbles/textarea"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
@@ -99,8 +100,9 @@ cursorWriter 把真实终端光标挪到输入框光标处：bubbletea v1 每帧
 	\x1b[<行>;H 收尾，这里在帧后补一个同行的列定位。
 */
 type cursorWriter struct {
-	out io.Writer
-	col atomic.Int64 // 1-based 列；0 = 不移动
+	out     io.Writer
+	col     atomic.Int64 // 1-based 列；0 = 不移动
+	rowBack atomic.Int64 // 输入光标所在行距帧末行（状态栏）的行数
 }
 
 /*
@@ -130,6 +132,10 @@ func (w *cursorWriter) Write(p []byte) (int, error) {
 	}
 	row, ok := frameRow(p)
 	if !ok {
+		return n, nil
+	}
+	row -= int(w.rowBack.Load())
+	if row < 1 {
 		return n, nil
 	}
 	fmt.Fprintf(w.out, "\x1b[%d;%dH", row, col)
@@ -166,7 +172,7 @@ type tuiModel struct {
 	branches     []branch
 	lines        []line
 	histCount    int // 历史消息行数：replay.sync 重建时截回这里
-	input        textinput.Model
+	input        textarea.Model
 	streaming    bool
 	liveText     string    // 当前这次模型调用的流式正文
 	liveThink    string    // 当前这次模型调用的流式思考
@@ -191,8 +197,18 @@ type tuiModel struct {
 	mcpStop      context.CancelFunc // 取消进行中的 MCP 授权轮询
 	interrupting bool               // 刚发新消息打断上一轮：忽略其取消错误
 	stopping     bool               // 已请求停止当前轮：等 turn_end 收尾、忽略取消错误
-	mouseOn      bool               // 鼠标捕获中（Ctrl+G 关掉以便终端原生选中复制）
+	lastBatch    time.Time          // 最近一次批量输入（粘贴/IME 提交）的时刻
+	lastInput    time.Time          // 最近一次文本输入（含逐字节到达的粘贴）的时刻
+	iter         int                // 本轮已进行的迭代数（SSE 帧 iter 实时更新）
 }
+
+const (
+	// pasteBurst 粘入一批文字后紧跟着的 Enter 仍算换行（终端没做括号粘贴时救急）。
+	pasteBurst = 120 * time.Millisecond
+	// pasteKeyGap 逐字符到达的粘贴（cmd/conhost 一个键一条消息）：紧跟着的 Enter 也算换行。
+	// 人手动敲完再按 Enter 的下限远大于此值。
+	pasteKeyGap = 40 * time.Millisecond
+)
 
 var (
 	titleStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("12"))
@@ -228,16 +244,22 @@ func cmdTUI(server string) {
 	}
 
 	cwd, _ := os.Getwd()
-	in := textinput.New()
-	in.Prompt = "" // 输入行的 ❯ 由 View 统一画，避免 "❯ > " 双前缀
-	in.Focus()
+	in := textarea.New()
+	in.Prompt = "" // 输入行的 ❯ 由 View 统一画，避免双前缀
+	in.Placeholder = "输入消息，/ 开头是命令"
+	in.ShowLineNumbers = false
 	in.CharLimit = 8000
+	in.MaxHeight = 6
+	in.SetHeight(1)
+	in.Focus()
+	// 静态反色光标：输入法定位靠帧内反色块，闪烁会让定位时有时无
+	in.Cursor.SetMode(cursor.CursorStatic)
 
 	out := &cursorWriter{out: os.Stdout}
 	m := &tuiModel{
 		cl: cl, addr: displayAddr(base), version: version, cwd: cwd,
 		rootID: b.SessionID, branches: b.Branches, input: in,
-		frames: make(chan frame, 256), status: b.Status, cursor: out, mouseOn: true,
+		frames: make(chan frame, 256), status: b.Status, cursor: out,
 		width: 80, height: 24, // 无窗口尺寸事件时的兜底（管道/pty 尺寸为 0）
 	}
 	m.applyWidth(m.width)
@@ -245,7 +267,8 @@ func cmdTUI(server string) {
 
 	/* 进入前净屏（含滚动区）：部分终端切备用屏不擦已滚出的旧内容 */
 	fmt.Print("\x1b[2J\x1b[3J\x1b[H")
-	p := tea.NewProgram(m, tea.WithAltScreen(), tea.WithOutput(out), tea.WithMouseCellMotion())
+	/* 不开鼠标捕获：拖选/复制交给终端自己；翻历史用 PgUp/PgDn */
+	p := tea.NewProgram(m, tea.WithAltScreen(), tea.WithOutput(out))
 	final, err := p.Run()
 	if mm, ok := final.(*tuiModel); ok && mm.stopSse != nil {
 		mm.stopSse()
@@ -364,6 +387,9 @@ func (m *tuiModel) applyFrame(f frame) {
 	if f.ForkID != "" {
 		return // 后台分支的帧不进主时间线
 	}
+	if f.Iter > 0 {
+		m.iter = f.Iter // 本轮迭代数：底栏「思考中… · 第 N 轮」实时进度
+	}
 	switch f.Type {
 	case "sse.error":
 		var s string
@@ -376,6 +402,7 @@ func (m *tuiModel) applyFrame(f frame) {
 			TurnActive bool `json:"turnActive"`
 		}
 		_ = json.Unmarshal(f.Data, &d)
+		m.iter = 0
 		m.resetTurn()
 		m.echoUser = ""
 		m.err = ""
@@ -463,6 +490,7 @@ func (m *tuiModel) applyFrame(f frame) {
 		m.stopping = false
 		m.streaming = false
 		m.resetTurn()
+		m.iter = 0
 		m.stopMcp()
 		if len(m.pending) > 0 {
 			m.input.SetValue("") // 待办已随轮作废，草稿也别留成消息
@@ -470,12 +498,10 @@ func (m *tuiModel) applyFrame(f frame) {
 		m.pending = nil // 轮结束：没答完的请求已随轮作废，别留着挡住输入
 		m.resetSel()
 		m.echoUser = ""
-		if d.Err != "" && !stopped {
-			m.lines = append(m.lines, line{kind: "err", text: d.Err})
+		if stopped && (d.StopReason == "" || d.StopReason == "error") {
+			d.StopReason, d.Err = "cancelled", "" // 主动停止：core 报的取消错误没有信息量
 		}
-		if stopped {
-			m.lines = append(m.lines, line{kind: "info", text: "已停止"})
-		}
+		m.lines = append(m.lines, line{kind: "info", text: turnEndText(d)})
 	case "decision.resolved":
 		// 别的客户端先答了：撤掉本端的待办，避免过期提示挡输入
 		var d struct {
@@ -682,6 +708,12 @@ func (m *tuiModel) pasteAttach(raw string) bool {
 	return true
 }
 
+/* normalizePaste 粘贴文本的换行统一成 \n（终端可能给 \r\n）；顺带去掉其中的 \r。 */
+func normalizePaste(s string) string {
+	s = strings.ReplaceAll(s, "\r\n", "\n")
+	return strings.ReplaceAll(s, "\r", "\n")
+}
+
 /* filePathOf 解析终端粘贴/拖入的路径（可能带引号或反斜杠转义）。 */
 func filePathOf(raw string) (string, bool) {
 	unq := strings.Trim(raw, "\"'")
@@ -784,15 +816,6 @@ func (m *tuiModel) stopTurn() tea.Cmd {
 	return func() tea.Msg {
 		return stopMsg{err: cl.cancelTurn(rootID)}
 	}
-}
-
-/* toggleMouse 释放/恢复鼠标捕获：关掉后终端原生选中复制可用（滚轮改用 PgUp/PgDn）。 */
-func (m *tuiModel) toggleMouse() tea.Cmd {
-	m.mouseOn = !m.mouseOn
-	if m.mouseOn {
-		return func() tea.Msg { return tea.EnableMouseCellMotion() }
-	}
-	return func() tea.Msg { return tea.DisableMouse() }
 }
 
 /* ---- 决策回传 ---- */
@@ -975,8 +998,8 @@ func (m *tuiModel) runCommand(cmd string) tea.Cmd {
 			line{kind: "info", text: "命令：/session 分支 · /new 新分支 · /compact 归档 · /permissions 审批档 · /models 模型 · /thinking 思考强度 · /status 状态 · /quit 退出"},
 			line{kind: "info", text: "审批/提问/计划/授权：↑↓ 选择 · Enter 确认；审批输入文字后 Enter 为拒绝理由"},
 			line{kind: "info", text: "粘贴/拖入文件路径变成 [IMAGE]/[FILE] 附件；空输入退格删除最后一个"},
-			line{kind: "info", text: "Ctrl+C/Esc 停止当前轮 · Shift+Tab 快速切思考强度 · Ctrl+G 释放鼠标（可选中复制）"},
-			line{kind: "info", text: "PgUp/PgDn 或滚轮翻阅历史"},
+			line{kind: "info", text: "Enter 发送 · 行尾 \\ + Enter 换行 · 粘贴多行按文本插入"},
+			line{kind: "info", text: "Ctrl+C/Esc 停止当前轮 · Shift+Tab 切思考强度 · PgUp/PgDn 翻历史 · 拖选即复制"},
 		)
 	case "session":
 		m.openSessionPicker()
@@ -1266,6 +1289,13 @@ func (m *tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case tea.KeyMsg:
+		now := time.Now()
+		if msg.Paste || len(msg.Runes) > 1 {
+			m.lastBatch = now
+		}
+		if msg.Type == tea.KeyRunes || msg.Type == tea.KeySpace || msg.Paste {
+			m.lastInput = now
+		}
 		switch msg.Type {
 		case tea.KeyUp:
 			if m.moveSel(-1) {
@@ -1285,8 +1315,13 @@ func (m *tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		}
-		if (msg.Paste || len(msg.Runes) > 1) && len(m.pending) == 0 && m.pasteAttach(string(msg.Runes)) {
+		if (msg.Paste || len(msg.Runes) > 1) && len(m.pending) == 0 && m.pasteAttach(normalizePaste(string(msg.Runes))) {
 			return m, nil // 粘贴的是本地文件路径：变成附件，不写进输入框
+		}
+		if msg.Paste {
+			// 括号粘贴整段插入；换行统一成 \n（textarea 的清洗会把 \r\n 拆成两个换行）
+			m.input.InsertString(normalizePaste(string(msg.Runes)))
+			return m, nil
 		}
 		if len(m.suggestions()) > 0 && msg.Type == tea.KeyTab {
 			m.fillSuggestion()
@@ -1299,9 +1334,21 @@ func (m *tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch msg.Type {
 		case tea.KeyCtrlC, tea.KeyEsc:
 			return m, m.stopTurn()
-		case tea.KeyCtrlG:
-			return m, m.toggleMouse()
 		case tea.KeyEnter:
+			recentInput := (!m.lastInput.IsZero() && time.Since(m.lastInput) < pasteKeyGap) ||
+				(!m.lastBatch.IsZero() && time.Since(m.lastBatch) < pasteBurst)
+			if recentInput {
+				// 紧跟在粘贴文字后的 Enter 是粘贴内容里的换行，不是发送
+				m.lastInput, m.lastBatch = time.Time{}, time.Time{}
+				m.input.InsertString("\n")
+				return m, nil
+			}
+			// 行尾 \ + Enter = 换行（多行草稿），否则发送
+			if v := m.input.Value(); strings.HasSuffix(v, "\\") {
+				m.input, _ = m.input.Update(tea.KeyMsg{Type: tea.KeyBackspace}) // 去掉行尾的 \
+				m.input.InsertString("\n")
+				return m, nil
+			}
 			return m, m.submit()
 		case tea.KeyPgUp:
 			m.scrollChat(m.pageStep())
@@ -1317,18 +1364,6 @@ func (m *tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.attaches = m.attaches[:len(m.attaches)-1] // 空输入退格删最后一个附件
 			return m, nil
 		}
-	case tea.MouseMsg:
-		switch msg.Button {
-		case tea.MouseButtonWheelUp:
-			if !m.moveSel(-1) {
-				m.scrollChat(3)
-			}
-		case tea.MouseButtonWheelDown:
-			if !m.moveSel(1) {
-				m.scrollChat(-3)
-			}
-		}
-		return m, nil
 	case frame:
 		m.applyFrame(msg)
 		if msg.Type == "turn_end" || msg.Type == "model_end" {
@@ -1477,10 +1512,26 @@ applyWidth 按终端宽度排输入区：空输入时 textinput 的光标块比 
 */
 func (m *tuiModel) applyWidth(w int) {
 	m.width = w
-	m.input.Width = w - 6
-	if m.input.Width < 10 {
-		m.input.Width = 10
+	iw := w - 6
+	if iw < 10 {
+		iw = 10
 	}
+	m.input.SetWidth(iw)
+}
+
+/* syncInputHeight 输入框高度跟草稿行数走（1..6 行；当前行软换行也算）。 */
+func (m *tuiModel) syncInputHeight() {
+	h := m.input.LineCount()
+	if info := m.input.LineInfo(); info.Height > 1 {
+		h += info.Height - 1
+	}
+	if h < 1 {
+		h = 1
+	}
+	if h > 6 {
+		h = 6
+	}
+	m.input.SetHeight(h)
 }
 
 /*
@@ -1502,15 +1553,6 @@ func (m *tuiModel) statusRow() string {
 	}
 	segs := []string{
 		field("模型", model), field("思考", effort), field("审批", approve), field("上下文", ctx),
-	}
-	switch {
-	case m.stopping:
-		segs = append([]string{askStyle.Render("停止中…")}, segs...)
-	case m.streaming:
-		segs = append([]string{selStyle.Render("工作中")}, segs...)
-	}
-	if !m.mouseOn {
-		segs = append(segs, askStyle.Render("鼠标已释放 · Ctrl+G 恢复"))
 	}
 	row := " " + strings.Join(segs, dimStyle.Render(" · "))
 	budget := m.width - 2
@@ -1599,9 +1641,19 @@ func (m *tuiModel) View() string {
 	if len(m.attaches) > 0 {
 		attachRows = 1
 	}
-	bodyH := m.height - 4 - attachRows // 标题 / 提示 / 附件 / 输入 / 状态栏
+	hint := m.statusHint(len(sugs) > 0)
+	hintRows := 0
+	if hint != "" {
+		hintRows = 1
+	}
+	m.syncInputHeight()
+	inputRows := m.input.Height()
+	bodyH := m.height - 2 - attachRows - hintRows - inputRows // 标题 / 状态栏 + 提示 / 附件 / 输入
 	if bodyH < 1 {
 		bodyH = 1
+	}
+	if len(sugs) > bodyH {
+		sugs = sugs[len(sugs)-bodyH:]
 	}
 
 	// 会话从顶部往下排，空白留在下方；选择栏/命令提示压在底部
@@ -1629,15 +1681,17 @@ func (m *tuiModel) View() string {
 	case m.err != "" && !m.streaming:
 		hintStyle = errStyle
 	}
-	hintRow := hintStyle.Render(" " + fitHint(oneLine(m.statusHint(len(sugs) > 0)), m.width-2))
 
 	out := []string{head}
 	out = append(out, body...)
-	out = append(out, hintRow)
-	if len(m.attaches) > 0 {
+	if hint != "" {
+		out = append(out, hintStyle.Render(" "+fitHint(oneLine(hint), m.width-2)))
+	}
+	if attachRows > 0 {
 		out = append(out, m.attachRow())
 	}
-	out = append(out, m.inputRow(), m.statusRow())
+	out = append(out, m.inputRows()...)
+	out = append(out, m.statusRow())
 	/* 最后一道保险：任何一行都不许写满终端宽度，避免自动换行把整屏
 	   行序冲乱（markdown 的内边距、宽字符宽度差异都可能超一格）。 */
 	for i := range out {
@@ -1649,8 +1703,11 @@ func (m *tuiModel) View() string {
 	return strings.Join(out, "\n")
 }
 
-/* inputRow 输入行；MCP 授权时整行换成操作提示。 */
-func (m *tuiModel) inputRow() string {
+/*
+inputRows 输入区各行：首行 ❯ 前缀、续行三空格对齐；顺带按反色光标
+块的位置记下真实光标（输入法合成框贴到光标处）。
+*/
+func (m *tuiModel) inputRows() []string {
 	if len(m.pending) > 0 && m.pending[0].kind == "mcp" {
 		prompt := "↑↓ 选择 · Enter 确认"
 		if m.pending[0].busy {
@@ -1659,19 +1716,36 @@ func (m *tuiModel) inputRow() string {
 		if m.cursor != nil {
 			m.cursor.col.Store(0) // 不画输入框，真实光标留在行首
 		}
-		return askStyle.Render(" ❯ " + prompt)
+		return []string{askStyle.Render(" ❯ " + prompt)}
 	}
 	prefix := " ❯ "
 	if len(m.pending) > 0 {
 		prefix = askStyle.Render(" ❯ ") // 这行现在是给待办的回答/理由
 	}
-	row := prefix + m.input.View()
-	if m.cursor != nil {
-		if i := strings.LastIndex(row, "\x1b[7m"); i >= 0 { // textinput 的反色光标
-			m.cursor.col.Store(int64(lipgloss.Width(row[:i]) + 1))
+	lines := strings.Split(strings.TrimSuffix(m.input.View(), "\n"), "\n")
+	rows := make([]string, 0, len(lines))
+	cursorLine, cursorCol := -1, 1
+	for i, ln := range lines {
+		lead := "   "
+		if i == 0 {
+			lead = prefix
 		}
+		if cursorLine < 0 {
+			if j := strings.LastIndex(ln, "\x1b[7m"); j >= 0 { // 静态反色光标块
+				cursorLine = i
+				cursorCol = 3 + lipgloss.Width(ln[:j]) + 1
+			}
+		}
+		rows = append(rows, lead+ln)
 	}
-	return row
+	if cursorLine < 0 { // 空输入时输入框只画 placeholder、没有反色块：贴 ❯ 之后
+		cursorLine, cursorCol = len(lines)-1, 4
+	}
+	if m.cursor != nil {
+		m.cursor.col.Store(int64(cursorCol))
+		m.cursor.rowBack.Store(int64(len(lines)-1-cursorLine) + 1) // 下面还有状态栏
+	}
+	return rows
 }
 
 /* suggestions 输入 / 时的候选命令（按前缀过滤）；待办回答期间不出命令。 */
@@ -1746,21 +1820,66 @@ func (m *tuiModel) statusHint(hasSug bool) string {
 			for _, r := range m.running {
 				names = append(names, r.name)
 			}
-			return "执行中 " + countNames(names)
+			return "执行中 " + countNames(names) + m.iterText()
 		}
 		if m.liveThink != "" && m.liveText == "" {
-			return "思考中…"
+			return "思考中…" + m.iterText()
 		}
 		if m.liveText != "" {
-			return "输出中…"
+			return "输出中…" + m.iterText()
 		}
-		return "运行中…"
+		return "运行中…" + m.iterText()
 	case m.err != "":
 		return m.err
 	case hasSug:
 		return "↑↓ 选择 · Enter/Tab 填入"
 	}
-	return "输入消息，/ 开头是命令"
+	return "" // 空闲不占提示行：引导语是输入框的 placeholder
+}
+
+/* iterText 本轮迭代后缀（已知轮数才显示，与桌面端「第 N 轮」同口径）。 */
+func (m *tuiModel) iterText() string {
+	if m.iter > 0 {
+		return fmt.Sprintf(" · 第 %d 轮", m.iter)
+	}
+	return ""
+}
+
+/* turnEndText 轮末一行：与桌面端 endtick 同口径——原因 · N 轮 · 耗时 · HH:MM。 */
+func turnEndText(d turnEndData) string {
+	stop := d.StopReason
+	if stop == "" {
+		stop = "completed"
+	}
+	reason := "本轮结束（" + stop + "）"
+	switch stop {
+	case "cancelled":
+		reason = "用户手动停止本轮"
+	case "max_iterations":
+		reason = "达到最大迭代次数上限"
+	case "error":
+		reason = "执行出错中止"
+	case "aborted":
+		reason = "被策略中止"
+	}
+	if stop == "error" && d.Err != "" {
+		reason += "：" + oneLine(d.Err)
+	}
+	return fmt.Sprintf("%s · %d 轮%s · %s", reason, d.Iterations, durText(d.ElapsedMs), time.Now().Format("15:04"))
+}
+
+/* durText 轮耗时（粗粒度，与桌面端一致）。 */
+func durText(ms int64) string {
+	secs := (ms + 500) / 1000
+	switch {
+	case secs >= 3600:
+		return fmt.Sprintf(" · %d 小时 %d 分钟", secs/3600, secs%3600/60)
+	case secs >= 60:
+		return fmt.Sprintf(" · %d 分 %d 秒", secs/60, secs%60)
+	case secs > 0:
+		return fmt.Sprintf(" · %d 秒", secs)
+	}
+	return ""
 }
 
 /* pendingHint 底栏提示：当前要回答的是哪一项、还有几项。 */

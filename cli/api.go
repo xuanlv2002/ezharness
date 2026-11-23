@@ -308,6 +308,8 @@ type toolEndData struct {
 type turnEndData struct {
 	StopReason string `json:"stopReason"`
 	Err        string `json:"err,omitempty"`
+	Iterations int    `json:"iterations"`
+	ElapsedMs  int64  `json:"elapsedMs,omitempty"`
 }
 
 /*

@@ -5,6 +5,8 @@ markdown 渲染：助手回复按终端宽度渲染成带样式的块（标题/�
 package main
 
 import (
+	"fmt"
+	"net/url"
 	"regexp"
 	"strings"
 
@@ -24,6 +26,7 @@ func renderMarkdown(src string, width int) string {
 		return ""
 	}
 	src = cleanText(src)
+	src, supper := rewriteSupperLinks(src)
 	if mdRender == nil || mdWidth != width {
 		cfg := styles.DarkStyleConfig
 		zero := uint(0)
@@ -39,7 +42,71 @@ func renderMarkdown(src string, width int) string {
 	if err != nil {
 		return ""
 	}
-	return linkify(strings.ReplaceAll(strings.Trim(out, "\n"), "\t", "    "))
+	return restoreSupperLinks(linkify(strings.ReplaceAll(strings.Trim(out, "\n"), "\t", "    ")), supper)
+}
+
+/* supperLink 是 <$supper_url> 占位入口的展示文本与可点击目标（uri 空 = 不可点）。 */
+type supperLink struct {
+	label string
+	uri   string
+}
+
+var supperURLRe = regexp.MustCompile(`<\$supper_url>\s*([\s\S]*?)\s*</\$supper_url>`)
+
+/*
+rewriteSupperLinks 把 <$supper_url>目标</$supper_url> 换成短占位符再交给
+markdown 渲染——原样留着会被当成文字打出来，长路径还会被折行拆散。
+渲染完再换回展示文本（见 restoreSupperLinks）。
+*/
+func rewriteSupperLinks(src string) (string, []supperLink) {
+	var links []supperLink
+	out := supperURLRe.ReplaceAllStringFunc(src, func(m string) string {
+		target := supperURLRe.FindStringSubmatch(m)[1]
+		links = append(links, supperLabel(target))
+		return fmt.Sprintf("〔L%d〕", len(links)-1)
+	})
+	return out, links
+}
+
+/* supperLabel 按协议给出展示文本：http/file 可点（OSC 8），终端/浏览器/快应用只给标签。 */
+func supperLabel(target string) supperLink {
+	switch {
+	case strings.HasPrefix(target, "http://"), strings.HasPrefix(target, "https://"):
+		return supperLink{label: target, uri: target}
+	case strings.HasPrefix(target, "file://"):
+		return supperLink{label: fileURLPath(target), uri: target}
+	case strings.HasPrefix(target, "term://"):
+		return supperLink{label: "终端 " + strings.TrimPrefix(target, "term://")}
+	case strings.HasPrefix(target, "browser://"):
+		return supperLink{label: "浏览器 " + strings.TrimPrefix(target, "browser://")}
+	case strings.HasPrefix(target, "app://"):
+		return supperLink{label: "快应用 " + strings.TrimPrefix(target, "app://")}
+	}
+	return supperLink{label: target}
+}
+
+/* fileURLPath file:// URL 折成本地路径展示（Windows 去掉多余的前导斜杠）。 */
+func fileURLPath(u string) string {
+	p := strings.TrimPrefix(u, "file://")
+	if unescaped, err := url.PathUnescape(p); err == nil {
+		p = unescaped
+	}
+	if len(p) >= 3 && p[0] == '/' && p[2] == ':' {
+		p = p[1:]
+	}
+	return p
+}
+
+/* restoreSupperLinks 把占位符换成展示文本（可点的套 OSC 8）。 */
+func restoreSupperLinks(s string, links []supperLink) string {
+	for i, l := range links {
+		text := l.label
+		if l.uri != "" {
+			text = ansi.SetHyperlink(escapeLinkURI(l.uri)) + text + ansi.ResetHyperlink()
+		}
+		s = strings.ReplaceAll(s, fmt.Sprintf("〔L%d〕", i), text)
+	}
+	return s
 }
 
 /* mdURL 匹配渲染结果里的裸 URL（不含 ANSI 序列与空白）。 */
