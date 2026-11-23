@@ -3,7 +3,6 @@ rem build: versioned full build (version source: script/version.yaml), windows l
 rem chain: frontend build -> copy dist to core/web/dist -> core/cli go build (release/dev/) -> electron-builder
 rem output:
 rem   release\v<version>\ezharness-desktop-v<version>-setup.exe   NSIS installer (desktop + core + cli)
-rem   release\v<version>\ezharness-desktop-v<version>.exe         portable exe
 rem cross-platform builds (win/linux/macos) run in CI: .github/workflows/build.yml
 rem NOTE: keep this file PURE ASCII -- cmd parses .bat in the OEM codepage, so a UTF-8
 rem comment is decoded into bytes that can swallow the line end and run as a command
@@ -28,10 +27,10 @@ powershell -NoProfile -Command "Remove-Item -Recurse -Force core/web/dist -Error
 echo [build] building core...
 if not exist release\dev mkdir release\dev
 cd core
-rem build core as a console-subsystem app: do NOT add -H windowsgui. A GUI-subsystem core
-rem has no console, so each console child it spawns (terminal's cmd.exe, taskkill, MCP
-rem server) gets its own visible console window and flashes a black box. The desktop shell
-rem instead spawns core with windowsHide, so core holds one hidden console that children inherit
+rem build core as a console-subsystem app (no -H windowsgui). The launcher spawns core
+rem hidden, so core has no console and allocates a hidden one itself at startup
+rem (core/console_windows.go); its console children (cmd.exe, git, taskkill, MCP server)
+rem attach to that console instead of flashing their own black boxes
 go build -trimpath -ldflags "-s -w -X ezharness/core/internal/config.Version=%VERSION%" -o ..\release\dev\ezharness-core.exe .
 if errorlevel 1 exit /b 1
 cd ..
@@ -51,4 +50,3 @@ cd ..
 echo.
 echo build done:
 echo   release\v%VERSION%\ezharness-desktop-v%VERSION%-setup.exe
-echo   release\v%VERSION%\ezharness-desktop-v%VERSION%.exe

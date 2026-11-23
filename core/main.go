@@ -29,6 +29,8 @@ import (
 var appStart = time.Now()
 
 func main() {
+	// 须在任何 spawn 之前：之后 git/cmd/taskkill 等控制台子进程附着于此，不弹黑框
+	hideConsole()
 	root := flag.String("root", "", "应用根目录(配置与数据所在;缺省=exe 所在目录)")
 	flag.Parse()
 	config.SetRoot(*root)

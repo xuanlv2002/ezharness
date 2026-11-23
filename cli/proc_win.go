@@ -10,9 +10,9 @@ import (
 /* detachedProcess 脱离控制台：Go 的 syscall 包没有导出它（x/sys/windows 才有）。 */
 const detachedProcess = 0x00000008
 
-// detachAttr 后台启动：独立进程组 + 脱离控制台。HideWindow 与 desktop 的
-// windowsHide 同理——core 拿到隐藏控制台，它 spawn 的控制台程序（MCP server、
-// taskkill）才不会各自弹一个黑框。
+// detachAttr 后台启动：独立进程组 + 脱离控制台。脱离后 core 没有控制台，
+// 由 core 自己分配隐藏控制台，它 spawn 的控制台程序（MCP server、taskkill）
+// 才不会各自弹一个黑框。
 func detachAttr() *syscall.SysProcAttr {
 	return &syscall.SysProcAttr{
 		HideWindow:    true,

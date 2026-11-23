@@ -201,7 +201,6 @@ function coreDir() {
 /*
 rootDir 是配置与数据根（ezharness.json + data/）：
 - 开发态：release/dev（与 core 产物同目录，dev.bat 的既有习惯）
-- 便携版（Windows portable）：锚定 exe 所在目录——绿色版数据跟包走
 - 安装版（Windows NSIS / macOS / Linux）：系统用户数据目录
   （%APPDATA%\ezharness、~/Library/Application Support/ezharness、
   ~/.config/ezharness）。安装目录会被升级/卸载整目录删除，配置与数据
@@ -210,11 +209,6 @@ rootDir 是配置与数据根（ezharness.json + data/）：
 function rootDir() {
   if (process.env.EZHARNESS_ROOT) return path.resolve(process.env.EZHARNESS_ROOT)
   if (!app.isPackaged) return coreDir()
-  if (process.platform === 'win32' && process.env.PORTABLE_EXECUTABLE_DIR) {
-    const base = path.resolve(process.env.PORTABLE_EXECUTABLE_DIR)
-    // 便携版放在只读位置时回落到用户目录
-    return writableDir(base) ? base : app.getPath('userData')
-  }
   return app.getPath('userData')
 }
 
@@ -229,7 +223,7 @@ ezharness.json 不迁移——由 core 在新根下按默认重建（旧版 data
 */
 function migrateLegacyRoot() {
   if (!app.isPackaged || process.platform !== 'win32') return
-  if (process.env.PORTABLE_EXECUTABLE_DIR || process.env.EZHARNESS_ROOT) return
+  if (process.env.EZHARNESS_ROOT) return
   const legacy = coreDir()
   const root = rootDir()
   if (path.resolve(legacy) === path.resolve(root)) return
@@ -253,16 +247,6 @@ function copyMissing(src, dst) {
     for (const name of fs.readdirSync(src)) copyMissing(path.join(src, name), path.join(dst, name))
   } else if (!fs.existsSync(dst)) {
     fs.copyFileSync(src, dst)
-  }
-}
-
-/* writableDir 目录是否可写（只读安装位置/AppImage 挂载点会 false）。 */
-function writableDir(dir) {
-  try {
-    fs.accessSync(dir, fs.constants.W_OK)
-    return true
-  } catch {
-    return false
   }
 }
 
@@ -356,9 +340,9 @@ function spawnCore(root) {
       /* 只读挂载或权限不足：交给 spawn 报错 */
     }
   }
-  /* detached + windowsHide：core 独立常驻（退出由 before-quit 显式停），并拿到隐藏控制台
-     （非 Windows 忽略）——它 spawn 的控制台程序继承该控制台，否则 Windows
-     会给每个子进程新开可见控制台，黑框一闪。日志走 core 自己的文件 */
+  /* detached + windowsHide：core 独立常驻（退出由 before-quit 显式停）。
+     windowsHide 下 core 没有控制台，由 core 自己分配隐藏控制台，避免它
+     spawn 的控制台程序（git/cmd/taskkill）各弹一个黑框。日志走 core 自己的文件 */
   const proc = spawn(exe, ['--root', root], {
     cwd: root, stdio: 'ignore', detached: true, windowsHide: true,
     env: { ...process.env, PATH: loginPath() },

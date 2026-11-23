@@ -144,15 +144,9 @@ jobs:
         shell: bash
         run: |
           cd cli
-          # 打包用产物三平台同名 ezharness.exe（desktop 的 extraFiles 按名取）；
-          # 另拷一份平台原生名的直接下载入口。core 也拷一份同目录发布——
-          # linux/mac 没有安装包时，CLI 靠 exe 同目录的 core 才能自己拉起实例。
+          # 只产出 release/dev/ezharness.exe：desktop 的 extraFiles 按名取，
+          # 随安装包一起分发，不单独发布裸二进制
           go build -trimpath -ldflags "-s -w -X main.version=${{ steps.ver.outputs.version }}" -o ../release/dev/ezharness.exe .
-          mkdir -p "../release/v${{ steps.ver.outputs.version }}"
-          ext=""
-          [ "${{ runner.os }}" = "Windows" ] && ext=".exe"
-          cp ../release/dev/ezharness.exe "../release/v${{ steps.ver.outputs.version }}/ezharness${ext}"
-          cp ../release/dev/ezharness-core.exe "../release/v${{ steps.ver.outputs.version }}/ezharness-core${ext}"
 
       - name: Package desktop
         run: |
@@ -171,17 +165,13 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: ezharness-v${{ steps.ver.outputs.version }}-${{ runner.os }}
-          # 只传安装包与校验和：electron-builder 输出目录里还有 win-unpacked/、
-          # mac/、linux-unpacked/ 等未打包目录（数百 MB），不能用 /* 通配
+          # 只传三平台安装包与校验和：electron-builder 输出目录里还有
+          # win-unpacked/、mac/、linux-unpacked/ 等未打包目录（数百 MB），
+          # 不能用 /* 通配
           path: |
             release/v${{ steps.ver.outputs.version }}/ezharness-desktop-v*-setup.exe
-            release/v${{ steps.ver.outputs.version }}/ezharness-desktop-v*.exe
             release/v${{ steps.ver.outputs.version }}/ezharness-*.dmg
             release/v${{ steps.ver.outputs.version }}/ezharness-desktop-v*.AppImage
-            release/v${{ steps.ver.outputs.version }}/ezharness
-            release/v${{ steps.ver.outputs.version }}/ezharness.exe
-            release/v${{ steps.ver.outputs.version }}/ezharness-core
-            release/v${{ steps.ver.outputs.version }}/ezharness-core.exe
             release/v${{ steps.ver.outputs.version }}/SHA256SUMS-*.txt
           compression-level: 0
 
@@ -191,13 +181,8 @@ jobs:
         with:
           files: |
             release/v${{ steps.ver.outputs.version }}/ezharness-desktop-v*-setup.exe
-            release/v${{ steps.ver.outputs.version }}/ezharness-desktop-v*.exe
             release/v${{ steps.ver.outputs.version }}/ezharness-*.dmg
             release/v${{ steps.ver.outputs.version }}/ezharness-desktop-v*.AppImage
-            release/v${{ steps.ver.outputs.version }}/ezharness
-            release/v${{ steps.ver.outputs.version }}/ezharness.exe
-            release/v${{ steps.ver.outputs.version }}/ezharness-core
-            release/v${{ steps.ver.outputs.version }}/ezharness-core.exe
             release/v${{ steps.ver.outputs.version }}/SHA256SUMS-*.txt
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

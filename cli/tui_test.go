@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/charmbracelet/bubbles/textinput"
+	"github.com/charmbracelet/bubbles/textarea"
 	tea "github.com/charmbracelet/bubbletea"
 )
 
@@ -105,12 +105,12 @@ func TestApplyFrameStreaming(t *testing.T) {
 	}
 }
 
-/* 输入 / 出命令提示；输入行右侧显示工作目录。 */
-func TestSlashHintsAndDirLine(t *testing.T) {
-	m := &tuiModel{cwd: "/tmp/ez-work", height: 24, input: textinput.New()}
+/* 输入 / 出命令提示；状态栏显示模型/思考/审批/上下文/目录。 */
+func TestSlashHintsAndStatusRow(t *testing.T) {
+	m := &tuiModel{cwd: "/tmp/ez-work", height: 24, input: textarea.New()}
 	m.input.Prompt = ""
 	m.input.Focus()
-	m.applyWidth(80)
+	m.applyWidth(120)
 	m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
 	if len(m.suggestionRows()) != len(slashCommands) {
 		t.Fatalf("斜杠未出命令提示：%+v", m.suggestionRows())
@@ -125,9 +125,16 @@ func TestSlashHintsAndDirLine(t *testing.T) {
 		t.Fatalf("前缀过滤不对：%+v", rows)
 	}
 
-	row := m.inputRow()
-	if !strings.HasSuffix(row, "工作中 /tmp/ez-work") {
-		t.Fatalf("目录未贴输入行右侧：%q", row)
+	m.status = &statusView{Model: "glm-5.4", ReasoningEffort: "high", ApproveMode: "off",
+		ContextTokens: 12349, ContextWindow: 102400}
+	row := m.statusRow()
+	for _, want := range []string{"glm-5.4", "高", "无审批", "12.3k/102.4k", "/tmp/ez-work"} {
+		if !strings.Contains(row, want) {
+			t.Fatalf("状态栏缺 %q：%q", want, row)
+		}
+	}
+	if strings.Contains(strings.Join(m.inputRows(), "\n"), "/tmp/ez-work") {
+		t.Fatalf("目录不该再贴在输入行：%q", m.inputRows())
 	}
 }
 

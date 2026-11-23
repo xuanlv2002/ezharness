@@ -31,14 +31,15 @@ type branch struct {
 
 /* statusView 是 /api/status 与本会话状态（bootstrap.status）的共用视图。 */
 type statusView struct {
-	Model         string `json:"model"`
-	ApproveMode   string `json:"approveMode"`
-	SessionID     string `json:"sessionId"`
-	RootID        string `json:"rootId"`
-	SessionMsgs   int    `json:"sessionMsgs"`
-	ContextTokens int    `json:"contextTokens"`
-	ContextWindow int    `json:"contextWindow"`
-	Busy          bool   `json:"busy"`
+	Model           string `json:"model"`
+	ReasoningEffort string `json:"reasoningEffort"`
+	ApproveMode     string `json:"approveMode"`
+	SessionID       string `json:"sessionId"`
+	RootID          string `json:"rootId"`
+	SessionMsgs     int    `json:"sessionMsgs"`
+	ContextTokens   int    `json:"contextTokens"`
+	ContextWindow   int    `json:"contextWindow"`
+	Busy            bool   `json:"busy"`
 }
 
 type bootstrapView struct {
@@ -209,14 +210,21 @@ func (c *client) models() ([]modelEntry, error) {
 
 /* prefsView 是会话偏好更新的回执。 */
 type prefsView struct {
-	ApproveMode string `json:"approveMode"`
-	Model       string `json:"model"`
+	ReasoningEffort string `json:"reasoningEffort"`
+	ApproveMode     string `json:"approveMode"`
+	Model           string `json:"model"`
+	ContextWindow   int    `json:"contextWindow"`
 }
 
 func (c *client) setPrefs(rootID string, patch map[string]any) (prefsView, error) {
 	var out prefsView
 	err := c.callJSON(http.MethodPost, "/api/sessions/"+rootID+"/prefs", patch, &out)
 	return out, err
+}
+
+/* cancelTurn 停止当前轮（Ctrl+C / Esc）。 */
+func (c *client) cancelTurn(rootID string) error {
+	return c.callJSON(http.MethodPost, "/api/sessions/"+rootID+"/cancel", nil, nil)
 }
 
 /* compact 归档当前话题（总结归档并开新会话）。 */
@@ -300,6 +308,8 @@ type toolEndData struct {
 type turnEndData struct {
 	StopReason string `json:"stopReason"`
 	Err        string `json:"err,omitempty"`
+	Iterations int    `json:"iterations"`
+	ElapsedMs  int64  `json:"elapsedMs,omitempty"`
 }
 
 /*

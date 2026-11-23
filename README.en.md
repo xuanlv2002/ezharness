@@ -56,15 +56,11 @@ Grab a build from [Releases](https://github.com/xuanlv2002/ezharness/releases):
 **Option 1: Windows installer**
 
 1. Download `ezharness-desktop-v<version>-setup.exe` and run it;
-2. It installs the desktop app, `ezharness.exe` (CLI/TUI) and `ezharness-core.exe` side by side and adds the install dir to your user PATH. Config and data live under `%APPDATA%\ezharness` and survive upgrades.
+2. It installs the desktop app, `ezharness.exe` (CLI/TUI) and `ezharness-core.exe` side by side; the checkbox (on by default) adds the install dir to the system PATH so `ezharness` works in any terminal for all users. Config and data live under `%APPDATA%\ezharness` and survive upgrades.
 
-**Option 2: Windows portable**
+**Option 2: macOS / Linux**
 
-Download `ezharness-desktop-v<version>.exe`, put it in any folder — config and data live next to it.
-
-**Option 3: CLI + core (Windows / macOS / Linux)**
-
-Download `ezharness` and `ezharness-core` (`.exe` on Windows) into the same folder. `ezharness server` starts the core, `ezharness tui` opens the terminal UI, `ezharness web` opens the browser UI. `ezharness --server <host:port> tui` connects to another core. On macOS/Linux you can also use the dmg / AppImage, which bundles all three.
+The `.dmg` / `.AppImage` bundles the desktop app, the CLI and core together.
 
 **Plain server (no desktop shell)**
 
@@ -139,7 +135,7 @@ The version has a single source of truth in `script/version.yaml`. Scripts run f
 
 ```sh
 script\dev.bat           # debug: build frontend + core/cli -> run Electron in the foreground
-script\build.bat         # release: installer + portable into release\v<version>\
+script\build.bat         # release: installer into release\v<version>\
 script/dev.sh            # macOS / Linux equivalent of dev.bat
 ```
 
